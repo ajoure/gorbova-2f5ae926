@@ -7,9 +7,20 @@ export interface EisenhowerTask {
   id: string;
   content: string;
   quadrant: string;
+  source?: string;
+  source_task_id?: string | null;
 }
 
 type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+
+function getImportanceUrgency(quadrant: QuadrantType): { important: boolean; urgent: boolean } {
+  switch (quadrant) {
+    case "urgent-important": return { important: true, urgent: true };
+    case "not-urgent-important": return { important: true, urgent: false };
+    case "urgent-not-important": return { important: false, urgent: true };
+    case "not-urgent-not-important": return { important: false, urgent: false };
+  }
+}
 
 export function useEisenhowerTasks() {
   const { user } = useAuth();
@@ -25,7 +36,7 @@ export function useEisenhowerTasks() {
 
     const { data, error } = await supabase
       .from("eisenhower_tasks")
-      .select("id, content, quadrant")
+      .select("id, content, quadrant, source, source_task_id")
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
 
@@ -46,8 +57,8 @@ export function useEisenhowerTasks() {
 
     const { data, error } = await supabase
       .from("eisenhower_tasks")
-      .insert({ user_id: user.id, content, quadrant })
-      .select("id, content, quadrant")
+      .insert({ user_id: user.id, content, quadrant, source: "direct" })
+      .select("id, content, quadrant, source, source_task_id")
       .single();
 
     if (error) {
@@ -66,6 +77,8 @@ export function useEisenhowerTasks() {
   const updateTask = async (taskId: string, updates: { content?: string; quadrant?: QuadrantType }) => {
     if (!user) return false;
 
+    const task = tasks.find(t => t.id === taskId);
+
     const { error } = await supabase
       .from("eisenhower_tasks")
       .update(updates)
@@ -79,6 +92,15 @@ export function useEisenhowerTasks() {
         variant: "destructive",
       });
       return false;
+    }
+
+    // Sync with wheel task if linked
+    if (updates.quadrant && task?.source === "wheel_balance" && task?.source_task_id) {
+      const { important, urgent } = getImportanceUrgency(updates.quadrant);
+      await supabase
+        .from("wheel_balance_tasks")
+        .update({ important, urgent })
+        .eq("id", task.source_task_id);
     }
 
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
