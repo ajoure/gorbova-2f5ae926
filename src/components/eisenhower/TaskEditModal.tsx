@@ -43,7 +43,7 @@ interface TaskEditModalProps {
   categories: TaskCategory[];
   onSave: (updates: {
     content: string;
-    quadrant: string;
+    quadrant: string | null;
     completed: boolean;
     deadline_date: string | null;
     deadline_time: string | null;
@@ -57,20 +57,21 @@ interface TaskEditModalProps {
 }
 
 const quadrantOptions = [
-  { value: "urgent-important", label: "Q1: Срочно и Важно" },
-  { value: "not-urgent-important", label: "Q2: Важно, не Срочно" },
-  { value: "urgent-not-important", label: "Q3: Срочно, не Важно" },
-  { value: "not-urgent-not-important", label: "Q4: Не Срочно, не Важно" },
+  { value: "urgent-important", label: "Q1 — Срочно и Важно" },
+  { value: "not-urgent-important", label: "Q2 — Важно, не Срочно" },
+  { value: "urgent-not-important", label: "Q3 — Срочно, не Важно" },
+  { value: "not-urgent-not-important", label: "Q4 — Не Срочно, не Важно" },
 ];
 
 const quadrantLabels: Record<string, string> = {
-  "urgent-important": "Q1: Срочно и Важно",
-  "not-urgent-important": "Q2: Важно, не Срочно",
-  "urgent-not-important": "Q3: Срочно, не Важно",
-  "not-urgent-not-important": "Q4: Не Срочно, не Важно",
+  "urgent-important": "Q1 — Срочно и Важно",
+  "not-urgent-important": "Q2 — Важно, не Срочно",
+  "urgent-not-important": "Q3 — Срочно, не Важно",
+  "not-urgent-not-important": "Q4 — Не Срочно, не Важно",
+  "inbox": "Планируемые задачи",
 };
 
-function getScoresForQuadrant(quadrant: string): { importance: number; urgency: number } {
+function getScoresForQuadrant(quadrant: string | null): { importance: number; urgency: number } {
   switch (quadrant) {
     case "urgent-important": return { importance: 8, urgency: 8 };
     case "not-urgent-important": return { importance: 8, urgency: 3 };
@@ -88,10 +89,10 @@ export function TaskEditModal({
   onSave,
   onDelete,
   isNew = false,
-  defaultQuadrant = "not-urgent-important",
+  defaultQuadrant,
 }: TaskEditModalProps) {
   const [content, setContent] = useState("");
-  const [quadrant, setQuadrant] = useState(defaultQuadrant);
+  const [quadrant, setQuadrant] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const [deadlineTime, setDeadlineTime] = useState("");
@@ -100,12 +101,12 @@ export function TaskEditModal({
   // AI Priority state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiRecommendation, setAiRecommendation] = useState<{ quadrant: string; reason: string } | null>(null);
-  const [useAiRecommendation, setUseAiRecommendation] = useState(true);
+  const [useAiRecommendation, setUseAiRecommendation] = useState(false);
 
   useEffect(() => {
     if (task) {
       setContent(task.content);
-      setQuadrant(task.quadrant);
+      setQuadrant(task.quadrant === "inbox" ? null : task.quadrant);
       setCompleted(task.completed);
       setDeadlineDate(task.deadline_date ? parse(task.deadline_date, "yyyy-MM-dd", new Date()) : undefined);
       setDeadlineTime(task.deadline_time || "");
@@ -113,18 +114,18 @@ export function TaskEditModal({
       setAiRecommendation(null);
       setUseAiRecommendation(false);
     } else {
+      // New task - start with empty/null values
       setContent("");
-      setQuadrant(defaultQuadrant);
+      setQuadrant(null); // No priority by default for new tasks
       setCompleted(false);
       setDeadlineDate(undefined);
       setDeadlineTime("");
       setCategoryId("__none__");
       setAiRecommendation(null);
-      setUseAiRecommendation(true);
+      setUseAiRecommendation(false);
     }
-  }, [task, open, defaultQuadrant]);
+  }, [task, open]);
 
-  // Request AI analysis when content changes (for new tasks)
   const requestAiAnalysis = async () => {
     if (!content.trim()) return;
     
@@ -148,9 +149,6 @@ export function TaskEditModal({
           quadrant: data.quadrant,
           reason: data.reason || "AI рекомендация",
         });
-        if (useAiRecommendation) {
-          setQuadrant(data.quadrant);
-        }
       }
     } catch (error) {
       console.error("AI analysis error:", error);
@@ -167,16 +165,24 @@ export function TaskEditModal({
   };
 
   const handleQuadrantChange = (value: string) => {
-    setQuadrant(value);
+    if (value === "__none__") {
+      setQuadrant(null);
+    } else {
+      setQuadrant(value);
+    }
     setUseAiRecommendation(false);
   };
 
   const handleSave = () => {
     if (!content.trim()) return;
-    const scores = getScoresForQuadrant(quadrant);
+    
+    // If no quadrant selected (neither AI nor manual), task stays in "inbox" (planned)
+    const finalQuadrant = quadrant || "inbox";
+    const scores = getScoresForQuadrant(finalQuadrant === "inbox" ? null : finalQuadrant);
+    
     onSave({
       content: content.trim(),
-      quadrant,
+      quadrant: finalQuadrant,
       completed,
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
@@ -300,31 +306,30 @@ export function TaskEditModal({
                   </p>
                 </div>
                 
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={useAiRecommendation && quadrant === aiRecommendation.quadrant ? "default" : "outline"}
-                    size="sm"
-                    onClick={handleAcceptRecommendation}
-                    className="flex-1 gap-1"
-                  >
-                    {useAiRecommendation && quadrant === aiRecommendation.quadrant && (
-                      <Check className="w-3 h-3" />
-                    )}
-                    Принять рекомендацию
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant={useAiRecommendation && quadrant === aiRecommendation.quadrant ? "default" : "outline"}
+                  size="sm"
+                  onClick={handleAcceptRecommendation}
+                  className="w-full gap-1"
+                >
+                  {useAiRecommendation && quadrant === aiRecommendation.quadrant && (
+                    <Check className="w-3 h-3" />
+                  )}
+                  Принять рекомендацию
+                </Button>
               </div>
             )}
           </div>
 
           <div className="space-y-2">
             <Label>Выбрать приоритет вручную</Label>
-            <Select value={quadrant} onValueChange={handleQuadrantChange}>
+            <Select value={quadrant || "__none__"} onValueChange={handleQuadrantChange}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder="Не выбран" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="__none__">Не выбран (останется в планируемых)</SelectItem>
                 {quadrantOptions.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
