@@ -19,11 +19,9 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { format, parse } from "date-fns";
-import { ru } from "date-fns/locale";
-import { CalendarIcon, Trash2, Sparkles, Loader2, Check, Settings } from "lucide-react";
+import { Trash2, Sparkles, Loader2, Check, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPHERES, getGroupedSpheres, getSphereById } from "@/constants/spheres";
 import { supabase } from "@/integrations/supabase/client";
@@ -346,41 +344,15 @@ export function TaskEditModal({
 
             <div className="space-y-2">
               <Label>Дедлайн</Label>
-              <div className="flex gap-2">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "flex-1 justify-start text-left font-normal",
-                        !deadlineDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {deadlineDate ? format(deadlineDate, "dd.MM.yyyy", { locale: ru }) : "Выберите дату"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={deadlineDate}
-                      onSelect={(date) => {
-                        setDeadlineDate(date);
-                        if (!date) setDeadlineTime("");
-                      }}
-                      initialFocus
-                      className="pointer-events-auto"
-                    />
-                  </PopoverContent>
-                </Popover>
-                <Input
-                  type="time"
-                  value={deadlineTime}
-                  onChange={(e) => setDeadlineTime(e.target.value)}
-                  disabled={!deadlineDate}
-                  className="w-[120px]"
-                />
-              </div>
+              <DateTimePicker
+                date={deadlineDate}
+                time={deadlineTime}
+                onDateChange={(date) => {
+                  setDeadlineDate(date);
+                  if (!date) setDeadlineTime("");
+                }}
+                onTimeChange={setDeadlineTime}
+              />
             </div>
 
             {/* AI Priority Section */}
