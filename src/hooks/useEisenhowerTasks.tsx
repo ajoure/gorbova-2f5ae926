@@ -78,7 +78,7 @@ export function useEisenhowerTasks() {
     fetchTasks();
   }, [fetchTasks]);
 
-  const addTask = async (content: string, quadrant: QuadrantType, options?: {
+  const addTask = async (content: string, quadrant?: QuadrantType | null, options?: {
     completed?: boolean;
     deadline_date?: string | null;
     deadline_time?: string | null;
@@ -88,17 +88,20 @@ export function useEisenhowerTasks() {
   }) => {
     if (!user) return null;
 
+    // If no quadrant provided or null, use "inbox" (planned tasks)
+    const finalQuadrant: QuadrantType = quadrant || "inbox";
+
     // Use provided importance/urgency or calculate defaults from quadrant
     const scores = options?.importance !== undefined && options?.urgency !== undefined
       ? { importance: options.importance, urgency: options.urgency }
-      : getScoresForQuadrant(quadrant);
+      : getScoresForQuadrant(finalQuadrant);
 
     const { data, error } = await supabase
       .from("eisenhower_tasks")
       .insert({ 
         user_id: user.id, 
         content, 
-        quadrant, 
+        quadrant: finalQuadrant, 
         source: "direct",
         completed: options?.completed ?? false,
         deadline_date: options?.deadline_date ?? null,
@@ -111,6 +114,7 @@ export function useEisenhowerTasks() {
       .single();
 
     if (error) {
+      console.error("Error adding task:", error);
       toast({
         title: "Ошибка",
         description: "Не удалось добавить задачу",

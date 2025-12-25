@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, forwardRef } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { LayoutGrid, Plus, X, Loader2, Settings, Trash2, Info, ClipboardList, Expand, BarChart3 } from "lucide-react";
@@ -16,6 +16,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -95,21 +96,24 @@ function formatDeadline(task: EisenhowerTask): string {
   return task.deadline_time ? `${formatted} ${task.deadline_time}` : formatted;
 }
 
-function SortableTask({ 
-  task, 
-  quadrantColor, 
-  categoryColor,
-  onRemove,
-  onToggleCompleted,
-  onClick,
-}: { 
+// Draggable task card - entire card is draggable (no 6-dot handle)
+const SortableTask = forwardRef<HTMLDivElement, { 
   task: EisenhowerTask; 
   quadrantColor: string;
   categoryColor?: string;
   onRemove: () => void;
   onToggleCompleted: () => void;
   onClick: () => void;
-}) {
+  isDragDisabled?: boolean;
+}>(function SortableTask({ 
+  task, 
+  quadrantColor, 
+  categoryColor,
+  onRemove,
+  onToggleCompleted,
+  onClick,
+  isDragDisabled = false,
+}, ref) {
   const {
     attributes,
     listeners,
@@ -117,7 +121,10 @@ function SortableTask({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task.id });
+  } = useSortable({ 
+    id: task.id,
+    disabled: isDragDisabled,
+  });
 
   const overdue = isOverdue(task);
   const deadline = formatDeadline(task);
@@ -133,8 +140,10 @@ function SortableTask({
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className="flex items-center gap-2 p-3 rounded-xl bg-background/80 border border-border/50 group hover:border-primary/30 hover:bg-background/90 hover:shadow-md transition-all cursor-grab active:cursor-grabbing touch-none"
+      {...(isDragDisabled ? {} : listeners)}
+      className={`flex items-center gap-2 p-3 rounded-xl bg-background/80 border border-border/50 group hover:border-primary/30 hover:bg-background/90 hover:shadow-md transition-all touch-none ${
+        isDragDisabled ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+      }`}
     >
       <div 
         onClick={(e) => {
@@ -184,7 +193,7 @@ function SortableTask({
       </button>
     </div>
   );
-}
+});
 
 function TaskOverlay({ task, quadrantColor }: { task: EisenhowerTask; quadrantColor: string }) {
   return (
@@ -194,6 +203,32 @@ function TaskOverlay({ task, quadrantColor }: { task: EisenhowerTask; quadrantCo
         style={{ backgroundColor: quadrantColor }}
       />
       <span className="flex-1 text-sm text-foreground">{task.content}</span>
+    </div>
+  );
+}
+
+// Droppable area for planned tasks
+function DroppablePlanned({ children }: { children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: "planned" });
+  
+  return (
+    <div 
+      ref={setNodeRef}
+      className={`space-y-2 min-h-[60px] rounded-lg transition-colors ${isOver ? "bg-primary/10" : ""}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Droppable quadrant
+function DroppableQuadrant({ id, children, isOver }: { id: string; children: React.ReactNode; isOver?: boolean }) {
+  return (
+    <div 
+      className={`space-y-2 min-h-[180px] rounded-lg transition-colors ${isOver ? "bg-primary/10" : ""}`}
+      data-droppable={id}
+    >
+      {children}
     </div>
   );
 }
@@ -227,9 +262,10 @@ export default function EisenhowerMatrix() {
     })
   );
 
+  // Quick add task to planned (inbox) - no quadrant assigned
   const handleAddPlannedTask = async () => {
     if (!plannedTaskInput.trim()) return;
-    await addTask(plannedTaskInput.trim(), "inbox" as any);
+    await addTask(plannedTaskInput.trim(), null); // null = inbox/planned
     setPlannedTaskInput("");
   };
 
@@ -241,6 +277,10 @@ export default function EisenhowerMatrix() {
 
   const handleDragStart = (event: DragStartEvent) => {
     const task = tasks.find(t => t.id === event.active.id);
+    // Don't allow dragging completed tasks
+    if (task?.completed) {
+      return;
+    }
     setActiveTask(task || null);
   };
 
@@ -251,7 +291,18 @@ export default function EisenhowerMatrix() {
     if (!over) return;
 
     const activeTaskId = active.id as string;
+    const activeTaskData = tasks.find(t => t.id === activeTaskId);
+    
+    // Don't allow moving completed tasks
+    if (activeTaskData?.completed) return;
+
     const overIdStr = over.id as string;
+
+    // Check if dropped on planned area
+    if (overIdStr === "planned") {
+      await moveTask(activeTaskId, "inbox");
+      return;
+    }
 
     // Check if dropped on a quadrant container
     if (Object.keys(quadrantConfig).includes(overIdStr)) {
@@ -260,10 +311,11 @@ export default function EisenhowerMatrix() {
       return;
     }
 
-    // Dropped on another task
+    // Dropped on another task - move to same quadrant
     const overTask = tasks.find(t => t.id === overIdStr);
-    if (overTask && overTask.quadrant) {
-      await moveTask(activeTaskId, overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox");
+    if (overTask) {
+      const targetQuadrant = overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
+      await moveTask(activeTaskId, targetQuadrant);
     }
   };
 
@@ -287,13 +339,12 @@ export default function EisenhowerMatrix() {
   };
 
   const plannedTasks = tasks.filter(t => t.quadrant === "inbox");
-  const showPlanned = statusFilter === "planned" || plannedTasks.length > 0;
 
   const completedCount = tasks.filter(t => t.completed).length;
 
   const handleSaveTask = async (updates: {
     content: string;
-    quadrant: string;
+    quadrant: string | null;
     completed: boolean;
     deadline_date: string | null;
     deadline_time: string | null;
@@ -301,9 +352,11 @@ export default function EisenhowerMatrix() {
     importance: number;
     urgency: number;
   }) => {
+    // Convert null quadrant to "inbox"
+    const finalQuadrant = updates.quadrant || "inbox";
+    
     if (isNewTask) {
-      // Creating a new task via extended modal
-      await addTask(updates.content, updates.quadrant as any, {
+      await addTask(updates.content, finalQuadrant as any, {
         completed: updates.completed,
         deadline_date: updates.deadline_date,
         deadline_time: updates.deadline_time,
@@ -315,7 +368,7 @@ export default function EisenhowerMatrix() {
     } else if (editingTask) {
       await updateTask(editingTask.id, {
         ...updates,
-        quadrant: updates.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox",
+        quadrant: finalQuadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox",
       });
     }
     setEditingTask(null);
@@ -472,8 +525,13 @@ export default function EisenhowerMatrix() {
             </div>
           </div>
 
-          {/* Planned Tasks Section */}
-          {(statusFilter === "planned" || (statusFilter === "all" && plannedTasks.length > 0)) && (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            {/* Planned Tasks Section - always visible */}
             <GlassCard className="border-primary/30">
               <div className="flex items-center gap-3 mb-4">
                 <ClipboardList className="w-5 h-5 text-primary" />
@@ -486,30 +544,37 @@ export default function EisenhowerMatrix() {
                 </span>
               </div>
 
-              <div className="space-y-2 mb-4 min-h-[60px]">
-                {getFilteredTasks("planned").map(task => (
-                  <SortableTask
-                    key={task.id}
-                    task={task}
-                    quadrantColor="hsl(217 91% 60%)"
-                    categoryColor={getCategoryColor(task.category_id)}
-                    onRemove={() => handleDeleteTask(task)}
-                    onToggleCompleted={() => toggleCompleted(task.id)}
-                    onClick={() => {
-                      setEditingTask(task);
-                      setIsNewTask(false);
-                      setShowEditModal(true);
-                    }}
-                  />
-                ))}
-                {getFilteredTasks("planned").length === 0 && statusFilter === "planned" && (
-                  <div className="h-[60px] flex items-center justify-center rounded-xl border-2 border-dashed border-border/50 text-sm text-muted-foreground">
-                    Нет планируемых задач
-                  </div>
-                )}
-              </div>
+              <SortableContext
+                id="planned"
+                items={getFilteredTasks("planned").map(t => t.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <DroppablePlanned>
+                  {getFilteredTasks("planned").map(task => (
+                    <SortableTask
+                      key={task.id}
+                      task={task}
+                      quadrantColor="hsl(217 91% 60%)"
+                      categoryColor={getCategoryColor(task.category_id)}
+                      onRemove={() => handleDeleteTask(task)}
+                      onToggleCompleted={() => toggleCompleted(task.id)}
+                      onClick={() => {
+                        setEditingTask(task);
+                        setIsNewTask(false);
+                        setShowEditModal(true);
+                      }}
+                      isDragDisabled={task.completed}
+                    />
+                  ))}
+                  {getFilteredTasks("planned").length === 0 && (
+                    <div className="h-[60px] flex items-center justify-center rounded-xl border-2 border-dashed border-border/50 text-sm text-muted-foreground">
+                      Нет планируемых задач
+                    </div>
+                  )}
+                </DroppablePlanned>
+              </SortableContext>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 mt-4">
                 <Input
                   placeholder="Название новой задачи..."
                   value={plannedTaskInput}
@@ -530,56 +595,16 @@ export default function EisenhowerMatrix() {
                 </Tooltip>
               </div>
             </GlassCard>
-          )}
 
-          {/* Show create task hint when Planned section is hidden */}
-          {statusFilter !== "planned" && plannedTasks.length === 0 && (
-            <GlassCard className="border-primary/30">
-              <div className="flex items-center gap-3">
-                <ClipboardList className="w-5 h-5 text-primary" />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-foreground">Планируемые задачи</h3>
-                  <p className="text-xs text-muted-foreground">Создавайте задачи здесь, затем распределяйте по квадрантам</p>
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Название новой задачи..."
-                    value={plannedTaskInput}
-                    onChange={(e) => setPlannedTaskInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAddPlannedTask()}
-                    className="h-9 text-sm bg-background/50 w-64"
-                  />
-                  <Button size="sm" onClick={handleAddPlannedTask} className="shrink-0">
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="sm" variant="outline" onClick={handleOpenNewTaskModal} className="shrink-0">
-                        <Expand className="w-4 h-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Расширенное создание с AI-приоритетом</TooltipContent>
-                  </Tooltip>
-                </div>
+            {/* Axis labels */}
+            <div className="relative">
+              <div className="absolute -left-6 top-1/2 -translate-y-1/2 -rotate-90 text-xs font-medium text-muted-foreground whitespace-nowrap hidden lg:block">
+                ВАЖНОСТЬ →
               </div>
-            </GlassCard>
-          )}
-
-          {/* Axis labels */}
-          <div className="relative">
-            <div className="absolute -left-6 top-1/2 -translate-y-1/2 -rotate-90 text-xs font-medium text-muted-foreground whitespace-nowrap hidden lg:block">
-              ВАЖНОСТЬ →
-            </div>
-            <div className="absolute left-1/2 -translate-x-1/2 -top-6 text-xs font-medium text-muted-foreground hidden lg:block">
-              СРОЧНОСТЬ →
-            </div>
-            
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-            >
+              <div className="absolute left-1/2 -translate-x-1/2 -top-6 text-xs font-medium text-muted-foreground hidden lg:block">
+                СРОЧНОСТЬ →
+              </div>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {Object.entries(quadrantConfig).map(([key, quadrant]) => {
                   const quadrantTasks = getFilteredTasks(key);
@@ -627,7 +652,8 @@ export default function EisenhowerMatrix() {
                           </span>
                         </div>
 
-                        <div className="space-y-2 min-h-[180px]" data-droppable={key}>
+                        {/* No input fields in quadrants - only display and drag */}
+                        <DroppableQuadrant id={key}>
                           {quadrantTasks.map(task => (
                             <SortableTask
                               key={task.id}
@@ -641,6 +667,7 @@ export default function EisenhowerMatrix() {
                                 setIsNewTask(false);
                                 setShowEditModal(true);
                               }}
+                              isDragDisabled={task.completed}
                             />
                           ))}
                           {quadrantTasks.length === 0 && (
@@ -648,7 +675,7 @@ export default function EisenhowerMatrix() {
                               Перетащите задачу сюда
                             </div>
                           )}
-                        </div>
+                        </DroppableQuadrant>
                       </GlassCard>
                     </SortableContext>
                   );
@@ -663,8 +690,8 @@ export default function EisenhowerMatrix() {
                   />
                 )}
               </DragOverlay>
-            </DndContext>
-          </div>
+            </div>
+          </DndContext>
 
           {/* Legend */}
           <GlassCard className="mt-6">
@@ -700,7 +727,6 @@ export default function EisenhowerMatrix() {
           onSave={handleSaveTask}
           onDelete={handleDeleteFromModal}
           isNew={isNewTask}
-          defaultQuadrant="not-urgent-important"
         />
 
         <CategoryManager
