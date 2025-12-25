@@ -50,6 +50,8 @@ export type Database = {
           created_at: string
           id: string
           quadrant: string
+          source: string | null
+          source_task_id: string | null
           updated_at: string
           user_id: string
         }
@@ -58,6 +60,8 @@ export type Database = {
           created_at?: string
           id?: string
           quadrant: string
+          source?: string | null
+          source_task_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -66,10 +70,20 @@ export type Database = {
           created_at?: string
           id?: string
           quadrant?: string
+          source?: string | null
+          source_task_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "eisenhower_tasks_source_task_id_fkey"
+            columns: ["source_task_id"]
+            isOneToOne: false
+            referencedRelation: "wheel_balance_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -154,6 +168,53 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      wheel_balance_tasks: {
+        Row: {
+          completed: boolean
+          content: string
+          created_at: string
+          id: string
+          important: boolean
+          linked_eisenhower_task_id: string | null
+          sphere_key: string
+          updated_at: string
+          urgent: boolean
+          user_id: string
+        }
+        Insert: {
+          completed?: boolean
+          content: string
+          created_at?: string
+          id?: string
+          important?: boolean
+          linked_eisenhower_task_id?: string | null
+          sphere_key: string
+          updated_at?: string
+          urgent?: boolean
+          user_id: string
+        }
+        Update: {
+          completed?: boolean
+          content?: string
+          created_at?: string
+          id?: string
+          important?: boolean
+          linked_eisenhower_task_id?: string | null
+          sphere_key?: string
+          updated_at?: string
+          urgent?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wheel_balance_tasks_linked_eisenhower_task_id_fkey"
+            columns: ["linked_eisenhower_task_id"]
+            isOneToOne: false
+            referencedRelation: "eisenhower_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

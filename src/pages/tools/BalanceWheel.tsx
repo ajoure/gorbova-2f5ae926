@@ -5,8 +5,9 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useBalanceWheel } from "@/hooks/useBalanceWheel";
+import { SphereTasks } from "@/components/wheel/SphereTasks";
 
 const stages = [
   { 
@@ -152,6 +153,8 @@ export default function BalanceWheel() {
   const [selectedStage, setSelectedStage] = useState<typeof stages[0] | null>(null);
   const [hoveredStage, setHoveredStage] = useState<string | null>(null);
   const [localNotes, setLocalNotes] = useState<string>("");
+  const [draggingStage, setDraggingStage] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
   const handleStageSelect = (stage: typeof stages[0]) => {
     setSelectedStage(stage);
@@ -163,6 +166,57 @@ export default function BalanceWheel() {
       await updateNotes(selectedStage.key, localNotes);
     }
   };
+
+  const handleDragStart = useCallback((stageKey: string) => {
+    setDraggingStage(stageKey);
+  }, []);
+
+  const handleDrag = useCallback((e: MouseEvent) => {
+    if (!draggingStage || !svgRef.current) return;
+
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    const svgWidth = rect.width;
+    const svgHeight = rect.height;
+    
+    // Convert mouse position to SVG coordinates (0-200 scale)
+    const mouseX = ((e.clientX - rect.left) / svgWidth) * 200;
+    const mouseY = ((e.clientY - rect.top) / svgHeight) * 200;
+    
+    const centerX = 100;
+    const centerY = 100;
+    
+    // Calculate distance from center
+    const dx = mouseX - centerX;
+    const dy = mouseY - centerY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    // Convert distance to value (15-90 radius range maps to 1-10)
+    const minRadius = 15;
+    const maxRadius = 90;
+    const clampedDistance = Math.max(minRadius, Math.min(maxRadius, distance));
+    const newValue = Math.round(((clampedDistance - minRadius) / (maxRadius - minRadius)) * 9 + 1);
+    
+    const stageKey = draggingStage as keyof typeof values;
+    if (newValue !== values[stageKey]) {
+      updateValue(stageKey, newValue);
+    }
+  }, [draggingStage, values, updateValue]);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingStage(null);
+  }, []);
+
+  useEffect(() => {
+    if (draggingStage) {
+      document.addEventListener('mousemove', handleDrag);
+      document.addEventListener('mouseup', handleDragEnd);
+      return () => {
+        document.removeEventListener('mousemove', handleDrag);
+        document.removeEventListener('mouseup', handleDragEnd);
+      };
+    }
+  }, [draggingStage, handleDrag, handleDragEnd]);
 
   const total = Object.values(values).reduce((a, b) => a + b, 0);
   const average = (total / stages.length).toFixed(1);
@@ -203,7 +257,7 @@ export default function BalanceWheel() {
             <div>
               <p className="text-sm text-foreground font-medium">Принцип колеса баланса</p>
               <p className="text-sm text-muted-foreground">
-                Цель — не идеальные «10», а осознанное управление жизнью и ресурсами. Нажмите на сферу для подробностей.
+                Цель — не идеальные «10», а осознанное управление жизнью и ресурсами. Перетаскивайте точки на колесе или используйте слайдеры.
               </p>
             </div>
           </div>
@@ -213,11 +267,32 @@ export default function BalanceWheel() {
           {/* Interactive Wheel */}
           <GlassCard className="flex items-center justify-center p-8">
             <div className="relative w-80 h-80">
-              <svg viewBox="0 0 200 200" className="w-full h-full">
+              <svg 
+                ref={svgRef}
+                viewBox="0 0 200 200" 
+                className="w-full h-full"
+                style={{ cursor: draggingStage ? 'grabbing' : 'default' }}
+              >
                 {/* Background circles */}
                 <circle cx="100" cy="100" r="90" fill="none" stroke="hsl(var(--border))" strokeWidth="1" strokeDasharray="4" />
                 <circle cx="100" cy="100" r="60" fill="none" stroke="hsl(var(--border))" strokeWidth="1" strokeDasharray="4" />
                 <circle cx="100" cy="100" r="30" fill="none" stroke="hsl(var(--border))" strokeWidth="1" strokeDasharray="4" />
+                
+                {/* Scale markers */}
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                  const r = 15 + ((n - 1) / 9) * 75;
+                  return (
+                    <text
+                      key={n}
+                      x="100"
+                      y={100 - r - 2}
+                      textAnchor="middle"
+                      className="fill-muted-foreground/50 text-[4px]"
+                    >
+                      {n}
+                    </text>
+                  );
+                })}
                 
                 {/* Sector lines and interactive areas */}
                 {stages.map((stage, i) => {
@@ -239,6 +314,7 @@ export default function BalanceWheel() {
                   const labelY = 100 + Math.sin(rad) * labelRadius;
                   
                   const isHovered = hoveredStage === stage.key;
+                  const isDragging = draggingStage === stage.key;
                   
                   return (
                     <g key={stage.key}>
@@ -263,22 +339,56 @@ export default function BalanceWheel() {
                         strokeLinecap="round"
                       />
                       
-                      {/* Interactive point */}
+                      {/* Draggable point */}
                       <circle 
                         cx={x} 
                         cy={y} 
-                        r={isHovered ? 10 : 7} 
+                        r={isDragging ? 12 : isHovered ? 10 : 7} 
                         fill={stage.color}
                         stroke="hsl(var(--background))"
                         strokeWidth="2"
                         style={{ 
-                          cursor: "pointer",
-                          transition: "r 0.2s ease"
+                          cursor: isDragging ? "grabbing" : "grab",
+                          transition: isDragging ? "none" : "r 0.2s ease",
+                          filter: isDragging ? "drop-shadow(0 0 8px rgba(0,0,0,0.3))" : undefined,
                         }}
                         onMouseEnter={() => setHoveredStage(stage.key)}
-                        onMouseLeave={() => setHoveredStage(null)}
-                        onClick={() => handleStageSelect(stage)}
+                        onMouseLeave={() => !draggingStage && setHoveredStage(null)}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleDragStart(stage.key);
+                        }}
+                        onClick={(e) => {
+                          if (!draggingStage) {
+                            e.stopPropagation();
+                            handleStageSelect(stage);
+                          }
+                        }}
                       />
+                      
+                      {/* Value tooltip on hover/drag */}
+                      {(isHovered || isDragging) && (
+                        <g>
+                          <rect 
+                            x={x - 10} 
+                            y={y - 22} 
+                            width="20" 
+                            height="14" 
+                            rx="3" 
+                            fill="hsl(var(--card))" 
+                            stroke={stage.color}
+                            strokeWidth="1"
+                          />
+                          <text 
+                            x={x} 
+                            y={y - 12} 
+                            textAnchor="middle" 
+                            className="fill-foreground text-[8px] font-bold"
+                          >
+                            {value}
+                          </text>
+                        </g>
+                      )}
                       
                       {/* Label */}
                       <text 
@@ -300,6 +410,11 @@ export default function BalanceWheel() {
                 <text x="100" y="97" textAnchor="middle" className="fill-foreground text-lg font-bold">{average}</text>
                 <text x="100" y="108" textAnchor="middle" className="fill-muted-foreground text-[5px]">баланс</text>
               </svg>
+              
+              {/* Drag hint */}
+              <p className="text-[10px] text-muted-foreground text-center mt-2">
+                Перетащите точку для изменения оценки
+              </p>
             </div>
           </GlassCard>
 
@@ -430,7 +545,7 @@ export default function BalanceWheel() {
 
       {/* Stage detail dialog */}
       <Dialog open={!!selectedStage} onOpenChange={() => setSelectedStage(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               <div 
@@ -461,11 +576,14 @@ export default function BalanceWheel() {
                   ))}
                 </ul>
               </div>
+
+              {/* User Tasks Section */}
+              <SphereTasks sphereKey={selectedStage.key} sphereTitle={selectedStage.title} />
               
               <div>
                 <h4 className="font-semibold text-foreground mb-3 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-primary" />
-                  Задания
+                  Рекомендации
                 </h4>
                 <ul className="space-y-2">
                   {selectedStage.tasks.map((t, i) => (
@@ -483,7 +601,7 @@ export default function BalanceWheel() {
               <div>
                 <h4 className="font-semibold text-foreground mb-3">Ваши заметки</h4>
                 <Textarea
-                  placeholder="Запишите свои мысли по этому этапу..."
+                  placeholder="Запишите свои мысли по этой сфере..."
                   value={localNotes}
                   onChange={(e) => setLocalNotes(e.target.value)}
                   className="min-h-[80px]"
@@ -498,7 +616,7 @@ export default function BalanceWheel() {
               </div>
               
               <div className="pt-2">
-                <label className="text-sm font-medium text-foreground">Ваша оценка этапа</label>
+                <label className="text-sm font-medium text-foreground">Ваша оценка сферы</label>
                 <div className="flex items-center gap-4 mt-2">
                   <Slider 
                     value={[values[selectedStage.key]]} 
