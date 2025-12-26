@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { jwtVerify, createRemoteJWKSet } from "https://deno.land/x/jose@v5.2.0/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,21 +47,23 @@ serve(async (req: Request): Promise<Response> => {
       },
     });
 
-    // Get user from the token using admin client
-    const {
-      data: { user: actorUser },
-      error: userError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (userError || !actorUser) {
-      console.error("Auth error:", userError);
+    // Verify JWT and get user ID
+    let actorUserId: string;
+    try {
+      const JWKS = createRemoteJWKSet(new URL(`${supabaseUrl}/auth/v1/keys`));
+      const { payload } = await jwtVerify(token, JWKS);
+      actorUserId = payload.sub as string;
+      
+      if (!actorUserId) {
+        throw new Error("No user ID in token");
+      }
+    } catch (jwtError) {
+      console.error("JWT verification error:", jwtError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const actorUserId = actorUser.id;
 
     const { action, targetUserId, email }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
