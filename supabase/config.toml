@@ -7,4 +7,4 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.roles-admin]
-verify_jwt = true
+verify_jwt = false
