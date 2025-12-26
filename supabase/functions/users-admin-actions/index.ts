@@ -45,14 +45,9 @@ serve(async (req: Request): Promise<Response> => {
       },
     });
 
-    // Verify JWT by asking the auth service for the current user
-    // (standard pattern for edge functions)
+    // Verify JWT by asking the auth service for the current user.
+    // IMPORTANT: pass the JWT explicitly; otherwise auth-js expects an in-memory session and throws AuthSessionMissingError.
     const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
       auth: {
         persistSession: false,
         autoRefreshToken: false,
@@ -63,7 +58,7 @@ serve(async (req: Request): Promise<Response> => {
     const {
       data: { user: actorUser },
       error: userError,
-    } = await supabaseAuth.auth.getUser();
+    } = await supabaseAuth.auth.getUser(token);
 
     if (userError || !actorUser) {
       console.error("Auth error:", userError);
