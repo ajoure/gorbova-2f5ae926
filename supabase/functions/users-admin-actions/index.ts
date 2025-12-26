@@ -45,30 +45,35 @@ serve(async (req: Request): Promise<Response> => {
       },
     });
 
-    // Verify JWT by asking the auth service for the current user.
-    // IMPORTANT: pass the JWT explicitly; otherwise auth-js expects an in-memory session and throws AuthSessionMissingError.
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
+    // Verify JWT by calling the Auth "user" endpoint.
+    // This avoids auth-js session handling issues in edge runtime (AuthSessionMissingError).
+    const authResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      method: "GET",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${token}`,
       },
     });
 
-    const {
-      data: { user: actorUser },
-      error: userError,
-    } = await supabaseAuth.auth.getUser(token);
-
-    if (userError || !actorUser) {
-      console.error("Auth error:", userError);
+    if (!authResp.ok) {
+      const errText = await authResp.text().catch(() => "");
+      console.error("Auth error:", authResp.status, errText);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const actorUserId = actorUser.id;
+    const actorUser = (await authResp.json()) as { id?: string };
+    const actorUserId = actorUser?.id;
+
+    if (!actorUserId) {
+      console.error("Auth error: no user id in auth response");
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { action, targetUserId, email }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
