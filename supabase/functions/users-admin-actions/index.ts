@@ -23,20 +23,34 @@ serve(async (req: Request): Promise<Response> => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
     // Get the JWT from the request
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "No authorization header" }), {
+    const authHeader = req.headers.get("authorization") ?? req.headers.get("Authorization");
+
+    // Expect: "Bearer <jwt>"
+    const match = authHeader?.match(/^Bearer\s+(.+)$/i);
+    const token = match?.[1]?.trim();
+
+    if (!token) {
+      return new Response(JSON.stringify({ error: "Invalid authorization header" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Create client with user's JWT to get their ID
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
+    // Create admin client with service role
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
     });
 
-    const { data: { user: actorUser }, error: userError } = await supabaseUser.auth.getUser();
+    // Get user from the token using admin client
+    const {
+      data: { user: actorUser },
+      error: userError,
+    } = await supabaseAdmin.auth.getUser(token);
+
     if (userError || !actorUser) {
       console.error("Auth error:", userError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -46,9 +60,6 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     const actorUserId = actorUser.id;
-
-    // Create admin client with service role
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     const { action, targetUserId, email }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
