@@ -83,19 +83,52 @@ export function useAdminUsers() {
     fetchUsers();
   }, [fetchUsers]);
 
+  const getAccessToken = useCallback(async (): Promise<string | null> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }, []);
+
+  const invokeUsersAdminActions = useCallback(
+    async (body: Record<string, unknown>) => {
+      const token = await getAccessToken();
+      if (!token) {
+        return { data: null, error: new Error("NOT_AUTHENTICATED") } as const;
+      }
+      return await supabase.functions.invoke("users-admin-actions", {
+        body,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    },
+    [getAccessToken]
+  );
+
+  const invokeRolesAdmin = useCallback(
+    async (body: Record<string, unknown>) => {
+      const token = await getAccessToken();
+      if (!token) {
+        return { data: null, error: new Error("NOT_AUTHENTICATED") } as const;
+      }
+      return await supabase.functions.invoke("roles-admin", {
+        body,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    },
+    [getAccessToken]
+  );
+
   const blockUser = async (userId: string): Promise<boolean> => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        toast.error("Не авторизован");
-        return false;
-      }
-
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "block", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "block", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Block error:", response.error);
         toast.error("Ошибка блокировки");
         return false;
@@ -113,11 +146,13 @@ export function useAdminUsers() {
 
   const unblockUser = async (userId: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "unblock", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "unblock", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Unblock error:", response.error);
         toast.error("Ошибка разблокировки");
         return false;
@@ -135,11 +170,13 @@ export function useAdminUsers() {
 
   const deleteUser = async (userId: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "delete", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "delete", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Delete error:", response.error);
         toast.error("Ошибка удаления");
         return false;
@@ -157,11 +194,13 @@ export function useAdminUsers() {
 
   const restoreUser = async (userId: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "restore", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "restore", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Restore error:", response.error);
         toast.error("Ошибка восстановления");
         return false;
@@ -179,11 +218,13 @@ export function useAdminUsers() {
 
   const assignRole = async (userId: string, roleCode: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("roles-admin", {
-        body: { action: "assign_role", userId, roleCode },
-      });
+      const response = await invokeRolesAdmin({ action: "assign_role", userId, roleCode });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Assign role error:", response.error);
         toast.error("Ошибка назначения роли");
         return false;
@@ -211,11 +252,17 @@ export function useAdminUsers() {
 
   const resetPassword = async (email: string, userId?: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "reset_password", email, targetUserId: userId },
+      const response = await invokeUsersAdminActions({
+        action: "reset_password",
+        email,
+        targetUserId: userId,
       });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Reset password error:", response.error);
         toast.error("Ошибка сброса пароля");
         return false;
@@ -232,11 +279,13 @@ export function useAdminUsers() {
 
   const forceLogout = async (userId: string): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "force_logout", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "force_logout", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Force logout error:", response.error);
         toast.error("Ошибка принудительного выхода");
         return false;
@@ -253,11 +302,13 @@ export function useAdminUsers() {
 
   const startImpersonation = async (userId: string): Promise<{ tokenHash: string; email: string } | null> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "impersonate_start", targetUserId: userId },
-      });
+      const response = await invokeUsersAdminActions({ action: "impersonate_start", targetUserId: userId });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return null;
+        }
         console.error("Impersonation error:", response.error);
         toast.error("Ошибка входа от имени пользователя");
         return null;
@@ -279,11 +330,13 @@ export function useAdminUsers() {
 
   const stopImpersonation = async (): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { action: "impersonate_stop" },
-      });
+      const response = await invokeUsersAdminActions({ action: "impersonate_stop" });
 
       if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
         console.error("Stop impersonation error:", response.error);
         toast.error("Ошибка выхода из режима просмотра");
         return false;
