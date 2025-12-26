@@ -53,11 +53,21 @@ export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: Invit
 
     setLoading(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        toast.error("Сессия истекла — войдите снова");
+        return;
+      }
+
       const response = await supabase.functions.invoke("users-admin-actions", {
-        body: { 
-          action: "invite", 
+        body: {
+          action: "invite",
           email: email.trim(),
-          roleCode: selectedRole
+          roleCode: selectedRole,
+        },
+        headers: {
+          Authorization: `Bearer ${token}`,
         },
       });
 
