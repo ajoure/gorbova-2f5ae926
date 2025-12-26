@@ -289,13 +289,13 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Generate a password reset link (not send via built-in email)
-        const origin = req.headers.get("origin") || "https://gorbova.by";
+        // Generate a password reset link - always use production domain
+        const siteUrl = "https://club.gorbova.by";
         const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
           type: "recovery",
           email: email,
           options: {
-            redirectTo: `${origin}/auth?mode=reset`,
+            redirectTo: `${siteUrl}/auth?mode=reset`,
           },
         });
 
@@ -308,7 +308,7 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         // Build the reset link
-        const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(origin + "/auth?mode=reset")}`;
+        const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(siteUrl + "/auth?mode=reset")}`;
 
         // Send custom email via our send-email function
         try {
@@ -525,13 +525,13 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Generate invite link using Supabase Admin API
-        const origin = req.headers.get("origin") || "https://gorbova.by";
+        // Generate invite link using Supabase Admin API - always use production domain
+        const siteUrl = "https://club.gorbova.by";
         const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.generateLink({
           type: "invite",
           email: inviteEmail,
           options: {
-            redirectTo: `${origin}/auth`,
+            redirectTo: `${siteUrl}/auth`,
           },
         });
 
@@ -544,7 +544,7 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         // Send custom email via our send-email function
-        const inviteLink = `${supabaseUrl}/auth/v1/verify?token=${inviteData.properties?.hashed_token}&type=invite&redirect_to=${encodeURIComponent(origin + "/auth")}`;
+        const inviteLink = `${supabaseUrl}/auth/v1/verify?token=${inviteData.properties?.hashed_token}&type=invite&redirect_to=${encodeURIComponent(siteUrl + "/auth")}`;
         
         try {
           const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-email`, {

@@ -63,13 +63,13 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Generate password reset link
-        const origin = req.headers.get("origin") || "https://gorbova.by";
+        // Generate password reset link - always use production domain
+        const siteUrl = "https://club.gorbova.by";
         const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
           type: "recovery",
           email: email,
           options: {
-            redirectTo: `${origin}/auth?mode=reset`,
+            redirectTo: `${siteUrl}/auth?mode=reset`,
           },
         });
 
@@ -82,7 +82,7 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         // Build reset link
-        const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(origin + "/auth?mode=reset")}`;
+        const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(siteUrl + "/auth?mode=reset")}`;
 
         // Send email via our custom send-email function
         try {
