@@ -11,8 +11,7 @@ import {
   Loader2, 
   ArrowLeft,
   Send,
-  Download,
-  Settings
+  Download
 } from "lucide-react";
 import { useMnsDocuments } from "@/hooks/useMnsDocuments";
 import { useToast } from "@/hooks/use-toast";
@@ -20,13 +19,6 @@ import { useNavigate } from "react-router-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropZone, UploadedFile } from "@/components/mns/FileDropZone";
 import { exportToDocx, exportToPdf } from "@/utils/exportDocument";
-import { LetterheadSettings } from "@/components/mns/LetterheadSettings";
-import { useLetterheadProcessor } from "@/hooks/useLetterheadProcessor";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 
 interface Message {
   role: "user" | "assistant";
@@ -44,10 +36,7 @@ export default function MnsResponseService() {
   const [finalResponse, setFinalResponse] = useState<string | null>(null);
   const [requestType, setRequestType] = useState<string>("unknown");
   const [originalRequest, setOriginalRequest] = useState<string>("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [letterheadEnabled, setLetterheadEnabled] = useState(true);
   
-  const { processedLetterhead } = useLetterheadProcessor();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handlePasteOnTextarea = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -197,13 +186,11 @@ export default function MnsResponseService() {
     try {
       await exportToDocx(
         finalResponse, 
-        `ответ_мнс_${new Date().toISOString().split("T")[0]}.docx`,
-        processedLetterhead,
-        letterheadEnabled
+        `ответ_мнс_${new Date().toISOString().split("T")[0]}.docx`
       );
       toast({
         title: "Экспорт завершён",
-        description: processedLetterhead && letterheadEnabled ? "Файл DOCX с бланком сохранён" : "Файл DOCX сохранён",
+        description: "Файл DOCX сохранён",
       });
     } catch (error) {
       toast({
@@ -212,7 +199,7 @@ export default function MnsResponseService() {
         variant: "destructive",
       });
     }
-  }, [finalResponse, processedLetterhead, letterheadEnabled, toast]);
+  }, [finalResponse, toast]);
 
   const handleExportPdf = useCallback(async () => {
     if (!finalResponse) return;
@@ -262,26 +249,8 @@ export default function MnsResponseService() {
                 Подготовка официального ответа на запрос налогового органа
               </p>
             </div>
-            </div>
           </div>
-          
-          {/* Settings Toggle */}
-          <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2 ml-auto">
-                <Settings className="h-4 w-4" />
-                Настройки экспорта
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-4">
-              <GlassCard className="p-4">
-                <LetterheadSettings 
-                  enabled={letterheadEnabled} 
-                  onEnabledChange={setLetterheadEnabled} 
-                />
-              </GlassCard>
-            </CollapsibleContent>
-          </Collapsible>
+        </div>
 
         {/* Main Content */}
         {!finalResponse ? (
