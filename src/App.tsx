@@ -32,6 +32,7 @@ import AdminProducts from "./pages/admin/AdminProducts";
 import AdminPayments from "./pages/admin/AdminPayments";
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
+import Purchases from "./pages/Purchases";
 
 const queryClient = new QueryClient();
 
@@ -57,6 +58,7 @@ const App = () => (
               
               {/* Protected routes */}
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
               <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
               <Route path="/business" element={<ProtectedRoute><Business /></ProtectedRoute>} />
               <Route path="/audits" element={<ProtectedRoute><Audits /></ProtectedRoute>} />
