@@ -168,6 +168,74 @@ Deno.serve(async (req) => {
           },
         });
 
+      // Send admin notification email
+      if (resend) {
+        const priceFormatted = `${(order.amount / 100).toFixed(2)} ${order.currency}`;
+        const adminEmail = 'info@ajoure.by';
+        
+        try {
+          await resend.emails.send({
+            from: 'Gorbova Club <noreply@gorbova.club>',
+            to: [adminEmail],
+            subject: `💰 Новая оплата: ${product?.name || 'Подписка'} — ${priceFormatted}`,
+            html: `
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <meta charset="utf-8">
+                <style>
+                  body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                  .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                  .header { background: #10b981; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+                  .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+                  .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+                  .amount { font-size: 24px; font-weight: bold; color: #10b981; }
+                </style>
+              </head>
+              <body>
+                <div class="container">
+                  <div class="header">
+                    <h2 style="margin: 0;">💰 Новая оплата получена!</h2>
+                  </div>
+                  <div class="content">
+                    <p class="amount">${priceFormatted}</p>
+                    
+                    <div class="info-row">
+                      <span>Продукт:</span>
+                      <strong>${product?.name || 'Подписка'}</strong>
+                    </div>
+                    <div class="info-row">
+                      <span>Email клиента:</span>
+                      <strong>${order.customer_email || '—'}</strong>
+                    </div>
+                    <div class="info-row">
+                      <span>Номер заказа:</span>
+                      <span>${orderId}</span>
+                    </div>
+                    <div class="info-row">
+                      <span>ID транзакции:</span>
+                      <span>${transactionUid}</span>
+                    </div>
+                    <div class="info-row">
+                      <span>Дата и время:</span>
+                      <span>${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' })}</span>
+                    </div>
+                    
+                    <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">
+                      Это автоматическое уведомление о новой оплате.
+                    </p>
+                  </div>
+                </div>
+              </body>
+              </html>
+            `,
+          });
+          console.log('Admin notification email sent');
+        } catch (adminEmailError) {
+          console.error('Failed to send admin notification:', adminEmailError);
+        }
+      }
+
       // Send email notification
       if (resend && order.customer_email) {
         const newUserCreated = meta.new_user_created === true;
