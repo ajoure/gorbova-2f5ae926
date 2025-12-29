@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,10 +13,14 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
   SidebarHeader,
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +37,7 @@ import {
   ShoppingCart,
   CreditCard,
   Copy,
+  ChevronRight,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -41,6 +47,11 @@ export function AdminSidebar() {
   const { user, signOut } = useAuth();
   const { hasPermission, hasAnyPermission } = usePermissions();
   const collapsed = state === "collapsed";
+  
+  // Track which submenus are open
+  const [clientsOpen, setClientsOpen] = useState(
+    location.pathname.startsWith("/admin/users") || location.pathname.startsWith("/admin/duplicates")
+  );
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
@@ -53,7 +64,7 @@ export function AdminSidebar() {
       if (error) return 0;
       return count || 0;
     },
-    refetchInterval: 60000, // Refresh every minute
+    refetchInterval: 60000,
   });
 
   const handleSignOut = async () => {
@@ -69,44 +80,11 @@ export function AdminSidebar() {
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
 
-  // Build menu items based on permissions
-  const adminMenuItems: Array<{ 
-    title: string; 
-    url: string; 
-    icon: typeof Users; 
-    badge?: number;
-  }> = [];
-
-  if (hasAnyPermission(["users.view", "users.update", "users.block", "users.delete"])) {
-    adminMenuItems.push({ title: "Клиенты", url: "/admin/users", icon: Users });
-  }
-
-  if (hasAnyPermission(["roles.view", "roles.manage", "admins.manage"])) {
-    adminMenuItems.push({ title: "Сотрудники и роли", url: "/admin/roles", icon: Shield });
-  }
-
-  if (hasAnyPermission(["entitlements.view", "entitlements.manage"])) {
-    adminMenuItems.push({ title: "Доступы", url: "/admin/entitlements", icon: Package });
-    adminMenuItems.push({ title: "Продукты", url: "/admin/products", icon: ShoppingCart });
-    adminMenuItems.push({ title: "Платежи", url: "/admin/payments", icon: CreditCard });
-  }
-
-  if (hasAnyPermission(["users.view", "users.update"])) {
-    adminMenuItems.push({ 
-      title: "Дубли", 
-      url: "/admin/duplicates", 
-      icon: Copy,
-      badge: duplicateCount || undefined,
-    });
-  }
-
-  if (hasAnyPermission(["content.view", "content.edit", "content.publish"])) {
-    adminMenuItems.push({ title: "Контент", url: "/admin/content", icon: FileText });
-  }
-
-  if (hasPermission("audit.view")) {
-    adminMenuItems.push({ title: "Аудит-лог", url: "/admin/audit", icon: ScrollText });
-  }
+  const hasClientsPermission = hasAnyPermission(["users.view", "users.update", "users.block", "users.delete"]);
+  const hasRolesPermission = hasAnyPermission(["roles.view", "roles.manage", "admins.manage"]);
+  const hasEntitlementsPermission = hasAnyPermission(["entitlements.view", "entitlements.manage"]);
+  const hasContentPermission = hasAnyPermission(["content.view", "content.edit", "content.publish"]);
+  const hasAuditPermission = hasPermission("audit.view");
 
   return (
     <Sidebar
@@ -141,38 +119,194 @@ export function AdminSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {adminMenuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
+              {/* Клиенты with submenu */}
+              {hasClientsPermission && (
+                <Collapsible open={clientsOpen} onOpenChange={setClientsOpen}>
+                  <SidebarMenuItem>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton
+                        tooltip={collapsed ? "Клиенты" : undefined}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent w-full"
+                      >
+                        <Users className="h-5 w-5 shrink-0" />
+                        {!collapsed && (
+                          <>
+                            <span className="flex-1">Клиенты</span>
+                            {duplicateCount && duplicateCount > 0 && (
+                              <Badge 
+                                variant="destructive" 
+                                className="h-5 min-w-5 px-1.5 text-xs mr-1"
+                              >
+                                {duplicateCount}
+                              </Badge>
+                            )}
+                            <ChevronRight className={`h-4 w-4 transition-transform ${clientsOpen ? "rotate-90" : ""}`} />
+                          </>
+                        )}
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={location.pathname === "/admin/users"}
+                          >
+                            <NavLink
+                              to="/admin/users"
+                              className="flex items-center gap-2"
+                            >
+                              <span>Все клиенты</span>
+                            </NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={location.pathname === "/admin/duplicates"}
+                          >
+                            <NavLink
+                              to="/admin/duplicates"
+                              className="flex items-center gap-2"
+                            >
+                              <Copy className="h-4 w-4" />
+                              <span className="flex-1">Дубли</span>
+                              {duplicateCount && duplicateCount > 0 && (
+                                <Badge 
+                                  variant="destructive" 
+                                  className="h-4 min-w-4 px-1 text-xs"
+                                >
+                                  {duplicateCount}
+                                </Badge>
+                              )}
+                            </NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuItem>
+                </Collapsible>
+              )}
+
+              {/* Сотрудники и роли */}
+              {hasRolesPermission && (
+                <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
-                    isActive={location.pathname === item.url}
-                    tooltip={collapsed ? item.title : undefined}
+                    isActive={location.pathname === "/admin/roles"}
+                    tooltip={collapsed ? "Сотрудники и роли" : undefined}
                   >
                     <NavLink
-                      to={item.url}
+                      to="/admin/roles"
                       end
                       className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
                       activeClassName="bg-sidebar-accent text-sidebar-primary"
                     >
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && (
-                        <span className="flex-1">{item.title}</span>
-                      )}
-                      {!collapsed && item.badge && item.badge > 0 && (
-                        <Badge 
-                          variant="destructive" 
-                          className="h-5 min-w-5 px-1.5 text-xs"
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                      {collapsed && item.badge && item.badge > 0 && (
-                        <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
-                      )}
+                      <Shield className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Сотрудники и роли</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              ))}
+              )}
+
+              {/* Доступы, Продукты, Платежи */}
+              {hasEntitlementsPermission && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/entitlements"}
+                      tooltip={collapsed ? "Доступы" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/entitlements"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Package className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Доступы</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/products"}
+                      tooltip={collapsed ? "Продукты" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/products"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <ShoppingCart className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Продукты</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/payments"}
+                      tooltip={collapsed ? "Платежи" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/payments"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <CreditCard className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Платежи</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
+              )}
+
+              {/* Контент */}
+              {hasContentPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/admin/content"}
+                    tooltip={collapsed ? "Контент" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/content"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <FileText className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Контент</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Аудит-лог */}
+              {hasAuditPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/admin/audit"}
+                    tooltip={collapsed ? "Аудит-лог" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/audit"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <ScrollText className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Аудит-лог</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
