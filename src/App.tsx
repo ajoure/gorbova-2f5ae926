@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
+import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Accountant from "./pages/Accountant";
@@ -36,7 +37,8 @@ const App = () => (
           <ImpersonationBar />
           <div className="impersonation-offset">
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Landing />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/accountant" element={<Accountant />} />
               <Route path="/business" element={<Business />} />
