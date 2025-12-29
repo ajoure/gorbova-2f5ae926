@@ -8,7 +8,20 @@ const corsHeaders = {
 interface CreateTokenRequest {
   productId: string;
   customerEmail: string;
+  customerPhone?: string;
+  customerFirstName?: string;
+  customerLastName?: string;
+  existingUserId?: string | null;
   description?: string;
+}
+
+function generatePassword(length = 12): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
 }
 
 Deno.serve(async (req) => {
@@ -32,16 +45,24 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get user from auth header
+    // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');
-    let userId: string | null = null;
+    let authUserId: string | null = null;
     
     if (authHeader) {
       const { data: { user } } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
-      userId = user?.id || null;
+      authUserId = user?.id || null;
     }
 
-    const { productId, customerEmail, description }: CreateTokenRequest = await req.json();
+    const { 
+      productId, 
+      customerEmail, 
+      customerPhone,
+      customerFirstName,
+      customerLastName,
+      existingUserId,
+      description 
+    }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
       return new Response(
@@ -49,6 +70,8 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const emailLower = customerEmail.toLowerCase().trim();
 
     // Get product details
     const { data: product, error: productError } = await supabase
@@ -64,6 +87,71 @@ Deno.serve(async (req) => {
         JSON.stringify({ success: false, error: 'Product not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Determine user ID for the order
+    let userId = authUserId || existingUserId || null;
+    let newUserCreated = false;
+    let newUserPassword: string | null = null;
+
+    // If no user ID, check if user exists by email or create new one
+    if (!userId) {
+      // Check if profile exists with this email
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('user_id')
+        .eq('email', emailLower)
+        .maybeSingle();
+
+      if (existingProfile) {
+        userId = existingProfile.user_id;
+        console.log('Found existing user by email:', userId);
+
+        // Update profile with additional info if provided
+        if (customerPhone || customerFirstName) {
+          const fullName = customerFirstName && customerLastName 
+            ? `${customerFirstName} ${customerLastName}`.trim()
+            : null;
+          
+          await supabase
+            .from('profiles')
+            .update({
+              ...(customerPhone && { phone: customerPhone }),
+              ...(fullName && { full_name: fullName }),
+            })
+            .eq('user_id', userId);
+        }
+      } else {
+        // Create new user
+        console.log('Creating new user for email:', emailLower);
+        newUserPassword = generatePassword();
+        
+        const fullName = customerFirstName && customerLastName 
+          ? `${customerFirstName} ${customerLastName}`.trim()
+          : customerFirstName || 'Пользователь';
+
+        const { data: newUser, error: createUserError } = await supabase.auth.admin.createUser({
+          email: emailLower,
+          password: newUserPassword,
+          email_confirm: true, // Auto-confirm email
+          user_metadata: {
+            full_name: fullName,
+            phone: customerPhone,
+          },
+        });
+
+        if (createUserError) {
+          console.error('Error creating user:', createUserError);
+          return new Response(
+            JSON.stringify({ success: false, error: 'Failed to create user account' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        userId = newUser.user.id;
+        newUserCreated = true;
+        console.log('Created new user:', userId);
+      }
     }
 
     // Get payment settings
@@ -84,14 +172,22 @@ Deno.serve(async (req) => {
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
-        user_id: userId || '00000000-0000-0000-0000-000000000000',
+        user_id: userId,
         product_id: productId,
         amount: product.price_byn,
         currency: product.currency,
         status: 'pending',
-        customer_email: customerEmail,
+        customer_email: emailLower,
         customer_ip: req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || 'unknown',
-        meta: { product_name: product.name, description }
+        meta: { 
+          product_name: product.name, 
+          description,
+          customer_first_name: customerFirstName,
+          customer_last_name: customerLastName,
+          customer_phone: customerPhone,
+          new_user_created: newUserCreated,
+          new_user_password: newUserCreated ? newUserPassword : null,
+        }
       })
       .select()
       .single();
@@ -104,7 +200,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Created order:', order.id);
+    console.log('Created order:', order.id, 'for user:', userId);
 
     // Create bePaid checkout token
     const bepaidPayload = {
@@ -129,7 +225,10 @@ Deno.serve(async (req) => {
           tracking_id: order.id,
         },
         customer: {
-          email: customerEmail,
+          email: emailLower,
+          first_name: customerFirstName || undefined,
+          last_name: customerLastName || undefined,
+          phone: customerPhone || undefined,
         },
       },
     };

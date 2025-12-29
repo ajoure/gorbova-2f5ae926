@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { Resend } from 'https://esm.sh/resend@2.0.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,8 +15,10 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const resendApiKey = Deno.env.get('RESEND_API_KEY');
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
     const body = await req.json();
     console.log('bePaid webhook received:', JSON.stringify(body, null, 2));
@@ -95,9 +98,10 @@ Deno.serve(async (req) => {
       console.error('Failed to update order:', updateError);
     }
 
-    // If payment successful, grant entitlement
-    if (orderStatus === 'completed' && order.user_id && order.user_id !== '00000000-0000-0000-0000-000000000000') {
+    // If payment successful, grant entitlement and send email
+    if (orderStatus === 'completed' && order.user_id) {
       const product = order.products;
+      const meta = order.meta as Record<string, any> || {};
       
       if (product) {
         console.log(`Granting entitlement for product: ${product.name}`);
@@ -160,8 +164,180 @@ Deno.serve(async (req) => {
             amount: order.amount,
             currency: order.currency,
             bepaid_uid: transactionUid,
+            product_name: product?.name,
           },
         });
+
+      // Send email notification
+      if (resend && order.customer_email) {
+        const newUserCreated = meta.new_user_created === true;
+        const newUserPassword = meta.new_user_password || null;
+        const customerName = meta.customer_first_name 
+          ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()
+          : 'Уважаемый клиент';
+        const priceFormatted = `${(order.amount / 100).toFixed(2)} ${order.currency}`;
+
+        let emailHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+              .success-badge { display: inline-block; background: #10b981; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; margin-bottom: 20px; }
+              .order-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+              .order-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+              .order-row:last-child { border-bottom: none; }
+              .credentials { background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+              .button { display: inline-block; background: #667eea; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+              .footer { text-align: center; color: #6b7280; font-size: 14px; margin-top: 30px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1 style="margin: 0;">Gorbova Club</h1>
+                <p style="margin: 10px 0 0;">Подтверждение оплаты</p>
+              </div>
+              <div class="content">
+                <div class="success-badge">✓ Оплата успешна</div>
+                
+                <p>Здравствуйте, ${customerName}!</p>
+                <p>Благодарим вас за покупку. Ваш платёж успешно обработан.</p>
+                
+                <div class="order-details">
+                  <h3 style="margin-top: 0;">Детали заказа</h3>
+                  <div class="order-row">
+                    <span>Продукт:</span>
+                    <strong>${product?.name || 'Подписка'}</strong>
+                  </div>
+                  <div class="order-row">
+                    <span>Сумма:</span>
+                    <strong>${priceFormatted}</strong>
+                  </div>
+                  <div class="order-row">
+                    <span>Номер заказа:</span>
+                    <span>${orderId}</span>
+                  </div>
+                  <div class="order-row">
+                    <span>ID транзакции:</span>
+                    <span>${transactionUid}</span>
+                  </div>
+                </div>
+        `;
+
+        // Add credentials section for new users
+        if (newUserCreated && newUserPassword) {
+          emailHtml += `
+                <div class="credentials">
+                  <h3 style="margin-top: 0; color: #92400e;">🔐 Доступ в личный кабинет</h3>
+                  <p>Мы создали для вас личный кабинет. Используйте эти данные для входа:</p>
+                  <p><strong>Логин (email):</strong> ${order.customer_email}</p>
+                  <p><strong>Временный пароль:</strong> ${newUserPassword}</p>
+                  <p style="color: #92400e; font-size: 14px;">⚠️ Рекомендуем сменить пароль после первого входа</p>
+                </div>
+          `;
+        }
+
+        emailHtml += `
+                <p style="text-align: center; margin-top: 30px;">
+                  <a href="https://gorbova.club/dashboard" class="button">Перейти в личный кабинет</a>
+                </p>
+                
+                <div class="footer">
+                  <p>Если у вас есть вопросы, свяжитесь с нами по email.</p>
+                  <p>© ${new Date().getFullYear()} Gorbova Club. Все права защищены.</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        try {
+          const emailResult = await resend.emails.send({
+            from: 'Gorbova Club <noreply@gorbova.club>',
+            to: [order.customer_email],
+            subject: newUserCreated 
+              ? 'Добро пожаловать! Данные для входа и подтверждение оплаты' 
+              : 'Подтверждение оплаты — Gorbova Club',
+            html: emailHtml,
+          });
+          console.log('Email sent successfully:', emailResult);
+        } catch (emailError) {
+          console.error('Failed to send email:', emailError);
+          // Don't fail the webhook - email is not critical
+        }
+
+        // Clear sensitive data from order meta
+        if (meta.new_user_password) {
+          await supabase
+            .from('orders')
+            .update({
+              meta: {
+                ...meta,
+                new_user_password: '[REDACTED]',
+                email_sent: true,
+              }
+            })
+            .eq('id', orderId);
+        }
+      }
+    }
+
+    // Handle failed payment notification
+    if (orderStatus === 'failed' && resend && order.customer_email) {
+      const meta = order.meta as Record<string, any> || {};
+      const customerName = meta.customer_first_name || 'Уважаемый клиент';
+
+      try {
+        await resend.emails.send({
+          from: 'Gorbova Club <noreply@gorbova.club>',
+          to: [order.customer_email],
+          subject: 'Ошибка оплаты — Gorbova Club',
+          html: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: #ef4444; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+                .button { display: inline-block; background: #667eea; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1 style="margin: 0;">Ошибка оплаты</h1>
+                </div>
+                <div class="content">
+                  <p>Здравствуйте, ${customerName}!</p>
+                  <p>К сожалению, ваш платёж не был обработан. Это может произойти по следующим причинам:</p>
+                  <ul>
+                    <li>Недостаточно средств на карте</li>
+                    <li>Карта заблокирована или истёк срок действия</li>
+                    <li>Превышен лимит на операции</li>
+                  </ul>
+                  <p>Вы можете попробовать оплатить снова:</p>
+                  <p style="text-align: center; margin-top: 20px;">
+                    <a href="https://gorbova.club/pricing" class="button">Попробовать снова</a>
+                  </p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `,
+        });
+        console.log('Failed payment notification sent');
+      } catch (emailError) {
+        console.error('Failed to send failure email:', emailError);
+      }
     }
 
     console.log(`Order ${orderId} updated to status: ${orderStatus}`);
