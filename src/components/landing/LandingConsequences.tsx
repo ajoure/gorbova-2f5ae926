@@ -1,4 +1,5 @@
 import { TrendingDown, Frown, DollarSign, Battery, AlertCircle } from "lucide-react";
+import { AnimatedSection } from "./AnimatedSection";
 
 const consequences = [
   {
@@ -31,34 +32,33 @@ export function LandingConsequences() {
       
       <div className="container mx-auto px-4">
         <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
+          <AnimatedSection className="text-center mb-12">
             <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
               Что будет, если ничего не менять?
             </h2>
             <p className="text-lg text-muted-foreground">
               Чувствуете? Внутри копится злость и апатия...
             </p>
-          </div>
+          </AnimatedSection>
 
           <div className="space-y-4">
             {consequences.map((item, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-4 p-4 rounded-xl border border-destructive/20 bg-card/80"
-              >
-                <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center flex-shrink-0">
-                  <item.icon className="text-destructive" size={20} />
+              <AnimatedSection key={index} animation="fade-left" delay={index * 100}>
+                <div className="flex items-center gap-4 p-4 rounded-xl border border-destructive/20 bg-card/80">
+                  <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center flex-shrink-0">
+                    <item.icon className="text-destructive" size={20} />
+                  </div>
+                  <p className="text-foreground font-medium">{item.text}</p>
                 </div>
-                <p className="text-foreground font-medium">{item.text}</p>
-              </div>
+              </AnimatedSection>
             ))}
           </div>
 
-          <div className="mt-12 text-center">
+          <AnimatedSection animation="fade-up" delay={500} className="mt-12 text-center">
             <p className="text-xl text-foreground font-semibold">
               Но выход есть — стать <span className="text-primary">бухгалтером нового поколения</span>
             </p>
-          </div>
+          </AnimatedSection>
         </div>
       </div>
     </section>

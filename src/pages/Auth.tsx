@@ -43,6 +43,19 @@ export default function Auth() {
   const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Get redirectTo from URL params
+  const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+
+  // Set initial mode from URL param
+  useEffect(() => {
+    const modeParam = searchParams.get("mode");
+    if (modeParam === "signup") {
+      setMode("signup");
+    } else if (modeParam === "reset") {
+      setMode("update_password");
+    }
+  }, [searchParams]);
+
   // Detect recovery flow from URL or session event
   useEffect(() => {
     const modeParam = searchParams.get("mode");
@@ -65,9 +78,10 @@ export default function Auth() {
   useEffect(() => {
     // Only redirect if user is logged in AND not in password update mode
     if (user && mode !== "update_password") {
-      navigate("/");
+      console.log("[Analytics] login_success");
+      navigate(redirectTo);
     }
-  }, [user, mode, navigate]);
+  }, [user, mode, navigate, redirectTo]);
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,7 +202,8 @@ export default function Auth() {
             title: "Добро пожаловать!",
             description: "Вы успешно вошли в систему",
           });
-          navigate("/");
+          console.log("[Analytics] login_success");
+          navigate(redirectTo);
         }
       } else if (mode === "signup") {
         const validation = signupSchema.safeParse({ email, password, fullName, phone });
@@ -222,7 +237,8 @@ export default function Auth() {
             title: "Регистрация успешна!",
             description: "Добро пожаловать в систему",
           });
-          navigate("/");
+          console.log("[Analytics] signup_success");
+          navigate(redirectTo);
         }
       }
     } catch (err) {
