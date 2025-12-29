@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,19 @@ interface EmailRequest {
   subject: string;
   html: string;
   text?: string;
+  account_id?: string; // Optional: specify which email account to use
+}
+
+interface EmailAccount {
+  id: string;
+  email: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_password: string;
+  smtp_encryption: string;
+  from_name: string;
+  from_email: string;
+  is_default: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -21,7 +35,6 @@ function b64Utf8(value: string): string {
 }
 
 function wrapBase64(value: string, lineLength = 76): string {
-  // SMTP base64 is commonly wrapped at 76 chars per RFC 2045
   const lines: string[] = [];
   for (let i = 0; i < value.length; i += lineLength) lines.push(value.slice(i, i + lineLength));
   return lines.join("\r\n");
@@ -32,25 +45,65 @@ function parseSmtpCode(response: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+async function getEmailAccount(supabase: any, accountId?: string): Promise<EmailAccount | null> {
+  let query = supabase.from("email_accounts").select("*").eq("is_active", true);
+  
+  if (accountId) {
+    query = query.eq("id", accountId);
+  } else {
+    query = query.eq("is_default", true);
+  }
+  
+  const { data, error } = await query.limit(1).single();
+  
+  if (error || !data) {
+    // Fallback to any active account
+    const { data: fallback } = await supabase
+      .from("email_accounts")
+      .select("*")
+      .eq("is_active", true)
+      .limit(1)
+      .single();
+    return fallback;
+  }
+  
+  return data;
+}
+
 async function sendEmailViaSMTP(params: {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  account: EmailAccount;
 }): Promise<void> {
-  const smtpHost = "smtp.yandex.ru";
-  const smtpPort = 465;
-  const username = "noreply@gorbova.by";
-  const password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
+  const { account } = params;
+  
+  const smtpHost = account.smtp_host || "smtp.yandex.ru";
+  const smtpPort = account.smtp_port || 465;
+  const username = account.email;
+  const password = account.smtp_password;
+  const fromName = account.from_name || "Gorbova.by";
+  const fromEmail = account.from_email || account.email;
 
   if (!password) {
-    throw new Error("YANDEX_SMTP_PASSWORD is not set");
+    throw new Error(`SMTP password not set for account ${username}`);
   }
 
-  const conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
+  console.log(`Sending via SMTP: ${smtpHost}:${smtpPort} as ${username}`);
+
+  let conn: Deno.TlsConn | Deno.TcpConn;
+  
+  // Connect based on encryption type
+  if (account.smtp_encryption === "TLS" || smtpPort === 587) {
+    // STARTTLS - connect plain first, then upgrade
+    conn = await Deno.connect({ hostname: smtpHost, port: smtpPort });
+  } else {
+    // SSL/TLS - connect with TLS directly
+    conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
+  }
 
   async function readResponse(): Promise<string> {
-    // Read until we see a line break (good enough for SMTP replies here)
     let out = "";
     const buf = new Uint8Array(4096);
     while (!out.includes("\n")) {
@@ -63,7 +116,9 @@ async function sendEmailViaSMTP(params: {
   }
 
   async function sendCommand(cmd: string, expectCodes?: number[]): Promise<string> {
-    const safeCmd = cmd.startsWith("AUTH") ? "AUTH [hidden]" : cmd;
+    const safeCmd = cmd.startsWith("AUTH") ? "AUTH [hidden]" : 
+                    cmd.length > 50 && !cmd.startsWith("MAIL") && !cmd.startsWith("RCPT") 
+                    ? cmd.substring(0, 50) + "..." : cmd;
     console.log(`SMTP > ${safeCmd}`);
 
     await conn.write(encoder.encode(cmd + "\r\n"));
@@ -88,22 +143,23 @@ async function sendEmailViaSMTP(params: {
       throw new Error(`SMTP greeting failed: ${greeting.trim()}`);
     }
 
-    await sendCommand("EHLO gorbova.by", [250]);
+    // Extract domain from email
+    const domain = username.split("@")[1] || "gorbova.by";
+    await sendCommand(`EHLO ${domain}`, [250]);
 
-    // AUTH LOGIN (Yandex supports LOGIN)
+    // AUTH LOGIN
     await sendCommand("AUTH LOGIN", [334]);
     await sendCommand(b64Utf8(username), [334]);
 
     const passResp = await sendCommand(b64Utf8(password));
     const passCode = parseSmtpCode(passResp);
     if (passCode !== 235) {
-      // Most common: 535 invalid credentials (needs app password)
       throw new Error(
-        `SMTP authentication failed (${passCode}). Check Yandex 360 mailbox SMTP/app password for ${username}.`,
+        `SMTP authentication failed (${passCode}). Check SMTP password for ${username}.`,
       );
     }
 
-    await sendCommand(`MAIL FROM:<${username}>`, [250]);
+    await sendCommand(`MAIL FROM:<${fromEmail}>`, [250]);
     await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
     await sendCommand("DATA", [354]);
 
@@ -114,7 +170,7 @@ async function sendEmailViaSMTP(params: {
     const htmlPart = wrapBase64(b64Utf8(params.html));
 
     const dataLines = [
-      `From: "Gorbova.by" <${username}>`,
+      `From: "${fromName}" <${fromEmail}>`,
       `To: ${params.to}`,
       `Subject: ${subjectEncoded}`,
       `MIME-Version: 1.0`,
@@ -137,7 +193,6 @@ async function sendEmailViaSMTP(params: {
       ".",
     ].join("\r\n");
 
-    // DATA must end with <CRLF>.<CRLF>
     await conn.write(encoder.encode(dataLines + "\r\n"));
     const dataResp = await readResponse();
     console.log(`SMTP < ${dataResp.trim()}`);
@@ -146,7 +201,6 @@ async function sendEmailViaSMTP(params: {
       throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
     }
 
-    // QUIT
     try {
       await sendCommand("QUIT");
     } catch {
@@ -167,13 +221,30 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
-    const { to, subject, html, text }: EmailRequest = await req.json();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Sending email to: ${to}, subject: ${subject}`);
+    const { to, subject, html, text, account_id }: EmailRequest = await req.json();
 
-    await sendEmailViaSMTP({ to, subject, html, text });
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}`);
 
-    return new Response(JSON.stringify({ success: true, message: "Email sent successfully" }), {
+    // Get email account from database
+    const account = await getEmailAccount(supabase, account_id);
+    
+    if (!account) {
+      throw new Error("No active email account found. Please configure an email account first.");
+    }
+
+    console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
+
+    await sendEmailViaSMTP({ to, subject, html, text, account });
+
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: "Email sent successfully",
+      from: account.from_email || account.email,
+    }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });

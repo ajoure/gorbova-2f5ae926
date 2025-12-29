@@ -287,7 +287,7 @@ export default function AdminEmail() {
           to: userData.user.email,
           subject: "Тестовое письмо",
           html: `<h1>Тестовое письмо</h1><p>Это тестовое письмо от ${account.from_name || account.email}</p>`,
-          accountId: accountId,
+          account_id: accountId,
         },
       });
       
