@@ -22,6 +22,18 @@ export function LandingHeader() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // Handle scrolling to anchor after navigation
+  useEffect(() => {
+    if (isHomePage && location.hash) {
+      const element = document.querySelector(location.hash);
+      if (element) {
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: "smooth" });
+        }, 100);
+      }
+    }
+  }, [isHomePage, location.hash]);
+
   const handleLoginClick = () => {
     console.log("[Analytics] click_login");
     navigate("/auth");
@@ -32,14 +44,17 @@ export function LandingHeader() {
   };
 
   const handleAnchorClick = (e: React.MouseEvent<HTMLAnchorElement>, anchor: string) => {
+    e.preventDefault();
+    setMobileMenuOpen(false);
+    
     if (isHomePage) {
-      e.preventDefault();
       const element = document.querySelector(anchor);
       if (element) {
         element.scrollIntoView({ behavior: "smooth" });
       }
+    } else {
+      navigate("/" + anchor);
     }
-    setMobileMenuOpen(false);
   };
 
   return (
@@ -71,33 +86,39 @@ export function LandingHeader() {
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6">
           <a 
-            href={isHomePage ? "#benefits" : "/#benefits"} 
+            href="#benefits"
             onClick={(e) => handleAnchorClick(e, "#benefits")}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             Преимущества
           </a>
           <a 
-            href={isHomePage ? "#content" : "/#content"} 
+            href="#content"
             onClick={(e) => handleAnchorClick(e, "#content")}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             Наполнение
           </a>
           <a 
-            href={isHomePage ? "#pricing" : "/#pricing"} 
+            href="#pricing"
             onClick={(e) => handleAnchorClick(e, "#pricing")}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             Тарифы
           </a>
           <a 
-            href={isHomePage ? "#faq" : "/#faq"} 
+            href="#faq"
             onClick={(e) => handleAnchorClick(e, "#faq")}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             FAQ
           </a>
+          <Link 
+            to="/contacts"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Контакты
+          </Link>
         </nav>
 
         {/* Auth Buttons */}
@@ -135,33 +156,40 @@ export function LandingHeader() {
         >
           <nav className="container mx-auto px-4 flex flex-col gap-4">
             <a
-              href={isHomePage ? "#benefits" : "/#benefits"}
+              href="#benefits"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
               onClick={(e) => handleAnchorClick(e, "#benefits")}
             >
               Преимущества
             </a>
             <a
-              href={isHomePage ? "#content" : "/#content"}
+              href="#content"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
               onClick={(e) => handleAnchorClick(e, "#content")}
             >
               Наполнение
             </a>
             <a
-              href={isHomePage ? "#pricing" : "/#pricing"}
+              href="#pricing"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
               onClick={(e) => handleAnchorClick(e, "#pricing")}
             >
               Тарифы
             </a>
             <a
-              href={isHomePage ? "#faq" : "/#faq"}
+              href="#faq"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
               onClick={(e) => handleAnchorClick(e, "#faq")}
             >
               FAQ
             </a>
+            <Link
+              to="/contacts"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Контакты
+            </Link>
             <div className="pt-2 border-t border-border/50">
               {!loading && (
                 user ? (
