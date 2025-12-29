@@ -35,11 +35,18 @@ async function makeAmoCRMRequest(
   body?: object
 ): Promise<Response> {
   const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  const subdomain = Deno.env.get('AMOCRM_SUBDOMAIN');
+  let subdomain = Deno.env.get('AMOCRM_SUBDOMAIN') || '';
 
   if (!accessToken || !subdomain) {
     throw new Error('AmoCRM credentials not configured');
   }
+
+  // Clean subdomain - extract just the subdomain part if full URL was provided
+  subdomain = subdomain
+    .replace(/^https?:\/\//, '') // Remove protocol
+    .replace(/\.amocrm\.(ru|com).*$/, '') // Remove domain suffix
+    .replace(/\/$/, '') // Remove trailing slash
+    .trim();
 
   const url = `https://${subdomain}.amocrm.ru/api/v4${endpoint}`;
   console.log(`Making AmoCRM request: ${method} ${url}`);

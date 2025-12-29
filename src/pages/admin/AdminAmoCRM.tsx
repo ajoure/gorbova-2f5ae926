@@ -41,13 +41,7 @@ export default function AdminAmoCRM() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Не авторизован");
 
-      const response = await supabase.functions.invoke("amocrm-sync", {
-        body: {},
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-
-      // Parse the URL to add query params since invoke doesn't support them well
-      const testResponse = await fetch(
+      const response = await fetch(
         `https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/amocrm-sync?action=test-connection`,
         {
           headers: {
@@ -57,12 +51,12 @@ export default function AdminAmoCRM() {
         }
       );
 
-      if (!testResponse.ok) {
-        const error = await testResponse.json();
+      if (!response.ok) {
+        const error = await response.json();
         throw new Error(error.error || "Ошибка подключения");
       }
 
-      return testResponse.json();
+      return response.json();
     },
     retry: false,
   });
