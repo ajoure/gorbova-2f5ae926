@@ -49,7 +49,14 @@ import {
   Eye,
   Loader2,
   Server,
+  ChevronDown,
+  Settings2,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 interface EmailAccount {
   id: string;
@@ -88,6 +95,50 @@ const USE_FOR_OPTIONS = [
   { value: "support", label: "Поддержка" },
 ];
 
+// Auto-detect SMTP settings based on email domain
+const getSmtpSettings = (email: string) => {
+  const domain = email.split("@")[1]?.toLowerCase();
+  
+  const smtpConfigs: Record<string, { host: string; port: number; encryption: string }> = {
+    // Yandex
+    "yandex.ru": { host: "smtp.yandex.ru", port: 465, encryption: "SSL" },
+    "yandex.com": { host: "smtp.yandex.ru", port: 465, encryption: "SSL" },
+    "ya.ru": { host: "smtp.yandex.ru", port: 465, encryption: "SSL" },
+    // Gmail
+    "gmail.com": { host: "smtp.gmail.com", port: 465, encryption: "SSL" },
+    "googlemail.com": { host: "smtp.gmail.com", port: 465, encryption: "SSL" },
+    // Mail.ru
+    "mail.ru": { host: "smtp.mail.ru", port: 465, encryption: "SSL" },
+    "inbox.ru": { host: "smtp.mail.ru", port: 465, encryption: "SSL" },
+    "list.ru": { host: "smtp.mail.ru", port: 465, encryption: "SSL" },
+    "bk.ru": { host: "smtp.mail.ru", port: 465, encryption: "SSL" },
+    // Outlook/Hotmail
+    "outlook.com": { host: "smtp.office365.com", port: 587, encryption: "TLS" },
+    "hotmail.com": { host: "smtp.office365.com", port: 587, encryption: "TLS" },
+    "live.com": { host: "smtp.office365.com", port: 587, encryption: "TLS" },
+    // iCloud
+    "icloud.com": { host: "smtp.mail.me.com", port: 587, encryption: "TLS" },
+    "me.com": { host: "smtp.mail.me.com", port: 587, encryption: "TLS" },
+    // Tut.by / Yandex Belarus
+    "tut.by": { host: "smtp.yandex.ru", port: 465, encryption: "SSL" },
+  };
+
+  return smtpConfigs[domain] || null;
+};
+
+const getProviderName = (email: string): string => {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return "smtp";
+  
+  if (["yandex.ru", "yandex.com", "ya.ru", "tut.by"].includes(domain)) return "Yandex";
+  if (["gmail.com", "googlemail.com"].includes(domain)) return "Gmail";
+  if (["mail.ru", "inbox.ru", "list.ru", "bk.ru"].includes(domain)) return "Mail.ru";
+  if (["outlook.com", "hotmail.com", "live.com"].includes(domain)) return "Outlook";
+  if (["icloud.com", "me.com"].includes(domain)) return "iCloud";
+  
+  return "SMTP";
+};
+
 export default function AdminEmail() {
   const queryClient = useQueryClient();
   const [accountDialog, setAccountDialog] = useState<{
@@ -107,6 +158,7 @@ export default function AdminEmail() {
   }>({ open: false, html: "", subject: "" });
   
   const [testingSend, setTestingSend] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Fetch email accounts
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
@@ -149,17 +201,22 @@ export default function AdminEmail() {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id: _id, created_at: _createdAt, ...insertData } = account;
         if (!insertData.email) throw new Error("Email обязателен");
+        
+        // Auto-detect SMTP settings
+        const smtpSettings = getSmtpSettings(insertData.email);
+        const provider = getProviderName(insertData.email);
+        
         const insertPayload = {
           email: insertData.email,
           display_name: insertData.display_name || null,
-          provider: insertData.provider || "smtp",
-          smtp_host: insertData.smtp_host || null,
-          smtp_port: insertData.smtp_port || 465,
-          smtp_encryption: insertData.smtp_encryption || "SSL",
-          smtp_username: insertData.smtp_username || null,
+          provider: provider,
+          smtp_host: insertData.smtp_host || smtpSettings?.host || null,
+          smtp_port: insertData.smtp_port || smtpSettings?.port || 465,
+          smtp_encryption: insertData.smtp_encryption || smtpSettings?.encryption || "SSL",
+          smtp_username: insertData.smtp_username || insertData.email,
           smtp_password: insertData.smtp_password || null,
           from_name: insertData.from_name || null,
-          from_email: insertData.from_email || null,
+          from_email: insertData.from_email || insertData.email,
           reply_to: insertData.reply_to || null,
           is_default: insertData.is_default ?? false,
           is_active: insertData.is_active ?? true,
@@ -521,115 +578,54 @@ export default function AdminEmail() {
             }}
             className="space-y-4"
           >
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Email (логин)</Label>
-                <Input
-                  required
-                  type="email"
-                  value={accountDialog.account?.email || ""}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, email: e.target.value },
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Провайдер</Label>
-                <Select
-                  value={accountDialog.account?.provider || "smtp"}
-                  onValueChange={(value) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, provider: value },
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="smtp">SMTP</SelectItem>
-                    <SelectItem value="yandex">Yandex</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2 col-span-2">
-                <Label>SMTP Host</Label>
-                <Input
-                  value={accountDialog.account?.smtp_host || ""}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, smtp_host: e.target.value },
-                    }))
-                  }
-                  placeholder="smtp.yandex.ru"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Port</Label>
-                <Input
-                  type="number"
-                  value={accountDialog.account?.smtp_port || 465}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: {
-                        ...prev.account,
-                        smtp_port: parseInt(e.target.value) || 465,
-                      },
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Encryption</Label>
-                <Select
-                  value={accountDialog.account?.smtp_encryption || "SSL"}
-                  onValueChange={(value) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, smtp_encryption: value },
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="SSL">SSL</SelectItem>
-                    <SelectItem value="TLS">TLS</SelectItem>
-                    <SelectItem value="none">None</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>SMTP Username</Label>
-                <Input
-                  value={accountDialog.account?.smtp_username || ""}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, smtp_username: e.target.value },
-                    }))
-                  }
-                />
-              </div>
+            {/* Simple form - just email and password */}
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input
+                required
+                type="email"
+                placeholder="your@email.com"
+                value={accountDialog.account?.email || ""}
+                onChange={(e) => {
+                  const email = e.target.value;
+                  const smtpSettings = getSmtpSettings(email);
+                  const provider = getProviderName(email);
+                  setAccountDialog((prev) => ({
+                    ...prev,
+                    account: { 
+                      ...prev.account, 
+                      email,
+                      // Auto-fill SMTP settings when email changes
+                      ...(smtpSettings && !prev.account?.id ? {
+                        smtp_host: smtpSettings.host,
+                        smtp_port: smtpSettings.port,
+                        smtp_encryption: smtpSettings.encryption,
+                        provider: provider,
+                        smtp_username: email,
+                        from_email: email,
+                      } : {}),
+                    },
+                  }));
+                }}
+              />
+              {accountDialog.account?.email && getSmtpSettings(accountDialog.account.email) && (
+                <p className="text-xs text-muted-foreground">
+                  Настройки SMTP для {getProviderName(accountDialog.account.email)} будут применены автоматически
+                </p>
+              )}
+              {accountDialog.account?.email && !getSmtpSettings(accountDialog.account.email) && accountDialog.account.email.includes("@") && (
+                <p className="text-xs text-amber-500">
+                  Неизвестный провайдер — настройте SMTP вручную в дополнительных настройках
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label>SMTP Password / App Password</Label>
+              <Label>Пароль приложения</Label>
               <Input
+                required={!accountDialog.account?.id}
                 type="password"
+                placeholder="Пароль или App Password"
                 value={accountDialog.account?.smtp_password || ""}
                 onChange={(e) =>
                   setAccountDialog((prev) => ({
@@ -638,38 +634,123 @@ export default function AdminEmail() {
                   }))
                 }
               />
+              <p className="text-xs text-muted-foreground">
+                Для Gmail, Yandex и других рекомендуется использовать пароль приложения
+              </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>From Name</Label>
-                <Input
-                  value={accountDialog.account?.from_name || ""}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, from_name: e.target.value },
-                    }))
-                  }
-                  placeholder="Gorbova Club"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Reply-To (опционально)</Label>
-                <Input
-                  type="email"
-                  value={accountDialog.account?.reply_to || ""}
-                  onChange={(e) =>
-                    setAccountDialog((prev) => ({
-                      ...prev,
-                      account: { ...prev.account, reply_to: e.target.value },
-                    }))
-                  }
-                />
-              </div>
+            <div className="space-y-2">
+              <Label>Имя отправителя</Label>
+              <Input
+                placeholder="Gorbova Club"
+                value={accountDialog.account?.from_name || ""}
+                onChange={(e) =>
+                  setAccountDialog((prev) => ({
+                    ...prev,
+                    account: { ...prev.account, from_name: e.target.value },
+                  }))
+                }
+              />
             </div>
 
-            <div className="flex items-center justify-between">
+            {/* Advanced settings - collapsible */}
+            <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between">
+                  <span className="flex items-center gap-2">
+                    <Settings2 className="w-4 h-4" />
+                    Дополнительные настройки
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label>SMTP Host</Label>
+                    <Input
+                      value={accountDialog.account?.smtp_host || ""}
+                      onChange={(e) =>
+                        setAccountDialog((prev) => ({
+                          ...prev,
+                          account: { ...prev.account, smtp_host: e.target.value },
+                        }))
+                      }
+                      placeholder="smtp.yandex.ru"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Port</Label>
+                    <Input
+                      type="number"
+                      value={accountDialog.account?.smtp_port || 465}
+                      onChange={(e) =>
+                        setAccountDialog((prev) => ({
+                          ...prev,
+                          account: {
+                            ...prev.account,
+                            smtp_port: parseInt(e.target.value) || 465,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Encryption</Label>
+                    <Select
+                      value={accountDialog.account?.smtp_encryption || "SSL"}
+                      onValueChange={(value) =>
+                        setAccountDialog((prev) => ({
+                          ...prev,
+                          account: { ...prev.account, smtp_encryption: value },
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SSL">SSL</SelectItem>
+                        <SelectItem value="TLS">TLS</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SMTP Username</Label>
+                    <Input
+                      value={accountDialog.account?.smtp_username || ""}
+                      onChange={(e) =>
+                        setAccountDialog((prev) => ({
+                          ...prev,
+                          account: { ...prev.account, smtp_username: e.target.value },
+                        }))
+                      }
+                      placeholder={accountDialog.account?.email || ""}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Reply-To (опционально)</Label>
+                  <Input
+                    type="email"
+                    value={accountDialog.account?.reply_to || ""}
+                    onChange={(e) =>
+                      setAccountDialog((prev) => ({
+                        ...prev,
+                        account: { ...prev.account, reply_to: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
+            <div className="flex items-center justify-between pt-2">
               <div className="flex items-center gap-2">
                 <Switch
                   checked={accountDialog.account?.is_active ?? true}
