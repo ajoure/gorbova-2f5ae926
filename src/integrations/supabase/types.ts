@@ -317,6 +317,95 @@ export type Database = {
         }
         Relationships: []
       }
+      orders: {
+        Row: {
+          amount: number
+          bepaid_token: string | null
+          bepaid_uid: string | null
+          created_at: string
+          currency: string
+          customer_email: string | null
+          customer_ip: string | null
+          error_message: string | null
+          id: string
+          meta: Json | null
+          payment_method: string | null
+          product_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          bepaid_token?: string | null
+          bepaid_uid?: string | null
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          error_message?: string | null
+          id?: string
+          meta?: Json | null
+          payment_method?: string | null
+          product_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          bepaid_token?: string | null
+          bepaid_uid?: string | null
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          error_message?: string | null
+          id?: string
+          meta?: Json | null
+          payment_method?: string | null
+          product_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_settings: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       permissions: {
         Row: {
           category: string | null
@@ -338,6 +427,51 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+        }
+        Relationships: []
+      }
+      products: {
+        Row: {
+          created_at: string
+          currency: string
+          description: string | null
+          duration_days: number | null
+          id: string
+          is_active: boolean
+          meta: Json | null
+          name: string
+          price_byn: number
+          product_type: string
+          tier: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          description?: string | null
+          duration_days?: number | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name: string
+          price_byn: number
+          product_type?: string
+          tier?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          description?: string | null
+          duration_days?: number | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name?: string
+          price_byn?: number
+          product_type?: string
+          tier?: string | null
+          updated_at?: string
         }
         Relationships: []
       }

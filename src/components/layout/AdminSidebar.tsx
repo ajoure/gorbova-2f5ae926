@@ -26,6 +26,8 @@ import {
   Settings,
   Package,
   FileText,
+  ShoppingCart,
+  CreditCard,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -62,6 +64,8 @@ export function AdminSidebar() {
 
   if (hasAnyPermission(["entitlements.view", "entitlements.manage"])) {
     adminMenuItems.push({ title: "Доступы", url: "/admin/entitlements", icon: Package });
+    adminMenuItems.push({ title: "Продукты", url: "/admin/products", icon: ShoppingCart });
+    adminMenuItems.push({ title: "Платежи", url: "/admin/payments", icon: CreditCard });
   }
 
   if (hasAnyPermission(["content.view", "content.edit", "content.publish"])) {
