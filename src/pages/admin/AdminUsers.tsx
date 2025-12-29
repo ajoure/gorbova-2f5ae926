@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useAdminRoles } from "@/hooks/useAdminRoles";
 import { usePermissions } from "@/hooks/usePermissions";
+import { saveAdminSessionForImpersonation } from "@/components/layout/ImpersonationBar";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,7 +65,8 @@ import {
   XCircle,
   RotateCcw,
   UserPlus,
-  Shield
+  Shield,
+  Copy
 } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
@@ -105,6 +108,20 @@ export default function AdminUsers() {
   }>({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
 
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+
+  // Fetch duplicate count
+  const { data: duplicateCount } = useQuery({
+    queryKey: ["duplicate-count-users-page"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("duplicate_cases")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "new");
+      if (error) return 0;
+      return count || 0;
+    },
+    refetchInterval: 60000,
+  });
 
   // Get effective role for a user (single role model)
   const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
@@ -166,11 +183,8 @@ export default function AdminUsers() {
         await forceLogout(userId);
         break;
       case "impersonate":
-        // Store current admin token before impersonating
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session?.access_token) {
-          localStorage.setItem("admin_token", sessionData.session.access_token);
-        }
+        // Save admin session before impersonating
+        await saveAdminSessionForImpersonation(location.pathname);
         
         const impersonationData = await startImpersonation(userId);
         if (impersonationData) {
@@ -180,7 +194,8 @@ export default function AdminUsers() {
           });
           if (error) {
             console.error("Impersonation OTP error:", error);
-            localStorage.removeItem("admin_token");
+            localStorage.removeItem("admin_session_backup");
+            localStorage.removeItem("admin_return_url");
           } else {
             navigate("/?impersonating=true");
             window.location.reload();
@@ -246,9 +261,27 @@ export default function AdminUsers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <h1 className="text-2xl font-bold">Клиенты</h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Duplicates button */}
+          <Button 
+            variant="outline" 
+            onClick={() => navigate("/admin/users/duplicates")}
+            className="relative"
+          >
+            <Copy className="w-4 h-4 mr-2" />
+            Дубли
+            {duplicateCount && duplicateCount > 0 && (
+              <Badge 
+                variant="destructive" 
+                className="ml-2 h-5 min-w-5 px-1.5 text-xs"
+              >
+                {duplicateCount}
+              </Badge>
+            )}
+          </Button>
+          
           {hasPermission("admins.manage") && (
             <Button onClick={() => setInviteDialogOpen(true)}>
               <UserPlus className="w-4 h-4 mr-2" />

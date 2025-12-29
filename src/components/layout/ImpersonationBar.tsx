@@ -5,10 +5,14 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, User } from "lucide-react";
 import { toast } from "sonner";
 
+const ADMIN_RETURN_URL_KEY = "admin_return_url";
+const IS_IMPERSONATING_KEY = "is_impersonating";
+const ADMIN_SESSION_KEY = "admin_session_backup";
+
 export function ImpersonationBar() {
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
-  const [originalAdminToken, setOriginalAdminToken] = useState<string | null>(null);
+  const [isReturning, setIsReturning] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -27,19 +31,6 @@ export function ImpersonationBar() {
           setImpersonatedEmail(data.user.email);
         }
       });
-      
-      // Store admin token if not already stored
-      const storedToken = localStorage.getItem("admin_token");
-      if (!storedToken) {
-        supabase.auth.getSession().then(({ data }) => {
-          if (data?.session?.access_token) {
-            // On first impersonation, we should have stored the admin token BEFORE switching
-            // This is handled in AdminUsers when starting impersonation
-          }
-        });
-      } else {
-        setOriginalAdminToken(storedToken);
-      }
 
       // Clean up URL
       const newParams = new URLSearchParams(location.search);
@@ -50,10 +41,10 @@ export function ImpersonationBar() {
       window.history.replaceState({}, "", newUrl);
       
       // Mark as impersonating in localStorage
-      localStorage.setItem("is_impersonating", "true");
+      localStorage.setItem(IS_IMPERSONATING_KEY, "true");
     } else {
       // Check localStorage for persistent impersonation state
-      const storedImpersonating = localStorage.getItem("is_impersonating") === "true";
+      const storedImpersonating = localStorage.getItem(IS_IMPERSONATING_KEY) === "true";
       setIsImpersonating(storedImpersonating);
       
       if (storedImpersonating) {
@@ -62,37 +53,73 @@ export function ImpersonationBar() {
             setImpersonatedEmail(data.user.email);
           }
         });
-        
-        const storedToken = localStorage.getItem("admin_token");
-        if (storedToken) {
-          setOriginalAdminToken(storedToken);
-        }
       }
     }
   }, [location]);
 
   const handleReturnToAdmin = async () => {
+    if (isReturning) return;
+    setIsReturning(true);
+    
     try {
+      // Get stored admin session
+      const storedSession = localStorage.getItem(ADMIN_SESSION_KEY);
+      const returnUrl = localStorage.getItem(ADMIN_RETURN_URL_KEY) || "/admin/users";
+      
       // Sign out from impersonated session
       await supabase.auth.signOut();
       
       // Clear impersonation state
-      localStorage.removeItem("is_impersonating");
+      localStorage.removeItem(IS_IMPERSONATING_KEY);
+      localStorage.removeItem(ADMIN_SESSION_KEY);
+      localStorage.removeItem(ADMIN_RETURN_URL_KEY);
       localStorage.removeItem("admin_token");
       
       setIsImpersonating(false);
       setImpersonatedEmail(null);
-      setOriginalAdminToken(null);
       
-      toast.success("Вышли из режима просмотра");
+      // Try to restore admin session
+      if (storedSession) {
+        try {
+          const sessionData = JSON.parse(storedSession);
+          if (sessionData.refresh_token) {
+            const { error } = await supabase.auth.setSession({
+              access_token: sessionData.access_token,
+              refresh_token: sessionData.refresh_token,
+            });
+            
+            if (!error) {
+              toast.success("Вернулись в аккаунт администратора");
+              navigate(returnUrl);
+              return;
+            }
+          }
+        } catch (e) {
+          console.error("Error restoring admin session:", e);
+        }
+      }
       
-      // Redirect to login - admin will need to log back in
+      // Fallback: redirect to login
+      toast.info("Сессия истекла, войдите снова");
       navigate("/auth");
     } catch (error) {
       console.error("Error returning from impersonation:", error);
       toast.error("Ошибка выхода из режима просмотра");
+      setIsReturning(false);
     }
   };
+
+  // Add/remove class to body for CSS offset targeting
+  useEffect(() => {
+    if (isImpersonating) {
+      document.body.classList.add("impersonation-active");
+    } else {
+      document.body.classList.remove("impersonation-active");
+    }
+    return () => {
+      document.body.classList.remove("impersonation-active");
+    };
+  }, [isImpersonating]);
 
   if (!isImpersonating) {
     return null;
@@ -101,8 +128,8 @@ export function ImpersonationBar() {
   return (
     <>
       {/* Spacer to push content down */}
-      <div className="h-10" />
-      <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 py-2 px-4 shadow-md">
+      <div className="h-11" />
+      <div className="fixed top-0 left-0 right-0 z-[100] bg-amber-500 text-amber-950 py-2 px-4 shadow-md">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <User className="w-4 h-4" />
@@ -114,13 +141,33 @@ export function ImpersonationBar() {
             onClick={handleReturnToAdmin}
             variant="outline" 
             size="sm"
+            disabled={isReturning}
             className="bg-white/20 border-amber-700 text-amber-950 hover:bg-white/30"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Вернуться в аккаунт администратора
+            {isReturning ? "Возврат..." : "Вернуться в админку"}
           </Button>
         </div>
       </div>
     </>
   );
+}
+
+// Helper function to start impersonation - call this before switching sessions
+export function saveAdminSessionForImpersonation(returnUrl: string = "/admin/users") {
+  return new Promise<void>(async (resolve) => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session) {
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+          access_token: sessionData.session.access_token,
+          refresh_token: sessionData.session.refresh_token,
+        }));
+        localStorage.setItem(ADMIN_RETURN_URL_KEY, returnUrl);
+      }
+    } catch (e) {
+      console.error("Error saving admin session:", e);
+    }
+    resolve();
+  });
 }
