@@ -4,6 +4,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { AnimatedSection } from "./AnimatedSection";
 
 const faqs = [
   {
@@ -39,36 +40,38 @@ export function LandingFAQ() {
       <div className="absolute inset-0 bg-muted/50 -z-10" />
 
       <div className="container mx-auto px-4">
-        <div className="text-center mb-12">
+        <AnimatedSection className="text-center mb-12">
           <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
             Частые вопросы
           </h2>
           <p className="text-lg text-muted-foreground">
             Ответы на популярные вопросы о Клубе
           </p>
-        </div>
+        </AnimatedSection>
 
         <div className="max-w-3xl mx-auto">
-          <Accordion type="single" collapsible className="space-y-4">
-            {faqs.map((faq, index) => (
-              <AccordionItem
-                key={index}
-                value={`item-${index}`}
-                className="rounded-xl border border-border/50 px-6 overflow-hidden"
-                style={{
-                  background: "linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7))",
-                  backdropFilter: "blur(20px)",
-                }}
-              >
-                <AccordionTrigger className="text-left font-semibold text-foreground hover:no-underline py-4">
-                  {faq.question}
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground pb-4">
-                  {faq.answer}
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <AnimatedSection animation="fade-up">
+            <Accordion type="single" collapsible className="space-y-4">
+              {faqs.map((faq, index) => (
+                <AccordionItem
+                  key={index}
+                  value={`item-${index}`}
+                  className="rounded-xl border border-border/50 px-6 overflow-hidden"
+                  style={{
+                    background: "linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7))",
+                    backdropFilter: "blur(20px)",
+                  }}
+                >
+                  <AccordionTrigger className="text-left font-semibold text-foreground hover:no-underline py-4">
+                    {faq.question}
+                  </AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground pb-4">
+                    {faq.answer}
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </AnimatedSection>
         </div>
       </div>
     </section>

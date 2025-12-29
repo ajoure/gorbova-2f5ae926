@@ -1,4 +1,5 @@
 import { Award, Users, BookOpen, Building2 } from "lucide-react";
+import { AnimatedSection } from "./AnimatedSection";
 
 const stats = [
   { icon: Award, value: "400+", label: "аудитов проведено" },
@@ -14,7 +15,7 @@ export function LandingAbout() {
         <div className="max-w-5xl mx-auto">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             {/* Text content */}
-            <div>
+            <AnimatedSection animation="fade-right">
               <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-6">
                 Катерина Горбова
               </h2>
@@ -32,27 +33,29 @@ export function LandingAbout() {
                   чувствовать себя уверенно в любой ситуации.
                 </p>
               </div>
-            </div>
+            </AnimatedSection>
 
             {/* Stats */}
-            <div className="grid grid-cols-2 gap-4">
-              {stats.map((stat, index) => (
-                <div
-                  key={index}
-                  className="p-6 rounded-2xl border border-border/50 text-center"
-                  style={{
-                    background: "linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7))",
-                    backdropFilter: "blur(20px)",
-                  }}
-                >
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3 mx-auto">
-                    <stat.icon className="text-primary" size={20} />
+            <AnimatedSection animation="fade-left">
+              <div className="grid grid-cols-2 gap-4">
+                {stats.map((stat, index) => (
+                  <div
+                    key={index}
+                    className="p-6 rounded-2xl border border-border/50 text-center"
+                    style={{
+                      background: "linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7))",
+                      backdropFilter: "blur(20px)",
+                    }}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3 mx-auto">
+                      <stat.icon className="text-primary" size={20} />
+                    </div>
+                    <div className="text-2xl font-bold text-foreground">{stat.value}</div>
+                    <div className="text-sm text-muted-foreground">{stat.label}</div>
                   </div>
-                  <div className="text-2xl font-bold text-foreground">{stat.value}</div>
-                  <div className="text-sm text-muted-foreground">{stat.label}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </AnimatedSection>
           </div>
         </div>
       </div>
