@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,14 +12,10 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
   SidebarHeader,
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +32,6 @@ import {
   ShoppingCart,
   CreditCard,
   Copy,
-  ChevronRight,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -47,11 +41,6 @@ export function AdminSidebar() {
   const { user, signOut } = useAuth();
   const { hasPermission, hasAnyPermission } = usePermissions();
   const collapsed = state === "collapsed";
-  
-  // Track which submenus are open
-  const [clientsOpen, setClientsOpen] = useState(
-    location.pathname.startsWith("/admin/users") || location.pathname.startsWith("/admin/duplicates")
-  );
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
@@ -119,73 +108,58 @@ export function AdminSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Клиенты with submenu */}
+              {/* Клиенты */}
               {hasClientsPermission && (
-                <Collapsible open={clientsOpen} onOpenChange={setClientsOpen}>
+                <>
                   <SidebarMenuItem>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuButton
-                        tooltip={collapsed ? "Клиенты" : undefined}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent w-full"
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/users"}
+                      tooltip={collapsed ? "Клиенты" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/users"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
                       >
                         <Users className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Клиенты</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  
+                  {/* Дубли - подпункт клиентов */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/duplicates"}
+                      tooltip={collapsed ? "Дубли" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/duplicates"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent ml-4"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Copy className="h-4 w-4 shrink-0" />
                         {!collapsed && (
                           <>
-                            <span className="flex-1">Клиенты</span>
+                            <span className="flex-1">Дубли</span>
                             {duplicateCount && duplicateCount > 0 && (
                               <Badge 
                                 variant="destructive" 
-                                className="h-5 min-w-5 px-1.5 text-xs mr-1"
+                                className="h-5 min-w-5 px-1.5 text-xs"
                               >
                                 {duplicateCount}
                               </Badge>
                             )}
-                            <ChevronRight className={`h-4 w-4 transition-transform ${clientsOpen ? "rotate-90" : ""}`} />
                           </>
                         )}
-                      </SidebarMenuButton>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={location.pathname === "/admin/users"}
-                          >
-                            <NavLink
-                              to="/admin/users"
-                              className="flex items-center gap-2"
-                            >
-                              <span>Все клиенты</span>
-                            </NavLink>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={location.pathname === "/admin/duplicates"}
-                          >
-                            <NavLink
-                              to="/admin/duplicates"
-                              className="flex items-center gap-2"
-                            >
-                              <Copy className="h-4 w-4" />
-                              <span className="flex-1">Дубли</span>
-                              {duplicateCount && duplicateCount > 0 && (
-                                <Badge 
-                                  variant="destructive" 
-                                  className="h-4 min-w-4 px-1 text-xs"
-                                >
-                                  {duplicateCount}
-                                </Badge>
-                              )}
-                            </NavLink>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
+                      </NavLink>
+                    </SidebarMenuButton>
                   </SidebarMenuItem>
-                </Collapsible>
+                </>
               )}
 
               {/* Сотрудники и роли */}
