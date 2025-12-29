@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,10 +8,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Receipt, CheckCircle, XCircle, Clock, CreditCard, Download, FileText } from "lucide-react";
+import { ShoppingBag, Receipt, CheckCircle, XCircle, Clock, CreditCard, Download, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
+import { jsPDF } from "jspdf";
+import { PaymentDialog } from "@/components/payment/PaymentDialog";
 
 interface Order {
   id: string;
@@ -36,8 +39,17 @@ interface Entitlement {
   meta: Record<string, any> | null;
 }
 
+interface Product {
+  id: string;
+  name: string;
+  price_byn: number;
+  product_type: string;
+  tier: string | null;
+}
+
 export default function Purchases() {
   const { user } = useAuth();
+  const [renewProduct, setRenewProduct] = useState<{ id: string; name: string; price: number } | null>(null);
 
   const { data: orders, isLoading: ordersLoading } = useQuery({
     queryKey: ["user-orders", user?.id],
@@ -70,6 +82,45 @@ export default function Purchases() {
     },
     enabled: !!user,
   });
+
+  // Fetch products for renewal
+  const { data: products } = useQuery({
+    queryKey: ["products-for-renewal"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, name, price_byn, product_type, tier")
+        .eq("is_active", true);
+      
+      if (error) throw error;
+      return data as Product[];
+    },
+  });
+
+  const findProductForRenewal = (entitlement: Entitlement): Product | null => {
+    if (!products) return null;
+    
+    // Try to find by product_code matching tier or product id
+    const product = products.find(p => 
+      p.tier === entitlement.product_code || 
+      p.id === entitlement.product_code
+    );
+    
+    return product || null;
+  };
+
+  const handleRenew = (entitlement: Entitlement) => {
+    const product = findProductForRenewal(entitlement);
+    if (product) {
+      setRenewProduct({
+        id: product.id,
+        name: product.name,
+        price: product.price_byn,
+      });
+    } else {
+      toast.error("Продукт для продления не найден");
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -145,64 +196,119 @@ export default function Purchases() {
     const priceFormatted = formatPrice(order.amount, order.currency);
     const dateFormatted = formatDate(order.created_at);
     
-    const receiptContent = `
-═══════════════════════════════════════════════════════════════
-                         КВИТАНЦИЯ ОБ ОПЛАТЕ
-                           Gorbova Club
-═══════════════════════════════════════════════════════════════
-
-Номер заказа:        ${order.id}
-ID транзакции:       ${order.bepaid_uid || "—"}
-Дата и время:        ${dateFormatted}
-
-───────────────────────────────────────────────────────────────
-                           ДЕТАЛИ ЗАКАЗА
-───────────────────────────────────────────────────────────────
-
-Продукт:             ${order.products?.name || "Подписка"}
-Тип:                 ${order.products?.product_type === "subscription" ? "Подписка" : 
-                       order.products?.product_type === "webinar" ? "Вебинар" : "Разовая покупка"}
-
-───────────────────────────────────────────────────────────────
-                         ИНФОРМАЦИЯ ОБ ОПЛАТЕ
-───────────────────────────────────────────────────────────────
-
-Способ оплаты:       ${order.payment_method || "Банковская карта"}
-Статус:              ${order.status === "completed" ? "Оплачено" : order.status}
-Email покупателя:    ${order.customer_email || "—"}
-
-───────────────────────────────────────────────────────────────
-                              ИТОГО
-───────────────────────────────────────────────────────────────
-
-                    СУММА: ${priceFormatted}
-
-═══════════════════════════════════════════════════════════════
-
-Исполнитель: ЗАО "АЖУР инкам"
-УНП: 193405000
-Адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л
-Email: info@ajoure.by
-
-Данный документ сформирован автоматически и является 
-подтверждением оплаты.
-
-═══════════════════════════════════════════════════════════════
-`;
-
-    const blob = new Blob([receiptContent], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `receipt_${order.id.slice(0, 8)}_${format(new Date(order.created_at), "yyyyMMdd")}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const doc = new jsPDF();
     
-    toast.success("Квитанция скачана");
+    // Header background
+    doc.setFillColor(102, 126, 234);
+    doc.rect(0, 0, 210, 45, "F");
+    
+    // Logo text (placeholder for actual logo)
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont("helvetica", "bold");
+    doc.text("Gorbova Club", 105, 22, { align: "center" });
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.text("КВИТАНЦИЯ ОБ ОПЛАТЕ", 105, 35, { align: "center" });
+    
+    // Reset text color
+    doc.setTextColor(51, 51, 51);
+    
+    // Order info section
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text("ИНФОРМАЦИЯ О ЗАКАЗЕ", 20, 60);
+    doc.setDrawColor(102, 126, 234);
+    doc.line(20, 63, 190, 63);
+    
+    doc.setFont("helvetica", "normal");
+    let y = 73;
+    
+    doc.text("Номер заказа:", 20, y);
+    doc.text(order.id, 80, y);
+    y += 8;
+    
+    doc.text("ID транзакции:", 20, y);
+    doc.text(order.bepaid_uid || "—", 80, y);
+    y += 8;
+    
+    doc.text("Дата и время:", 20, y);
+    doc.text(dateFormatted, 80, y);
+    y += 15;
+    
+    // Product section
+    doc.setFont("helvetica", "bold");
+    doc.text("ДЕТАЛИ ЗАКАЗА", 20, y);
+    doc.line(20, y + 3, 190, y + 3);
+    y += 13;
+    
+    doc.setFont("helvetica", "normal");
+    doc.text("Продукт:", 20, y);
+    doc.text(order.products?.name || "Подписка", 80, y);
+    y += 8;
+    
+    doc.text("Тип:", 20, y);
+    doc.text(
+      order.products?.product_type === "subscription" ? "Подписка" : 
+      order.products?.product_type === "webinar" ? "Вебинар" : "Разовая покупка",
+      80, y
+    );
+    y += 15;
+    
+    // Payment section
+    doc.setFont("helvetica", "bold");
+    doc.text("ИНФОРМАЦИЯ ОБ ОПЛАТЕ", 20, y);
+    doc.line(20, y + 3, 190, y + 3);
+    y += 13;
+    
+    doc.setFont("helvetica", "normal");
+    doc.text("Способ оплаты:", 20, y);
+    doc.text(order.payment_method || "Банковская карта", 80, y);
+    y += 8;
+    
+    doc.text("Статус:", 20, y);
+    doc.setTextColor(16, 185, 129);
+    doc.text("Оплачено", 80, y);
+    doc.setTextColor(51, 51, 51);
+    y += 8;
+    
+    doc.text("Email покупателя:", 20, y);
+    doc.text(order.customer_email || "—", 80, y);
+    y += 20;
+    
+    // Total section
+    doc.setFillColor(245, 247, 250);
+    doc.roundedRect(20, y - 5, 170, 25, 3, 3, "F");
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("ИТОГО:", 30, y + 10);
+    doc.setTextColor(102, 126, 234);
+    doc.text(priceFormatted, 180, y + 10, { align: "right" });
+    doc.setTextColor(51, 51, 51);
+    y += 35;
+    
+    // Footer
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(107, 114, 128);
+    doc.text("Исполнитель: ЗАО «АЖУР инкам»", 105, y, { align: "center" });
+    doc.text("УНП: 193405000", 105, y + 5, { align: "center" });
+    doc.text("Адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л", 105, y + 10, { align: "center" });
+    doc.text("Email: info@ajoure.by", 105, y + 15, { align: "center" });
+    y += 25;
+    
+    doc.setFontSize(8);
+    doc.text("Данный документ сформирован автоматически и является подтверждением оплаты.", 105, y, { align: "center" });
+    
+    // Save the PDF
+    doc.save(`receipt_${order.id.slice(0, 8)}_${format(new Date(order.created_at), "yyyyMMdd")}.pdf`);
+    
+    toast.success("PDF-чек скачан");
   };
 
+  // Show all entitlements, including expired ones for renewal
+  const allEntitlements = entitlements || [];
+  
   const activeEntitlements = entitlements?.filter(e => {
     const isExpired = e.expires_at && new Date(e.expires_at) < new Date();
     return e.status === "active" && !isExpired;
@@ -221,7 +327,7 @@ Email: info@ajoure.by
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />
-              Активные подписки
+              Подписки
             </CardTitle>
             <CardDescription>
               Ваши текущие подписки и продукты
@@ -233,36 +339,61 @@ Email: info@ajoure.by
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
               </div>
-            ) : activeEntitlements.length > 0 ? (
+            ) : allEntitlements.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2">
-                {activeEntitlements.map((entitlement) => (
-                  <div
-                    key={entitlement.id}
-                    className="rounded-lg border p-4 bg-gradient-to-br from-primary/5 to-accent/5"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-semibold text-foreground">
-                          {(entitlement.meta as Record<string, any>)?.product_name || getProductCodeName(entitlement.product_code)}
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          Активирована: {formatDate(entitlement.created_at)}
-                        </p>
-                        {entitlement.expires_at && (
+                {allEntitlements.map((entitlement) => {
+                  const isExpired = entitlement.expires_at && new Date(entitlement.expires_at) < new Date();
+                  const isExpiringSoon = entitlement.expires_at && !isExpired && 
+                    new Date(entitlement.expires_at) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                  const renewalProduct = findProductForRenewal(entitlement);
+                  
+                  return (
+                    <div
+                      key={entitlement.id}
+                      className={`rounded-lg border p-4 ${
+                        isExpired 
+                          ? "bg-muted/50 border-destructive/30" 
+                          : isExpiringSoon 
+                            ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
+                            : "bg-gradient-to-br from-primary/5 to-accent/5"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="font-semibold text-foreground">
+                            {(entitlement.meta as Record<string, any>)?.product_name || getProductCodeName(entitlement.product_code)}
+                          </h3>
                           <p className="text-sm text-muted-foreground">
-                            Действует до: {formatDate(entitlement.expires_at)}
+                            Активирована: {formatDate(entitlement.created_at)}
                           </p>
-                        )}
+                          {entitlement.expires_at && (
+                            <p className={`text-sm ${isExpired ? "text-destructive" : isExpiringSoon ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
+                              {isExpired ? "Истекла: " : "Действует до: "}{formatDate(entitlement.expires_at)}
+                            </p>
+                          )}
+                        </div>
+                        {getEntitlementStatusBadge(entitlement)}
                       </div>
-                      {getEntitlementStatusBadge(entitlement)}
+                      
+                      {(isExpired || isExpiringSoon) && renewalProduct && (
+                        <Button
+                          size="sm"
+                          onClick={() => handleRenew(entitlement)}
+                          className="w-full gap-2"
+                          variant={isExpired ? "default" : "outline"}
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          {isExpired ? "Продлить подписку" : "Продлить заранее"}
+                        </Button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
                 <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>У вас пока нет активных подписок</p>
+                <p>У вас пока нет подписок</p>
               </div>
             )}
           </CardContent>
@@ -347,6 +478,17 @@ Email: info@ajoure.by
           </CardContent>
         </Card>
       </div>
+
+      {/* Payment Dialog for Renewal */}
+      {renewProduct && (
+        <PaymentDialog
+          open={!!renewProduct}
+          onOpenChange={(open) => !open && setRenewProduct(null)}
+          productId={renewProduct.id}
+          productName={renewProduct.name}
+          price={`${(renewProduct.price / 100).toFixed(2)} BYN`}
+        />
+      )}
     </DashboardLayout>
   );
 }
