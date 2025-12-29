@@ -160,23 +160,49 @@ serve(async (req) => {
       }
 
       case "amocrm": {
-        // Use existing amocrm-sync function
+        const subdomain = (config.subdomain as string || "").trim();
+        const accessToken = config.long_term_token as string || config.access_token as string;
+
+        if (!subdomain || !accessToken) {
+          errorMessage = "Отсутствуют обязательные параметры: subdomain или long_term_token";
+          break;
+        }
+
+        // Normalize subdomain - remove .amocrm.ru if present
+        const cleanSubdomain = subdomain.replace(/\.amocrm\.(ru|com)$/i, "");
+
         try {
-          const { data, error } = await supabase.functions.invoke("amocrm-sync", {
-            body: { action: "test" },
+          const apiUrl = `https://${cleanSubdomain}.amocrm.ru/api/v4/account`;
+          console.log("AmoCRM API URL:", apiUrl);
+
+          const response = await fetch(apiUrl, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
           });
 
-          if (error) {
-            errorMessage = error.message;
-          } else if (data?.connected) {
+          console.log("AmoCRM response status:", response.status);
+
+          if (response.ok) {
+            const data = await response.json();
             success = true;
-            responseData = { account: data.account?.name };
+            responseData = { 
+              account_id: data.id, 
+              account_name: data.name,
+              subdomain: cleanSubdomain 
+            };
+          } else if (response.status === 401) {
+            errorMessage = "Неверный токен доступа amoCRM. Проверьте долгосрочный токен.";
           } else {
-            errorMessage = data?.error || "Не удалось подключиться к amoCRM";
+            const errorText = await response.text();
+            errorMessage = `Ошибка amoCRM API (${response.status}): ${errorText}`;
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
-          errorMessage = `Ошибка проверки amoCRM: ${err}`;
+          console.error("AmoCRM API error:", err);
+          errorMessage = `Ошибка подключения к amoCRM: ${err}`;
         }
         break;
       }
