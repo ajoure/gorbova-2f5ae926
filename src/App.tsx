@@ -28,6 +28,8 @@ import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminEntitlements from "./pages/admin/AdminEntitlements";
 import AdminContent from "./pages/admin/AdminContent";
+import AdminProducts from "./pages/admin/AdminProducts";
+import AdminPayments from "./pages/admin/AdminPayments";
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 
@@ -70,6 +72,8 @@ const App = () => (
               <Route path="/admin/audit" element={<ProtectedRoute><AdminLayout><AdminAudit /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/content" element={<ProtectedRoute><AdminLayout><AdminContent /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/products" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/payments" element={<ProtectedRoute><AdminLayout><AdminPayments /></AdminLayout></ProtectedRoute>} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>

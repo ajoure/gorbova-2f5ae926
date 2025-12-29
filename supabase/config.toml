@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.mns-response-generator]
 verify_jwt = false
+
+[functions.bepaid-create-token]
+verify_jwt = false
+
+[functions.bepaid-webhook]
+verify_jwt = false
