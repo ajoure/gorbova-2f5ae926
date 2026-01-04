@@ -20,6 +20,7 @@ import {
   FileText,
   HelpCircle,
 } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const sections = [
   {
@@ -342,6 +343,9 @@ const adminSections = [
 ];
 
 export default function Documentation() {
+  const { hasAdminAccess, loading: permissionsLoading } = usePermissions();
+  const showAdminDocs = hasAdminAccess();
+
   return (
     <DashboardLayout>
       <div className="max-w-5xl mx-auto space-y-6">
@@ -355,16 +359,18 @@ export default function Documentation() {
         </div>
 
         <Tabs defaultValue="user" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 max-w-md">
-            <TabsTrigger value="user" className="flex items-center gap-2">
-              <BookOpen className="h-4 w-4" />
-              Для пользователей
-            </TabsTrigger>
-            <TabsTrigger value="admin" className="flex items-center gap-2">
-              <Shield className="h-4 w-4" />
-              Для администраторов
-            </TabsTrigger>
-          </TabsList>
+          {showAdminDocs ? (
+            <TabsList className="grid w-full grid-cols-2 max-w-md">
+              <TabsTrigger value="user" className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4" />
+                Для пользователей
+              </TabsTrigger>
+              <TabsTrigger value="admin" className="flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                Для администраторов
+              </TabsTrigger>
+            </TabsList>
+          ) : null}
 
           <TabsContent value="user" className="mt-6">
             <div className="grid gap-6">
@@ -395,34 +401,36 @@ export default function Documentation() {
             </div>
           </TabsContent>
 
-          <TabsContent value="admin" className="mt-6">
-            <div className="grid gap-6">
-              {adminSections.map((section) => (
-                <GlassCard key={section.id}>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center">
-                      <section.icon className="h-5 w-5 text-destructive" />
+          {showAdminDocs && (
+            <TabsContent value="admin" className="mt-6">
+              <div className="grid gap-6">
+                {adminSections.map((section) => (
+                  <GlassCard key={section.id}>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center">
+                        <section.icon className="h-5 w-5 text-destructive" />
+                      </div>
+                      <h2 className="text-xl font-semibold">{section.title}</h2>
                     </div>
-                    <h2 className="text-xl font-semibold">{section.title}</h2>
-                  </div>
-                  <Accordion type="single" collapsible className="w-full">
-                    {section.content.map((item, index) => (
-                      <AccordionItem key={index} value={`${section.id}-${index}`}>
-                        <AccordionTrigger className="text-left">
-                          {item.title}
-                        </AccordionTrigger>
-                        <AccordionContent>
-                          <div className="text-muted-foreground whitespace-pre-line">
-                            {item.text}
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
-                </GlassCard>
-              ))}
-            </div>
-          </TabsContent>
+                    <Accordion type="single" collapsible className="w-full">
+                      {section.content.map((item, index) => (
+                        <AccordionItem key={index} value={`${section.id}-${index}`}>
+                          <AccordionTrigger className="text-left">
+                            {item.title}
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="text-muted-foreground whitespace-pre-line">
+                              {item.text}
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      ))}
+                    </Accordion>
+                  </GlassCard>
+                ))}
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </DashboardLayout>
