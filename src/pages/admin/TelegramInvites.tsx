@@ -237,12 +237,12 @@ export default function TelegramInvites() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <div className="flex items-center gap-4">
-              <Select value={selectedClubId} onValueChange={setSelectedClubId}>
+              <Select value={selectedClubId || "all"} onValueChange={(v) => setSelectedClubId(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-[250px]">
                   <SelectValue placeholder="Все клубы" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Все клубы</SelectItem>
+                  <SelectItem value="all">Все клубы</SelectItem>
                   {clubs.map((club) => (
                     <SelectItem key={club.id} value={club.id}>
                       {club.club_name}
