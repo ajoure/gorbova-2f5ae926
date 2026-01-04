@@ -31,7 +31,7 @@ import AdminContent from "./pages/admin/AdminContent";
 import AdminProducts from "./pages/admin/AdminProducts";
 import AdminDuplicates from "./pages/admin/AdminDuplicates";
 import AdminIntegrations from "./pages/admin/AdminIntegrations";
-import AdminTelegram from "./pages/admin/AdminTelegram";
+
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
@@ -86,7 +86,7 @@ const App = () => (
               <Route path="/admin/integrations/crm" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/integrations/payments" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/integrations/email" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram" element={<ProtectedRoute><AdminLayout><AdminTelegram /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
               
               {/* Legacy redirects */}
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />

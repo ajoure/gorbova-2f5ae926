@@ -256,6 +256,7 @@ export default function AdminIntegrations() {
           )}
         </div>
         )}
+      </Tabs>
 
       {/* Dialogs */}
       <AddIntegrationDialog
