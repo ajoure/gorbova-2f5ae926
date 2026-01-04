@@ -954,6 +954,9 @@ export type Database = {
           phone: string | null
           primary_in_group: boolean | null
           status: string
+          telegram_linked_at: string | null
+          telegram_user_id: number | null
+          telegram_username: string | null
           updated_at: string
           user_id: string
         }
@@ -971,6 +974,9 @@ export type Database = {
           phone?: string | null
           primary_in_group?: boolean | null
           status?: string
+          telegram_linked_at?: string | null
+          telegram_user_id?: number | null
+          telegram_username?: string | null
           updated_at?: string
           user_id: string
         }
@@ -988,6 +994,9 @@ export type Database = {
           phone?: string | null
           primary_in_group?: boolean | null
           status?: string
+          telegram_linked_at?: string | null
+          telegram_user_id?: number | null
+          telegram_username?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -1142,6 +1151,266 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      telegram_access: {
+        Row: {
+          active_until: string | null
+          club_id: string
+          created_at: string
+          id: string
+          last_sync_at: string | null
+          state_channel: string
+          state_chat: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active_until?: string | null
+          club_id: string
+          created_at?: string
+          id?: string
+          last_sync_at?: string | null
+          state_channel?: string
+          state_chat?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active_until?: string | null
+          club_id?: string
+          created_at?: string
+          id?: string
+          last_sync_at?: string | null
+          state_channel?: string
+          state_chat?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_access_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_bots: {
+        Row: {
+          bot_id: number | null
+          bot_name: string
+          bot_token_encrypted: string
+          bot_username: string
+          created_at: string
+          error_message: string | null
+          id: string
+          last_check_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          bot_id?: number | null
+          bot_name: string
+          bot_token_encrypted: string
+          bot_username: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_check_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          bot_id?: number | null
+          bot_name?: string
+          bot_token_encrypted?: string
+          bot_username?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_check_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      telegram_clubs: {
+        Row: {
+          access_mode: string
+          bot_id: string
+          channel_id: number | null
+          channel_invite_link: string | null
+          channel_status: string | null
+          chat_id: number | null
+          chat_invite_link: string | null
+          chat_status: string | null
+          club_name: string
+          created_at: string
+          id: string
+          is_active: boolean
+          revoke_mode: string
+          subscription_duration_days: number
+          updated_at: string
+        }
+        Insert: {
+          access_mode?: string
+          bot_id: string
+          channel_id?: number | null
+          channel_invite_link?: string | null
+          channel_status?: string | null
+          chat_id?: number | null
+          chat_invite_link?: string | null
+          chat_status?: string | null
+          club_name: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          revoke_mode?: string
+          subscription_duration_days?: number
+          updated_at?: string
+        }
+        Update: {
+          access_mode?: string
+          bot_id?: string
+          channel_id?: number | null
+          channel_invite_link?: string | null
+          channel_status?: string | null
+          chat_id?: number | null
+          chat_invite_link?: string | null
+          chat_status?: string | null
+          club_name?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          revoke_mode?: string
+          subscription_duration_days?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_clubs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_link_tokens: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          token: string
+          used_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          token: string
+          used_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          token?: string
+          used_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      telegram_logs: {
+        Row: {
+          action: string
+          club_id: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          meta: Json | null
+          status: string
+          target: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          club_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          meta?: Json | null
+          status: string
+          target?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          club_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          meta?: Json | null
+          status?: string
+          target?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_logs_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_manual_access: {
+        Row: {
+          club_id: string
+          comment: string | null
+          created_at: string
+          created_by_admin_id: string
+          id: string
+          is_active: boolean
+          updated_at: string
+          user_id: string
+          valid_until: string | null
+        }
+        Insert: {
+          club_id: string
+          comment?: string | null
+          created_at?: string
+          created_by_admin_id: string
+          id?: string
+          is_active?: boolean
+          updated_at?: string
+          user_id: string
+          valid_until?: string | null
+        }
+        Update: {
+          club_id?: string
+          comment?: string | null
+          created_at?: string
+          created_by_admin_id?: string
+          id?: string
+          is_active?: boolean
+          updated_at?: string
+          user_id?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_manual_access_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
