@@ -44,3 +44,18 @@ verify_jwt = false
 
 [functions.integration-sync]
 verify_jwt = true
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.telegram-grant-access]
+verify_jwt = true
+
+[functions.telegram-revoke-access]
+verify_jwt = true
+
+[functions.telegram-check-expired]
+verify_jwt = true
+
+[functions.telegram-bot-actions]
+verify_jwt = true

@@ -32,6 +32,7 @@ import {
   ShoppingCart,
   Plug,
   Copy,
+  Send,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -217,6 +218,24 @@ export function AdminSidebar() {
                       >
                         <Plug className="h-5 w-5 shrink-0" />
                         {!collapsed && <span>Интеграции</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  
+                  {/* Telegram */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/integrations/telegram"}
+                      tooltip={collapsed ? "Telegram" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/integrations/telegram"
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Send className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Telegram</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
