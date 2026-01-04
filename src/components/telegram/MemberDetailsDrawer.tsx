@@ -37,17 +37,22 @@ import {
   Calendar,
   Search,
   Copy,
+  MinusCircle,
+  Clock,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { 
   TelegramClubMember,
   useUserAccessGrants,
   useGrantTelegramAccess,
+  useRevokeTelegramAccess,
 } from '@/hooks/useTelegramIntegration';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface MemberDetailsDrawerProps {
   member: TelegramClubMember | null;
@@ -58,12 +63,25 @@ interface MemberDetailsDrawerProps {
 
 export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: MemberDetailsDrawerProps) {
   const userId = member?.profiles?.user_id;
+  const { user: currentUser } = useAuth();
+  const queryClient = useQueryClient();
+  
+  // Dialog states
   const [showGrantDialog, setShowGrantDialog] = useState(false);
+  const [showRevokeDialog, setShowRevokeDialog] = useState(false);
+  const [showExtendDialog, setShowExtendDialog] = useState(false);
+  
+  // Form states
   const [grantDays, setGrantDays] = useState(30);
   const [grantComment, setGrantComment] = useState('');
+  const [revokeReason, setRevokeReason] = useState('');
+  const [extendDays, setExtendDays] = useState(30);
+  const [extendComment, setExtendComment] = useState('');
+  
   const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
   
   const grantAccess = useGrantTelegramAccess();
+  const revokeAccess = useRevokeTelegramAccess();
 
   // Check link mutation
   const checkLink = useMutation({
@@ -122,9 +140,89 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
       comment: grantComment || undefined,
     });
     
+    // Log the action
+    await supabase.from('telegram_logs').insert({
+      user_id: userId,
+      club_id: clubId,
+      action: 'MANUAL_GRANT',
+      status: 'ok',
+      meta: { 
+        granted_by: currentUser?.id,
+        granted_by_email: currentUser?.email,
+        days: grantDays, 
+        valid_until: validUntil,
+        comment: grantComment,
+      },
+    });
+    
     setShowGrantDialog(false);
     setGrantDays(30);
     setGrantComment('');
+    queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
+    onRefresh?.();
+  };
+
+  const handleRevokeAccess = async () => {
+    if (!userId || !clubId) return;
+    
+    await revokeAccess.mutateAsync({
+      userId,
+      clubId,
+      reason: revokeReason || undefined,
+      isManual: true,
+    });
+    
+    // Log the action
+    await supabase.from('telegram_logs').insert({
+      user_id: userId,
+      club_id: clubId,
+      action: 'MANUAL_REVOKE',
+      status: 'ok',
+      meta: { 
+        revoked_by: currentUser?.id,
+        revoked_by_email: currentUser?.email,
+        reason: revokeReason,
+      },
+    });
+    
+    setShowRevokeDialog(false);
+    setRevokeReason('');
+    queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
+    onRefresh?.();
+  };
+
+  const handleExtendAccess = async () => {
+    if (!userId || !clubId) return;
+    
+    const validUntil = addDays(new Date(), extendDays).toISOString();
+    
+    await grantAccess.mutateAsync({
+      userId,
+      clubId,
+      isManual: true,
+      validUntil,
+      comment: extendComment || 'Продление доступа',
+    });
+    
+    // Log the action
+    await supabase.from('telegram_logs').insert({
+      user_id: userId,
+      club_id: clubId,
+      action: 'MANUAL_EXTEND',
+      status: 'ok',
+      meta: { 
+        extended_by: currentUser?.id,
+        extended_by_email: currentUser?.email,
+        days: extendDays, 
+        valid_until: validUntil,
+        comment: extendComment,
+      },
+    });
+    
+    setShowExtendDialog(false);
+    setExtendDays(30);
+    setExtendComment('');
+    queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
     onRefresh?.();
   };
 
@@ -342,15 +440,43 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                 </CardContent>
               </Card>
 
-              {/* Grant Access Button - only for linked users without access */}
-              {member.profiles && member.access_status !== 'ok' && (
-                <Button 
-                  className="w-full" 
-                  onClick={() => setShowGrantDialog(true)}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Выдать доступ вручную
-                </Button>
+              {/* Action Buttons */}
+              {member.profiles && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Управление доступом</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {member.access_status !== 'ok' ? (
+                      <Button 
+                        className="w-full" 
+                        onClick={() => setShowGrantDialog(true)}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Выдать доступ
+                      </Button>
+                    ) : (
+                      <>
+                        <Button 
+                          variant="outline"
+                          className="w-full" 
+                          onClick={() => setShowExtendDialog(true)}
+                        >
+                          <Clock className="h-4 w-4 mr-2" />
+                          Продлить доступ
+                        </Button>
+                        <Button 
+                          variant="destructive"
+                          className="w-full" 
+                          onClick={() => setShowRevokeDialog(true)}
+                        >
+                          <MinusCircle className="h-4 w-4 mr-2" />
+                          Отозвать доступ
+                        </Button>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
               )}
 
               {/* Tabs for history */}
@@ -494,7 +620,7 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
       <Dialog open={showGrantDialog} onOpenChange={setShowGrantDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Выдать доступ вручную</DialogTitle>
+            <DialogTitle>Выдать доступ</DialogTitle>
             <DialogDescription>
               Выдайте доступ пользователю {member?.profiles?.full_name || member?.telegram_first_name} к клубу
             </DialogDescription>
@@ -518,13 +644,17 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="comment">Комментарий (необязательно)</Label>
-              <Input
+              <Label htmlFor="comment">Комментарий</Label>
+              <Textarea
                 id="comment"
-                placeholder="Причина выдачи..."
+                placeholder="Причина выдачи доступа..."
                 value={grantComment}
                 onChange={(e) => setGrantComment(e.target.value)}
+                rows={3}
               />
+              <p className="text-xs text-muted-foreground">
+                Будет сохранено в истории действий
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -534,6 +664,97 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
             <Button onClick={handleGrantAccess} disabled={grantAccess.isPending}>
               {grantAccess.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               Выдать доступ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Extend Access Dialog */}
+      <Dialog open={showExtendDialog} onOpenChange={setShowExtendDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Продлить доступ</DialogTitle>
+            <DialogDescription>
+              Продлите доступ пользователю {member?.profiles?.full_name || member?.telegram_first_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="extend-days">Продлить на (дней)</Label>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="extend-days"
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={extendDays}
+                  onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Новая дата окончания: {format(addDays(new Date(), extendDays), 'dd.MM.yyyy', { locale: ru })}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="extend-comment">Комментарий</Label>
+              <Textarea
+                id="extend-comment"
+                placeholder="Причина продления..."
+                value={extendComment}
+                onChange={(e) => setExtendComment(e.target.value)}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExtendDialog(false)}>
+              Отмена
+            </Button>
+            <Button onClick={handleExtendAccess} disabled={grantAccess.isPending}>
+              {grantAccess.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Продлить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke Access Dialog */}
+      <Dialog open={showRevokeDialog} onOpenChange={setShowRevokeDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Отозвать доступ</DialogTitle>
+            <DialogDescription>
+              Отзыв доступа для пользователя {member?.profiles?.full_name || member?.telegram_first_name}. 
+              Пользователь будет удалён из чата и канала.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="revoke-reason">Причина отзыва *</Label>
+              <Textarea
+                id="revoke-reason"
+                placeholder="Укажите причину отзыва доступа..."
+                value={revokeReason}
+                onChange={(e) => setRevokeReason(e.target.value)}
+                rows={3}
+              />
+              <p className="text-xs text-muted-foreground">
+                Будет сохранено в истории и видно в логах
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRevokeDialog(false)}>
+              Отмена
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleRevokeAccess} 
+              disabled={revokeAccess.isPending || !revokeReason.trim()}
+            >
+              {revokeAccess.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Отозвать доступ
             </Button>
           </DialogFooter>
         </DialogContent>
