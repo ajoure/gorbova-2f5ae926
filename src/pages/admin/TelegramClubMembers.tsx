@@ -85,7 +85,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
-type FilterTab = 'all' | 'clients' | 'with_access' | 'no_access' | 'violators';
+type FilterTab = 'all' | 'clients' | 'with_access' | 'violators';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -118,20 +118,15 @@ export default function TelegramClubMembers() {
 
   // Calculate counts for tabs
   const counts = useMemo(() => {
-    if (!members) return { all: 0, clients: 0, with_access: 0, no_access: 0, violators: 0 };
+    if (!members) return { all: 0, clients: 0, with_access: 0, violators: 0 };
     
     return {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      // "Без доступа" = linked users with expired, no_access, or removed status
-      no_access: members.filter(m => 
-        m.link_status === 'linked' && 
-        (m.access_status === 'no_access' || m.access_status === 'expired' || m.access_status === 'removed')
-      ).length,
-      // "Нарушители" = users in chat/channel but without access (including removed)
+      // "Нарушители" = users in chat/channel but without legal access
       violators: members.filter(m => 
-        (m.access_status === 'no_access' || m.access_status === 'removed') && 
+        (m.access_status !== 'ok') && 
         (m.in_chat || m.in_channel)
       ).length,
     };
@@ -163,13 +158,9 @@ export default function TelegramClubMembers() {
           return member.link_status === 'linked';
         case 'with_access':
           return member.access_status === 'ok';
-        case 'no_access':
-          // "Без доступа" = linked users with expired, no_access, or removed status  
-          return member.link_status === 'linked' && 
-            (member.access_status === 'no_access' || member.access_status === 'expired' || member.access_status === 'removed');
         case 'violators':
-          // "Нарушители" = users in chat/channel but without access (including removed)
-          return (member.access_status === 'no_access' || member.access_status === 'removed') && (member.in_chat || member.in_channel);
+          // "Нарушители" = users in chat/channel but without legal access
+          return (member.access_status !== 'ok') && (member.in_chat || member.in_channel);
         default:
           return true;
       }
@@ -285,38 +276,29 @@ export default function TelegramClubMembers() {
     if (errorCount > 0) toast.error(`Ошибки: ${errorCount}`);
   };
 
-  // Mass revoke access
+  // Mass revoke access - works with both linked users and violators
   const handleMassRevoke = async () => {
-    if (!clubId || selectedLinkedMembers.length === 0) return;
+    if (!clubId || selectedIds.size === 0) return;
     setMassActionLoading(true);
     
     let successCount = 0;
     let errorCount = 0;
 
-    for (const member of selectedLinkedMembers) {
-      if (!member.profiles?.user_id) continue;
+    // Get selected members (may or may not be linked)
+    const selectedMembers = filteredMembers.filter(m => selectedIds.has(m.id));
+
+    for (const member of selectedMembers) {
       try {
         await revokeAccess.mutateAsync({
-          userId: member.profiles.user_id,
+          userId: member.profiles?.user_id,
+          telegramUserId: member.telegram_user_id,
           clubId,
           reason: massRevokeReason || 'Массовый отзыв доступа',
           isManual: true,
         });
-        
-        // Log the action
-        await supabase.from('telegram_logs').insert({
-          user_id: member.profiles.user_id,
-          club_id: clubId,
-          action: 'MASS_REVOKE',
-          status: 'ok',
-          target: member.telegram_username || String(member.telegram_user_id),
-          meta: { 
-            revoked_by: currentUser?.id,
-            reason: massRevokeReason,
-          },
-        });
         successCount++;
       } catch (e) {
+        console.error('Revoke error for', member.telegram_user_id, e);
         errorCount++;
       }
     }
@@ -449,7 +431,7 @@ export default function TelegramClubMembers() {
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="all" className="gap-1.5">
               <Users className="h-4 w-4" />
               Все
@@ -464,11 +446,6 @@ export default function TelegramClubMembers() {
               <UserCheck className="h-4 w-4" />
               С доступом
               <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.with_access}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="no_access" className="gap-1.5">
-              <UserX className="h-4 w-4" />
-              Без доступа
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.no_access}</Badge>
             </TabsTrigger>
             <TabsTrigger value="violators" className="gap-1.5">
               <AlertTriangle className="h-4 w-4" />
