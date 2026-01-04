@@ -25,6 +25,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { 
   ArrowLeft, 
   RefreshCw, 
@@ -43,6 +51,11 @@ import {
   UserCheck,
   UserX,
   Link2,
+  MoreHorizontal,
+  Plus,
+  Clock,
+  Ban,
+  MinusCircle,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
@@ -82,14 +95,14 @@ export default function TelegramClubMembers() {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      // "Без доступа" = linked users with expired OR no_access status
+      // "Без доступа" = linked users with expired, no_access, or removed status
       no_access: members.filter(m => 
         m.link_status === 'linked' && 
-        (m.access_status === 'no_access' || m.access_status === 'expired')
+        (m.access_status === 'no_access' || m.access_status === 'expired' || m.access_status === 'removed')
       ).length,
-      // "Нарушители" = users in chat/channel but without access (regardless of link status)
+      // "Нарушители" = users in chat/channel but without access (including removed)
       violators: members.filter(m => 
-        m.access_status === 'no_access' && 
+        (m.access_status === 'no_access' || m.access_status === 'removed') && 
         (m.in_chat || m.in_channel)
       ).length,
     };
@@ -122,12 +135,12 @@ export default function TelegramClubMembers() {
         case 'with_access':
           return member.access_status === 'ok';
         case 'no_access':
-          // "Без доступа" = linked users with expired OR no_access status  
+          // "Без доступа" = linked users with expired, no_access, or removed status  
           return member.link_status === 'linked' && 
-            (member.access_status === 'no_access' || member.access_status === 'expired');
+            (member.access_status === 'no_access' || member.access_status === 'expired' || member.access_status === 'removed');
         case 'violators':
-          // "Нарушители" = users in chat/channel but without access
-          return member.access_status === 'no_access' && (member.in_chat || member.in_channel);
+          // "Нарушители" = users in chat/channel but without access (including removed)
+          return (member.access_status === 'no_access' || member.access_status === 'removed') && (member.in_chat || member.in_channel);
         default:
           return true;
       }
@@ -391,11 +404,10 @@ export default function TelegramClubMembers() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Telegram</TableHead>
-                    <TableHead>Связь</TableHead>
-                    <TableHead>Должен иметь доступ</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Чат</TableHead>
-                    <TableHead>Канал</TableHead>
+                    <TableHead>Связь с ЛК</TableHead>
+                    <TableHead>Статус доступа</TableHead>
+                    <TableHead className="text-center">Чат</TableHead>
+                    <TableHead className="text-center">Канал</TableHead>
                     <TableHead className="text-right">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -403,7 +415,13 @@ export default function TelegramClubMembers() {
                   {filteredMembers.map((member) => (
                     <TableRow 
                       key={member.id}
-                      className={member.access_status === 'no_access' ? 'bg-destructive/5' : ''}
+                      className={
+                        member.access_status === 'no_access' || member.access_status === 'removed' 
+                          ? 'bg-destructive/5' 
+                          : member.access_status === 'expired' 
+                            ? 'bg-yellow-500/5' 
+                            : ''
+                      }
                     >
                       <TableCell>
                         <div>
@@ -422,47 +440,79 @@ export default function TelegramClubMembers() {
                             <div className="text-xs text-muted-foreground">{member.profiles?.email}</div>
                           </div>
                         ) : (
-                          <Badge variant="outline">Не связан</Badge>
+                          <Badge variant="outline" className="text-muted-foreground">Не связан</Badge>
                         )}
                       </TableCell>
                       <TableCell>
-                        {member.profiles && member.access_status === 'ok' ? (
-                          <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">Должен</Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20">Не должен</Badge>
-                        )}
+                        {getAccessStatusBadge(member.access_status, member.link_status)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">
                         {member.in_chat ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground" />
+                          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">
                         {member.in_channel ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground" />
+                          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelectedMember(member)}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        {member.access_status === 'no_access' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => clubId && kickViolators.mutate({ clubId, memberIds: [member.id] })}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Действия</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setSelectedMember(member)}>
+                              <Eye className="h-4 w-4 mr-2" />
+                              Подробнее
+                            </DropdownMenuItem>
+                            {member.profiles && member.access_status !== 'ok' && (
+                              <DropdownMenuItem onClick={() => {
+                                setSelectedMember(member);
+                                // Will open grant dialog from drawer
+                              }}>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Выдать доступ
+                              </DropdownMenuItem>
+                            )}
+                            {member.profiles && member.access_status === 'ok' && (
+                              <>
+                                <DropdownMenuItem onClick={() => setSelectedMember(member)}>
+                                  <Clock className="h-4 w-4 mr-2" />
+                                  Продлить доступ
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => setSelectedMember(member)}
+                                  className="text-destructive"
+                                >
+                                  <MinusCircle className="h-4 w-4 mr-2" />
+                                  Отозвать доступ
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {(member.access_status === 'no_access' || member.access_status === 'removed') && 
+                             (member.in_chat || member.in_channel) && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={() => clubId && kickViolators.mutate({ clubId, memberIds: [member.id] })}
+                                  className="text-destructive"
+                                >
+                                  <Ban className="h-4 w-4 mr-2" />
+                                  Удалить из чата/канала
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}
