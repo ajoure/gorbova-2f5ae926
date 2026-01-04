@@ -57,7 +57,7 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
 
-type FilterStatus = 'all' | 'violators' | 'linked' | 'not_linked' | 'chat' | 'channel';
+type FilterStatus = 'all' | 'violators' | 'linked' | 'not_linked' | 'chat' | 'channel' | 'clients';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -107,6 +107,8 @@ export default function TelegramClubMembers() {
           return member.in_chat;
         case 'channel':
           return member.in_channel;
+        case 'clients':
+          return !!member.profiles && (member.in_chat || member.in_channel);
         default:
           return true;
       }
@@ -278,11 +280,12 @@ export default function TelegramClubMembers() {
                   />
                 </div>
                 <Select value={filter} onValueChange={(v) => setFilter(v as FilterStatus)}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-44">
                     <SelectValue placeholder="Фильтр" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Все</SelectItem>
+                    <SelectItem value="clients">Клиенты в клубе</SelectItem>
                     <SelectItem value="violators">Нарушители</SelectItem>
                     <SelectItem value="linked">Связанные</SelectItem>
                     <SelectItem value="not_linked">Без связки</SelectItem>
@@ -335,6 +338,7 @@ export default function TelegramClubMembers() {
                   <TableRow>
                     <TableHead>Telegram</TableHead>
                     <TableHead>Связь</TableHead>
+                    <TableHead>Должен иметь доступ</TableHead>
                     <TableHead>Статус</TableHead>
                     <TableHead>Чат</TableHead>
                     <TableHead>Канал</TableHead>
@@ -368,7 +372,11 @@ export default function TelegramClubMembers() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {getAccessStatusBadge(member.access_status)}
+                        {member.profiles && member.access_status === 'ok' ? (
+                          <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">Должен</Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20">Не должен</Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {member.in_chat ? (
