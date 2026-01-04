@@ -68,3 +68,6 @@ verify_jwt = false
 
 [functions.telegram-mass-broadcast]
 verify_jwt = false
+
+[functions.telegram-club-members]
+verify_jwt = true

@@ -30,6 +30,10 @@ export interface TelegramClub {
   revoke_mode: string;
   subscription_duration_days: number;
   is_active: boolean;
+  last_members_sync_at?: string | null;
+  members_count_chat?: number;
+  members_count_channel?: number;
+  violators_count?: number;
   created_at: string;
   updated_at: string;
   telegram_bots?: TelegramBot;
@@ -67,6 +71,51 @@ export interface TelegramLog {
   error_message: string | null;
   meta: Record<string, unknown> | null;
   created_at: string;
+}
+
+export interface TelegramClubMember {
+  id: string;
+  club_id: string;
+  telegram_user_id: number;
+  telegram_username: string | null;
+  telegram_first_name: string | null;
+  telegram_last_name: string | null;
+  in_chat: boolean;
+  in_channel: boolean;
+  joined_chat_at: string | null;
+  joined_channel_at: string | null;
+  profile_id: string | null;
+  link_status: string;
+  access_status: string;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+  profiles?: {
+    id: string;
+    user_id: string;
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+}
+
+export interface TelegramAccessGrant {
+  id: string;
+  user_id: string;
+  club_id: string;
+  source: string;
+  source_id: string | null;
+  granted_by: string | null;
+  start_at: string;
+  end_at: string | null;
+  status: string;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revoke_reason: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  telegram_clubs?: TelegramClub;
 }
 
 // Hooks
@@ -489,5 +538,136 @@ export function useCurrentUserTelegramStatus() {
         isLinked: !!profile?.telegram_user_id,
       };
     },
+  });
+}
+
+// Club Members hooks
+export function useClubMembers(clubId: string | null) {
+  return useQuery({
+    queryKey: ['telegram-club-members', clubId],
+    queryFn: async () => {
+      if (!clubId) return [];
+      const { data, error } = await supabase
+        .from('telegram_club_members')
+        .select('*, profiles(id, user_id, full_name, email, phone)')
+        .eq('club_id', clubId)
+        .order('access_status', { ascending: true })
+        .order('telegram_username', { ascending: true });
+
+      if (error) throw error;
+      return data as TelegramClubMember[];
+    },
+    enabled: !!clubId,
+  });
+}
+
+export function useSyncClubMembers() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (clubId: string) => {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'sync', club_id: clubId },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, clubId) => {
+      queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
+      queryClient.invalidateQueries({ queryKey: ['telegram-clubs'] });
+      if (data.chat_warning || data.channel_warning) {
+        toast.warning(data.chat_warning || data.channel_warning);
+      } else {
+        toast.success(`Синхронизировано: ${data.members_count} участников`);
+      }
+    },
+    onError: (error) => {
+      console.error('Sync error:', error);
+      toast.error('Ошибка синхронизации');
+    },
+  });
+}
+
+export function useKickViolators() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ clubId, memberIds }: { clubId: string; memberIds?: string[] }) => {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'kick', club_id: clubId, member_ids: memberIds },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, { clubId }) => {
+      queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
+      queryClient.invalidateQueries({ queryKey: ['telegram-clubs'] });
+      toast.success(`Удалено: ${data.kicked_count} участников`);
+    },
+    onError: (error) => {
+      console.error('Kick error:', error);
+      toast.error('Ошибка удаления');
+    },
+  });
+}
+
+export function usePreviewViolators(clubId: string | null) {
+  return useQuery({
+    queryKey: ['telegram-violators-preview', clubId],
+    queryFn: async () => {
+      if (!clubId) return { violators: [], count: 0 };
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'preview', club_id: clubId },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!clubId,
+  });
+}
+
+// Delete club
+export function useDeleteTelegramClub() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (clubId: string) => {
+      const { error } = await supabase
+        .from('telegram_clubs')
+        .delete()
+        .eq('id', clubId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['telegram-clubs'] });
+      toast.success('Клуб удалён');
+    },
+    onError: (error) => {
+      console.error('Delete club error:', error);
+      toast.error('Ошибка при удалении клуба');
+    },
+  });
+}
+
+// Access grants history
+export function useUserAccessGrants(userId: string | null) {
+  return useQuery({
+    queryKey: ['telegram-access-grants', userId],
+    queryFn: async () => {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('telegram_access_grants')
+        .select('*, telegram_clubs(*)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data as TelegramAccessGrant[];
+    },
+    enabled: !!userId,
   });
 }

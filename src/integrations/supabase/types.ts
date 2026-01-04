@@ -1196,6 +1196,68 @@ export type Database = {
           },
         ]
       }
+      telegram_access_grants: {
+        Row: {
+          club_id: string
+          created_at: string
+          end_at: string | null
+          granted_by: string | null
+          id: string
+          meta: Json | null
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          source: string
+          source_id: string | null
+          start_at: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          club_id: string
+          created_at?: string
+          end_at?: string | null
+          granted_by?: string | null
+          id?: string
+          meta?: Json | null
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          source?: string
+          source_id?: string | null
+          start_at?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          club_id?: string
+          created_at?: string
+          end_at?: string | null
+          granted_by?: string | null
+          id?: string
+          meta?: Json | null
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          source?: string
+          source_id?: string | null
+          start_at?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_access_grants_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_bots: {
         Row: {
           bot_id: number | null
@@ -1235,6 +1297,78 @@ export type Database = {
         }
         Relationships: []
       }
+      telegram_club_members: {
+        Row: {
+          access_status: string
+          club_id: string
+          created_at: string
+          id: string
+          in_channel: boolean | null
+          in_chat: boolean | null
+          joined_channel_at: string | null
+          joined_chat_at: string | null
+          last_synced_at: string | null
+          link_status: string
+          profile_id: string | null
+          telegram_first_name: string | null
+          telegram_last_name: string | null
+          telegram_user_id: number
+          telegram_username: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_status?: string
+          club_id: string
+          created_at?: string
+          id?: string
+          in_channel?: boolean | null
+          in_chat?: boolean | null
+          joined_channel_at?: string | null
+          joined_chat_at?: string | null
+          last_synced_at?: string | null
+          link_status?: string
+          profile_id?: string | null
+          telegram_first_name?: string | null
+          telegram_last_name?: string | null
+          telegram_user_id: number
+          telegram_username?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_status?: string
+          club_id?: string
+          created_at?: string
+          id?: string
+          in_channel?: boolean | null
+          in_chat?: boolean | null
+          joined_channel_at?: string | null
+          joined_chat_at?: string | null
+          last_synced_at?: string | null
+          link_status?: string
+          profile_id?: string | null
+          telegram_first_name?: string | null
+          telegram_last_name?: string | null
+          telegram_user_id?: number
+          telegram_username?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_club_members_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_club_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_clubs: {
         Row: {
           access_mode: string
@@ -1249,9 +1383,13 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          last_members_sync_at: string | null
+          members_count_channel: number | null
+          members_count_chat: number | null
           revoke_mode: string
           subscription_duration_days: number
           updated_at: string
+          violators_count: number | null
         }
         Insert: {
           access_mode?: string
@@ -1266,9 +1404,13 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          last_members_sync_at?: string | null
+          members_count_channel?: number | null
+          members_count_chat?: number | null
           revoke_mode?: string
           subscription_duration_days?: number
           updated_at?: string
+          violators_count?: number | null
         }
         Update: {
           access_mode?: string
@@ -1283,9 +1425,13 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          last_members_sync_at?: string | null
+          members_count_channel?: number | null
+          members_count_chat?: number | null
           revoke_mode?: string
           subscription_duration_days?: number
           updated_at?: string
+          violators_count?: number | null
         }
         Relationships: [
           {
