@@ -445,18 +445,21 @@ export function useRevokeTelegramAccess() {
   return useMutation({
     mutationFn: async ({
       userId,
+      telegramUserId,
       clubId,
       reason,
       isManual,
     }: {
-      userId: string;
-      clubId?: string;
+      userId?: string;
+      telegramUserId?: number;
+      clubId: string;
       reason?: string;
       isManual?: boolean;
     }) => {
       const { data, error } = await supabase.functions.invoke('telegram-revoke-access', {
         body: {
           user_id: userId,
+          telegram_user_id: telegramUserId,
           club_id: clubId,
           reason,
           is_manual: isManual,
@@ -467,9 +470,12 @@ export function useRevokeTelegramAccess() {
       return data;
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['telegram-access', variables.userId] });
-      queryClient.invalidateQueries({ queryKey: ['telegram-manual-access', variables.userId] });
+      if (variables.userId) {
+        queryClient.invalidateQueries({ queryKey: ['telegram-access', variables.userId] });
+        queryClient.invalidateQueries({ queryKey: ['telegram-manual-access', variables.userId] });
+      }
       queryClient.invalidateQueries({ queryKey: ['telegram-logs'] });
+      queryClient.invalidateQueries({ queryKey: ['club-members'] });
       toast.success('Доступ отозван');
     },
     onError: (error) => {
