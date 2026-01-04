@@ -32,6 +32,7 @@ import AdminContent from "./pages/admin/AdminContent";
 import AdminProducts from "./pages/admin/AdminProducts";
 import AdminDuplicates from "./pages/admin/AdminDuplicates";
 import AdminIntegrations from "./pages/admin/AdminIntegrations";
+import TelegramClubMembers from "./pages/admin/TelegramClubMembers";
 
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
@@ -91,6 +92,7 @@ const App = () => (
               <Route path="/admin/integrations/payments" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/integrations/email" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><TelegramClubMembers /></ProtectedRoute>} />
               
               {/* Legacy redirects */}
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />

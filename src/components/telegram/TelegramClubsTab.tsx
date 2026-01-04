@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,25 +29,34 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Settings, Trash2, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
   useCreateTelegramClub, 
   useUpdateTelegramClub,
+  TelegramClub,
 } from '@/hooks/useTelegramIntegration';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { HelpLabel, HelpIcon } from '@/components/help/HelpComponents';
+import { HelpLabel } from '@/components/help/HelpComponents';
+import { ClubSettingsDialog } from './ClubSettingsDialog';
 
 export function TelegramClubsTab() {
+  const navigate = useNavigate();
   const { data: clubs, isLoading } = useTelegramClubs();
   const { data: bots } = useTelegramBots();
   const createClub = useCreateTelegramClub();
   const updateClub = useUpdateTelegramClub();
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [editingClub, setEditingClub] = useState<string | null>(null);
+  const [editingClub, setEditingClub] = useState<TelegramClub | null>(null);
   const [newClub, setNewClub] = useState({
     club_name: '',
     bot_id: '',
@@ -291,13 +301,41 @@ export function TelegramClubsTab() {
                     />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingClub(club.id)}
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/admin/integrations/telegram/clubs/${club.id}/members`)}
+                            >
+                              <Users className="h-4 w-4" />
+                              {(club.violators_count ?? 0) > 0 && (
+                                <span className="ml-1 text-xs text-destructive">
+                                  {club.violators_count}
+                                </span>
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Участники</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingClub(club)}
+                            >
+                              <Settings className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Настройки</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -309,6 +347,13 @@ export function TelegramClubsTab() {
           </div>
         )}
       </CardContent>
+
+      {/* Settings Dialog */}
+      <ClubSettingsDialog 
+        club={editingClub}
+        bots={bots || []}
+        onClose={() => setEditingClub(null)}
+      />
     </Card>
   );
 }
