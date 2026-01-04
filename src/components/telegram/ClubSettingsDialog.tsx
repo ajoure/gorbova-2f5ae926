@@ -62,6 +62,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
   
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
+  const [membersView, setMembersView] = useState<'all' | 'clients'>('all');
   const [formData, setFormData] = useState({
     club_name: '',
     bot_id: '',
@@ -72,7 +73,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
     subscription_duration_days: 30,
   });
 
-  // Update form when club changes - use useEffect correctly
+  // Update form when club changes - useEffect
   useEffect(() => {
     if (club) {
       setFormData({
@@ -85,8 +86,9 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
         subscription_duration_days: club.subscription_duration_days,
       });
       setActiveTab('settings');
+      setMembersView('all');
     }
-  }, [club]);
+  }, [club?.id, club?.updated_at]);
 
   const handleSave = async () => {
     if (!club) return;
@@ -112,6 +114,10 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
   };
 
   const activeBots = bots.filter(b => b.status === 'active');
+
+  const clubMembers = members ?? [];
+  const clientsInClub = clubMembers.filter((m) => !!m.profiles && (m.in_chat || m.in_channel));
+  const displayedMembers = membersView === 'clients' ? clientsInClub : clubMembers;
 
   const getAccessStatusBadge = (status: string) => {
     switch (status) {
@@ -273,13 +279,24 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
             </TabsContent>
 
             <TabsContent value="members" className="mt-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm text-muted-foreground">
-                  {club?.last_members_sync_at ? (
-                    <>Последняя синхронизация: {new Date(club.last_members_sync_at).toLocaleString('ru-RU')}</>
-                  ) : (
-                    <>Синхронизация не выполнялась</>
-                  )}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-muted-foreground">
+                    {club?.last_members_sync_at ? (
+                      <>Последняя синхронизация: {new Date(club.last_members_sync_at).toLocaleString('ru-RU')}</>
+                    ) : (
+                      <>Синхронизация не выполнялась</>
+                    )}
+                  </div>
+                  <Select value={membersView} onValueChange={(v) => setMembersView(v as 'all' | 'clients')}>
+                    <SelectTrigger className="w-[170px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все участники</SelectItem>
+                      <SelectItem value="clients">Клиенты в клубе</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <Button 
                   variant="outline" 
@@ -296,12 +313,19 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                 </Button>
               </div>
 
+              <div className="flex flex-wrap gap-3 mb-3 text-sm text-muted-foreground">
+                <span>Всего: {clubMembers.length}</span>
+                <span>Клиенты: {clientsInClub.length}</span>
+                <span className="text-green-600">Должны иметь доступ: {clientsInClub.filter(m => m.access_status === 'ok').length}</span>
+                <span className="text-red-600">Без доступа: {clientsInClub.filter(m => m.access_status !== 'ok').length}</span>
+              </div>
+
               <ScrollArea className="h-[350px] rounded-md border">
                 {membersLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin" />
                   </div>
-                ) : members && members.length > 0 ? (
+                ) : displayedMembers && displayedMembers.length > 0 ? (
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -309,52 +333,67 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                         <TableHead>Клиент</TableHead>
                         <TableHead>Чат</TableHead>
                         <TableHead>Канал</TableHead>
-                        <TableHead>Статус доступа</TableHead>
+                        <TableHead>Должен иметь доступ</TableHead>
+                        <TableHead>Статус</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {members.map((member) => (
-                        <TableRow 
-                          key={member.id}
-                          className={member.access_status === 'no_access' ? 'bg-destructive/5' : ''}
-                        >
-                          <TableCell>
-                            <div className="font-medium">
-                              {member.telegram_first_name} {member.telegram_last_name}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {member.profiles ? (
-                              <div>
-                                <div className="text-sm">{member.profiles.full_name || member.profiles.email}</div>
-                                <div className="text-xs text-muted-foreground">{member.profiles.phone}</div>
+                      {displayedMembers.map((member) => {
+                        const shouldHaveAccess = !!member.profiles && member.access_status === 'ok';
+                        return (
+                          <TableRow 
+                            key={member.id}
+                            className={member.access_status === 'no_access' ? 'bg-destructive/5' : ''}
+                          >
+                            <TableCell>
+                              <div className="font-medium">
+                                {member.telegram_first_name} {member.telegram_last_name}
                               </div>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">Не привязан</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {member.in_chat ? (
-                              <CheckCircle className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <XCircle className="h-4 w-4 text-muted-foreground" />
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {member.in_channel ? (
-                              <CheckCircle className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <XCircle className="h-4 w-4 text-muted-foreground" />
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {getAccessStatusBadge(member.access_status)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                              <div className="text-sm text-muted-foreground">
+                                {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {member.profiles ? (
+                                <div>
+                                  <div className="text-sm">{member.profiles.full_name || member.profiles.email}</div>
+                                  <div className="text-xs text-muted-foreground">{member.profiles.phone}</div>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">Не привязан</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {member.in_chat ? (
+                                <CheckCircle className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {member.in_channel ? (
+                                <CheckCircle className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {shouldHaveAccess ? (
+                                <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
+                                  Должен
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20">
+                                  Не должен
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {getAccessStatusBadge(member.access_status)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 ) : (
