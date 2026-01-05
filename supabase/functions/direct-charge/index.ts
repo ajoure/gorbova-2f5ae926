@@ -214,11 +214,37 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Update order status
-      await supabase
+      // Mark order as paid (trial amount = 0 does not create a bePaid charge)
+      const { error: orderUpdateError } = await supabase
         .from('orders_v2')
-        .update({ status: 'completed' })
+        .update({ status: 'paid', paid_amount: 0 })
         .eq('id', order.id);
+
+      if (orderUpdateError) {
+        console.error('Order update error:', orderUpdateError);
+      }
+
+      // Create internal payment record for history/audit
+      const { error: trialPaymentError } = await supabase
+        .from('payments_v2')
+        .insert({
+          order_id: order.id,
+          user_id: user.id,
+          amount: 0,
+          currency: product.currency,
+          status: 'succeeded',
+          provider: 'bepaid',
+          payment_token: paymentMethod.provider_token,
+          is_recurring: false,
+          meta: {
+            kind: 'trial_activation_no_charge',
+            payment_method_id: paymentMethod.id,
+          },
+        });
+
+      if (trialPaymentError) {
+        console.error('Trial payment record error:', trialPaymentError);
+      }
 
       // Grant Telegram access
       if (product.telegram_club_id) {
@@ -286,23 +312,25 @@ Deno.serve(async (req) => {
     }
 
     // Call bePaid to charge the token
+    const baseUrl = 'https://checkout.bepaid.by/ctp/api';
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
-    const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
+
+    const chargeResponse = await fetch(`${baseUrl}/charges`, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${bepaidAuth}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'X-API-Version': '2',
       },
       body: JSON.stringify({
         request: {
-          amount: Math.round(amount * 100), // Convert to cents
+          amount: Math.round(amount * 100), // minimal currency units
           currency: product.currency,
-          description: isTrial 
-            ? `Trial: ${product.name} - ${tariff.name}` 
+          description: isTrial
+            ? `Trial: ${product.name} - ${tariff.name}`
             : `${product.name} - ${tariff.name}`,
           tracking_id: payment.id,
-          test: testMode,
           credit_card: {
             token: paymentMethod.provider_token,
           },
@@ -317,10 +345,10 @@ Deno.serve(async (req) => {
 
     if (txStatus === 'successful') {
       // Update payment
-      await supabase
+      const { error: payUpdateError } = await supabase
         .from('payments_v2')
         .update({
-          status: 'completed',
+          status: 'succeeded',
           paid_at: new Date().toISOString(),
           provider_payment_id: chargeResult.transaction.uid,
           provider_response: chargeResult,
@@ -329,14 +357,22 @@ Deno.serve(async (req) => {
         })
         .eq('id', payment.id);
 
+      if (payUpdateError) {
+        console.error('Payment update error:', payUpdateError);
+      }
+
       // Update order
-      await supabase
+      const { error: orderPaidError } = await supabase
         .from('orders_v2')
-        .update({ 
-          status: 'completed',
+        .update({
+          status: 'paid',
           paid_amount: amount,
         })
         .eq('id', order.id);
+
+      if (orderPaidError) {
+        console.error('Order paid update error:', orderPaidError);
+      }
 
       // Create subscription
       const accessDays = isTrial ? effectiveTrialDays : tariff.access_days;
