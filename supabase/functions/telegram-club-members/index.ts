@@ -101,16 +101,26 @@ async function getChatAdministrators(
 
 async function kickMember(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string; notMember?: boolean }> {
   try {
+    console.log(`Banning user ${userId} from chat ${chatId} (permanent, no unban)`);
+    
     const banResult = await telegramRequest(botToken, 'banChatMember', {
       chat_id: chatId,
       user_id: userId,
       revoke_messages: false,
+      // Ban for 366 days to prevent rejoin via old invite links
+      until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
     });
 
     if (!banResult.ok) {
       if (banResult.description?.includes('user is not a member') ||
           banResult.description?.includes('PARTICIPANT_NOT_EXISTS') ||
           banResult.description?.includes('USER_NOT_PARTICIPANT')) {
+        // User not in chat - still try preventive ban
+        await telegramRequest(botToken, 'banChatMember', {
+          chat_id: chatId,
+          user_id: userId,
+          until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
+        });
         return { success: true, notMember: true };
       }
       if (banResult.description?.includes('not enough rights')) {
@@ -119,12 +129,8 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
       return { success: false, error: banResult.description };
     }
 
-    // Immediately unban to allow rejoin with proper invite
-    await telegramRequest(botToken, 'unbanChatMember', {
-      chat_id: chatId,
-      user_id: userId,
-      only_if_banned: true,
-    });
+    // DO NOT UNBAN - this prevents rejoin via old invite links
+    // User will be unbanned when access is granted again via telegram-grant-access
 
     return { success: true };
   } catch (error) {

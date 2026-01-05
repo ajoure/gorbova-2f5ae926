@@ -17,28 +17,32 @@ async function telegramRequest(botToken: string, method: string, params: Record<
 }
 
 async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
-  console.log(`Kicking violator ${userId} from chat ${chatId}`);
+  console.log(`Banning violator ${userId} from chat ${chatId} (permanent, no unban)`);
   
   const result = await telegramRequest(botToken, 'banChatMember', {
     chat_id: chatId,
     user_id: userId,
+    // Ban for 366 days to prevent rejoin via old invite links
+    until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
   });
   
   if (!result.ok) {
     if (result.description?.includes('user is not a member') || 
         result.description?.includes('PARTICIPANT_NOT_EXISTS') ||
         result.description?.includes('USER_NOT_PARTICIPANT')) {
+      // Still try preventive ban
+      await telegramRequest(botToken, 'banChatMember', {
+        chat_id: chatId,
+        user_id: userId,
+        until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
+      });
       return { success: true };
     }
     return { success: false, error: result.description };
   }
   
-  // Immediately unban so they can rejoin later if they pay
-  await telegramRequest(botToken, 'unbanChatMember', {
-    chat_id: chatId,
-    user_id: userId,
-    only_if_banned: true,
-  });
+  // DO NOT UNBAN - this prevents rejoin via old invite links
+  // User will be unbanned when access is granted again via telegram-grant-access
   
   return { success: true };
 }
