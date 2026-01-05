@@ -95,3 +95,6 @@ verify_jwt = true
 
 [functions.telegram-link-manage]
 verify_jwt = false
+
+[functions.test-payment-complete]
+verify_jwt = false
