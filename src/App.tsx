@@ -42,7 +42,7 @@ import ProductClubMappings from "./pages/admin/ProductClubMappings";
 import TelegramChatAnalytics from "./pages/admin/TelegramChatAnalytics";
 import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
 import AdminProductsV2 from "./pages/admin/AdminProductsV2";
-import AdminProductDetail from "./pages/admin/AdminProductDetail";
+import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 import AdminPaymentsV2 from "./pages/admin/AdminPaymentsV2";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
@@ -122,7 +122,7 @@ const App = () => (
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/products" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
-              <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetail /></ProtectedRoute>} />
+              <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetailV2 /></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
