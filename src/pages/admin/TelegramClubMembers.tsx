@@ -464,6 +464,50 @@ export default function TelegramClubMembers() {
     refetch();
   };
 
+  // Single member kick from Telegram (for violators)
+  const handleKickSingleMember = async (member: TelegramClubMember) => {
+    if (!clubId) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: {
+          action: 'kick_present',
+          club_id: clubId,
+          member_ids: [member.id],
+        },
+      });
+
+      if (error) throw error;
+      toast.success(data.kicked_count > 0 ? 'Пользователь удалён из Telegram' : 'Пользователь не найден в чате/канале');
+      refetch();
+    } catch (e) {
+      console.error('Kick single member error:', e);
+      toast.error('Ошибка при удалении из Telegram');
+    }
+  };
+
+  // Single member mark as removed
+  const handleMarkSingleRemoved = async (member: TelegramClubMember) => {
+    if (!clubId) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke('telegram-club-members', {
+        body: {
+          action: 'mark_removed',
+          club_id: clubId,
+          member_ids: [member.id],
+        },
+      });
+
+      if (error) throw error;
+      toast.success('Пользователь помечен как удалённый');
+      refetch();
+    } catch (e) {
+      console.error('Mark removed error:', e);
+      toast.error('Ошибка при пометке удаления');
+    }
+  };
+
   // Calculate selected members present in chat/channel
   const selectedPresentMembers = useMemo(() => {
     return selectedMembers.filter(m => m.in_chat || m.in_channel);
@@ -946,23 +990,46 @@ export default function TelegramClubMembers() {
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem 
-                              onClick={() => {
-                                revokeAccess.mutate({
-                                  userId: member.profiles?.user_id,
-                                  telegramUserId: member.telegram_user_id,
-                                  clubId: clubId!,
-                                  reason: 'Ручной отзыв',
-                                  isManual: true,
-                                }, {
-                                  onSuccess: () => refetch()
-                                });
-                              }}
-                              className="text-destructive"
-                            >
-                              <Ban className="h-4 w-4 mr-2" />
-                              Отозвать доступ и удалить
-                            </DropdownMenuItem>
+                            {/* Для пользователей с доступом - отозвать и удалить */}
+                            {member.access_status === 'ok' && (
+                              <DropdownMenuItem 
+                                onClick={() => {
+                                  revokeAccess.mutate({
+                                    userId: member.profiles?.user_id,
+                                    telegramUserId: member.telegram_user_id,
+                                    clubId: clubId!,
+                                    reason: 'Ручной отзыв',
+                                    isManual: true,
+                                  }, {
+                                    onSuccess: () => refetch()
+                                  });
+                                }}
+                                className="text-destructive"
+                              >
+                                <Ban className="h-4 w-4 mr-2" />
+                                Отозвать доступ и удалить
+                              </DropdownMenuItem>
+                            )}
+                            {/* Для нарушителей (без доступа, но в чате/канале) - удалить из Telegram */}
+                            {member.access_status !== 'ok' && (member.in_chat || member.in_channel) && (
+                              <DropdownMenuItem 
+                                onClick={() => handleKickSingleMember(member)}
+                                className="text-destructive"
+                              >
+                                <Ban className="h-4 w-4 mr-2" />
+                                Удалить из Telegram
+                              </DropdownMenuItem>
+                            )}
+                            {/* Для удалённых без присутствия - пометить удалённым */}
+                            {member.access_status !== 'ok' && !member.in_chat && !member.in_channel && (
+                              <DropdownMenuItem 
+                                onClick={() => handleMarkSingleRemoved(member)}
+                                className="text-muted-foreground"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Пометить удалённым
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
