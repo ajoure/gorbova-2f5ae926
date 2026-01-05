@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { 
   ArrowLeft, Plus, Pencil, Trash2, Tag, Clock, CreditCard, 
-  Calendar, Users, DollarSign, Percent, Check
+  Calendar, Users, DollarSign, Percent, Check, MousePointer, Eye, Globe
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -29,6 +29,14 @@ import {
   useFlows, useCreateFlow, useUpdateFlow, useDeleteFlow,
   PRICING_STAGE_TYPE_LABELS, PAYMENT_PLAN_TYPE_LABELS,
 } from "@/hooks/useProductsV2";
+import {
+  useProductOffers,
+  useCreateTariffOffer,
+  useUpdateTariffOffer,
+  useDeleteTariffOffer,
+  type TariffOffer,
+  type TariffOfferInsert,
+} from "@/hooks/useTariffOffers";
 import type { Database } from "@/integrations/supabase/types";
 
 type PricingStageType = Database["public"]["Enums"]["pricing_stage_type"];
@@ -42,7 +50,12 @@ export default function AdminProductDetail() {
   const { data: tariffs } = useTariffs(productId);
   const { data: pricingStages } = usePricingStages(productId);
   const { data: flows } = useFlows(productId);
+  const { data: offers, refetch: refetchOffers } = useProductOffers(productId);
 
+  // Offer mutations
+  const createOffer = useCreateTariffOffer();
+  const updateOffer = useUpdateTariffOffer();
+  const deleteOffer = useDeleteTariffOffer();
   // Mutations
   const createTariff = useCreateTariff();
   const updateTariff = useUpdateTariff();
@@ -58,6 +71,7 @@ export default function AdminProductDetail() {
   const [tariffDialog, setTariffDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [stageDialog, setStageDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [flowDialog, setFlowDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
+  const [offerDialog, setOfferDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
 
   // Tariff form
@@ -91,6 +105,20 @@ export default function AdminProductDetail() {
     end_date: "",
     max_participants: null as number | null,
     is_default: false,
+    is_active: true,
+  });
+
+  // Offer form
+  const [offerForm, setOfferForm] = useState({
+    tariff_id: "",
+    offer_type: "pay_now" as "pay_now" | "trial",
+    button_label: "",
+    amount: 0,
+    trial_days: 5,
+    auto_charge_after_trial: true,
+    auto_charge_amount: 0,
+    auto_charge_delay_days: 5,
+    requires_card_tokenization: false,
     is_active: true,
   });
 
@@ -260,6 +288,70 @@ export default function AdminProductDetail() {
     setFlowDialog({ open: false, editing: null });
   };
 
+  // Offer dialog handlers
+  const openOfferDialog = (offer?: any) => {
+    if (offer) {
+      setOfferForm({
+        tariff_id: offer.tariff_id,
+        offer_type: offer.offer_type,
+        button_label: offer.button_label,
+        amount: offer.amount,
+        trial_days: offer.trial_days || 5,
+        auto_charge_after_trial: offer.auto_charge_after_trial,
+        auto_charge_amount: offer.auto_charge_amount || 0,
+        auto_charge_delay_days: offer.auto_charge_delay_days || 5,
+        requires_card_tokenization: offer.requires_card_tokenization,
+        is_active: offer.is_active,
+      });
+      setOfferDialog({ open: true, editing: offer });
+    } else {
+      setOfferForm({
+        tariff_id: tariffs?.[0]?.id || "",
+        offer_type: "pay_now",
+        button_label: "Оплатить",
+        amount: 0,
+        trial_days: 5,
+        auto_charge_after_trial: true,
+        auto_charge_amount: 0,
+        auto_charge_delay_days: 5,
+        requires_card_tokenization: false,
+        is_active: true,
+      });
+      setOfferDialog({ open: true, editing: null });
+    }
+  };
+
+  const handleSaveOffer = async () => {
+    if (!offerForm.tariff_id || !offerForm.button_label) {
+      toast.error("Заполните обязательные поля");
+      return;
+    }
+    
+    const data: TariffOfferInsert = {
+      tariff_id: offerForm.tariff_id,
+      offer_type: offerForm.offer_type,
+      button_label: offerForm.button_label,
+      amount: offerForm.amount,
+      trial_days: offerForm.offer_type === "trial" ? offerForm.trial_days : null,
+      auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
+      auto_charge_amount: offerForm.offer_type === "trial" ? offerForm.auto_charge_amount : null,
+      auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
+      requires_card_tokenization: offerForm.offer_type === "trial" ? true : offerForm.requires_card_tokenization,
+      is_active: offerForm.is_active,
+      visible_from: null,
+      visible_to: null,
+      sort_order: offerForm.offer_type === "trial" ? 1 : 0,
+    };
+
+    if (offerDialog.editing) {
+      await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
+    } else {
+      await createOffer.mutateAsync(data);
+    }
+    setOfferDialog({ open: false, editing: null });
+    refetchOffers();
+  };
+
   const handleDelete = async () => {
     if (!deleteConfirm) return;
     
@@ -272,6 +364,10 @@ export default function AdminProductDetail() {
         break;
       case "flow":
         await deleteFlow.mutateAsync(deleteConfirm.id);
+        break;
+      case "offer":
+        await deleteOffer.mutateAsync(deleteConfirm.id);
+        refetchOffers();
         break;
     }
     setDeleteConfirm(null);
@@ -304,6 +400,10 @@ export default function AdminProductDetail() {
               <Tag className="h-4 w-4" />
               Тарифы
             </TabsTrigger>
+            <TabsTrigger value="offers" className="gap-2">
+              <MousePointer className="h-4 w-4" />
+              Кнопки оплаты
+            </TabsTrigger>
             <TabsTrigger value="pricing" className="gap-2">
               <DollarSign className="h-4 w-4" />
               Ценообразование
@@ -311,6 +411,10 @@ export default function AdminProductDetail() {
             <TabsTrigger value="flows" className="gap-2">
               <Users className="h-4 w-4" />
               Потоки
+            </TabsTrigger>
+            <TabsTrigger value="preview" className="gap-2">
+              <Eye className="h-4 w-4" />
+              Превью
             </TabsTrigger>
           </TabsList>
 
@@ -341,6 +445,96 @@ export default function AdminProductDetail() {
                     onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
                   />
                 ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Offers Tab */}
+          <TabsContent value="offers" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-semibold">Кнопки оплаты</h2>
+                <p className="text-sm text-muted-foreground">
+                  Настройте варианты покупки для каждого тарифа (оплата / trial)
+                </p>
+              </div>
+              <Button onClick={() => openOfferDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Добавить кнопку
+              </Button>
+            </div>
+
+            {!offers?.length ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  Нет кнопок оплаты. Создайте кнопки для отображения на сайте.
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {tariffs?.map((tariff) => {
+                  const tariffOffers = offers.filter((o: any) => o.tariff_id === tariff.id);
+                  if (!tariffOffers.length) return null;
+                  
+                  return (
+                    <Card key={tariff.id}>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Tag className="h-4 w-4" />
+                          {tariff.name}
+                          <code className="text-xs bg-muted px-2 py-0.5 rounded ml-2">{tariff.code}</code>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {tariffOffers.map((offer: any) => (
+                            <div key={offer.id} className="flex items-center justify-between p-3 border rounded-lg">
+                              <div className="flex items-center gap-4">
+                                <Badge variant={offer.offer_type === "trial" ? "secondary" : "default"}>
+                                  {offer.offer_type === "trial" ? "Trial" : "Оплата"}
+                                </Badge>
+                                <div>
+                                  <div className="font-medium">{offer.button_label}</div>
+                                  <div className="text-sm text-muted-foreground">
+                                    {offer.amount} BYN
+                                    {offer.offer_type === "trial" && (
+                                      <>
+                                        {" "}• {offer.trial_days} дней
+                                        {offer.auto_charge_after_trial && (
+                                          <span className="text-orange-600">
+                                            {" "}→ автосписание {offer.auto_charge_amount} BYN
+                                          </span>
+                                        )}
+                                      </>
+                                    )}
+                                    {offer.requires_card_tokenization && (
+                                      <span className="text-blue-600"> • токенизация</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={offer.is_active ? "default" : "outline"}>
+                                  {offer.is_active ? "Активна" : "Неактивна"}
+                                </Badge>
+                                <Button variant="ghost" size="icon" onClick={() => openOfferDialog(offer)}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => setDeleteConfirm({ type: "offer", id: offer.id })}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -490,6 +684,100 @@ export default function AdminProductDetail() {
                 </TableBody>
               </Table>
             )}
+          </TabsContent>
+
+          {/* Preview Tab */}
+          <TabsContent value="preview" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-semibold">Превью секции тарифов</h2>
+                <p className="text-sm text-muted-foreground">
+                  Так будет выглядеть секция на сайте {(product as any).primary_domain || ""}
+                </p>
+              </div>
+              {(product as any).primary_domain && (
+                <Button variant="outline" asChild>
+                  <a href={`https://${(product as any).primary_domain}`} target="_blank" rel="noopener noreferrer">
+                    <Globe className="h-4 w-4 mr-2" />
+                    Открыть сайт
+                  </a>
+                </Button>
+              )}
+            </div>
+
+            <Card className="p-8 bg-gradient-to-br from-background to-muted/30">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold mb-2">
+                  {(product as any).public_title || "Тарифы"}
+                </h2>
+                <p className="text-muted-foreground">
+                  {(product as any).public_subtitle || "Выберите подходящий вариант"}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {tariffs?.filter(t => t.is_active).map((tariff: any) => {
+                  const tariffOffers = offers?.filter((o: any) => o.tariff_id === tariff.id && o.is_active) || [];
+                  const mainOffer = tariffOffers.find((o: any) => o.offer_type === "pay_now");
+                  const trialOffer = tariffOffers.find((o: any) => o.offer_type === "trial");
+
+                  return (
+                    <Card key={tariff.id} className="relative overflow-hidden">
+                      {tariff.badge && (
+                        <div className="absolute top-0 right-0 bg-primary text-primary-foreground px-3 py-1 text-xs font-medium rounded-bl-lg">
+                          {tariff.badge}
+                        </div>
+                      )}
+                      <CardHeader>
+                        <CardTitle>{tariff.name}</CardTitle>
+                        {tariff.subtitle && (
+                          <CardDescription>{tariff.subtitle}</CardDescription>
+                        )}
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="text-3xl font-bold">
+                          {tariff.price_monthly || "—"} 
+                          <span className="text-sm font-normal text-muted-foreground ml-1">
+                            {tariff.period_label || "BYN/мес"}
+                          </span>
+                        </div>
+                        
+                        {tariff.features && Array.isArray(tariff.features) && (
+                          <ul className="space-y-2">
+                            {(tariff.features as string[]).map((feature, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm">
+                                <Check className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                                <span>{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <div className="space-y-2 pt-4">
+                          {mainOffer && (
+                            <Button className="w-full">{mainOffer.button_label}</Button>
+                          )}
+                          {trialOffer && (
+                            <Button variant="outline" className="w-full">
+                              {trialOffer.button_label}
+                            </Button>
+                          )}
+                          {!mainOffer && !trialOffer && (
+                            <Button className="w-full" disabled>Нет кнопок</Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {(product as any).payment_disclaimer_text && (
+                <p className="text-center text-sm text-muted-foreground mt-8">
+                  {(product as any).payment_disclaimer_text}
+                </p>
+              )}
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
@@ -746,6 +1034,156 @@ export default function AdminProductDetail() {
             </Button>
             <Button onClick={handleSaveFlow}>
               {flowDialog.editing ? "Сохранить" : "Создать"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Offer Dialog */}
+      <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
+            </DialogTitle>
+            <DialogDescription>
+              Настройте вариант покупки для тарифа
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Тариф *</Label>
+              <Select
+                value={offerForm.tariff_id}
+                onValueChange={(v) => setOfferForm({ ...offerForm, tariff_id: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите тариф" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tariffs?.map((tariff) => (
+                    <SelectItem key={tariff.id} value={tariff.id}>
+                      {tariff.name} ({tariff.code})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Тип кнопки *</Label>
+              <Select
+                value={offerForm.offer_type}
+                onValueChange={(v: "pay_now" | "trial") => {
+                  setOfferForm({ 
+                    ...offerForm, 
+                    offer_type: v,
+                    button_label: v === "trial" ? "Демо-доступ 1 BYN / 5 дней" : "Оплатить",
+                    requires_card_tokenization: v === "trial",
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
+                  <SelectItem value="trial">Trial (пробный период)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Текст кнопки *</Label>
+                <Input
+                  placeholder="Оплатить"
+                  value={offerForm.button_label}
+                  onChange={(e) => setOfferForm({ ...offerForm, button_label: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Сумма (BYN) *</Label>
+                <Input
+                  type="number"
+                  value={offerForm.amount}
+                  onChange={(e) => setOfferForm({ ...offerForm, amount: parseFloat(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            {offerForm.offer_type === "trial" && (
+              <>
+                <div className="border-t pt-4">
+                  <h4 className="font-medium mb-3">Настройки Trial</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Дней trial</Label>
+                      <Input
+                        type="number"
+                        value={offerForm.trial_days}
+                        onChange={(e) => setOfferForm({ ...offerForm, trial_days: parseInt(e.target.value) || 5 })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Автосписание через (дней)</Label>
+                      <Input
+                        type="number"
+                        value={offerForm.auto_charge_delay_days}
+                        onChange={(e) => setOfferForm({ ...offerForm, auto_charge_delay_days: parseInt(e.target.value) || 5 })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={offerForm.auto_charge_after_trial}
+                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, auto_charge_after_trial: checked })}
+                  />
+                  <Label>Автосписание после trial</Label>
+                </div>
+
+                {offerForm.auto_charge_after_trial && (
+                  <div className="space-y-2">
+                    <Label>Сумма автосписания (BYN)</Label>
+                    <Input
+                      type="number"
+                      value={offerForm.auto_charge_amount}
+                      onChange={(e) => setOfferForm({ ...offerForm, auto_charge_amount: parseFloat(e.target.value) || 0 })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Обычно равна полной стоимости тарифа
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={offerForm.requires_card_tokenization}
+                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                  />
+                  <Label>Требуется токенизация карты</Label>
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                checked={offerForm.is_active}
+                onCheckedChange={(checked) => setOfferForm({ ...offerForm, is_active: checked })}
+              />
+              <Label>Активна</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOfferDialog({ open: false, editing: null })}>
+              Отмена
+            </Button>
+            <Button onClick={handleSaveOffer}>
+              {offerDialog.editing ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
         </DialogContent>
