@@ -1,22 +1,64 @@
-import { ReactNode } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { ReactNode, useMemo } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { usePermissions } from "@/hooks/usePermissions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
 import { Loader2, HelpCircle } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { useHelpMode } from "@/contexts/HelpModeContext";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 
 interface AdminLayoutProps {
   children: ReactNode;
 }
 
+// Map admin routes to help section anchors
+const routeToHelpAnchor: Record<string, string> = {
+  '/admin/users': 'admin-impersonate',
+  '/admin/deals': 'orders',
+  '/admin/contacts': 'admin',
+  '/admin/orders': 'orders',
+  '/admin/orders-v2': 'orders',
+  '/admin/payments': 'orders',
+  '/admin/payments-v2': 'orders',
+  '/admin/products': 'admin',
+  '/admin/products-v2': 'admin',
+  '/admin/subscriptions-v2': 'subscriptions',
+  '/admin/entitlements': 'admin',
+  '/admin/duplicates': 'duplicates',
+  '/admin/integrations': 'integrations',
+  '/admin/amocrm': 'amocrm',
+  '/admin/telegram/bots': 'telegram-bots',
+  '/admin/telegram/clubs': 'telegram-clubs',
+  '/admin/telegram/invites': 'telegram-notifications',
+  '/admin/telegram/members': 'telegram-clubs',
+  '/admin/telegram/logs': 'telegram-bots',
+  '/admin/telegram/mtproto': 'telegram-bots',
+  '/admin/email': 'email',
+  '/admin/content': 'admin',
+  '/admin/roles': 'roles',
+  '/admin/fields': 'integrations-mapping',
+  '/admin/audit': 'admin',
+};
+
 export function AdminLayout({ children }: AdminLayoutProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { hasAdminAccess, loading } = usePermissions();
-  const { helpMode, toggleHelpMode } = useHelpMode();
+
+  // Get the help anchor for the current route
+  const helpAnchor = useMemo(() => {
+    const path = location.pathname;
+    // Check for exact match first
+    if (routeToHelpAnchor[path]) {
+      return routeToHelpAnchor[path];
+    }
+    // Check for prefix match (for nested routes)
+    for (const [route, anchor] of Object.entries(routeToHelpAnchor)) {
+      if (path.startsWith(route)) {
+        return anchor;
+      }
+    }
+    return 'admin';
+  }, [location.pathname]);
 
   if (loading) {
     return (
@@ -41,41 +83,22 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               <SidebarTrigger className="mr-3 md:mr-4 shrink-0" />
               <h2 className="text-base md:text-lg font-semibold truncate">Админ-панель</h2>
             </div>
-            <div className="flex items-center gap-2 md:gap-4 shrink-0">
-              {/* Help mode toggle */}
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="help-mode"
-                        checked={helpMode}
-                        onCheckedChange={toggleHelpMode}
-                        className="data-[state=checked]:bg-primary"
-                      />
-                      <Label 
-                        htmlFor="help-mode" 
-                        className="text-sm text-muted-foreground cursor-pointer hidden md:inline"
-                      >
-                        Подсказки
-                      </Label>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {helpMode ? 'Скрыть подсказки' : 'Показать подсказки'}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              {/* Help link */}
-              <Link 
-                to="/help" 
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                title="Помощь"
-              >
-                <HelpCircle className="h-5 w-5" />
-              </Link>
-            </div>
+            {/* Contextual help link */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link 
+                    to={`/help#${helpAnchor}`}
+                    className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                  >
+                    <HelpCircle className="h-5 w-5" />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Помощь по текущему разделу
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </header>
           <div className="flex-1 p-4 md:p-6 overflow-auto">
             {children}
