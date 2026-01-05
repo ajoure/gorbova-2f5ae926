@@ -273,7 +273,7 @@ export default function AdminProductsV2() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {product.telegram_clubs?.name || (
+                        {(product.telegram_clubs as any)?.club_name || (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>

@@ -17,7 +17,7 @@ export function useProductsV2() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products_v2")
-        .select("*, telegram_clubs(name)")
+        .select("*, telegram_clubs(club_name)")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -32,7 +32,7 @@ export function useProductV2(productId: string | null) {
       if (!productId) return null;
       const { data, error } = await supabase
         .from("products_v2")
-        .select("*, telegram_clubs(name)")
+        .select("*, telegram_clubs(club_name)")
         .eq("id", productId)
         .single();
       if (error) throw error;
