@@ -206,11 +206,11 @@ Deno.serve(async (req) => {
     console.log('Created order:', order.id, 'for user:', userId);
 
     // Create bePaid checkout token for recurring/subscription payment
-    // Using 'tokenization' transaction type to save card for recurring charges
+    // Using subscription with 30-day recurring interval
     const bepaidPayload = {
       checkout: {
         test: testMode,
-        transaction_type: 'tokenization', // Changed from 'payment' to enable recurring
+        transaction_type: 'payment', // Use payment for initial charge
         attempts: 3,
         settings: {
           return_url: `${origin}${successUrl}`,
@@ -221,8 +221,9 @@ Deno.serve(async (req) => {
           customer_fields: {
             read_only: ['email'],
           },
+          recurring_mode: true, // Enable recurring payments
           save_card_toggle: {
-            display: false, // Don't show toggle, always save for subscriptions
+            display: false, // Always save card for subscriptions
           },
         },
         order: {
@@ -236,6 +237,16 @@ Deno.serve(async (req) => {
           first_name: customerFirstName || undefined,
           last_name: customerLastName || undefined,
           phone: customerPhone || undefined,
+        },
+        // Subscription plan for 30-day recurring payments
+        subscription: {
+          plan: {
+            amount: product.price_byn,
+            currency: product.currency,
+            interval: 30,
+            interval_unit: 'day',
+            description: `Ежемесячная подписка: ${product.name}`,
+          },
         },
       },
     };
