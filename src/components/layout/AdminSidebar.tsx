@@ -33,6 +33,8 @@ import {
   Plug,
   Copy,
   Database,
+  CreditCard,
+  ClipboardList,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -216,6 +218,63 @@ export function AdminSidebar() {
                       >
                         <Package className="h-5 w-5 shrink-0" />
                         {!collapsed && <span>Продукты v2</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  
+                  {/* Заказы v2 */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/orders-v2"}
+                      tooltip={collapsed ? "Заказы" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/orders-v2"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <ClipboardList className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Заказы</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+
+                  {/* Платежи v2 */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/payments-v2"}
+                      tooltip={collapsed ? "Платежи" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/payments-v2"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <CreditCard className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Платежи</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+
+                  {/* Подписки v2 */}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/subscriptions-v2"}
+                      tooltip={collapsed ? "Подписки" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/subscriptions-v2"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Users className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Подписки</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
