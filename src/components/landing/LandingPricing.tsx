@@ -271,153 +271,169 @@ export function LandingPricing() {
           </p>
         </AnimatedSection>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
           {hasDynamicTariffs
             ? // Dynamic tariffs from DB
-              tariffs.map((tariff, index) => {
-                const visibleFeatures = tariff.features.filter(isFeatureVisible);
-                const price = tariff.current_price || tariff.original_price || 0;
-                const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now");
-                const trialOffer = tariff.offers?.find((o) => o.offer_type === "trial");
+              (() => {
+                // Check if any tariff has trial
+                const anyHasTrial = tariffs.some(t => t.offers?.some(o => o.offer_type === "trial"));
+                
+                return tariffs.map((tariff, index) => {
+                  const visibleFeatures = tariff.features.filter(isFeatureVisible);
+                  const price = tariff.current_price || tariff.original_price || 0;
+                  const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now");
+                  const trialOffer = tariff.offers?.find((o) => o.offer_type === "trial");
 
-                return (
-                  <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 150}>
-                    <div
-                      className={`relative p-6 rounded-2xl border transition-all duration-300 hover:shadow-xl h-full flex flex-col ${
-                        tariff.is_popular
-                          ? "border-primary shadow-lg scale-105"
-                          : "border-border/50"
-                      }`}
-                      style={{
-                        background:
-                          "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))",
-                        backdropFilter: "blur(20px)",
-                      }}
-                    >
-                      {tariff.badge && (
-                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-primary text-primary-foreground text-sm font-medium flex items-center gap-1">
-                          <Star size={14} />
-                          {tariff.badge}
-                        </div>
-                      )}
-
-                      <div className="text-center mb-6">
-                        <h3 className="text-xl font-bold text-foreground mb-2">
-                          {tariff.name}
-                        </h3>
-                        {tariff.subtitle && (
-                          <p className="text-sm text-muted-foreground mb-4">
-                            {tariff.subtitle}
-                          </p>
+                  return (
+                    <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 150}>
+                      <div
+                        className={`relative p-6 rounded-2xl border transition-all duration-300 hover:shadow-xl h-full flex flex-col ${
+                          tariff.is_popular
+                            ? "border-primary shadow-lg scale-105"
+                            : "border-border/50"
+                        }`}
+                        style={{
+                          background:
+                            "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))",
+                          backdropFilter: "blur(20px)",
+                        }}
+                      >
+                        {tariff.badge && (
+                          <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-primary text-primary-foreground text-sm font-medium flex items-center gap-1 z-10">
+                            <Star size={14} />
+                            {tariff.badge}
+                          </div>
                         )}
-                        <div className="flex items-baseline justify-center gap-1">
-                          <span className="text-4xl font-bold text-foreground">{price}</span>
-                          <span className="text-muted-foreground">
-                            {tariff.period_label || "BYN/мес"}
-                          </span>
-                        </div>
-                      </div>
 
-                      <ul className="space-y-3 mb-6 flex-1">
-                        {visibleFeatures.map((feature) => (
-                          <li
-                            key={feature.id}
-                            className={`flex items-start gap-2 ${
-                              feature.link_url ? "cursor-pointer hover:text-primary" : ""
-                            }`}
-                            onClick={() => feature.link_url && window.open(feature.link_url, "_blank")}
-                          >
-                            <div
-                              className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                                feature.is_bonus
-                                  ? "bg-amber-500/20"
-                                  : "bg-primary/10"
+                        <div className="text-center mb-6">
+                          <h3 className="text-xl font-bold text-foreground mb-2">
+                            {tariff.name}
+                          </h3>
+                          {tariff.subtitle && (
+                            <p className="text-sm text-muted-foreground mb-4">
+                              {tariff.subtitle}
+                            </p>
+                          )}
+                          <div className="flex items-baseline justify-center gap-1">
+                            <span className="text-4xl font-bold text-foreground">{price}</span>
+                            <span className="text-muted-foreground">
+                              {tariff.period_label || "BYN/мес"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Features - flex-1 to push buttons to bottom */}
+                        <ul className="space-y-3 flex-1">
+                          {visibleFeatures.map((feature) => (
+                            <li
+                              key={feature.id}
+                              className={`flex items-start gap-2 ${
+                                feature.link_url ? "cursor-pointer hover:text-primary" : ""
                               }`}
+                              onClick={() => feature.link_url && window.open(feature.link_url, "_blank")}
                             >
-                              {feature.is_bonus ? (
-                                <Gift className="text-amber-500" size={12} />
+                              <div
+                                className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                                  feature.is_bonus
+                                    ? "bg-amber-500/20"
+                                    : "bg-primary/10"
+                                }`}
+                              >
+                                {feature.is_bonus ? (
+                                  <Gift className="text-amber-500" size={12} />
+                                ) : (
+                                  <Check className="text-primary" size={12} />
+                                )}
+                              </div>
+                              <span
+                                className={`text-sm ${
+                                  feature.is_bonus
+                                    ? "text-foreground font-medium"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {feature.text}
+                                {feature.label && (
+                                  <span className="ml-1 text-xs text-amber-600">
+                                    {feature.label}
+                                  </span>
+                                )}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+
+                        {/* Buttons Container - always at bottom */}
+                        <div className="mt-6 space-y-2">
+                          {/* Primary Button Row - fixed height for alignment */}
+                          <div className="h-10">
+                            {payOffer ? (
+                              <Button
+                                onClick={() =>
+                                  handleSelectPlan(
+                                    tariff.name,
+                                    String(payOffer.amount),
+                                    tariff.code,
+                                    productData?.product?.id
+                                  )
+                                }
+                                className="w-full h-full gap-2"
+                                variant={tariff.is_popular ? "default" : "outline"}
+                              >
+                                <CreditCard size={16} />
+                                {payOffer.button_label}
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() =>
+                                  handleSelectPlan(
+                                    tariff.name,
+                                    String(price),
+                                    tariff.code,
+                                    productData?.product?.id
+                                  )
+                                }
+                                className="w-full h-full gap-2"
+                                variant={tariff.is_popular ? "default" : "outline"}
+                              >
+                                <CreditCard size={16} />
+                                Оплатить
+                              </Button>
+                            )}
+                          </div>
+                          
+                          {/* Trial Button Row - reserve space if any tariff has trial */}
+                          {anyHasTrial && (
+                            <div className="h-10">
+                              {trialOffer ? (
+                                <Button
+                                  onClick={() =>
+                                    handleSelectPlan(
+                                      tariff.name,
+                                      String(trialOffer.amount),
+                                      tariff.code,
+                                      productData?.product?.id,
+                                      true,
+                                      trialOffer.trial_days || 5
+                                    )
+                                  }
+                                  className="w-full h-full gap-2"
+                                  variant="secondary"
+                                >
+                                  <Zap size={16} />
+                                  {trialOffer.button_label}
+                                </Button>
                               ) : (
-                                <Check className="text-primary" size={12} />
+                                <div className="h-full" /> /* Empty space for alignment */
                               )}
                             </div>
-                            <span
-                              className={`text-sm ${
-                                feature.is_bonus
-                                  ? "text-foreground font-medium"
-                                  : "text-muted-foreground"
-                              }`}
-                            >
-                              {feature.text}
-                              {feature.label && (
-                                <span className="ml-1 text-xs text-amber-600">
-                                  {feature.label}
-                                </span>
-                              )}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-
-                      {/* Buttons from tariff_offers */}
-                      <div className="space-y-2">
-                        {payOffer && (
-                          <Button
-                            onClick={() =>
-                              handleSelectPlan(
-                                tariff.name,
-                                String(payOffer.amount),
-                                tariff.code,
-                                productData?.product?.id
-                              )
-                            }
-                            className="w-full gap-2"
-                            variant={tariff.is_popular ? "default" : "outline"}
-                          >
-                            <CreditCard size={16} />
-                            {payOffer.button_label}
-                          </Button>
-                        )}
-                        {trialOffer && (
-                          <Button
-                            onClick={() =>
-                              handleSelectPlan(
-                                tariff.name,
-                                String(trialOffer.amount),
-                                tariff.code,
-                                productData?.product?.id,
-                                true,
-                                trialOffer.trial_days || 5
-                              )
-                            }
-                            className="w-full gap-2"
-                            variant="secondary"
-                          >
-                            <Zap size={16} />
-                            {trialOffer.button_label}
-                          </Button>
-                        )}
-                        {!payOffer && !trialOffer && (
-                          <Button
-                            onClick={() =>
-                              handleSelectPlan(
-                                tariff.name,
-                                String(price),
-                                tariff.code,
-                                productData?.product?.id
-                              )
-                            }
-                            className="w-full gap-2"
-                            variant={tariff.is_popular ? "default" : "outline"}
-                          >
-                            <CreditCard size={16} />
-                            Оплатить
-                          </Button>
-                        )}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </AnimatedSection>
-                );
-              })
+                    </AnimatedSection>
+                  );
+                });
+              })()
             : // Fallback static plans
               fallbackPlans.map((plan, index) => (
                 <AnimatedSection key={index} animation="fade-up" delay={index * 150}>
