@@ -1031,6 +1031,7 @@ export type Database = {
           payment_plan_id: string | null
           pricing_stage_id: string | null
           product_id: string | null
+          purchase_snapshot: Json | null
           status: Database["public"]["Enums"]["order_status"]
           tariff_id: string | null
           trial_end_at: string | null
@@ -1055,6 +1056,7 @@ export type Database = {
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
+          purchase_snapshot?: Json | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
@@ -1079,6 +1081,7 @@ export type Database = {
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
+          purchase_snapshot?: Json | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
@@ -1439,33 +1442,54 @@ export type Database = {
         Row: {
           code: string
           created_at: string
+          currency: string
           description: string | null
           id: string
           is_active: boolean
           meta: Json | null
           name: string
+          payment_disclaimer_text: string | null
+          primary_domain: string | null
+          public_subtitle: string | null
+          public_title: string | null
+          slug: string | null
+          status: string
           telegram_club_id: string | null
           updated_at: string
         }
         Insert: {
           code: string
           created_at?: string
+          currency?: string
           description?: string | null
           id?: string
           is_active?: boolean
           meta?: Json | null
           name: string
+          payment_disclaimer_text?: string | null
+          primary_domain?: string | null
+          public_subtitle?: string | null
+          public_title?: string | null
+          slug?: string | null
+          status?: string
           telegram_club_id?: string | null
           updated_at?: string
         }
         Update: {
           code?: string
           created_at?: string
+          currency?: string
           description?: string | null
           id?: string
           is_active?: boolean
           meta?: Json | null
           name?: string
+          payment_disclaimer_text?: string | null
+          primary_domain?: string | null
+          public_subtitle?: string | null
+          public_title?: string | null
+          slug?: string | null
+          status?: string
           telegram_club_id?: string | null
           updated_at?: string
         }
@@ -1676,6 +1700,7 @@ export type Database = {
           flow_id: string | null
           id: string
           is_trial: boolean
+          keep_access_until_trial_end: boolean | null
           meta: Json | null
           next_charge_at: string | null
           order_id: string | null
@@ -1683,6 +1708,8 @@ export type Database = {
           product_id: string
           status: Database["public"]["Enums"]["subscription_status"]
           tariff_id: string | null
+          trial_canceled_at: string | null
+          trial_canceled_by: string | null
           trial_end_at: string | null
           updated_at: string
           user_id: string
@@ -1697,6 +1724,7 @@ export type Database = {
           flow_id?: string | null
           id?: string
           is_trial?: boolean
+          keep_access_until_trial_end?: boolean | null
           meta?: Json | null
           next_charge_at?: string | null
           order_id?: string | null
@@ -1704,6 +1732,8 @@ export type Database = {
           product_id: string
           status?: Database["public"]["Enums"]["subscription_status"]
           tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
           trial_end_at?: string | null
           updated_at?: string
           user_id: string
@@ -1718,6 +1748,7 @@ export type Database = {
           flow_id?: string | null
           id?: string
           is_trial?: boolean
+          keep_access_until_trial_end?: boolean | null
           meta?: Json | null
           next_charge_at?: string | null
           order_id?: string | null
@@ -1725,6 +1756,8 @@ export type Database = {
           product_id?: string
           status?: Database["public"]["Enums"]["subscription_status"]
           tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
           trial_end_at?: string | null
           updated_at?: string
           user_id?: string
@@ -1753,6 +1786,71 @@ export type Database = {
           },
           {
             foreignKeyName: "subscriptions_v2_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tariff_offers: {
+        Row: {
+          amount: number
+          auto_charge_after_trial: boolean | null
+          auto_charge_amount: number | null
+          auto_charge_delay_days: number | null
+          button_label: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          offer_type: string
+          requires_card_tokenization: boolean | null
+          sort_order: number | null
+          tariff_id: string
+          trial_days: number | null
+          updated_at: string | null
+          visible_from: string | null
+          visible_to: string | null
+        }
+        Insert: {
+          amount: number
+          auto_charge_after_trial?: boolean | null
+          auto_charge_amount?: number | null
+          auto_charge_delay_days?: number | null
+          button_label: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          offer_type: string
+          requires_card_tokenization?: boolean | null
+          sort_order?: number | null
+          tariff_id: string
+          trial_days?: number | null
+          updated_at?: string | null
+          visible_from?: string | null
+          visible_to?: string | null
+        }
+        Update: {
+          amount?: number
+          auto_charge_after_trial?: boolean | null
+          auto_charge_amount?: number | null
+          auto_charge_delay_days?: number | null
+          button_label?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          offer_type?: string
+          requires_card_tokenization?: boolean | null
+          sort_order?: number | null
+          tariff_id?: string
+          trial_days?: number | null
+          updated_at?: string | null
+          visible_from?: string | null
+          visible_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tariff_offers_tariff_id_fkey"
             columns: ["tariff_id"]
             isOneToOne: false
             referencedRelation: "tariffs"
@@ -1820,6 +1918,7 @@ export type Database = {
       tariffs: {
         Row: {
           access_days: number
+          badge: string | null
           code: string
           created_at: string
           description: string | null
@@ -1829,15 +1928,22 @@ export type Database = {
           is_active: boolean
           meta: Json | null
           name: string
+          period_label: string | null
+          price_monthly: number | null
           product_id: string
+          sort_order: number | null
+          subtitle: string | null
           trial_auto_charge: boolean | null
           trial_days: number | null
           trial_enabled: boolean
           trial_price: number | null
           updated_at: string
+          visible_from: string | null
+          visible_to: string | null
         }
         Insert: {
           access_days?: number
+          badge?: string | null
           code: string
           created_at?: string
           description?: string | null
@@ -1847,15 +1953,22 @@ export type Database = {
           is_active?: boolean
           meta?: Json | null
           name: string
+          period_label?: string | null
+          price_monthly?: number | null
           product_id: string
+          sort_order?: number | null
+          subtitle?: string | null
           trial_auto_charge?: boolean | null
           trial_days?: number | null
           trial_enabled?: boolean
           trial_price?: number | null
           updated_at?: string
+          visible_from?: string | null
+          visible_to?: string | null
         }
         Update: {
           access_days?: number
+          badge?: string | null
           code?: string
           created_at?: string
           description?: string | null
@@ -1865,12 +1978,18 @@ export type Database = {
           is_active?: boolean
           meta?: Json | null
           name?: string
+          period_label?: string | null
+          price_monthly?: number | null
           product_id?: string
+          sort_order?: number | null
+          subtitle?: string | null
           trial_auto_charge?: boolean | null
           trial_days?: number | null
           trial_enabled?: boolean
           trial_price?: number | null
           updated_at?: string
+          visible_from?: string | null
+          visible_to?: string | null
         }
         Relationships: [
           {

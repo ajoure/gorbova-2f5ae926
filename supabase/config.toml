@@ -80,3 +80,15 @@ verify_jwt = false
 
 [functions.telegram-kick-violators]
 verify_jwt = false
+
+[functions.getcourse-sync]
+verify_jwt = true
+
+[functions.subscription-charge]
+verify_jwt = false
+
+[functions.public-product]
+verify_jwt = false
+
+[functions.cancel-trial]
+verify_jwt = true
