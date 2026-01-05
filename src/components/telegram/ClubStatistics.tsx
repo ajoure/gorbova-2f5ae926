@@ -1,5 +1,15 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { 
   AreaChart, 
   Area, 
@@ -11,17 +21,26 @@ import {
   PieChart,
   Pie,
   Cell,
-  BarChart,
-  Bar,
-  Legend,
 } from 'recharts';
-import { format, subDays, startOfDay, eachDayOfInterval } from 'date-fns';
+import { format, subDays, startOfDay, eachDayOfInterval, subMonths } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Skeleton } from '@/components/ui/skeleton';
-import { TrendingUp, TrendingDown, Users, UserPlus, UserMinus, Target } from 'lucide-react';
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Users, 
+  UserPlus, 
+  UserMinus, 
+  Target,
+  CalendarIcon,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { DateRange } from 'react-day-picker';
 
 interface ClubStatisticsProps {
   clubId: string;
@@ -29,17 +48,46 @@ interface ClubStatisticsProps {
 
 const COLORS = ['hsl(var(--primary))', 'hsl(var(--secondary))', 'hsl(var(--accent))', 'hsl(var(--muted))'];
 
+type DatePreset = '7d' | '14d' | '30d' | '90d' | 'custom';
+
 export function ClubStatistics({ clubId }: ClubStatisticsProps) {
+  const queryClient = useQueryClient();
+  const [datePreset, setDatePreset] = useState<DatePreset>('30d');
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 29),
+    to: new Date(),
+  });
+
+  // Calculate date range based on preset
+  const effectiveDateRange = useMemo(() => {
+    switch (datePreset) {
+      case '7d':
+        return { from: subDays(new Date(), 6), to: new Date() };
+      case '14d':
+        return { from: subDays(new Date(), 13), to: new Date() };
+      case '30d':
+        return { from: subDays(new Date(), 29), to: new Date() };
+      case '90d':
+        return { from: subDays(new Date(), 89), to: new Date() };
+      case 'custom':
+        return dateRange?.from && dateRange?.to 
+          ? { from: dateRange.from, to: dateRange.to }
+          : { from: subDays(new Date(), 29), to: new Date() };
+      default:
+        return { from: subDays(new Date(), 29), to: new Date() };
+    }
+  }, [datePreset, dateRange]);
+
   // Fetch access grants for activity chart
-  const { data: grantsData, isLoading: grantsLoading } = useQuery({
-    queryKey: ['club-grants-stats', clubId],
+  const { data: grantsData, isLoading: grantsLoading, refetch: refetchGrants } = useQuery({
+    queryKey: ['club-grants-stats', clubId, effectiveDateRange.from?.toISOString(), effectiveDateRange.to?.toISOString()],
     queryFn: async () => {
-      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
       const { data, error } = await supabase
         .from('telegram_access_grants')
         .select('created_at, source, status, revoked_at')
         .eq('club_id', clubId)
-        .gte('created_at', thirtyDaysAgo)
+        .gte('created_at', effectiveDateRange.from.toISOString())
+        .lte('created_at', effectiveDateRange.to.toISOString())
         .order('created_at', { ascending: true });
       
       if (error) throw error;
@@ -48,15 +96,15 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
   });
 
   // Fetch logs for activity
-  const { data: logsData, isLoading: logsLoading } = useQuery({
-    queryKey: ['club-logs-stats', clubId],
+  const { data: logsData, isLoading: logsLoading, refetch: refetchLogs } = useQuery({
+    queryKey: ['club-logs-stats', clubId, effectiveDateRange.from?.toISOString(), effectiveDateRange.to?.toISOString()],
     queryFn: async () => {
-      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
       const { data, error } = await supabase
         .from('telegram_logs')
         .select('created_at, action, status')
         .eq('club_id', clubId)
-        .gte('created_at', thirtyDaysAgo)
+        .gte('created_at', effectiveDateRange.from.toISOString())
+        .lte('created_at', effectiveDateRange.to.toISOString())
         .order('created_at', { ascending: true });
       
       if (error) throw error;
@@ -64,13 +112,37 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
     },
   });
 
-  // Calculate activity chart data (last 30 days)
+  // Refresh all statistics
+  const handleRefresh = () => {
+    refetchGrants();
+    refetchLogs();
+  };
+
+  // Reset statistics cache
+  const handleReset = () => {
+    queryClient.invalidateQueries({ queryKey: ['club-grants-stats', clubId] });
+    queryClient.invalidateQueries({ queryKey: ['club-logs-stats', clubId] });
+    setDatePreset('30d');
+    setDateRange({
+      from: subDays(new Date(), 29),
+      to: new Date(),
+    });
+  };
+
+  // Calculate days in range
+  const daysInRange = useMemo(() => {
+    if (!effectiveDateRange.from || !effectiveDateRange.to) return 30;
+    const diffTime = Math.abs(effectiveDateRange.to.getTime() - effectiveDateRange.from.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+  }, [effectiveDateRange]);
+
+  // Calculate activity chart data
   const activityData = useMemo(() => {
-    if (!grantsData) return [];
+    if (!grantsData || !effectiveDateRange.from || !effectiveDateRange.to) return [];
 
     const days = eachDayOfInterval({
-      start: subDays(new Date(), 29),
-      end: new Date(),
+      start: effectiveDateRange.from,
+      end: effectiveDateRange.to,
     });
 
     return days.map(day => {
@@ -97,7 +169,7 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
         net: dayGrants.length - dayRevokes.length,
       };
     });
-  }, [grantsData]);
+  }, [grantsData, effectiveDateRange]);
 
   // Calculate source distribution
   const sourceData = useMemo(() => {
@@ -169,6 +241,73 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
 
   return (
     <div className="space-y-6">
+      {/* Date Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={datePreset} onValueChange={(val) => setDatePreset(val as DatePreset)}>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="Период" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7d">7 дней</SelectItem>
+            <SelectItem value="14d">14 дней</SelectItem>
+            <SelectItem value="30d">30 дней</SelectItem>
+            <SelectItem value="90d">90 дней</SelectItem>
+            <SelectItem value="custom">Свой период</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {datePreset === 'custom' && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "justify-start text-left font-normal",
+                  !dateRange && "text-muted-foreground"
+                )}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {dateRange?.from ? (
+                  dateRange.to ? (
+                    <>
+                      {format(dateRange.from, "dd.MM.yy", { locale: ru })} -{" "}
+                      {format(dateRange.to, "dd.MM.yy", { locale: ru })}
+                    </>
+                  ) : (
+                    format(dateRange.from, "dd.MM.yy", { locale: ru })
+                  )
+                ) : (
+                  <span>Выберите даты</span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                initialFocus
+                mode="range"
+                defaultMonth={dateRange?.from}
+                selected={dateRange}
+                onSelect={setDateRange}
+                numberOfMonths={2}
+                locale={ru}
+                disabled={(date) => date > new Date() || date < subMonths(new Date(), 12)}
+              />
+            </PopoverContent>
+          </Popover>
+        )}
+
+        <div className="flex gap-2 ml-auto">
+          <Button variant="outline" size="sm" onClick={handleRefresh}>
+            <RefreshCw className="h-4 w-4 mr-1" />
+            Обновить
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleReset}>
+            <RotateCcw className="h-4 w-4 mr-1" />
+            Сбросить
+          </Button>
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -178,7 +317,7 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats?.totalGranted || 0}</div>
-            <p className="text-xs text-muted-foreground">за 30 дней</p>
+            <p className="text-xs text-muted-foreground">за {daysInRange} {daysInRange === 1 ? 'день' : daysInRange < 5 ? 'дня' : 'дней'}</p>
           </CardContent>
         </Card>
         
@@ -189,7 +328,7 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats?.totalRevoked || 0}</div>
-            <p className="text-xs text-muted-foreground">за 30 дней</p>
+            <p className="text-xs text-muted-foreground">за {daysInRange} {daysInRange === 1 ? 'день' : daysInRange < 5 ? 'дня' : 'дней'}</p>
           </CardContent>
         </Card>
 
@@ -228,7 +367,7 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
         {/* Activity Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Динамика за 30 дней</CardTitle>
+            <CardTitle>Динамика за период</CardTitle>
             <CardDescription>Выданные и отозванные доступы</CardDescription>
           </CardHeader>
           <CardContent>
@@ -240,13 +379,14 @@ export function ClubStatistics({ clubId }: ClubStatisticsProps) {
                     dataKey="date" 
                     tick={{ fontSize: 12 }}
                     className="text-muted-foreground"
+                    interval={daysInRange > 30 ? Math.floor(daysInRange / 10) : 'preserveStartEnd'}
                   />
                   <YAxis 
                     tick={{ fontSize: 12 }}
                     className="text-muted-foreground"
                   />
                   <Tooltip 
-                    content={({ active, payload, label }) => {
+                    content={({ active, payload }) => {
                       if (!active || !payload?.length) return null;
                       const data = payload[0]?.payload;
                       return (
