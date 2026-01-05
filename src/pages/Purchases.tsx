@@ -15,6 +15,17 @@ import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 
+interface OrderMeta {
+  description?: string;
+  product_name?: string;
+  tariff_code?: string;
+  is_trial?: boolean;
+  trial_days?: number;
+  test_payment?: boolean;
+  bepaid_subscription_id?: string;
+  [key: string]: unknown;
+}
+
 interface Order {
   id: string;
   amount: number;
@@ -24,6 +35,7 @@ interface Order {
   bepaid_uid: string | null;
   customer_email: string | null;
   created_at: string;
+  meta: OrderMeta | null;
   products: {
     name: string;
     product_type: string;
@@ -57,7 +69,7 @@ export default function Purchases() {
       if (!user) return [];
       const { data, error } = await supabase
         .from("orders")
-        .select("*, products(name, product_type)")
+        .select("id, amount, currency, status, payment_method, bepaid_uid, customer_email, created_at, meta, products(name, product_type)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       
@@ -190,6 +202,56 @@ export default function Purchases() {
       webinar: "Вебинар",
     };
     return names[code] || code;
+  };
+
+  const getOrderProductName = (order: Order): string => {
+    // First try meta.description (has full product + tariff name like "CHAT — Месячная подписка")
+    if (order.meta?.description) {
+      return order.meta.description;
+    }
+    // Fallback to meta.product_name
+    if (order.meta?.product_name) {
+      return order.meta.product_name;
+    }
+    // Fallback to linked product
+    if (order.products?.name) {
+      return order.products.name;
+    }
+    return "—";
+  };
+
+  const getOrderPaymentMethod = (order: Order): string | null => {
+    // Check payment_method field
+    if (order.payment_method) {
+      return order.payment_method;
+    }
+    // Check if it's a trial (free)
+    if (order.meta?.is_trial) {
+      return "trial";
+    }
+    // Check for bePaid subscription
+    if (order.meta?.bepaid_subscription_id) {
+      return "bepaid";
+    }
+    return null;
+  };
+
+  const formatPaymentMethod = (method: string | null): { label: string; icon: React.ReactNode } => {
+    switch (method) {
+      case "trial":
+        return { label: "Пробный период", icon: <Clock className="h-3 w-3" /> };
+      case "test_payment":
+        return { label: "Тестовый платёж", icon: <Receipt className="h-3 w-3" /> };
+      case "bepaid":
+        return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
+      case "card":
+        return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
+      default:
+        if (method) {
+          return { label: method, icon: <Receipt className="h-3 w-3" /> };
+        }
+        return { label: "—", icon: null };
+    }
   };
 
   const downloadReceipt = (order: Order) => {
@@ -436,20 +498,24 @@ export default function Purchases() {
                         {formatDate(order.created_at)}
                       </TableCell>
                       <TableCell className="font-medium">
-                        {order.products?.name || "—"}
+                        {getOrderProductName(order)}
                       </TableCell>
                       <TableCell>
                         {formatPrice(order.amount, order.currency)}
                       </TableCell>
                       <TableCell>
-                        {order.payment_method ? (
-                          <span className="flex items-center gap-1">
-                            <Receipt className="h-3 w-3" />
-                            {order.payment_method}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
+                        {(() => {
+                          const method = getOrderPaymentMethod(order);
+                          const { label, icon } = formatPaymentMethod(method);
+                          return icon ? (
+                            <span className="flex items-center gap-1">
+                              {icon}
+                              {label}
+                            </span>
+                          ) : (
+                            label
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>{getStatusBadge(order.status)}</TableCell>
                       <TableCell className="text-right">
