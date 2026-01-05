@@ -906,16 +906,22 @@ export default function TelegramClubMembers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredMembers.map((member) => (
+                  {filteredMembers.map((member) => {
+                    // Определяем нарушителя - без доступа, но в чате/канале
+                    const isViolator = member.access_status !== 'ok' && (member.in_chat === true || member.in_channel === true);
+                    
+                    return (
                     <TableRow 
                       key={member.id}
                       className={`
                         ${selectedIds.has(member.id) ? 'bg-primary/5' : ''}
-                        ${member.access_status === 'no_access' || member.access_status === 'removed' 
-                          ? 'bg-destructive/5' 
-                          : member.access_status === 'expired' 
-                            ? 'bg-yellow-500/5' 
-                            : ''
+                        ${isViolator 
+                          ? 'bg-red-500/10 border-l-2 border-l-red-500' 
+                          : member.access_status === 'no_access' || member.access_status === 'removed' 
+                            ? 'bg-destructive/5' 
+                            : member.access_status === 'expired' 
+                              ? 'bg-yellow-500/5' 
+                              : ''
                         }
                       `}
                     >
@@ -926,12 +932,26 @@ export default function TelegramClubMembers() {
                         />
                       </TableCell>
                       <TableCell>
-                        <div>
-                          <div className="font-medium">
-                            {member.telegram_first_name} {member.telegram_last_name}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <div className="font-medium flex items-center gap-1">
+                              {member.telegram_first_name} {member.telegram_last_name}
+                              {isViolator && (
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <AlertTriangle className="h-4 w-4 text-red-500" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="font-medium text-red-500">Нарушитель</p>
+                                    <p>Находится в {member.in_chat ? 'чате' : ''}{member.in_chat && member.in_channel ? ' и ' : ''}{member.in_channel ? 'канале' : ''}, но без доступа</p>
+                                    <p className="text-xs mt-1">Подлежит автоматическому удалению</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
+                            </div>
                           </div>
                         </div>
                       </TableCell>
@@ -1029,7 +1049,8 @@ export default function TelegramClubMembers() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (
