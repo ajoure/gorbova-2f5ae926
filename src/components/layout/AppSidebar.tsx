@@ -57,7 +57,8 @@ export function AppSidebar() {
     role
   } = useAuth();
   const {
-    hasAdminAccess
+    hasAdminAccess,
+    isAdmin,
   } = usePermissions();
   const collapsed = state === "collapsed";
   const handleSignOut = async () => {
@@ -85,7 +86,7 @@ export function AppSidebar() {
     }
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
-  const showAdminLink = hasAdminAccess();
+  const showAdminLink = isAdmin() || hasAdminAccess();
   return <Sidebar collapsible="icon" className="border-r-0" style={{
     background: "var(--gradient-sidebar)"
   }}>

@@ -63,7 +63,7 @@ const leaderTools = [
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { userRoles, hasAdminAccess } = usePermissions();
+  const { userRoles, hasAdminAccess, isAdmin } = usePermissions();
 
   // Get effective role for display (single role model)
   const getEffectiveRole = () => {
@@ -77,6 +77,7 @@ export default function Dashboard() {
 
   const effectiveRole = getEffectiveRole();
   const isStaff = effectiveRole !== null; // Has any privileged role
+  const showAdmin = isAdmin() || hasAdminAccess();
 
   const getRoleDisplayName = (roleCode: string) => {
     const displayNames: Record<string, string> = {
@@ -114,7 +115,17 @@ export default function Dashboard() {
 
         {/* Quick links grid */}
         <div>
-          <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-3 md:mb-4">Разделы</h2>
+          <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
+            <h2 className="text-lg sm:text-xl font-semibold text-foreground">Разделы</h2>
+            {showAdmin && (
+              <Link
+                to="/admin/users"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Админ-панель
+              </Link>
+            )}
+          </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             {quickLinks.map((link) => (
               <Link key={link.url} to={link.url}>
