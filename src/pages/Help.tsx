@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { 
   UserPlus, 
   CreditCard, 
@@ -487,9 +487,24 @@ const faq = [
 
 export default function Help() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { hasAdminAccess, hasPermission, isSuperAdmin, loading: permissionsLoading } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Handle anchor scroll when page loads or hash changes
+  useEffect(() => {
+    const hash = location.hash;
+    if (hash) {
+      // Small delay to ensure content is rendered
+      setTimeout(() => {
+        const element = document.getElementById(hash.slice(1));
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+    }
+  }, [location.hash]);
 
   // Filter admin sections based on permissions
   const filteredAdminSections = useMemo(() => {
