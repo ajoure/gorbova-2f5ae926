@@ -126,27 +126,48 @@ Deno.serve(async (req) => {
     console.log(`Charge amount: ${amount} ${product.currency}, trial=${isTrial}, days=${effectiveTrialDays}`);
 
     // Check if user already has an active subscription for this product
+    // For trial - block if already used trial for this product
+    // For regular purchase - allow and extend access
     const { data: existingSub } = await supabase
       .from('subscriptions_v2')
-      .select('id, status, access_end_at')
+      .select('id, status, access_end_at, is_trial')
       .eq('user_id', user.id)
       .eq('product_id', productId)
       .in('status', ['active', 'trial'])
       .gte('access_end_at', new Date().toISOString())
+      .order('access_end_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (existingSub) {
-      console.log(`User already has active subscription ${existingSub.id} for this product, skipping`);
-      return new Response(JSON.stringify({
-        success: true,
-        alreadySubscribed: true,
-        message: 'Already subscribed',
-        subscriptionId: existingSub.id,
-        accessEndsAt: existingSub.access_end_at,
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // Block trial if user already used trial for this product
+    if (isTrial) {
+      const { data: usedTrial } = await supabase
+        .from('subscriptions_v2')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('product_id', productId)
+        .eq('is_trial', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (usedTrial) {
+        console.log(`User already used trial for this product`);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Вы уже использовали пробный период для этого продукта',
+          alreadyUsedTrial: true,
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // For regular purchase with active subscription - extend access period
+    let extendFromDate: Date | null = null;
+    if (existingSub && !isTrial) {
+      extendFromDate = new Date(existingSub.access_end_at);
+      console.log(`User has active subscription until ${extendFromDate.toISOString()}, will extend from that date`);
     }
 
     // Get bePaid settings
@@ -398,9 +419,11 @@ Deno.serve(async (req) => {
         console.error('Order paid update error:', orderPaidError);
       }
 
-      // Create subscription
+      // Create or update subscription
       const accessDays = isTrial ? effectiveTrialDays : tariff.access_days;
-      const accessEndAt = new Date(Date.now() + accessDays * 24 * 60 * 60 * 1000);
+      // If extending existing subscription, start from its end date
+      const baseDate = extendFromDate || new Date();
+      const accessEndAt = new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
       
       let nextChargeAt: Date | null = null;
       if (isTrial && autoChargeAfterTrial) {
@@ -409,27 +432,51 @@ Deno.serve(async (req) => {
         nextChargeAt = new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
       }
 
-      const { data: subscription, error: subError } = await supabase
-        .from('subscriptions_v2')
-        .insert({
-          user_id: user.id,
-          product_id: productId,
-          tariff_id: tariff.id,
-          order_id: order.id,
-          status: isTrial ? 'trial' : 'active',
-          is_trial: isTrial || false,
-          access_start_at: new Date().toISOString(),
-          access_end_at: accessEndAt.toISOString(),
-          trial_end_at: isTrial ? accessEndAt.toISOString() : null,
-          payment_method_id: paymentMethod.id,
-          payment_token: paymentMethod.provider_token,
-          next_charge_at: nextChargeAt?.toISOString() || null,
-        })
-        .select()
-        .single();
+      let subscription;
+      if (existingSub && !isTrial) {
+        // Update existing subscription with extended access
+        const { data: updatedSub, error: updateError } = await supabase
+          .from('subscriptions_v2')
+          .update({
+            access_end_at: accessEndAt.toISOString(),
+            next_charge_at: nextChargeAt?.toISOString() || null,
+            status: 'active',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingSub.id)
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error('Subscription update error:', updateError);
+        }
+        subscription = updatedSub;
+        console.log(`Extended subscription ${existingSub.id} until ${accessEndAt.toISOString()}`);
+      } else {
+        // Create new subscription
+        const { data: newSub, error: subError } = await supabase
+          .from('subscriptions_v2')
+          .insert({
+            user_id: user.id,
+            product_id: productId,
+            tariff_id: tariff.id,
+            order_id: order.id,
+            status: isTrial ? 'trial' : 'active',
+            is_trial: isTrial || false,
+            access_start_at: new Date().toISOString(),
+            access_end_at: accessEndAt.toISOString(),
+            trial_end_at: isTrial ? accessEndAt.toISOString() : null,
+            payment_method_id: paymentMethod.id,
+            payment_token: paymentMethod.provider_token,
+            next_charge_at: nextChargeAt?.toISOString() || null,
+          })
+          .select()
+          .single();
 
-      if (subError) {
-        console.error('Subscription creation error:', subError);
+        if (subError) {
+          console.error('Subscription creation error:', subError);
+        }
+        subscription = newSub;
       }
 
       // Grant Telegram access

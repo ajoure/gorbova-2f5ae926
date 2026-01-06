@@ -307,16 +307,16 @@ export function PaymentDialog({
           // If no payment method or requires tokenization, fall back to redirect
           if (data.requiresTokenization) {
             console.log("Falling back to redirect flow");
+          } else if (data.alreadyUsedTrial) {
+            toast.warning("Вы уже использовали пробный период для этого продукта", {
+              duration: 8000,
+            });
+            setStep("ready");
+            return;
           } else {
             throw new Error(data.error || "Ошибка при оплате");
           }
         } else {
-          // Handle already subscribed case
-          if (data.alreadySubscribed) {
-            toast.info(`У вас уже есть активная подписка до ${new Date(data.accessEndsAt).toLocaleDateString("ru-RU")}`);
-            onOpenChange(false);
-            return;
-          }
           
           // Payment successful
           toast.success(
