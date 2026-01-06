@@ -45,8 +45,10 @@ import {
   RotateCcw,
   Settings,
   ChevronRight,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DealDetailSheet } from "./DealDetailSheet";
 
 interface Contact {
   id: string;
@@ -78,6 +80,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [grantProductId, setGrantProductId] = useState("");
   const [grantTariffId, setGrantTariffId] = useState("");
   const [grantDays, setGrantDays] = useState(30);
+  const [selectedDeal, setSelectedDeal] = useState<any>(null);
+  const [dealSheetOpen, setDealSheetOpen] = useState(false);
 
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
@@ -317,8 +321,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col">
-        <SheetHeader className="p-6 pb-4 border-b">
+      <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col h-full overflow-hidden">
+        <SheetHeader className="p-6 pb-4 border-b flex-shrink-0">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
@@ -341,8 +345,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           </div>
         </SheetHeader>
 
-        <Tabs defaultValue="profile" className="flex-1 flex flex-col">
-          <TabsList className="mx-6 mt-4 justify-start flex-wrap">
+        <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0">
+          <TabsList className="mx-6 mt-4 justify-start flex-wrap flex-shrink-0">
             <TabsTrigger value="profile">Профиль</TabsTrigger>
             <TabsTrigger value="access">
               Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1">{activeSubscriptions.length}</Badge>}
@@ -356,7 +360,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
             )}
           </TabsList>
 
-          <ScrollArea className="flex-1 px-6 py-4">
+          <ScrollArea className="flex-1 min-h-0 px-6 py-4">
             {/* Profile Tab */}
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
@@ -615,16 +619,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                   Возобновить
                                 </Button>
                               ) : isActive ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleSubscriptionAction("cancel", sub.id)}
-                                  disabled={isProcessing}
-                                  className="h-7 text-xs gap-1 text-amber-600 hover:text-amber-700"
-                                >
-                                  <Ban className="w-3 h-3" />
-                                  Отменить
-                                </Button>
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleSubscriptionAction("cancel", sub.id)}
+                                    disabled={isProcessing}
+                                    className="h-7 text-xs gap-1 text-amber-600 hover:text-amber-700"
+                                  >
+                                    <Ban className="w-3 h-3" />
+                                    Отменить
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
+                                    disabled={isProcessing}
+                                    className="h-7 text-xs gap-1 text-red-600 hover:text-red-700"
+                                  >
+                                    <XCircle className="w-3 h-3" />
+                                    Заблокировать
+                                  </Button>
+                                </>
                               ) : null}
 
                               {!isActive && (
@@ -662,7 +678,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 </div>
               ) : (
                 deals.map(deal => (
-                  <Card key={deal.id} className="cursor-pointer hover:bg-muted/50 transition-colors">
+                  <Card 
+                    key={deal.id} 
+                    className="cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => {
+                      setSelectedDeal(deal);
+                      setDealSheetOpen(true);
+                    }}
+                  >
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between mb-2">
                         <div>
@@ -671,7 +694,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                             <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                           )}
                         </div>
-                        <Badge className={getStatusColor(deal.status)}>{deal.status}</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge className={getStatusColor(deal.status)}>{deal.status}</Badge>
+                          <Eye className="w-4 h-4 text-muted-foreground" />
+                        </div>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2 text-muted-foreground">
@@ -755,6 +781,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
             )}
           </ScrollArea>
         </Tabs>
+
+        {/* Deal Detail Sheet */}
+        <DealDetailSheet
+          deal={selectedDeal}
+          profile={contact}
+          open={dealSheetOpen}
+          onOpenChange={setDealSheetOpen}
+        />
       </SheetContent>
     </Sheet>
   );
