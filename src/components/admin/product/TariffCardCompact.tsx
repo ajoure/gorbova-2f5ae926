@@ -125,7 +125,7 @@ export function TariffCardCompact({
 
       {/* Collapsible Details */}
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <CollapsibleTrigger className="w-full mt-3 flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 hover:bg-muted/30 hover:border-border/50 border border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 group">
+        <CollapsibleTrigger className="w-full mt-3 flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 hover:bg-primary/5 border border-transparent hover:border-primary/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 group">
           <span className="text-muted-foreground text-sm group-hover:text-foreground transition-colors">
             Подробности
           </span>

@@ -5,6 +5,7 @@ import { CalendarIcon, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TimePickerWheel } from "@/components/ui/time-picker-wheel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -100,12 +101,30 @@ export function DateTimePicker({
             </TabsContent>
             
             <TabsContent value="time" className="m-0">
-              <div className="p-2">
-                <TimePickerWheel
-                  value={time || "12:00"}
-                  onChange={onTimeChange}
-                  disabled={!date}
-                />
+              <div className="p-4 space-y-4">
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+                  <Checkbox 
+                    id="no-time" 
+                    checked={!time}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        onTimeChange("");
+                      } else {
+                        onTimeChange("12:00");
+                      }
+                    }}
+                  />
+                  <label htmlFor="no-time" className="text-sm cursor-pointer">
+                    Без точного времени
+                  </label>
+                </div>
+                {time && (
+                  <TimePickerWheel
+                    value={time}
+                    onChange={onTimeChange}
+                    disabled={!date}
+                  />
+                )}
               </div>
             </TabsContent>
           </Tabs>

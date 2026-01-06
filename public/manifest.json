@@ -1,0 +1,24 @@
+{
+  "name": "Клуб Катерины Горбовой",
+  "short_name": "Клуб Горбовой",
+  "description": "Сообщество для бухгалтеров и предпринимателей",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#1a1625",
+  "theme_color": "#1a1625",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
