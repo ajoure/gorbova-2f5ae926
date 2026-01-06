@@ -78,7 +78,13 @@ export function AdminLayout({ children }: AdminLayoutProps) {
       <div className="min-h-screen flex w-full">
         <AdminSidebar />
         <main className="flex-1 flex flex-col min-w-0">
-          <header className="h-14 border-b flex items-center justify-between px-3 md:px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
+          <header 
+            className="border-b flex items-center justify-between px-3 md:px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10"
+            style={{ 
+              paddingTop: 'env(safe-area-inset-top, 0px)',
+              minHeight: 'calc(3.5rem + env(safe-area-inset-top, 0px))'
+            }}
+          >
             <div className="flex items-center min-w-0">
               <SidebarTrigger className="mr-3 md:mr-4 shrink-0" />
               <h2 className="text-base md:text-lg font-semibold truncate">Админ-панель</h2>
@@ -100,7 +106,14 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               </Tooltip>
             </TooltipProvider>
           </header>
-          <div className="flex-1 p-4 md:p-6 overflow-auto">
+          <div 
+            className="flex-1 p-4 md:p-6 overflow-auto"
+            style={{
+              paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+              paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+              paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
+            }}
+          >
             {children}
           </div>
         </main>
