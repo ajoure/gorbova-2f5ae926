@@ -323,6 +323,77 @@ async function importPayments(
   return result;
 }
 
+// Add user to offer - used when granting access via admin panel
+async function addUserToOffer(
+  supabase: any,
+  config: GetCourseConfig,
+  instanceId: string,
+  userId: string,
+  offerCode: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Get user profile
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('email, full_name, phone')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !profile?.email) {
+      return { success: false, error: 'User not found or no email' };
+    }
+
+    // Create deal in GetCourse with the specified offer
+    const dealParams = {
+      user: {
+        email: profile.email,
+        first_name: profile.full_name?.split(' ')[0] || '',
+        last_name: profile.full_name?.split(' ').slice(1).join(' ') || '',
+        phone: profile.phone || '',
+      },
+      deal: {
+        offer_code: offerCode,
+        deal_status: 'payed',
+        payment_type: 'Выдано вручную',
+      },
+    };
+
+    console.log(`Adding user ${profile.email} to GetCourse offer ${offerCode}`);
+
+    const response = await gcRequest(config, 'deals', { params: dealParams });
+
+    if (!response.success) {
+      console.error('GetCourse add to offer failed:', response);
+      return { success: false, error: response.error_message || 'Failed to add user to offer' };
+    }
+
+    // Log sync
+    await supabase.from('integration_sync_logs').insert({
+      instance_id: instanceId,
+      entity_type: 'access_grant',
+      direction: 'export',
+      object_id: userId,
+      object_type: 'user',
+      result: 'success',
+      payload_meta: { 
+        email: profile.email,
+        offer_code: offerCode,
+        gc_deal_id: response.result?.deal_id,
+      },
+    });
+
+    console.log(`User ${profile.email} added to GetCourse offer ${offerCode}`);
+    return { success: true };
+
+  } catch (error) {
+    console.error('Error adding user to offer:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -334,36 +405,64 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json();
-    const { instance_id, action, order_id } = body;
+    const { instance_id, action, order_id, user_id, offer_code } = body;
 
-    if (!instance_id) {
-      return new Response(JSON.stringify({ error: 'instance_id required' }), {
+    // Get GetCourse instance - either specified or default
+    let instanceQuery = supabase
+      .from('integration_instances')
+      .select('*')
+      .eq('provider', 'getcourse')
+      .eq('status', 'active');
+    
+    if (instance_id) {
+      instanceQuery = instanceQuery.eq('id', instance_id);
+    } else {
+      instanceQuery = instanceQuery.eq('is_default', true);
+    }
+
+    const { data: instance, error: instanceError } = await instanceQuery.maybeSingle();
+
+    if (instanceError || !instance) {
+      // Try to get any active instance
+      const { data: anyInstance } = await supabase
+        .from('integration_instances')
+        .select('*')
+        .eq('provider', 'getcourse')
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle();
+
+      if (!anyInstance) {
+        console.log('No GetCourse instance configured');
+        return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    const finalInstance = instance || (await supabase
+      .from('integration_instances')
+      .select('*')
+      .eq('provider', 'getcourse')
+      .eq('status', 'active')
+      .limit(1)
+      .single()).data;
+
+    if (!finalInstance) {
+      return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Get instance config
-    const { data: instance, error: instanceError } = await supabase
-      .from('integration_instances')
-      .select('*')
-      .eq('id', instance_id)
-      .single();
-
-    if (instanceError || !instance) {
-      return new Response(JSON.stringify({ error: 'Instance not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
     const config: GetCourseConfig = {
-      account_name: (instance.config as any)?.account_name || '',
-      secret_key: (instance.config as any)?.secret_key || '',
+      account_name: (finalInstance.config as any)?.account_name || '',
+      secret_key: (finalInstance.config as any)?.secret_key || '',
     };
 
     if (!config.account_name || !config.secret_key) {
-      return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
+      return new Response(JSON.stringify({ error: 'GetCourse credentials not configured' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -371,7 +470,15 @@ Deno.serve(async (req) => {
 
     // Handle specific actions
     if (action === 'export-order' && order_id) {
-      const result = await exportOrder(supabase, config, instance_id, order_id);
+      const result = await exportOrder(supabase, config, finalInstance.id, order_id);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Add user to offer
+    if (action === 'add_user_to_offer' && user_id && offer_code) {
+      const result = await addUserToOffer(supabase, config, finalInstance.id, user_id, offer_code);
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -381,7 +488,7 @@ Deno.serve(async (req) => {
     const { data: syncSettings } = await supabase
       .from('integration_sync_settings')
       .select('*')
-      .eq('instance_id', instance_id)
+      .eq('instance_id', finalInstance.id)
       .eq('is_enabled', true);
 
     const results: SyncResult[] = [];
@@ -391,13 +498,13 @@ Deno.serve(async (req) => {
 
       if (setting.entity_type === 'users' && 
           (setting.direction === 'import' || setting.direction === 'bidirectional')) {
-        const result = await importUsers(supabase, config, instance_id, filters);
+        const result = await importUsers(supabase, config, finalInstance.id, filters);
         results.push(result);
       }
 
       if (setting.entity_type === 'payments' && 
           (setting.direction === 'import' || setting.direction === 'bidirectional')) {
-        const result = await importPayments(supabase, config, instance_id, filters);
+        const result = await importPayments(supabase, config, finalInstance.id, filters);
         results.push(result);
       }
     }
@@ -406,7 +513,7 @@ Deno.serve(async (req) => {
     await supabase
       .from('integration_instances')
       .update({ last_check_at: new Date().toISOString() })
-      .eq('id', instance_id);
+      .eq('id', finalInstance.id);
 
     return new Response(JSON.stringify({ success: true, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

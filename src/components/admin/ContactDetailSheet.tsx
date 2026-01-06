@@ -247,7 +247,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     try {
       const accessEnd = new Date(Date.now() + grantDays * 24 * 60 * 60 * 1000);
       
-      const { error } = await supabase.from("subscriptions_v2").insert({
+      // Create subscription
+      const { data: newSub, error } = await supabase.from("subscriptions_v2").insert({
         user_id: contact.user_id,
         product_id: grantProductId,
         tariff_id: grantTariffId,
@@ -255,16 +256,57 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         is_trial: false,
         access_start_at: new Date().toISOString(),
         access_end_at: accessEnd.toISOString(),
-      });
+      }).select().single();
 
       if (error) throw error;
+
+      // Get tariff to check for GetCourse offer code
+      const { data: tariff } = await supabase
+        .from("tariffs")
+        .select("getcourse_offer_code")
+        .eq("id", grantTariffId)
+        .single();
+
+      // Get product for telegram club
+      const { data: product } = await supabase
+        .from("products_v2")
+        .select("telegram_club_id")
+        .eq("id", grantProductId)
+        .single();
+
+      // Grant Telegram access if product has club
+      if (product?.telegram_club_id) {
+        await supabase.functions.invoke("telegram-grant-access", {
+          body: {
+            user_id: contact.user_id,
+            duration_days: grantDays,
+          },
+        });
+      }
+
+      // Sync to GetCourse if offer code exists
+      if (tariff?.getcourse_offer_code) {
+        await supabase.functions.invoke("getcourse-sync", {
+          body: {
+            action: "add_user_to_offer",
+            user_id: contact.user_id,
+            offer_code: tariff.getcourse_offer_code,
+          },
+        });
+      }
 
       // Log action
       await supabase.from("audit_logs").insert({
         actor_user_id: (await supabase.auth.getUser()).data.user?.id,
         action: "admin.grant_access",
         target_user_id: contact.user_id,
-        meta: { product_id: grantProductId, tariff_id: grantTariffId, days: grantDays },
+        meta: { 
+          product_id: grantProductId, 
+          tariff_id: grantTariffId, 
+          days: grantDays,
+          subscription_id: newSub?.id,
+          getcourse_offer_code: tariff?.getcourse_offer_code,
+        },
       });
 
       toast.success(`Доступ выдан на ${grantDays} дней`);
@@ -272,6 +314,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
       setGrantProductId("");
       setGrantTariffId("");
     } catch (error) {
+      console.error("Grant access error:", error);
       toast.error("Ошибка выдачи доступа");
     } finally {
       setIsProcessing(false);
