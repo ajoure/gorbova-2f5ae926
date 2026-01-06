@@ -49,9 +49,13 @@ import {
   Trash2,
   Send,
   BookOpen,
+  History,
+  Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
+import { RefundDialog } from "./RefundDialog";
+import { AccessHistorySheet } from "./AccessHistorySheet";
 
 interface Contact {
   id: string;
@@ -85,6 +89,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [grantDays, setGrantDays] = useState(30);
   const [selectedDeal, setSelectedDeal] = useState<any>(null);
   const [dealSheetOpen, setDealSheetOpen] = useState(false);
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
+  const [refundDeal, setRefundDeal] = useState<any>(null);
+  const [historySheetOpen, setHistorySheetOpen] = useState(false);
 
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
@@ -502,6 +509,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
             {/* Access/Subscriptions Tab */}
             <TabsContent value="access" className="m-0 space-y-4">
+              {/* History button */}
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHistorySheetOpen(true)}
+                  className="gap-1.5 text-xs"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">История действий</span>
+                  <span className="sm:hidden">История</span>
+                </Button>
+              </div>
+
               {/* Grant new access */}
               <Card>
                 <CardHeader className="pb-2">
@@ -511,11 +532,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <Label className="text-xs">Продукт</Label>
                       <Select value={grantProductId} onValueChange={(v) => { setGrantProductId(v); setGrantTariffId(""); }}>
-                        <SelectTrigger className="h-9">
+                        <SelectTrigger className="h-10 sm:h-9 text-sm">
                           <SelectValue placeholder="Выбрать..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -528,7 +549,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                     <div>
                       <Label className="text-xs">Тариф</Label>
                       <Select value={grantTariffId} onValueChange={setGrantTariffId} disabled={!grantProductId}>
-                        <SelectTrigger className="h-9">
+                        <SelectTrigger className="h-10 sm:h-9 text-sm">
                           <SelectValue placeholder="Выбрать..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -539,7 +560,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                       </Select>
                     </div>
                   </div>
-                  <div className="flex gap-2 items-end">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                     <div className="flex-1">
                       <Label className="text-xs">Дней доступа</Label>
                       <Input
@@ -547,16 +568,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                         value={grantDays}
                         onChange={(e) => setGrantDays(parseInt(e.target.value) || 30)}
                         min={1}
-                        className="h-9"
+                        className="h-10 sm:h-9"
                       />
                     </div>
                     <Button
                       onClick={handleGrantNewAccess}
                       disabled={isProcessing || !grantProductId || !grantTariffId}
-                      className="gap-1"
+                      className="gap-1 h-10 sm:h-9 w-full sm:w-auto"
                     >
                       <Plus className="w-4 h-4" />
-                      Выдать
+                      Выдать доступ
                     </Button>
                   </div>
                 </CardContent>
@@ -638,36 +659,40 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                           )}
                         </div>
 
-                        {/* Quick actions */}
-                        <div className="flex flex-wrap gap-2">
-                          {/* Extend */}
+                        {/* Quick actions - mobile friendly */}
+                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                          {/* Extend mode */}
                           {isSelected ? (
-                            <div className="flex gap-1 items-center w-full">
-                              <Input
-                                type="number"
-                                value={extendDays}
-                                onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
-                                className="h-8 w-20"
-                                min={1}
-                              />
-                              <span className="text-xs">дней</span>
-                              <Button
-                                size="sm"
-                                onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
-                                disabled={isProcessing}
-                                className="h-8 gap-1"
-                              >
-                                <Plus className="w-3 h-3" />
-                                Продлить
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setSelectedSubscription(null)}
-                                className="h-8"
-                              >
-                                ✕
-                              </Button>
+                            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
+                              <div className="flex gap-1 items-center">
+                                <Input
+                                  type="number"
+                                  value={extendDays}
+                                  onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
+                                  className="h-9 sm:h-8 w-20"
+                                  min={1}
+                                />
+                                <span className="text-xs">дней</span>
+                              </div>
+                              <div className="flex gap-1 flex-1">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
+                                  disabled={isProcessing}
+                                  className="h-9 sm:h-8 flex-1 sm:flex-none gap-1 text-xs sm:text-sm"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Продлить
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setSelectedSubscription(null)}
+                                  className="h-9 sm:h-8 px-3"
+                                >
+                                  ✕
+                                </Button>
+                              </div>
                             </div>
                           ) : (
                             <>
@@ -675,10 +700,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                 size="sm"
                                 variant="outline"
                                 onClick={() => setSelectedSubscription(sub)}
-                                className="h-7 text-xs gap-1"
+                                className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
                               >
-                                <Settings className="w-3 h-3" />
-                                Управление
+                                <Settings className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                <span className="hidden xs:inline">Управление</span>
+                                <span className="xs:hidden">⚙</span>
                               </Button>
                               
                               {isCanceled && isActive ? (
@@ -687,9 +713,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                   variant="outline"
                                   onClick={() => handleSubscriptionAction("resume", sub.id)}
                                   disabled={isProcessing}
-                                  className="h-7 text-xs gap-1"
+                                  className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
                                 >
-                                  <RotateCcw className="w-3 h-3" />
+                                  <RotateCcw className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
                                   Возобновить
                                 </Button>
                               ) : isActive ? (
@@ -699,20 +725,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                     variant="ghost"
                                     onClick={() => handleSubscriptionAction("cancel", sub.id)}
                                     disabled={isProcessing}
-                                    className="h-7 text-xs gap-1 text-amber-600 hover:text-amber-700"
+                                    className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-amber-600 hover:text-amber-700"
                                   >
-                                    <Ban className="w-3 h-3" />
-                                    Отменить
+                                    <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                    <span className="hidden sm:inline">Отменить</span>
                                   </Button>
                                   <Button
                                     size="sm"
                                     variant="ghost"
                                     onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
                                     disabled={isProcessing}
-                                    className="h-7 text-xs gap-1 text-red-600 hover:text-red-700"
+                                    className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-red-600 hover:text-red-700"
                                   >
-                                    <XCircle className="w-3 h-3" />
-                                    Заблокировать
+                                    <XCircle className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                    <span className="hidden sm:inline">Заблокировать</span>
                                   </Button>
                                 </>
                               ) : null}
@@ -723,9 +749,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                   variant="default"
                                   onClick={() => handleSubscriptionAction("grant_access", sub.id)}
                                   disabled={isProcessing}
-                                  className="h-7 text-xs gap-1"
+                                  className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
                                 >
-                                  <CheckCircle className="w-3 h-3" />
+                                  <CheckCircle className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
                                   Активировать
                                 </Button>
                               )}
@@ -751,41 +777,61 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   <p>Нет сделок</p>
                 </div>
               ) : (
-                deals.map(deal => (
-                  <Card 
-                    key={deal.id} 
-                    className="cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => {
-                      setSelectedDeal(deal);
-                      setDealSheetOpen(true);
-                    }}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <div className="font-medium">{(deal.products_v2 as any)?.name || "Продукт"}</div>
-                          {deal.tariffs && (
-                            <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
-                          )}
+                deals.map(deal => {
+                  const isPaid = deal.status === "paid";
+                  return (
+                    <Card 
+                      key={deal.id} 
+                      className="cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => {
+                        setSelectedDeal(deal);
+                        setDealSheetOpen(true);
+                      }}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="font-medium">{(deal.products_v2 as any)?.name || "Продукт"}</div>
+                            {deal.tariffs && (
+                              <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge className={getStatusColor(deal.status)}>{deal.status}</Badge>
+                            <Eye className="w-4 h-4 text-muted-foreground" />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge className={getStatusColor(deal.status)}>{deal.status}</Badge>
-                          <Eye className="w-4 h-4 text-muted-foreground" />
+                        <div className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Calendar className="w-3 h-3" />
+                            {format(new Date(deal.created_at), "dd.MM.yy HH:mm")}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium flex items-center gap-1">
+                              <CreditCard className="w-3 h-3" />
+                              {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
+                            </span>
+                            {isPaid && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-purple-600 hover:text-purple-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRefundDeal(deal);
+                                  setRefundDialogOpen(true);
+                                }}
+                              >
+                                <Undo2 className="w-3 h-3 mr-1" />
+                                <span className="hidden sm:inline">Возврат</span>
+                              </Button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Calendar className="w-3 h-3" />
-                          {format(new Date(deal.created_at), "dd.MM.yy HH:mm")}
-                        </div>
-                        <div className="flex items-center gap-2 font-medium">
-                          <CreditCard className="w-3 h-3" />
-                          {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
+                      </CardContent>
+                    </Card>
+                  );
+                })
               )}
             </TabsContent>
 
@@ -862,6 +908,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           profile={contact}
           open={dealSheetOpen}
           onOpenChange={setDealSheetOpen}
+        />
+
+        {/* Refund Dialog */}
+        {refundDeal && (
+          <RefundDialog
+            open={refundDialogOpen}
+            onOpenChange={setRefundDialogOpen}
+            orderId={refundDeal.id}
+            orderNumber={refundDeal.order_number}
+            amount={Number(refundDeal.final_price)}
+            currency={refundDeal.currency}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
+            }}
+          />
+        )}
+
+        {/* Access History Sheet */}
+        <AccessHistorySheet
+          open={historySheetOpen}
+          onOpenChange={setHistorySheetOpen}
+          userId={contact.user_id}
         />
       </SheetContent>
     </Sheet>
