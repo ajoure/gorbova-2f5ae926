@@ -404,6 +404,22 @@ Deno.serve(async (req) => {
             .eq('id', orderV2.tariff_id)
             .maybeSingle();
 
+          // Get offer settings to check if this is a subscription or one-time payment
+          const offerType = orderV2.is_trial ? 'trial' : 'pay_now';
+          const { data: offer } = await supabase
+            .from('tariff_offers')
+            .select('requires_card_tokenization, auto_charge_after_trial')
+            .eq('tariff_id', orderV2.tariff_id)
+            .eq('offer_type', offerType)
+            .eq('is_active', true)
+            .order('is_primary', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          // Determine if this should be a recurring subscription
+          const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
+          const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? true;
+
           if (productV2 && tariff) {
             // Extend existing subscription (if any) for non-trial purchases
             // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL)
@@ -435,9 +451,14 @@ Deno.serve(async (req) => {
               ? new Date(orderV2.trial_end_at)
               : new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
 
-            const nextChargeAt = orderV2.is_trial
-              ? new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000)
-              : new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
+            // Set next_charge_at only if this is a recurring subscription or trial with auto-charge
+            let nextChargeAt: Date | null = null;
+            if (orderV2.is_trial && autoChargeAfterTrial) {
+              nextChargeAt = new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000);
+            } else if (!orderV2.is_trial && isRecurringSubscription) {
+              nextChargeAt = new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
+            }
+            // If not recurring subscription (one-time payment), next_charge_at stays null
 
             // Upsert subscription - exclude canceled subscriptions
             const { data: existing } = await supabase
@@ -458,7 +479,7 @@ Deno.serve(async (req) => {
                   status: 'active',
                   is_trial: false,
                   access_end_at: accessEndAt.toISOString(),
-                  next_charge_at: nextChargeAt.toISOString(),
+                  next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
                   payment_token: paymentV2.payment_token || null,
                   updated_at: now.toISOString(),
@@ -477,7 +498,7 @@ Deno.serve(async (req) => {
                   access_start_at: now.toISOString(),
                   access_end_at: accessEndAt.toISOString(),
                   trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
-                  next_charge_at: nextChargeAt.toISOString(),
+                  next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
                   payment_token: paymentV2.payment_token || null,
                 });
