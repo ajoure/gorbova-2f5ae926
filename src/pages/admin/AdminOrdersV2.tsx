@@ -39,7 +39,15 @@ import {
   CreditCard,
   Clock,
   CheckCircle,
+  XCircle,
+  ExternalLink,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -262,6 +270,7 @@ export default function AdminOrdersV2() {
                     <TableHead>Продукт / Тариф</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead>GC</TableHead>
                     <TableHead>Дата</TableHead>
                     <TableHead className="text-right">Действия</TableHead>
                   </TableRow>
@@ -310,6 +319,37 @@ export default function AdminOrdersV2() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <TooltipProvider>
+                            {(order.meta as any)?.gc_sync_status === 'success' ? (
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Синхронизировано в GetCourse</p>
+                                  {(order.meta as any)?.gc_order_id && (
+                                    <p className="text-xs text-muted-foreground">ID: {(order.meta as any).gc_order_id}</p>
+                                  )}
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (order.meta as any)?.gc_sync_status === 'failed' ? (
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Ошибка синхронизации</p>
+                                  {(order.meta as any)?.gc_sync_error && (
+                                    <p className="text-xs text-destructive">{(order.meta as any).gc_sync_error}</p>
+                                  )}
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TooltipProvider>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1 text-sm text-muted-foreground">

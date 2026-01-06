@@ -1187,7 +1187,7 @@ Deno.serve(async (req) => {
           
           // Update order with GetCourse sync status
           await supabase
-            .from('orders')
+            .from('orders_v2')
             .update({
               meta: {
                 ...meta,

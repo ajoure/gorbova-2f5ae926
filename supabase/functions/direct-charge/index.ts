@@ -710,6 +710,23 @@ Deno.serve(async (req) => {
             tariff.code || tariff.name
           );
           console.log('GetCourse sync result (direct-charge):', gcResult);
+          
+          // Save GetCourse sync result to order meta
+          const existingMeta = (order as any).meta || {};
+          await supabase
+            .from('orders_v2')
+            .update({
+              meta: {
+                ...existingMeta,
+                bepaid_uid: txUid,
+                payment_id: payment.id,
+                gc_sync_status: gcResult.success ? 'success' : 'failed',
+                gc_sync_error: gcResult.error || null,
+                gc_order_id: gcResult.gcOrderId || null,
+                gc_sync_at: new Date().toISOString(),
+              },
+            })
+            .eq('id', order.id);
         }
       }
 
