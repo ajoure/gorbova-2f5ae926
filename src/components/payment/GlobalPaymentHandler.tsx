@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useLocation } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -10,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, Calendar, CreditCard, Loader2, Send, XCircle, RefreshCw, MessageCircle } from "lucide-react";
-import { format, addDays } from "date-fns";
+import { format, addDays, differenceInCalendarDays } from "date-fns";
 import { ru } from "date-fns/locale";
 
 interface OrderInfo {
@@ -20,12 +21,15 @@ interface OrderInfo {
   product_name: string;
   tariff_name: string;
   access_days: number;
+  access_end_at: string;
   created_at: string;
+  is_trial: boolean;
 }
 
 export function GlobalPaymentHandler() {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const [successOpen, setSuccessOpen] = useState(false);
   const [failedOpen, setFailedOpen] = useState(false);
@@ -34,7 +38,7 @@ export function GlobalPaymentHandler() {
 
   useEffect(() => {
     const paymentStatus = searchParams.get("payment");
-    
+
     if (paymentStatus === "success") {
       setSuccessOpen(true);
       setFailedOpen(false);
@@ -51,34 +55,59 @@ export function GlobalPaymentHandler() {
 
   const fetchLastOrder = async () => {
     if (!user) return;
-    
+
     setLoading(true);
     try {
-      const { data } = await supabase
+      const orderIdParam = searchParams.get("order");
+
+      let query = supabase
         .from("orders_v2")
         .select(`
+          id,
           order_number,
           final_price,
           currency,
           created_at,
+          is_trial,
+          trial_end_at,
           products_v2 (name),
           tariffs (name, access_days)
         `)
         .eq("user_id", user.id)
-        .eq("status", "paid")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .eq("status", "paid");
+
+      if (orderIdParam) {
+        query = query.eq("id", orderIdParam);
+      } else {
+        query = query.order("created_at", { ascending: false }).limit(1);
+      }
+
+      const { data, error } = await query.maybeSingle();
+      if (error) throw error;
 
       if (data) {
+        const createdAt = new Date(data.created_at);
+
+        const isTrial = !!(data as any).is_trial;
+        const trialEndAtRaw = (data as any).trial_end_at as string | null;
+
+        const tariffAccessDays = (data.tariffs as any)?.access_days || 30;
+
+        const accessEndAt = isTrial && trialEndAtRaw ? new Date(trialEndAtRaw) : addDays(createdAt, tariffAccessDays);
+        const accessDays = isTrial && trialEndAtRaw
+          ? Math.max(1, differenceInCalendarDays(accessEndAt, createdAt))
+          : tariffAccessDays;
+
         setOrderInfo({
           order_number: data.order_number,
-          final_price: data.final_price,
+          final_price: Number(data.final_price),
           currency: data.currency,
           product_name: (data.products_v2 as any)?.name || "Продукт",
-          tariff_name: (data.tariffs as any)?.name || "Тариф",
-          access_days: (data.tariffs as any)?.access_days || 30,
+          tariff_name: (data.tariffs as any)?.name || (isTrial ? "Пробный период" : "Тариф"),
+          access_days: accessDays,
+          access_end_at: accessEndAt.toISOString(),
           created_at: data.created_at,
+          is_trial: isTrial,
         });
       }
     } catch (error) {
@@ -90,11 +119,15 @@ export function GlobalPaymentHandler() {
 
   const clearPaymentParam = () => {
     searchParams.delete("payment");
+    searchParams.delete("order");
     setSearchParams(searchParams);
   };
 
   const handleSuccessClose = () => {
     setSuccessOpen(false);
+    // Ensure UI ("Мои покупки") refreshes after successful payment
+    queryClient.invalidateQueries({ queryKey: ["user-orders-v2"] });
+    queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
     clearPaymentParam();
   };
 
@@ -120,9 +153,7 @@ export function GlobalPaymentHandler() {
 
   const getAccessEndDate = () => {
     if (!orderInfo) return "";
-    const startDate = new Date(orderInfo.created_at);
-    const endDate = addDays(startDate, orderInfo.access_days);
-    return format(endDate, "d MMMM yyyy", { locale: ru });
+    return format(new Date(orderInfo.access_end_at), "d MMMM yyyy", { locale: ru });
   };
 
   return (
