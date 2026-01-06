@@ -97,6 +97,7 @@ export default function AdminProductDetailV2() {
     badge: "",
     access_days: 30,
     is_active: true,
+    getcourse_offer_code: "",
   });
 
   // Offer form
@@ -161,6 +162,7 @@ export default function AdminProductDetailV2() {
         badge: tariff.badge || "",
         access_days: tariff.access_days,
         is_active: tariff.is_active,
+        getcourse_offer_code: tariff.getcourse_offer_code || "",
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -174,6 +176,7 @@ export default function AdminProductDetailV2() {
         badge: "",
         access_days: 30,
         is_active: true,
+        getcourse_offer_code: "",
       });
       setTariffDialog({ open: true, editing: null });
     }
@@ -655,6 +658,18 @@ export default function AdminProductDetailV2() {
                 onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
                 rows={2}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>GetCourse код предложения</Label>
+              <Input
+                placeholder="например: offer_12345"
+                value={tariffForm.getcourse_offer_code}
+                onChange={(e) => setTariffForm({ ...tariffForm, getcourse_offer_code: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Код предложения для автоматического проброса в GetCourse при выдаче доступа
+              </p>
             </div>
 
             <div className="flex items-center gap-6">
