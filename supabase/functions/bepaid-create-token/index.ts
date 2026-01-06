@@ -454,6 +454,8 @@ Deno.serve(async (req) => {
       return url.toString();
     };
 
+    // For subscriptions requiring recurring payments, only allow card payments
+    // ERIP, Apple Pay, Google Pay do not support server-initiated recurring charges
     const subscriptionPayload = {
       customer: {
         email: emailLower,
@@ -469,6 +471,12 @@ Deno.serve(async (req) => {
       notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
       settings: {
         language: 'ru',
+        // Restrict payment methods to cards only for recurring subscriptions
+        // This excludes ERIP, Apple Pay, Google Pay, Samsung Pay which don't support
+        // server-initiated recurring charges with saved tokens
+        payment_method: {
+          types: ['credit_card'],
+        },
       },
       additional_data: {
         order_id: order.id,
