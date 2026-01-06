@@ -235,13 +235,13 @@ export default function Purchases() {
     setDetailSheetOpen(true);
   };
 
-  const downloadReceipt = (order: OrderV2) => {
-    generateOrderReceipt(order);
+  const downloadReceipt = async (order: OrderV2) => {
+    await generateOrderReceipt(order);
   };
 
   // Download receipt for subscription (uses related order)
-  const downloadSubscriptionReceipt = (sub: SubscriptionV2) => {
-    generateSubscriptionReceipt(sub);
+  const downloadSubscriptionReceipt = async (sub: SubscriptionV2) => {
+    await generateSubscriptionReceipt(sub);
   };
 
   // Filter active subscriptions (current ones, not expired and not canceled)
