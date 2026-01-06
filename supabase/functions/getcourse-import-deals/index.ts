@@ -57,7 +57,7 @@ const STATUS_MAP: Record<string, string> = {
   'part_payed': 'pending',
 };
 
-// GetCourse API helper - использует формат запроса GetCourse
+// GetCourse API helper - использует формат как в direct-charge
 async function gcRequest(
   config: GetCourseConfig,
   endpoint: string,
@@ -66,24 +66,26 @@ async function gcRequest(
 ): Promise<any> {
   const url = `https://${config.account_name}.getcourse.ru/pl/api/${endpoint}`;
   
-  const formData = new FormData();
-  formData.append('key', config.secret_key);
-  formData.append('action', action);
+  // GetCourse требует params в base64
+  const paramsEncoded = btoa(unescape(encodeURIComponent(JSON.stringify(params))));
   
-  // GetCourse требует params как JSON объект
-  if (Object.keys(params).length > 0) {
-    formData.append('params', JSON.stringify(params));
-  }
+  const formData = new URLSearchParams();
+  formData.append('action', action);
+  formData.append('key', config.secret_key);
+  formData.append('params', paramsEncoded);
 
-  console.log(`GC Request: ${endpoint} action=${action} params=${JSON.stringify(params)}`);
+  console.log(`GC Request: ${url} action=${action} params=${JSON.stringify(params)}`);
 
   const response = await fetch(url, {
     method: 'POST',
-    body: formData,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: formData.toString(),
   });
 
   const text = await response.text();
-  console.log(`GC Response (${endpoint}): ${text.slice(0, 500)}`);
+  console.log(`GC Response: ${text.slice(0, 1000)}`);
   
   try {
     return JSON.parse(text);
