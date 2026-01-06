@@ -56,9 +56,98 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { action, subscription_id, days, new_end_date } = body;
+    const { action, subscription_id, order_id, days, new_end_date, refund_amount, refund_reason } = body;
 
-    console.log(`Admin ${adminUserId} performing ${action} on subscription ${subscription_id}`);
+    console.log(`Admin ${adminUserId} performing ${action}`);
+
+    // Handle refund separately since it uses order_id not subscription_id
+    if (action === 'refund') {
+      if (!order_id) {
+        return new Response(JSON.stringify({ success: false, error: 'order_id required for refund' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (!refund_reason || !refund_reason.trim()) {
+        return new Response(JSON.stringify({ success: false, error: 'refund_reason required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Get order
+      const { data: order, error: orderError } = await supabase
+        .from('orders_v2')
+        .select('*')
+        .eq('id', order_id)
+        .single();
+
+      if (orderError || !order) {
+        return new Response(JSON.stringify({ success: false, error: 'Order not found' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (order.status !== 'paid') {
+        return new Response(JSON.stringify({ success: false, error: 'Only paid orders can be refunded' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const actualRefundAmount = refund_amount || order.final_price;
+
+      // Update order status
+      await supabase
+        .from('orders_v2')
+        .update({
+          status: 'refunded',
+          meta: {
+            ...(order.meta as object || {}),
+            refund_amount: actualRefundAmount,
+            refund_reason: refund_reason,
+            refunded_at: new Date().toISOString(),
+            refunded_by: adminUserId,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', order_id);
+
+      // Log the refund action
+      await supabase.from('audit_logs').insert({
+        actor_user_id: adminUserId,
+        target_user_id: order.user_id,
+        action: 'admin.subscription.refund',
+        meta: {
+          order_id,
+          order_number: order.order_number,
+          refund_amount: actualRefundAmount,
+          refund_reason: refund_reason,
+          currency: order.currency,
+          original_amount: order.final_price,
+        },
+      });
+
+      console.log(`Refund processed for order ${order_id}: ${actualRefundAmount} ${order.currency}`);
+
+      return new Response(JSON.stringify({ 
+        success: true, 
+        refund_amount: actualRefundAmount,
+        order_number: order.order_number,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // For other actions, subscription_id is required
+    if (!subscription_id) {
+      return new Response(JSON.stringify({ success: false, error: 'subscription_id required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Get subscription
     const { data: subscription, error: subError } = await supabase
