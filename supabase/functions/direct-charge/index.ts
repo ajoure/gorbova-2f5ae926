@@ -140,6 +140,7 @@ Deno.serve(async (req) => {
       console.log(`User already has active subscription ${existingSub.id} for this product, skipping`);
       return new Response(JSON.stringify({
         success: true,
+        alreadySubscribed: true,
         message: 'Already subscribed',
         subscriptionId: existingSub.id,
         accessEndsAt: existingSub.access_end_at,

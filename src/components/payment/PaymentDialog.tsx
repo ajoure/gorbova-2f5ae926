@@ -311,6 +311,13 @@ export function PaymentDialog({
             throw new Error(data.error || "Ошибка при оплате");
           }
         } else {
+          // Handle already subscribed case
+          if (data.alreadySubscribed) {
+            toast.info(`У вас уже есть активная подписка до ${new Date(data.accessEndsAt).toLocaleDateString("ru-RU")}`);
+            onOpenChange(false);
+            return;
+          }
+          
           // Payment successful
           toast.success(
             isTrial
@@ -319,7 +326,10 @@ export function PaymentDialog({
           );
           onOpenChange(false);
           // Redirect to success page
-          window.location.href = `/dashboard?payment=success&order=${data.orderId}`;
+          const redirectUrl = data.orderId 
+            ? `/dashboard?payment=success&order=${data.orderId}`
+            : `/dashboard?payment=success`;
+          window.location.href = redirectUrl;
           return;
         }
       }
