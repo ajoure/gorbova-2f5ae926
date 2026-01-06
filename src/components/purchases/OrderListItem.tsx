@@ -30,17 +30,24 @@ interface Order {
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
+    provider_response: {
+      transaction?: {
+        receipt_url?: string;
+      };
+    } | null;
   }>;
 }
 
 interface OrderListItemProps {
   order: Order;
   onDownloadReceipt: (order: Order) => void;
+  onOpenBePaidReceipt: (url: string) => void;
 }
 
-export function OrderListItem({ order, onDownloadReceipt }: OrderListItemProps) {
+export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }: OrderListItemProps) {
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
+  const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
 
   const formatShortDate = (dateString: string) => {
     return format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
@@ -79,13 +86,13 @@ export function OrderListItem({ order, onDownloadReceipt }: OrderListItemProps) 
   };
 
   const getProductName = (): string => {
-    const productCode = order.products_v2?.code || "";
+    const productName = order.products_v2?.name || order.products_v2?.code || "";
     const tariffName = order.tariffs?.name || order.purchase_snapshot?.tariff_name || "";
     
-    if (productCode && tariffName) {
-      return `${productCode} — ${tariffName}`;
+    if (productName && tariffName) {
+      return `${productName} — ${tariffName}`;
     }
-    if (order.products_v2?.name) return order.products_v2.name;
+    if (productName) return productName;
     if (order.is_trial) return "Пробный период";
     return order.order_number;
   };
@@ -119,18 +126,22 @@ export function OrderListItem({ order, onDownloadReceipt }: OrderListItemProps) 
         </div>
       </div>
       {isPaid && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDownloadReceipt(order);
-          }}
-          className="ml-2 flex-shrink-0"
-        >
-          <Download className="h-4 w-4" />
-          <span className="hidden sm:inline ml-1">Чек</span>
-        </Button>
+        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+          {receiptUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenBePaidReceipt(receiptUrl);
+              }}
+              title="Чек bePaid"
+            >
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1">Чек</span>
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

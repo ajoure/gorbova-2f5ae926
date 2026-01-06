@@ -139,7 +139,7 @@ export function SubscriptionDetailSheet({
       <SheetContent className="sm:max-w-md overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="text-left">
-            {subscription.products_v2?.code || subscription.products_v2?.name} — {subscription.tariffs?.name}
+            {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </SheetTitle>
           <SheetDescription className="text-left">
             {subscription.is_trial ? "Пробный период" : "Подписка"}

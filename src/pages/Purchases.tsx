@@ -51,6 +51,11 @@ interface OrderV2 {
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
+    provider_response: {
+      transaction?: {
+        receipt_url?: string;
+      };
+    } | null;
   }>;
 }
 
@@ -101,7 +106,7 @@ export default function Purchases() {
           customer_email, created_at, meta, purchase_snapshot,
           products_v2(name, code),
           tariffs(name, code),
-          payments_v2(id, status, provider_payment_id, card_brand, card_last4)
+          payments_v2(id, status, provider_payment_id, card_brand, card_last4, provider_response)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -427,6 +432,7 @@ export default function Purchases() {
                         key={order.id}
                         order={order}
                         onDownloadReceipt={downloadReceipt}
+                        onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
                       />
                     ))}
                   </div>

@@ -122,6 +122,7 @@ Deno.serve(async (req) => {
     const effectiveTrialDays = offer?.trial_days ?? trialDays ?? tariff.trial_days ?? 5;
     const autoChargeAmount = offer?.auto_charge_amount ?? tariff.original_price ?? 0;
     const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? tariff.trial_auto_charge ?? true;
+    const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
 
     console.log(`Charge amount: ${amount} ${product.currency}, trial=${isTrial}, days=${effectiveTrialDays}`);
 
@@ -538,12 +539,14 @@ Deno.serve(async (req) => {
       const baseDate = extendFromDate || new Date();
       const accessEndAt = new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
 
+      // Set next_charge_at only if this is a recurring subscription or trial with auto-charge
       let nextChargeAt: Date | null = null;
       if (isTrial && autoChargeAfterTrial) {
         nextChargeAt = new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000);
-      } else if (!isTrial) {
+      } else if (!isTrial && isRecurringSubscription) {
         nextChargeAt = new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
       }
+      // If not recurring subscription (one-time payment), next_charge_at stays null
 
       let subscription;
       if (existingSub && !isTrial) {

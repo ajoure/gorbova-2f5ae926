@@ -82,7 +82,7 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="font-medium text-foreground truncate">
-            {subscription.products_v2?.code || subscription.products_v2?.name} — {subscription.tariffs?.name}
+            {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </h3>
           {getStatusBadge()}
         </div>
