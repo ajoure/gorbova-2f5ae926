@@ -1,7 +1,7 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
 [functions.analyze-task-priority]
-verify_jwt = true
+verify_jwt = false
 
 [functions.users-admin-actions]
 verify_jwt = false

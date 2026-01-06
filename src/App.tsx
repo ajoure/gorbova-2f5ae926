@@ -90,6 +90,7 @@ const App = () => (
               <Route path="/audits/mns-response" element={<ProtectedRoute><MnsResponseService /></ProtectedRoute>} />
               <Route path="/audits/mns-history" element={<ProtectedRoute><MnsDocumentHistory /></ProtectedRoute>} />
               <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
+              <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
@@ -98,7 +99,7 @@ const App = () => (
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
               <Route path="/settings/profile" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
               <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodsSettings /></ProtectedRoute>} />
-              <Route path="/settings/subscriptions" element={<ProtectedRoute><SubscriptionsSettings /></ProtectedRoute>} />
+              <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - New CRM-style */}
               <Route path="/admin" element={<Navigate to="/admin/contacts" replace />} />

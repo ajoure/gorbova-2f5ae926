@@ -12,10 +12,6 @@ const mainMenuItems = [{
   url: "/dashboard",
   icon: LayoutGrid
 }, {
-  title: "Мои покупки",
-  url: "/purchases",
-  icon: ShoppingBag
-}, {
   title: "Бухгалтер",
   url: "/accountant",
   icon: Calculator
@@ -32,8 +28,9 @@ const mainMenuItems = [{
   url: "/self-development",
   icon: Sparkles
 }];
+
 const leaderToolsItems = [{
-  title: "Матрица продуктивности",
+  title: "Матрица",
   url: "/tools/eisenhower",
   icon: LayoutGrid
 }, {
@@ -41,10 +38,11 @@ const leaderToolsItems = [{
   url: "/tools/balance-wheel",
   icon: Target
 }, {
-  title: "Документация",
+  title: "FAQ",
   url: "/docs",
   icon: BookOpen
 }];
+
 const settingsItems = [{
   title: "Профиль",
   url: "/settings/profile",
@@ -54,8 +52,8 @@ const settingsItems = [{
   url: "/settings/payment-methods",
   icon: ShoppingBag
 }, {
-  title: "Подписки",
-  url: "/settings/subscriptions",
+  title: "Мои покупки",
+  url: "/purchases",
   icon: Target
 }];
 export function AppSidebar() {

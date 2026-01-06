@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { MatrixAnalysisModal } from "@/components/eisenhower/MatrixAnalysisModal";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -423,9 +423,8 @@ export default function EisenhowerMatrix() {
   }
 
   return (
-    <TooltipProvider>
-      <DashboardLayout>
-        <div className="max-w-7xl mx-auto space-y-6">
+    <DashboardLayout>
+      <div className="max-w-7xl mx-auto space-y-6">
           <div className="flex items-center gap-4 mb-8">
             <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
               <LayoutGrid className="w-7 h-7 text-primary-foreground" />
@@ -585,14 +584,14 @@ export default function EisenhowerMatrix() {
                 <Button size="sm" onClick={handleAddPlannedTask} className="shrink-0">
                   <Plus className="w-4 h-4" />
                 </Button>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <Popover>
+                  <PopoverTrigger asChild>
                     <Button size="sm" variant="outline" onClick={handleOpenNewTaskModal} className="shrink-0">
                       <Expand className="w-4 h-4" />
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Расширенное создание с AI-приоритетом</TooltipContent>
-                </Tooltip>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" className="text-sm w-auto">Расширенное создание с AI-приоритетом</PopoverContent>
+                </Popover>
               </div>
             </GlassCard>
 
@@ -630,16 +629,16 @@ export default function EisenhowerMatrix() {
                           />
                           <div className="flex items-center gap-1">
                             <h3 className="font-semibold text-foreground">{quadrant.title}</h3>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button className="text-muted-foreground hover:text-foreground">
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button className="text-muted-foreground hover:text-foreground p-1 -m-1">
                                   <Info className="w-3.5 h-3.5" />
                                 </button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="max-w-xs">{quadrant.tooltip}</p>
-                              </TooltipContent>
-                            </Tooltip>
+                              </PopoverTrigger>
+                              <PopoverContent side="top" className="max-w-xs text-sm">
+                                {quadrant.tooltip}
+                              </PopoverContent>
+                            </Popover>
                           </div>
                           <span 
                             className="ml-auto text-xs font-medium px-2 py-1 rounded-full"
@@ -752,6 +751,5 @@ export default function EisenhowerMatrix() {
           tasks={tasks}
         />
       </DashboardLayout>
-    </TooltipProvider>
   );
 }
