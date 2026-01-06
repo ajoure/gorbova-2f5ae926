@@ -1,6 +1,7 @@
-import { format } from "date-fns";
+import { useState } from "react";
+import { format, addDays } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sheet,
@@ -15,6 +16,15 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   User,
   Mail,
@@ -30,6 +40,11 @@ import {
   Ban,
   CheckCircle,
   XCircle,
+  Key,
+  Plus,
+  RotateCcw,
+  Settings,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -56,6 +71,14 @@ interface ContactDetailSheetProps {
 }
 
 export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetailSheetProps) {
+  const queryClient = useQueryClient();
+  const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
+  const [extendDays, setExtendDays] = useState(30);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [grantProductId, setGrantProductId] = useState("");
+  const [grantTariffId, setGrantTariffId] = useState("");
+  const [grantDays, setGrantDays] = useState(30);
+
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.user_id],
@@ -74,6 +97,58 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
       return data;
     },
     enabled: !!contact?.user_id,
+  });
+
+  // Fetch subscriptions for this contact
+  const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
+    queryKey: ["contact-subscriptions", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return [];
+      const { data, error } = await supabase
+        .from("subscriptions_v2")
+        .select(`
+          *,
+          products_v2(id, name, code, telegram_club_id),
+          tariffs(id, name, code)
+        `)
+        .eq("user_id", contact.user_id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // Fetch products for grant access
+  const { data: products } = useQuery({
+    queryKey: ["products-for-grant"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name, code")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: open,
+  });
+
+  // Fetch tariffs for selected product
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-for-grant", grantProductId],
+    queryFn: async () => {
+      if (!grantProductId) return [];
+      const { data, error } = await supabase
+        .from("tariffs")
+        .select("id, name, code")
+        .eq("product_id", grantProductId)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!grantProductId,
   });
 
   // Fetch communication history (audit logs for this user)
@@ -117,6 +192,88 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     enabled: !!contact?.duplicate_flag,
   });
 
+  // Admin action mutation
+  const adminActionMutation = useMutation({
+    mutationFn: async ({ action, subscriptionId, data }: { action: string; subscriptionId: string; data?: Record<string, any> }) => {
+      const { data: result, error } = await supabase.functions.invoke("subscription-admin-actions", {
+        body: {
+          action,
+          subscription_id: subscriptionId,
+          ...data,
+        },
+      });
+      if (error) throw error;
+      if (!result.success) throw new Error(result.error);
+      return result;
+    },
+    onSuccess: (_, variables) => {
+      const messages: Record<string, string> = {
+        cancel: "Подписка отменена",
+        resume: "Подписка восстановлена",
+        extend: "Доступ продлён",
+        grant_access: "Доступ выдан",
+        revoke_access: "Доступ отозван",
+      };
+      toast.success(messages[variables.action] || "Действие выполнено");
+      refetchSubs();
+      setSelectedSubscription(null);
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
+  const handleSubscriptionAction = async (action: string, subscriptionId: string, data?: Record<string, any>) => {
+    setIsProcessing(true);
+    try {
+      await adminActionMutation.mutateAsync({ action, subscriptionId, data });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Grant new access
+  const handleGrantNewAccess = async () => {
+    if (!contact?.user_id || !grantProductId || !grantTariffId) {
+      toast.error("Выберите продукт и тариф");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const accessEnd = new Date(Date.now() + grantDays * 24 * 60 * 60 * 1000);
+      
+      const { error } = await supabase.from("subscriptions_v2").insert({
+        user_id: contact.user_id,
+        product_id: grantProductId,
+        tariff_id: grantTariffId,
+        status: "active",
+        is_trial: false,
+        access_start_at: new Date().toISOString(),
+        access_end_at: accessEnd.toISOString(),
+      });
+
+      if (error) throw error;
+
+      // Log action
+      await supabase.from("audit_logs").insert({
+        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
+        action: "admin.grant_access",
+        target_user_id: contact.user_id,
+        meta: { product_id: grantProductId, tariff_id: grantTariffId, days: grantDays },
+      });
+
+      toast.success(`Доступ выдан на ${grantDays} дней`);
+      refetchSubs();
+      setGrantProductId("");
+      setGrantTariffId("");
+    } catch (error) {
+      toast.error("Ошибка выдачи доступа");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} скопирован`);
@@ -126,10 +283,35 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     switch (status) {
       case "paid": return "bg-green-500/20 text-green-600";
       case "pending": return "bg-amber-500/20 text-amber-600";
-      case "cancelled": return "bg-red-500/20 text-red-600";
+      case "cancelled": 
+      case "failed": return "bg-red-500/20 text-red-600";
       default: return "bg-muted text-muted-foreground";
     }
   };
+
+  const getSubscriptionStatusBadge = (sub: any) => {
+    const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
+    const isCanceled = !!sub.canceled_at;
+    
+    if (isExpired) {
+      return <Badge variant="secondary">Истекла</Badge>;
+    }
+    if (isCanceled) {
+      return <Badge variant="outline" className="text-amber-600 border-amber-300">Не продлевается</Badge>;
+    }
+    if (sub.status === "trial") {
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Триал</Badge>;
+    }
+    if (sub.status === "active") {
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Активна</Badge>;
+    }
+    return <Badge variant="outline">{sub.status}</Badge>;
+  };
+
+  const activeSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return !isExpired && (s.status === "active" || s.status === "trial");
+  }) || [];
 
   if (!contact) return null;
 
@@ -160,12 +342,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         </SheetHeader>
 
         <Tabs defaultValue="profile" className="flex-1 flex flex-col">
-          <TabsList className="mx-6 mt-4 justify-start">
+          <TabsList className="mx-6 mt-4 justify-start flex-wrap">
             <TabsTrigger value="profile">Профиль</TabsTrigger>
+            <TabsTrigger value="access">
+              Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1">{activeSubscriptions.length}</Badge>}
+            </TabsTrigger>
             <TabsTrigger value="deals">
               Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1">{deals.length}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="communications">Коммуникации</TabsTrigger>
+            <TabsTrigger value="communications">События</TabsTrigger>
             {contact.duplicate_flag && (
               <TabsTrigger value="duplicates">Дубли</TabsTrigger>
             )}
@@ -262,6 +447,206 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Access/Subscriptions Tab */}
+            <TabsContent value="access" className="m-0 space-y-4">
+              {/* Grant new access */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    Выдать новый доступ
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Продукт</Label>
+                      <Select value={grantProductId} onValueChange={(v) => { setGrantProductId(v); setGrantTariffId(""); }}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Выбрать..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {products?.map(p => (
+                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Тариф</Label>
+                      <Select value={grantTariffId} onValueChange={setGrantTariffId} disabled={!grantProductId}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Выбрать..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {tariffs?.map(t => (
+                            <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <Label className="text-xs">Дней доступа</Label>
+                      <Input
+                        type="number"
+                        value={grantDays}
+                        onChange={(e) => setGrantDays(parseInt(e.target.value) || 30)}
+                        min={1}
+                        className="h-9"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleGrantNewAccess}
+                      disabled={isProcessing || !grantProductId || !grantTariffId}
+                      className="gap-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Выдать
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Existing subscriptions */}
+              {subsLoading ? (
+                <div className="space-y-3">
+                  {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
+                </div>
+              ) : !subscriptions?.length ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Key className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>Нет подписок</p>
+                </div>
+              ) : (
+                subscriptions.map(sub => {
+                  const product = sub.products_v2 as any;
+                  const tariff = sub.tariffs as any;
+                  const isSelected = selectedSubscription?.id === sub.id;
+                  const isCanceled = !!sub.canceled_at;
+                  const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
+                  const isActive = !isExpired && (sub.status === "active" || sub.status === "trial");
+
+                  return (
+                    <Card key={sub.id} className={`transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <div className="font-medium">{product?.name || "Продукт"}</div>
+                            <div className="text-sm text-muted-foreground">{tariff?.name}</div>
+                          </div>
+                          {getSubscriptionStatusBadge(sub)}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                          <div>
+                            <span className="text-muted-foreground">Начало: </span>
+                            <span>{format(new Date(sub.access_start_at), "dd.MM.yy")}</span>
+                          </div>
+                          {sub.access_end_at && (
+                            <div>
+                              <span className="text-muted-foreground">До: </span>
+                              <span className={isExpired ? "text-destructive" : ""}>{format(new Date(sub.access_end_at), "dd.MM.yy")}</span>
+                            </div>
+                          )}
+                          {sub.next_charge_at && !isCanceled && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground">Списание: </span>
+                              <span>{format(new Date(sub.next_charge_at), "dd.MM.yy")}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Quick actions */}
+                        <div className="flex flex-wrap gap-2">
+                          {/* Extend */}
+                          {isSelected ? (
+                            <div className="flex gap-1 items-center w-full">
+                              <Input
+                                type="number"
+                                value={extendDays}
+                                onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
+                                className="h-8 w-20"
+                                min={1}
+                              />
+                              <span className="text-xs">дней</span>
+                              <Button
+                                size="sm"
+                                onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
+                                disabled={isProcessing}
+                                className="h-8 gap-1"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Продлить
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setSelectedSubscription(null)}
+                                className="h-8"
+                              >
+                                ✕
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSelectedSubscription(sub)}
+                                className="h-7 text-xs gap-1"
+                              >
+                                <Settings className="w-3 h-3" />
+                                Управление
+                              </Button>
+                              
+                              {isCanceled && isActive ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleSubscriptionAction("resume", sub.id)}
+                                  disabled={isProcessing}
+                                  className="h-7 text-xs gap-1"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  Возобновить
+                                </Button>
+                              ) : isActive ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleSubscriptionAction("cancel", sub.id)}
+                                  disabled={isProcessing}
+                                  className="h-7 text-xs gap-1 text-amber-600 hover:text-amber-700"
+                                >
+                                  <Ban className="w-3 h-3" />
+                                  Отменить
+                                </Button>
+                              ) : null}
+
+                              {!isActive && (
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => handleSubscriptionAction("grant_access", sub.id)}
+                                  disabled={isProcessing}
+                                  className="h-7 text-xs gap-1"
+                                >
+                                  <CheckCircle className="w-3 h-3" />
+                                  Активировать
+                                </Button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })
+              )}
             </TabsContent>
 
             {/* Deals Tab */}
