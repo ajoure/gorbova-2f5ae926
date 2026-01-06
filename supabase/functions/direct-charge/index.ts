@@ -359,7 +359,18 @@ Deno.serve(async (req) => {
     // Call bePaid Gateway API to charge the token
     // Important: For token charges, use gateway.bepaid.by/transactions/payments with additional_data.contract
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
-    const returnUrl = `https://gorbova.club/dashboard?payment=success&order=${order.id}`;
+
+    // Build URLs from the request origin to support preview domains (and avoid hanging redirects).
+    const reqOrigin = req.headers.get('origin');
+    const reqReferer = req.headers.get('referer');
+    const origin = reqOrigin
+      || (reqReferer ? new URL(reqReferer).origin : null)
+      || 'https://club.gorbova.by';
+
+    // bePaid webhook receiver (so we can finalize payment after 3DS)
+    const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
+
+    const returnUrl = `${origin}/dashboard?payment=success&order=${order.id}`;
 
     const chargePayload = {
       request: {
@@ -371,14 +382,19 @@ Deno.serve(async (req) => {
         tracking_id: payment.id,
         test: testMode,
         return_url: returnUrl,
+        notification_url: notificationUrl,
         credit_card: {
           token: paymentMethod.provider_token,
         },
         additional_data: {
           contract: ["recurring", "unscheduled"],
+          order_id: order.id,
+          payment_id: payment.id,
         },
       },
     };
+
+    console.log('bePaid gateway URLs:', { origin, returnUrl, notificationUrl });
 
     console.log('Sending charge to bePaid Gateway:', JSON.stringify(chargePayload));
 
