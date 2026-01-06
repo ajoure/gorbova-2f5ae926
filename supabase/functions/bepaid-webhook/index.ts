@@ -498,23 +498,83 @@ Deno.serve(async (req) => {
       if (productV2 && tariffData) {
         console.log(`Granting subscription for products_v2: ${productV2.name}, tariff: ${tariffData.name}`);
         
-        // Calculate access duration
+        // Calculate access duration - prioritize trial_days for trials
         let accessDays = tariffData.access_days || 30;
         if (meta.is_trial && meta.trial_days) {
-          accessDays = meta.trial_days; // Trial period
+          accessDays = meta.trial_days; // Trial period takes priority
+          console.log(`Using trial_days from meta: ${accessDays}`);
         }
         
         const now = new Date();
         const accessEndAt = new Date(now);
         accessEndAt.setDate(accessEndAt.getDate() + accessDays);
         
+        // Create order in orders_v2 for display in "My Purchases"
+        const orderNumber = `ORD-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
+        const { data: orderV2, error: orderV2Error } = await supabase
+          .from('orders_v2')
+          .insert({
+            order_number: orderNumber,
+            user_id: order.user_id,
+            product_id: productV2.id,
+            tariff_id: tariffData.id,
+            customer_email: order.customer_email,
+            base_price: order.amount,
+            final_price: order.amount,
+            paid_amount: order.amount,
+            currency: order.currency,
+            status: 'paid',
+            is_trial: meta.is_trial || false,
+            trial_end_at: meta.is_trial ? accessEndAt.toISOString() : null,
+            purchase_snapshot: {
+              product_name: productV2.name,
+              tariff_name: tariffData.name,
+              tariff_code: meta.tariff_code,
+              access_days: accessDays,
+            },
+            meta: {
+              legacy_order_id: internalOrderId,
+              bepaid_uid: transactionUid,
+              bepaid_subscription_id: subscriptionId,
+            },
+          })
+          .select()
+          .single();
+        
+        if (orderV2Error) {
+          console.error('Failed to create order_v2:', orderV2Error);
+        } else {
+          console.log('Created order_v2:', orderV2.id);
+          
+          // Create payment_v2 record for the order
+          await supabase
+            .from('payments_v2')
+            .insert({
+              order_id: orderV2.id,
+              user_id: order.user_id,
+              amount: order.amount,
+              currency: order.currency,
+              status: 'succeeded',
+              provider: 'bepaid',
+              provider_payment_id: transactionUid,
+              payment_token: subscription?.card?.token || subscription?.token || null,
+              card_brand: subscription?.card?.brand || null,
+              card_last4: subscription?.card?.last_4 || null,
+              paid_at: now.toISOString(),
+              is_recurring: false,
+              meta: {
+                bepaid_subscription_id: subscriptionId,
+              },
+            });
+        }
+        
         // Create subscription in subscriptions_v2
         const { data: existingSub } = await supabase
           .from('subscriptions_v2')
-          .select('id, access_end_at')
+          .select('id, access_end_at, status')
           .eq('user_id', order.user_id)
           .eq('product_id', productV2.id)
-          .eq('status', 'active')
+          .in('status', ['active', 'trial'])
           .maybeSingle();
         
         if (existingSub) {
@@ -529,23 +589,24 @@ Deno.serve(async (req) => {
             .update({
               access_end_at: newEndAt.toISOString(),
               is_trial: meta.is_trial || false,
+              status: meta.is_trial ? 'trial' : 'active',
               trial_end_at: meta.is_trial ? accessEndAt.toISOString() : null,
               payment_token: subscription?.token || null,
+              order_id: orderV2?.id || null,
             })
             .eq('id', existingSub.id);
           
           console.log('Extended existing subscription:', existingSub.id);
         } else {
           // Create new subscription
-          // Note: order_id references orders_v2, but we're using legacy orders table
-          // So we store the order reference in meta instead
           const { error: subError } = await supabase
             .from('subscriptions_v2')
             .insert({
               user_id: order.user_id,
               product_id: productV2.id,
               tariff_id: tariffData.id,
-              status: 'active',
+              order_id: orderV2?.id || null,
+              status: meta.is_trial ? 'trial' : 'active',
               is_trial: meta.is_trial || false,
               access_start_at: now.toISOString(),
               access_end_at: accessEndAt.toISOString(),
@@ -558,6 +619,7 @@ Deno.serve(async (req) => {
                 bepaid_subscription_id: subscriptionId,
                 auto_charge_amount: meta.auto_charge_amount,
                 legacy_order_id: internalOrderId,
+                trial_days: meta.trial_days || null,
               },
             });
           
