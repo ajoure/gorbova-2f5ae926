@@ -435,7 +435,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="px-4 sm:px-6 py-4">
+            <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
                 <CardHeader className="pb-2">
