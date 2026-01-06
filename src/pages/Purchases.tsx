@@ -63,6 +63,7 @@ interface SubscriptionV2 {
   trial_end_at: string | null;
   cancel_at: string | null;
   canceled_at: string | null;
+  next_charge_at: string | null;
   created_at: string;
   products_v2: {
     id: string;
@@ -72,6 +73,10 @@ interface SubscriptionV2 {
   tariffs: {
     name: string;
     code: string;
+  } | null;
+  payment_methods: {
+    brand: string | null;
+    last4: string | null;
   } | null;
 }
 
@@ -114,9 +119,10 @@ export default function Purchases() {
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
-          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, created_at,
+          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at,
           products_v2(id, name, code),
-          tariffs(name, code)
+          tariffs(name, code),
+          payment_methods(brand, last4)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -188,6 +194,18 @@ export default function Purchases() {
 
   const getOrderStatusBadge = (order: OrderV2) => {
     const payment = order.payments_v2?.[0];
+    
+    // Show trial badge for trial orders
+    if (order.is_trial) {
+      if (order.status === "paid" || payment?.status === "succeeded") {
+        return (
+          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+            <Clock className="mr-1 h-3 w-3" />
+            Триал активирован
+          </Badge>
+        );
+      }
+    }
     
     if (order.status === "paid" || payment?.status === "succeeded") {
       return (
@@ -266,10 +284,15 @@ export default function Purchases() {
     const productName = order.products_v2?.name || order.purchase_snapshot?.product_name || "";
     const tariffName = order.tariffs?.name || order.purchase_snapshot?.tariff_name || "";
     
-    if (productName && tariffName) {
-      return `${order.products_v2?.code || ""} — ${tariffName}`;
+    let prefix = "";
+    if (order.is_trial) {
+      prefix = "[Триал] ";
     }
-    if (productName) return productName;
+    
+    if (productName && tariffName) {
+      return `${prefix}${order.products_v2?.code || ""} — ${tariffName}`;
+    }
+    if (productName) return `${prefix}${productName}`;
     if (order.is_trial) return "Пробный период";
     return "—";
   };
@@ -462,6 +485,20 @@ export default function Purchases() {
                           {sub.access_end_at && (
                             <p className={`text-sm ${isExpiringSoon ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
                               Действует до: {formatDate(sub.access_end_at)}
+                            </p>
+                          )}
+                          {/* Show next charge info */}
+                          {sub.next_charge_at && !isCanceled && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <CreditCard className="h-3 w-3" />
+                              Следующее списание: {format(new Date(sub.next_charge_at), "d MMMM yyyy", { locale: ru })}
+                            </p>
+                          )}
+                          {/* Show payment method */}
+                          {sub.payment_methods?.brand && sub.payment_methods?.last4 && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <CreditCard className="h-3 w-3" />
+                              Карта: {sub.payment_methods.brand.toUpperCase()} **** {sub.payment_methods.last4}
                             </p>
                           )}
                           {isCanceled && sub.cancel_at && (
