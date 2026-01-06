@@ -158,7 +158,7 @@ export default function AdminContacts() {
           matchesContactFilter = !contact.telegram_user_id;
           break;
         case "duplicates":
-          matchesContactFilter = !!contact.duplicate_flag;
+          matchesContactFilter = contact.duplicate_flag && contact.duplicate_flag !== 'none';
           break;
       }
 
@@ -297,7 +297,7 @@ export default function AdminContacts() {
                     <div>
                       <div className="font-medium flex items-center gap-2">
                         {contact.full_name || "—"}
-                        {contact.duplicate_flag && (
+                        {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                           <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30">
                             <Copy className="w-3 h-3 mr-1" />
                             Дубль

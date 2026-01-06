@@ -408,7 +408,7 @@ Deno.serve(async (req) => {
           const offerType = orderV2.is_trial ? 'trial' : 'pay_now';
           const { data: offer } = await supabase
             .from('tariff_offers')
-            .select('requires_card_tokenization, auto_charge_after_trial')
+            .select('requires_card_tokenization, auto_charge_after_trial, getcourse_offer_id')
             .eq('tariff_id', orderV2.tariff_id)
             .eq('offer_type', offerType)
             .eq('is_active', true)
@@ -523,9 +523,10 @@ Deno.serve(async (req) => {
               });
             }
 
-            // GetCourse sync
-            if (tariff.getcourse_offer_id && orderV2.customer_email) {
-              console.log(`Syncing to GetCourse: offer_id=${tariff.getcourse_offer_id}, email=${orderV2.customer_email}`);
+            // GetCourse sync - prefer offer-level getcourse_offer_id, fallback to tariff-level
+            const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
+            if (getcourseOfferId && orderV2.customer_email) {
+              console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}, email=${orderV2.customer_email}`);
               
               // Get customer phone from profile
               const { data: profile } = await supabase
@@ -537,7 +538,7 @@ Deno.serve(async (req) => {
               const gcResult = await sendToGetCourse(
                 orderV2.customer_email,
                 profile?.phone || orderV2.customer_phone || null,
-                tariff.getcourse_offer_id,
+                parseInt(getcourseOfferId, 10) || 0,
                 orderV2.id,
                 paymentV2.amount,
                 tariff.code || tariff.name

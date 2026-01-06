@@ -1991,6 +1991,7 @@ export type Database = {
           auto_charge_delay_days: number | null
           button_label: string
           created_at: string | null
+          getcourse_offer_id: string | null
           id: string
           is_active: boolean | null
           is_primary: boolean | null
@@ -2010,6 +2011,7 @@ export type Database = {
           auto_charge_delay_days?: number | null
           button_label: string
           created_at?: string | null
+          getcourse_offer_id?: string | null
           id?: string
           is_active?: boolean | null
           is_primary?: boolean | null
@@ -2029,6 +2031,7 @@ export type Database = {
           auto_charge_delay_days?: number | null
           button_label?: string
           created_at?: string | null
+          getcourse_offer_id?: string | null
           id?: string
           is_active?: boolean | null
           is_primary?: boolean | null
