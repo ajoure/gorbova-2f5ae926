@@ -6,51 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft, Phone, Check, X } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft, Check, X } from "lucide-react";
 import { z } from "zod";
-
-// Belarusian phone format: +375 XX XXX-XX-XX
-const formatBelarusianPhone = (value: string): string => {
-  // Remove all non-digits except +
-  const digits = value.replace(/[^\d+]/g, '');
-  
-  // Ensure it starts with +375
-  let phone = digits;
-  if (!phone.startsWith('+')) {
-    phone = '+' + phone;
-  }
-  if (phone === '+') {
-    return '+375 ';
-  }
-  if (!phone.startsWith('+375') && phone.length > 1) {
-    // If user started typing without +375, add it
-    const digitsOnly = phone.replace(/\D/g, '');
-    if (digitsOnly.startsWith('375')) {
-      phone = '+' + digitsOnly;
-    } else if (digitsOnly.length > 0) {
-      phone = '+375' + digitsOnly;
-    }
-  }
-  
-  // Format: +375 XX XXX-XX-XX
-  const match = phone.match(/^\+375(\d{0,2})(\d{0,3})(\d{0,2})(\d{0,2})$/);
-  if (match) {
-    let formatted = '+375';
-    if (match[1]) formatted += ' ' + match[1];
-    if (match[2]) formatted += ' ' + match[2];
-    if (match[3]) formatted += '-' + match[3];
-    if (match[4]) formatted += '-' + match[4];
-    return formatted;
-  }
-  
-  return phone.slice(0, 17); // Limit length
-};
-
-const unformatPhone = (value: string): string => {
-  return value.replace(/[^\d+]/g, '');
-};
-
-const phoneRegex = /^\+375\d{9}$/;
+import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -75,8 +33,8 @@ const validatePassword = (password: string) => {
 const signupSchema = z.object({
   firstName: z.string().trim().min(2, "Имя должно содержать минимум 2 символа"),
   lastName: z.string().trim().min(2, "Фамилия должна содержать минимум 2 символа"),
-  phone: z.string().refine((val) => phoneRegex.test(unformatPhone(val)), {
-    message: "Введите номер в формате +375 XX XXX-XX-XX",
+  phone: z.string().refine((val) => isValidPhoneNumber(val), {
+    message: "Введите корректный номер телефона",
   }),
   email: z.string().email("Введите корректный email"),
   password: z.string()
@@ -117,7 +75,7 @@ export default function Auth() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [phone, setPhone] = useState("+375 ");
+  const [phone, setPhone] = useState("+375");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldError[]>([]);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -169,9 +127,8 @@ export default function Auth() {
     return fieldErrors.find(e => e.field === field)?.message;
   };
 
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatBelarusianPhone(e.target.value);
-    setPhone(formatted);
+  const handlePhoneChange = (value: string) => {
+    setPhone(value);
   };
 
   const handleBlur = (field: string) => {
@@ -320,7 +277,7 @@ export default function Auth() {
           return;
         }
 
-        const cleanPhone = unformatPhone(phone);
+        const cleanPhone = phone.replace(/[^\d+]/g, '');
         const { error } = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
         if (error) {
           if (error.message.includes("already registered")) {
@@ -583,24 +540,20 @@ export default function Auth() {
                       </div>
                     </div>
 
-                    {/* Phone with Belarusian mask */}
+                    {/* Phone with country selector */}
                     <div className="space-y-2">
                       <Label htmlFor="phone" className="text-foreground">
                         Телефон
                       </Label>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={phone}
-                          onChange={handlePhoneChange}
-                          onBlur={() => handleBlur('phone')}
-                          className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('phone') ? 'border-destructive' : ''}`}
-                          placeholder="+375 44 356-15-12"
-                          required
-                        />
-                      </div>
+                      <PhoneInput
+                        id="phone"
+                        value={phone}
+                        onChange={handlePhoneChange}
+                        onBlur={() => handleBlur('phone')}
+                        placeholder="Номер телефона"
+                        error={!!getFieldError('phone')}
+                        required
+                      />
                       {getFieldError('phone') && (
                         <p className="text-sm text-destructive">{getFieldError('phone')}</p>
                       )}
