@@ -88,7 +88,7 @@ export function AdminSidebar() {
         background: "var(--gradient-sidebar)",
       }}
     >
-      <SidebarHeader className="p-4">
+      <SidebarHeader className="p-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' }}>
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-destructive to-orange-500 flex items-center justify-center shrink-0">
             <Settings className="w-5 h-5 text-white" />
@@ -325,7 +325,7 @@ export function AdminSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="p-3">
+      <SidebarFooter className="p-3" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
         <div
           className="rounded-xl p-3"
           style={{

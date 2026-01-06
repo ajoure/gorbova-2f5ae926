@@ -101,7 +101,7 @@ export function AppSidebar() {
   return <Sidebar collapsible="icon" className="border-r-0" style={{
     background: "var(--gradient-sidebar)"
   }}>
-      <SidebarHeader className="p-4">
+      <SidebarHeader className="p-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' }}>
         <button 
           onClick={handleLogoClick}
           className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-primary rounded-xl w-full text-left"
@@ -192,7 +192,7 @@ export function AppSidebar() {
           </SidebarGroup>}
       </SidebarContent>
 
-      <SidebarFooter className="p-3">
+      <SidebarFooter className="p-3" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
         <div className="rounded-xl p-3" style={{
         background: "hsl(var(--sidebar-accent))"
       }}>
