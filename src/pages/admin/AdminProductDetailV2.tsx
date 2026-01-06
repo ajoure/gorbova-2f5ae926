@@ -97,7 +97,6 @@ export default function AdminProductDetailV2() {
     badge: "",
     access_days: 30,
     is_active: true,
-    getcourse_offer_code: "",
   });
 
   // Offer form
@@ -112,6 +111,7 @@ export default function AdminProductDetailV2() {
     auto_charge_delay_days: 5,
     requires_card_tokenization: false,
     is_active: true,
+    getcourse_offer_id: "",
   });
 
   // Flow form
@@ -162,7 +162,6 @@ export default function AdminProductDetailV2() {
         badge: tariff.badge || "",
         access_days: tariff.access_days,
         is_active: tariff.is_active,
-        getcourse_offer_code: tariff.getcourse_offer_code || "",
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -176,7 +175,6 @@ export default function AdminProductDetailV2() {
         badge: "",
         access_days: 30,
         is_active: true,
-        getcourse_offer_code: "",
       });
       setTariffDialog({ open: true, editing: null });
     }
@@ -211,6 +209,7 @@ export default function AdminProductDetailV2() {
         auto_charge_delay_days: offer.auto_charge_delay_days || 5,
         requires_card_tokenization: offer.requires_card_tokenization ?? false,
         is_active: offer.is_active ?? true,
+        getcourse_offer_id: offer.getcourse_offer_id || "",
       });
       setOfferDialog({ open: true, editing: offer });
     } else {
@@ -225,6 +224,7 @@ export default function AdminProductDetailV2() {
         auto_charge_delay_days: 5,
         requires_card_tokenization: false,
         is_active: true,
+        getcourse_offer_id: "",
       });
       setOfferDialog({ open: true, editing: null });
     }
@@ -250,6 +250,7 @@ export default function AdminProductDetailV2() {
       visible_from: null,
       visible_to: null,
       sort_order: offerForm.offer_type === "trial" ? 1 : 0,
+      getcourse_offer_id: offerForm.getcourse_offer_id || null,
     };
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
@@ -660,18 +661,6 @@ export default function AdminProductDetailV2() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>GetCourse код предложения</Label>
-              <Input
-                placeholder="например: offer_12345"
-                value={tariffForm.getcourse_offer_code}
-                onChange={(e) => setTariffForm({ ...tariffForm, getcourse_offer_code: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Код предложения для автоматического проброса в GetCourse при выдаче доступа
-              </p>
-            </div>
-
             <div className="flex items-center gap-6">
               <div className="flex items-center space-x-2">
                 <Switch
@@ -845,6 +834,18 @@ export default function AdminProductDetailV2() {
                 )}
               </>
             )}
+
+            <div className="border-t pt-4 space-y-2">
+              <Label>GetCourse код предложения</Label>
+              <Input
+                placeholder="например: offer_12345"
+                value={offerForm.getcourse_offer_id}
+                onChange={(e) => setOfferForm({ ...offerForm, getcourse_offer_id: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Код предложения для автоматического проброса в GetCourse при выдаче доступа
+              </p>
+            </div>
 
             <div className="flex items-center space-x-2">
               <Switch

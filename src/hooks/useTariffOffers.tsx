@@ -18,12 +18,13 @@ export interface TariffOffer {
   visible_from: string | null;
   visible_to: string | null;
   sort_order: number;
+  getcourse_offer_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at">;
-export type TariffOfferUpdate = Partial<TariffOfferInsert> & { id: string };
+export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id"> & { getcourse_offer_id?: string | null };
+export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
 export function useTariffOffers(tariffId?: string) {
   return useQuery({

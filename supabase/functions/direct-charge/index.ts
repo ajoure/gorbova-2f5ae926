@@ -689,9 +689,10 @@ Deno.serve(async (req) => {
         });
       }
 
-      // GetCourse sync
-      if (tariff.getcourse_offer_id) {
-        console.log(`Syncing to GetCourse: offer_id=${tariff.getcourse_offer_id}`);
+      // GetCourse sync - prefer offer-level getcourse_offer_id, fallback to tariff-level
+      const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
+      if (getcourseOfferId) {
+        console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}`);
         
         const { data: profile } = await supabase
           .from('profiles')
@@ -703,7 +704,7 @@ Deno.serve(async (req) => {
           const gcResult = await sendToGetCourse(
             profile.email,
             profile.phone || null,
-            tariff.getcourse_offer_id,
+            parseInt(getcourseOfferId, 10) || 0,
             order.id,
             amount,
             tariff.code || tariff.name
