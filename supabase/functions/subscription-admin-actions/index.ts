@@ -212,14 +212,35 @@ Deno.serve(async (req) => {
           .eq('id', subscription_id);
 
         // Revoke Telegram access
-        const product = subscription.products_v2 as any;
-        if (product?.telegram_club_id) {
+        const productForRevoke = subscription.products_v2 as any;
+        if (productForRevoke?.telegram_club_id) {
           await supabase.functions.invoke('telegram-revoke-access', {
             body: {
               user_id: subscription.user_id,
             },
           });
         }
+        break;
+      }
+
+      case 'delete': {
+        // First revoke any access
+        const productForDelete = subscription.products_v2 as any;
+        if (productForDelete?.telegram_club_id) {
+          await supabase.functions.invoke('telegram-revoke-access', {
+            body: {
+              user_id: subscription.user_id,
+            },
+          });
+        }
+
+        // Delete the subscription
+        await supabase
+          .from('subscriptions_v2')
+          .delete()
+          .eq('id', subscription_id);
+
+        result.deleted = true;
         break;
       }
 

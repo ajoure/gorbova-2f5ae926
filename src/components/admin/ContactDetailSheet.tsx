@@ -46,6 +46,9 @@ import {
   Settings,
   ChevronRight,
   Eye,
+  Trash2,
+  Send,
+  BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
@@ -113,7 +116,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         .select(`
           *,
           products_v2(id, name, code, telegram_club_id),
-          tariffs(id, name, code)
+          tariffs(id, name, code, getcourse_offer_code)
         `)
         .eq("user_id", contact.user_id)
         .order("created_at", { ascending: false });
@@ -217,6 +220,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         extend: "Доступ продлён",
         grant_access: "Доступ выдан",
         revoke_access: "Доступ отозван",
+        delete: "Подписка удалена",
       };
       toast.success(messages[variables.action] || "Действие выполнено");
       refetchSubs();
@@ -580,12 +584,39 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   return (
                     <Card key={sub.id} className={`transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}>
                       <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-start justify-between mb-2">
                           <div>
                             <div className="font-medium">{product?.name || "Продукт"}</div>
                             <div className="text-sm text-muted-foreground">{tariff?.name}</div>
                           </div>
-                          {getSubscriptionStatusBadge(sub)}
+                          <div className="flex items-center gap-2">
+                            {getSubscriptionStatusBadge(sub)}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleSubscriptionAction("delete", sub.id)}
+                              disabled={isProcessing}
+                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Access info badges */}
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {product?.telegram_club_id && (
+                            <Badge variant="outline" className="text-xs gap-1 text-blue-600 border-blue-200">
+                              <Send className="w-3 h-3" />
+                              Telegram
+                            </Badge>
+                          )}
+                          {tariff?.getcourse_offer_code && (
+                            <Badge variant="outline" className="text-xs gap-1 text-purple-600 border-purple-200">
+                              <BookOpen className="w-3 h-3" />
+                              GetCourse
+                            </Badge>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 text-xs mb-3">
