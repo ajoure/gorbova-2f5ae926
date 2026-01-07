@@ -945,20 +945,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                     <XCircle className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
                                     <span className="hidden sm:inline">Заблокировать</span>
                                   </Button>
-                                </>
-                              ) : null}
-
-                              {!isActive && (
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  onClick={() => handleSubscriptionAction("grant_access", sub.id)}
-                                  disabled={isProcessing}
-                                  className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
-                                >
-                                  <CheckCircle className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                  Активировать
-                                </Button>
+                              </>
+                              ) : (
+                                <span className="text-xs text-muted-foreground italic">
+                                  Для восстановления используйте «Выдать новый доступ»
+                                </span>
                               )}
                             </>
                           )}
