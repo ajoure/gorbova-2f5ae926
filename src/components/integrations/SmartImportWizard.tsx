@@ -96,7 +96,8 @@ const DEFAULT_MAPPING: ColumnMapping = {
 };
 
 const DEFAULT_SETTINGS: ImportSettings = {
-  statusFilter: ["Оплачено", "Завершён", "В процессе", "Ожидает анализа"],
+  // Пустой фильтр = импортировать все статусы (без отсечения)
+  statusFilter: [],
   duplicateHandling: "skip",
   mergeEmailDuplicates: true,
   normalizeNames: true,
@@ -416,21 +417,33 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
   // Import mutation
   const importMutation = useMutation({
-    mutationFn: async () => {
-      const dealsToImport = prepareDealsForImport();
-      console.log(`[SmartImport] Sending ${dealsToImport.length} deals to import`);
-      
+    mutationFn: async (vars?: { mode?: "full" | "test5" }) => {
+      const mode = vars?.mode ?? "full";
+
+      const dealsToImport =
+        mode === "test5"
+          ? prepareDealsForImport({ limit: 5, ignoreStatusFilter: true })
+          : prepareDealsForImport();
+
+      if (!dealsToImport.length) {
+        throw new Error(
+          "Нет сделок для импорта. Проверьте фильтр статусов и маппинг тарифов."
+        );
+      }
+
+      console.log(`[SmartImport] Sending ${dealsToImport.length} deals to import (mode=${mode})`);
+
       // Create abort controller for this request
       abortControllerRef.current = new AbortController();
-      
+
       const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
         body: {
-          fileDeals: dealsToImport, // Edge function expects fileDeals for file import mode
+          fileDeals: dealsToImport, // File import mode
           settings,
           instanceId, // Optional, for logging
         },
       });
-      
+
       if (error) throw error;
       return data;
     },
@@ -440,7 +453,10 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         setImportResult({
           success: data.result?.orders_created || data.orders_created || 0,
           skipped: data.result?.orders_skipped || 0,
-          errors: data.result?.details?.filter((d: string) => d.includes('Ошибка')).map((d: string, i: number) => ({ row: i, error: d })) || [],
+          errors:
+            data.result?.details
+              ?.filter((d: string) => d.includes('Ошибка'))
+              .map((d: string, i: number) => ({ row: i, error: d })) || [],
         });
         queryClient.invalidateQueries({ queryKey: ["orders-v2"] });
         toast.success(`Импортировано сделок: ${data.result?.orders_created || data.orders_created || 0}`);
@@ -466,99 +482,111 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   }, []);
 
   // Prepare deals for import based on mappings
-  const prepareDealsForImport = useCallback(() => {
-    return rows
-      .filter((row) => {
-        // If no status column mapped, include all rows
-        if (!columnMapping.status) return true;
-        
-        const status = String(row[columnMapping.status] || "");
-        // If no status filter or empty filter, include all rows
-        if (!settings.statusFilter || settings.statusFilter.length === 0) return true;
-        
-        return settings.statusFilter.some(s => status.toLowerCase().includes(s.toLowerCase()));
-      })
-      .filter((row) => {
-        const offerName = String(row[columnMapping.offerName!] || "");
-        const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
+  const prepareDealsForImport = useCallback(
+    (opts: { limit?: number; ignoreStatusFilter?: boolean } = {}) => {
+      const { limit, ignoreStatusFilter = false } = opts;
 
-        // Always honor explicit user decision
-        if (suggestion?.userChoice === "skip") return false;
+      const deals = rows
+        .filter((row) => {
+          // Test mode or explicit override
+          if (ignoreStatusFilter) return true;
 
-        // Default: if status is "Ожидает анализа" and AI couldn't confidently map tariff → skip
-        const status = columnMapping.status ? String(row[columnMapping.status] || "") : "";
-        const isWaitingForAnalysis = status.toLowerCase().includes("ожидает анализа");
-        const isTariffUnclearFromAi =
-          !!suggestion &&
-          !suggestion.userChoice &&
-          (suggestion.action === "needs_review" ||
-            (suggestion.action === "skip" && !suggestion.targetTariffId && !suggestion.targetTariffCode));
+          // If no status column mapped, include all rows
+          if (!columnMapping.status) return true;
 
-        if (isWaitingForAnalysis && isTariffUnclearFromAi) return false;
+          const status = String(row[columnMapping.status] || "");
+          // If no status filter or empty filter, include all rows
+          if (!settings.statusFilter || settings.statusFilter.length === 0) return true;
 
-        return true;
-      })
-      .map((row) => {
-        // Find tariff based on suggestions
-        const offerName = String(row[columnMapping.offerName!] || "");
-        const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
-        
-        let tariffCode = "UNKNOWN";
-        
-        // Handle archive_unknown - keep as special marker for club without tariff
-        if (suggestion?.userChoice === "archive_unknown" || suggestion?.action === "archive_unknown") {
-          tariffCode = "ARCHIVE_UNKNOWN";
-        } else if (suggestion?.userChoice && suggestion.userChoice !== "skip") {
-          tariffCode = suggestion.userChoice;
-        } else if (suggestion?.targetTariffCode) {
-          tariffCode = suggestion.targetTariffCode;
-        }
-        
-        // If using secondary field
-        if (suggestion?.action === "use_secondary_field" && suggestion.secondaryField) {
-          const secondaryValue = String(row[suggestion.secondaryField] || "").toLowerCase();
-          if (secondaryValue.includes("chat")) tariffCode = "chat";
-          else if (secondaryValue.includes("full")) tariffCode = "full";
-          else if (secondaryValue.includes("business")) tariffCode = "business";
-        }
-        
-        // Get raw name
-        let rawFullName = String(row[columnMapping.fullName!] || "");
-        let firstName = columnMapping.firstName ? String(row[columnMapping.firstName] || "") : "";
-        let lastName = columnMapping.lastName ? String(row[columnMapping.lastName] || "") : "";
-        
-        // Normalize names if enabled
-        if (settings.normalizeNames) {
-          if (rawFullName) {
-            const normalized = normalizeName(rawFullName);
-            rawFullName = normalized.fullName;
-            if (!firstName) firstName = normalized.firstName;
-            if (!lastName) lastName = normalized.lastName;
-          } else if (firstName || lastName) {
-            const combined = normalizeName(`${firstName} ${lastName}`);
-            firstName = combined.firstName;
-            lastName = combined.lastName;
-            rawFullName = combined.fullName;
+          return settings.statusFilter.some((s) =>
+            status.toLowerCase().includes(s.toLowerCase())
+          );
+        })
+        .filter((row) => {
+          const offerName = String(row[columnMapping.offerName!] || "");
+          const suggestion = tariffSuggestions.find((s) => s.pattern === offerName);
+
+          // Always honor explicit user decision
+          if (suggestion?.userChoice === "skip") return false;
+
+          // Default: if status is "Ожидает анализа" and AI couldn't confidently map tariff → skip
+          const status = columnMapping.status ? String(row[columnMapping.status] || "") : "";
+          const isWaitingForAnalysis = status.toLowerCase().includes("ожидает анализа");
+          const isTariffUnclearFromAi =
+            !!suggestion &&
+            !suggestion.userChoice &&
+            (suggestion.action === "needs_review" ||
+              (suggestion.action === "skip" && !suggestion.targetTariffId && !suggestion.targetTariffCode));
+
+          if (isWaitingForAnalysis && isTariffUnclearFromAi) return false;
+
+          return true;
+        })
+        .map((row) => {
+          // Find tariff based on suggestions
+          const offerName = String(row[columnMapping.offerName!] || "");
+          const suggestion = tariffSuggestions.find((s) => s.pattern === offerName);
+
+          let tariffCode = "UNKNOWN";
+
+          // Handle archive_unknown - keep as special marker for club without tariff
+          if (suggestion?.userChoice === "archive_unknown" || suggestion?.action === "archive_unknown") {
+            tariffCode = "ARCHIVE_UNKNOWN";
+          } else if (suggestion?.userChoice && suggestion.userChoice !== "skip") {
+            tariffCode = suggestion.userChoice;
+          } else if (suggestion?.targetTariffCode) {
+            tariffCode = suggestion.targetTariffCode;
           }
-        }
-        
-        return {
-          // Map to field names expected by edge function
-          user_email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
-          user_phone: String(row[columnMapping.phone!] || ""),
-          user_full_name: rawFullName,
-          user_first_name: firstName,
-          user_last_name: lastName,
-          offerName,
-          tariffCode,
-          amount: parseFloat(String(row[columnMapping.amount!] || "0")) || 0,
-          status: String(row[columnMapping.status!] || ""),
-          createdAt: String(row[columnMapping.createdAt!] || ""),
-          paidAt: String(row[columnMapping.paidAt!] || ""),
-          externalId: String(row[columnMapping.externalId!] || ""),
-        };
-      });
-  }, [rows, columnMapping, tariffSuggestions, settings, normalizeName]);
+
+          // If using secondary field
+          if (suggestion?.action === "use_secondary_field" && suggestion.secondaryField) {
+            const secondaryValue = String(row[suggestion.secondaryField] || "").toLowerCase();
+            if (secondaryValue.includes("chat")) tariffCode = "chat";
+            else if (secondaryValue.includes("full")) tariffCode = "full";
+            else if (secondaryValue.includes("business")) tariffCode = "business";
+          }
+
+          // Get raw name
+          let rawFullName = String(row[columnMapping.fullName!] || "");
+          let firstName = columnMapping.firstName ? String(row[columnMapping.firstName] || "") : "";
+          let lastName = columnMapping.lastName ? String(row[columnMapping.lastName] || "") : "";
+
+          // Normalize names if enabled
+          if (settings.normalizeNames) {
+            if (rawFullName) {
+              const normalized = normalizeName(rawFullName);
+              rawFullName = normalized.fullName;
+              if (!firstName) firstName = normalized.firstName;
+              if (!lastName) lastName = normalized.lastName;
+            } else if (firstName || lastName) {
+              const combined = normalizeName(`${firstName} ${lastName}`);
+              firstName = combined.firstName;
+              lastName = combined.lastName;
+              rawFullName = combined.fullName;
+            }
+          }
+
+          return {
+            // Map to field names expected by edge function
+            user_email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
+            user_phone: String(row[columnMapping.phone!] || ""),
+            user_full_name: rawFullName,
+            user_first_name: firstName,
+            user_last_name: lastName,
+            offerName,
+            tariffCode,
+            amount: parseFloat(String(row[columnMapping.amount!] || "0")) || 0,
+            status: String(row[columnMapping.status!] || ""),
+            createdAt: String(row[columnMapping.createdAt!] || ""),
+            paidAt: String(row[columnMapping.paidAt!] || ""),
+            externalId: String(row[columnMapping.externalId!] || ""),
+          };
+        });
+
+      return typeof limit === "number" ? deals.slice(0, limit) : deals;
+    },
+    [rows, columnMapping, tariffSuggestions, settings, normalizeName]
+  );
 
   // Stats for preview
   const previewStats = useMemo(() => {
@@ -1204,14 +1232,28 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                     Будет импортировано {previewStats.total} сделок
                   </p>
                   {previewStats.total === 0 ? (
-                    <Alert variant="destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Нет сделок для импорта. Проверьте маппинг тарифов — возможно, все сделки имеют статус «UNKNOWN» или пропущены.
-                      </AlertDescription>
-                    </Alert>
+                    <div className="space-y-4">
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          Нет сделок для импорта по текущим настройкам. Чаще всего это происходит из-за фильтра статусов.
+                        </AlertDescription>
+                      </Alert>
+
+                      <Button
+                        onClick={() => {
+                          setImportCancelled(false);
+                          setIsImporting(true);
+                          importMutation.mutate({ mode: "test5" });
+                        }}
+                        size="lg"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Импортировать 5 сделок (тест)
+                      </Button>
+                    </div>
                   ) : (
-                    <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate(); }} size="lg">
+                    <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "full" }); }} size="lg">
                       <Upload className="h-4 w-4 mr-2" />
                       Начать импорт
                     </Button>
