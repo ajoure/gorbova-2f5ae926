@@ -63,6 +63,8 @@ interface InstallmentPlan {
   closeReason: CloseReason | null;
   closeComment: string | null;
   closedAt: string | null;
+  closedBy: string | null;
+  closedByEmail: string | null;
 }
 
 export function ContactInstallments({ userId, currency = "BYN" }: ContactInstallmentsProps) {
@@ -171,6 +173,8 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
         closeReason: null,
         closeComment: null,
         closedAt: null,
+        closedBy: null,
+        closedByEmail: null,
       });
     }
     
@@ -190,6 +194,8 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
       plan.closeReason = installment.status as CloseReason;
       plan.closeComment = meta?.close_comment || null;
       plan.closedAt = meta?.closed_at || null;
+      plan.closedBy = meta?.closed_by || null;
+      plan.closedByEmail = meta?.closed_by_email || null;
     }
   });
 
@@ -551,6 +557,12 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
                             <span className="text-muted-foreground">Списано:</span>
                             <span className="font-medium">{formatAmount(cancelledAmount)} {currency}</span>
                           </div>
+                          {plan.closedByEmail && (
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">Закрыл:</span>
+                              <span>{plan.closedByEmail}</span>
+                            </div>
+                          )}
                           {plan.closedAt && (
                             <div className="flex items-center justify-between text-sm">
                               <span className="text-muted-foreground">Дата закрытия:</span>
