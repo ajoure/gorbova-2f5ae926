@@ -192,8 +192,9 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
     } else if (installment.status === "cancelled" || installment.status === "forgiven") {
       plan.isClosed = true;
       plan.closeReason = installment.status as CloseReason;
-      plan.closeComment = meta?.close_comment || null;
-      plan.closedAt = meta?.closed_at || null;
+      // Support both old and new meta field names
+      plan.closeComment = meta?.close_comment || meta?.cancelled_reason || null;
+      plan.closedAt = meta?.closed_at || installment.updated_at || null;
       plan.closedBy = meta?.closed_by || null;
       plan.closedByEmail = meta?.closed_by_email || null;
     }
