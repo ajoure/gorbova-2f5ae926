@@ -8,7 +8,6 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
@@ -18,13 +17,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,12 +38,10 @@ import {
   MessageCircle,
   Handshake,
   RefreshCw,
-  Filter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
-
-type ContactFilter = "all" | "with_deals" | "no_deals" | "with_telegram" | "no_telegram" | "duplicates";
+import { AdvancedFilters, ActiveFilter, FilterField, applyFilters } from "@/components/admin/AdvancedFilters";
 
 interface Contact {
   id: string;
@@ -69,12 +59,40 @@ interface Contact {
   last_deal_at: string | null;
 }
 
+const CONTACT_FILTER_FIELDS: FilterField[] = [
+  { key: "full_name", label: "Имя", type: "text" },
+  { key: "email", label: "Email", type: "text" },
+  { key: "phone", label: "Телефон", type: "text" },
+  { key: "telegram_username", label: "Telegram", type: "text" },
+  { 
+    key: "status", 
+    label: "Статус", 
+    type: "select",
+    options: [
+      { value: "active", label: "Активен" },
+      { value: "blocked", label: "Заблокирован" },
+      { value: "deleted", label: "Удален" },
+    ]
+  },
+  { key: "deals_count", label: "Кол-во сделок", type: "number" },
+  { 
+    key: "has_telegram", 
+    label: "Есть Telegram", 
+    type: "boolean" 
+  },
+  { 
+    key: "is_duplicate", 
+    label: "Дубль", 
+    type: "boolean" 
+  },
+  { key: "created_at", label: "Дата создания", type: "date" },
+];
+
 export default function AdminContacts() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "blocked" | "deleted">("all");
-  const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
+  const [advancedFilters, setAdvancedFilters] = useState<ActiveFilter[]>([]);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -141,44 +159,35 @@ export default function AdminContacts() {
     },
   });
 
+  const getContactFieldValue = (contact: Contact, fieldKey: string): any => {
+    switch (fieldKey) {
+      case "has_telegram":
+        return !!contact.telegram_user_id;
+      case "is_duplicate":
+        return contact.duplicate_flag && contact.duplicate_flag !== 'none';
+      default:
+        return (contact as any)[fieldKey];
+    }
+  };
+
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
     
-    return contacts.filter(contact => {
-      // Search filter
+    // First apply search
+    let result = contacts;
+    if (search) {
       const searchLower = search.toLowerCase();
-      const matchesSearch = !search || 
+      result = result.filter(contact => 
         contact.email?.toLowerCase().includes(searchLower) ||
         contact.full_name?.toLowerCase().includes(searchLower) ||
         contact.phone?.includes(search) ||
-        contact.telegram_username?.toLowerCase().includes(searchLower);
-
-      // Status filter
-      const matchesStatus = statusFilter === "all" || contact.status === statusFilter;
-
-      // Contact filter
-      let matchesContactFilter = true;
-      switch (contactFilter) {
-        case "with_deals":
-          matchesContactFilter = contact.deals_count > 0;
-          break;
-        case "no_deals":
-          matchesContactFilter = contact.deals_count === 0;
-          break;
-        case "with_telegram":
-          matchesContactFilter = !!contact.telegram_user_id;
-          break;
-        case "no_telegram":
-          matchesContactFilter = !contact.telegram_user_id;
-          break;
-        case "duplicates":
-          matchesContactFilter = contact.duplicate_flag && contact.duplicate_flag !== 'none';
-          break;
-      }
-
-      return matchesSearch && matchesStatus && matchesContactFilter;
-    });
-  }, [contacts, search, statusFilter, contactFilter]);
+        contact.telegram_username?.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Then apply advanced filters
+    return applyFilters(result, advancedFilters, getContactFieldValue);
+  }, [contacts, search, advancedFilters]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -307,40 +316,24 @@ export default function AdminContacts() {
       </div>
 
       {/* Search and Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск по email, имени, телефону, Telegram..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по email, имени, телефону, Telegram..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
         
-        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
-          <TabsList>
-            <TabsTrigger value="all">Все</TabsTrigger>
-            <TabsTrigger value="active">Активные</TabsTrigger>
-            <TabsTrigger value="blocked">Заблокированные</TabsTrigger>
-            <TabsTrigger value="deleted">Удаленные</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <Select value={contactFilter} onValueChange={(v) => setContactFilter(v as ContactFilter)}>
-          <SelectTrigger className="w-[180px]">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Фильтр" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все контакты</SelectItem>
-            <SelectItem value="with_deals">Есть сделки</SelectItem>
-            <SelectItem value="no_deals">Нет сделок</SelectItem>
-            <SelectItem value="with_telegram">Есть Telegram</SelectItem>
-            <SelectItem value="no_telegram">Нет Telegram</SelectItem>
-            <SelectItem value="duplicates">Дубли</SelectItem>
-          </SelectContent>
-        </Select>
+        <AdvancedFilters
+          fields={CONTACT_FILTER_FIELDS}
+          filters={advancedFilters}
+          onFiltersChange={setAdvancedFilters}
+        />
       </div>
 
       {/* Stats & Bulk Actions */}
