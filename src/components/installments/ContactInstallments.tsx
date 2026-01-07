@@ -8,22 +8,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { 
   CreditCard, 
   ChevronDown, 
@@ -31,17 +32,15 @@ import {
   Clock,
   AlertTriangle,
   Check,
-  Zap,
-  Bell,
   XCircle,
-  Loader2,
+  Gift,
   Package,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { InstallmentProgress } from "./InstallmentProgress";
 import { InstallmentTimeline } from "./InstallmentTimeline";
-import { useChargeInstallment, useCloseInstallmentPlan } from "@/hooks/useInstallments";
+import { useChargeInstallment, useCloseInstallmentPlan, type CloseReason } from "@/hooks/useInstallments";
 import type { InstallmentPayment } from "@/hooks/useInstallments";
 
 interface ContactInstallmentsProps {
@@ -60,11 +59,18 @@ interface InstallmentPlan {
   pendingAmount: number;
   isComplete: boolean;
   hasOverdue: boolean;
+  isClosed: boolean;
+  closeReason: CloseReason | null;
+  closeComment: string | null;
+  closedAt: string | null;
 }
 
 export function ContactInstallments({ userId, currency = "BYN" }: ContactInstallmentsProps) {
   const queryClient = useQueryClient();
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
+  const [closeDialogOpen, setCloseDialogOpen] = useState<string | null>(null);
+  const [closeReason, setCloseReason] = useState<CloseReason>("cancelled");
+  const [closeComment, setCloseComment] = useState("");
   const chargeInstallment = useChargeInstallment();
   const closeInstallmentPlan = useCloseInstallmentPlan();
 
@@ -91,23 +97,6 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
     enabled: !!userId,
   });
 
-  // Send reminder mutation
-  const sendReminderMutation = useMutation({
-    mutationFn: async (installmentId: string) => {
-      const { data, error } = await supabase.functions.invoke("installment-notifications", {
-        body: { action: "upcoming", installment_id: installmentId },
-      });
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      toast.success("Напоминание отправлено");
-    },
-    onError: (error) => {
-      toast.error("Ошибка: " + (error as Error).message);
-    },
-  });
-
   const togglePlan = (subscriptionId: string) => {
     setExpandedPlans(prev => {
       const next = new Set(prev);
@@ -118,6 +107,19 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
       }
       return next;
     });
+  };
+
+  const handleClosePlan = (subscriptionId: string) => {
+    closeInstallmentPlan.mutate(
+      { subscriptionId, closeReason, comment: closeComment },
+      {
+        onSuccess: () => {
+          setCloseDialogOpen(null);
+          setCloseReason("cancelled");
+          setCloseComment("");
+        },
+      }
+    );
   };
 
   const formatAmount = (amount: number) => {
@@ -151,6 +153,7 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
   installments.forEach(installment => {
     const subId = installment.subscription_id;
     const sub = installment.subscriptions_v2 as any;
+    const meta = installment.meta as Record<string, any> | null;
     
     if (!planMap.has(subId)) {
       planMap.set(subId, {
@@ -164,6 +167,10 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
         pendingAmount: 0,
         isComplete: false,
         hasOverdue: false,
+        isClosed: false,
+        closeReason: null,
+        closeComment: null,
+        closedAt: null,
       });
     }
     
@@ -178,6 +185,11 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
       if (isPast(new Date(installment.due_date))) {
         plan.hasOverdue = true;
       }
+    } else if (installment.status === "cancelled" || installment.status === "forgiven") {
+      plan.isClosed = true;
+      plan.closeReason = installment.status as CloseReason;
+      plan.closeComment = meta?.close_comment || null;
+      plan.closedAt = meta?.closed_at || null;
     }
   });
 
@@ -187,8 +199,9 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
   });
 
   const plans = Array.from(planMap.values());
-  const activePlans = plans.filter(p => !p.isComplete);
+  const activePlans = plans.filter(p => !p.isComplete && !p.isClosed);
   const completedPlans = plans.filter(p => p.isComplete);
+  const closedPlans = plans.filter(p => p.isClosed);
   const hasOverduePlans = plans.some(p => p.hasOverdue);
 
   return (
@@ -281,31 +294,108 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
 
                 {/* Actions */}
                 <div className="flex gap-2 mt-4 pt-4 border-t">
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1.5">
+                  <Dialog 
+                    open={closeDialogOpen === plan.subscriptionId} 
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        setCloseDialogOpen(null);
+                        setCloseReason("cancelled");
+                        setCloseComment("");
+                      }
+                    }}
+                  >
+                    <DialogTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="gap-1.5"
+                        onClick={() => setCloseDialogOpen(plan.subscriptionId)}
+                      >
                         <XCircle className="h-4 w-4" />
                         Закрыть рассрочку
                       </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Закрыть рассрочку досрочно?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Все оставшиеся платежи будут отменены. Остаток к оплате: {formatAmount(plan.pendingAmount)} {currency}.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Отмена</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => closeInstallmentPlan.mutate({ subscriptionId: plan.subscriptionId })}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Закрыть рассрочку</DialogTitle>
+                        <DialogDescription>
+                          Остаток к оплате: <span className="font-semibold">{formatAmount(plan.pendingAmount)} {currency}</span>
+                        </DialogDescription>
+                      </DialogHeader>
+                      
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-3">
+                          <Label>Причина закрытия</Label>
+                          <RadioGroup 
+                            value={closeReason} 
+                            onValueChange={(v) => setCloseReason(v as CloseReason)}
+                          >
+                            <div className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                              <RadioGroupItem value="cancelled" id="cancelled" className="mt-1" />
+                              <div className="flex-1">
+                                <Label htmlFor="cancelled" className="flex items-center gap-2 cursor-pointer font-medium">
+                                  <XCircle className="h-4 w-4 text-muted-foreground" />
+                                  Не оплачено
+                                </Label>
+                                <p className="text-sm text-muted-foreground mt-0.5">
+                                  Клиент не выполнил обязательства по оплате
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                              <RadioGroupItem value="forgiven" id="forgiven" className="mt-1" />
+                              <div className="flex-1">
+                                <Label htmlFor="forgiven" className="flex items-center gap-2 cursor-pointer font-medium">
+                                  <Gift className="h-4 w-4 text-purple-500" />
+                                  Прощено
+                                </Label>
+                                <p className="text-sm text-muted-foreground mt-0.5">
+                                  Списываем остаток долга клиенту
+                                </p>
+                              </div>
+                            </div>
+                          </RadioGroup>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="comment">Комментарий (опционально)</Label>
+                          <Textarea
+                            id="comment"
+                            placeholder="Причина закрытия рассрочки..."
+                            value={closeComment}
+                            onChange={(e) => setCloseComment(e.target.value)}
+                            rows={3}
+                          />
+                        </div>
+                      </div>
+
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setCloseDialogOpen(null)}
                         >
-                          Закрыть рассрочку
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                          Отмена
+                        </Button>
+                        <Button
+                          variant={closeReason === "forgiven" ? "default" : "destructive"}
+                          onClick={() => handleClosePlan(plan.subscriptionId)}
+                          disabled={closeInstallmentPlan.isPending}
+                        >
+                          {closeReason === "forgiven" ? (
+                            <>
+                              <Gift className="h-4 w-4 mr-1.5" />
+                              Простить долг
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-4 w-4 mr-1.5" />
+                              Закрыть рассрочку
+                            </>
+                          )}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </CardContent>
             </CollapsibleContent>
@@ -344,6 +434,78 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {/* Closed plans */}
+      {closedPlans.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
+            <XCircle className="h-4 w-4 text-muted-foreground" />
+            Закрытые рассрочки ({closedPlans.length})
+          </p>
+          
+          {closedPlans.map(plan => {
+            const isForgiven = plan.closeReason === "forgiven";
+            const cancelledAmount = plan.installments
+              .filter(i => i.status === "cancelled" || i.status === "forgiven")
+              .reduce((sum, i) => sum + Number(i.amount), 0);
+            
+            return (
+              <Card 
+                key={plan.subscriptionId} 
+                className={cn(
+                  isForgiven 
+                    ? "bg-purple-500/5 border-purple-500/20" 
+                    : "bg-muted/30 border-muted"
+                )}
+              >
+                <CardContent className="py-3 px-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      {isForgiven ? (
+                        <Gift className="h-5 w-5 text-purple-500 mt-0.5" />
+                      ) : (
+                        <XCircle className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      )}
+                      <div>
+                        <p className="font-medium">{plan.productName}</p>
+                        <p className="text-xs text-muted-foreground">{plan.tariffName}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge 
+                            variant="outline" 
+                            className={cn(
+                              "text-xs",
+                              isForgiven 
+                                ? "border-purple-500/30 text-purple-600 dark:text-purple-400" 
+                                : "text-muted-foreground"
+                            )}
+                          >
+                            {isForgiven ? "Прощено" : "Не оплачено"} • {formatAmount(cancelledAmount)} {currency}
+                          </Badge>
+                        </div>
+                        {plan.closeComment && (
+                          <p className="text-xs text-muted-foreground mt-1.5 italic">
+                            "{plan.closeComment}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm">
+                        Оплачено: <span className="font-semibold">{formatAmount(plan.paidAmount)}</span> / {formatAmount(plan.totalAmount)}
+                      </p>
+                      {plan.closedAt && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Закрыто: {format(new Date(plan.closedAt), "d MMM yyyy", { locale: ru })}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

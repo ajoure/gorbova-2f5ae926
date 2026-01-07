@@ -4,8 +4,8 @@ import {
   Clock, 
   AlertTriangle, 
   Check,
-  CreditCard,
-  Calendar,
+  XCircle,
+  Gift,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { InstallmentWithDetails } from "@/hooks/useInstallments";
@@ -27,11 +27,14 @@ export function InstallmentStats({ installments, currency = "BYN" }: Installment
   const pending = installments.filter(i => i.status === "pending");
   const overdue = pending.filter(i => isPast(new Date(i.due_date)));
   const succeeded = installments.filter(i => i.status === "succeeded");
-  const failed = installments.filter(i => i.status === "failed");
+  const cancelled = installments.filter(i => i.status === "cancelled");
+  const forgiven = installments.filter(i => i.status === "forgiven");
 
   const pendingAmount = pending.reduce((sum, i) => sum + Number(i.amount), 0);
   const overdueAmount = overdue.reduce((sum, i) => sum + Number(i.amount), 0);
   const succeededAmount = succeeded.reduce((sum, i) => sum + Number(i.amount), 0);
+  const cancelledAmount = cancelled.reduce((sum, i) => sum + Number(i.amount), 0);
+  const forgivenAmount = forgiven.reduce((sum, i) => sum + Number(i.amount), 0);
 
   const stats = [
     {
@@ -71,11 +74,33 @@ export function InstallmentStats({ installments, currency = "BYN" }: Installment
       bgColor: "bg-primary/10",
       borderColor: "border-primary/20",
     },
+    {
+      label: "Не оплачено",
+      value: cancelled.length,
+      amount: cancelledAmount,
+      icon: XCircle,
+      color: "text-muted-foreground",
+      bgColor: "bg-muted/50",
+      borderColor: "border-muted",
+      hide: cancelled.length === 0,
+    },
+    {
+      label: "Прощено",
+      value: forgiven.length,
+      amount: forgivenAmount,
+      icon: Gift,
+      color: "text-purple-600 dark:text-purple-400",
+      bgColor: "bg-purple-500/10",
+      borderColor: "border-purple-500/20",
+      hide: forgiven.length === 0,
+    },
   ];
 
+  const visibleStats = stats.filter(s => !s.hide);
+
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {stats.map((stat, index) => (
+    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      {visibleStats.map((stat, index) => (
         <Card 
           key={index} 
           className={cn(
