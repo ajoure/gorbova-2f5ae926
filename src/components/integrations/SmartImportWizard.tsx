@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from "react";
+import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -13,7 +14,7 @@ import { toast } from "sonner";
 import { 
   Upload, FileSpreadsheet, Sparkles, ArrowRight, ArrowLeft, 
   Check, X, Loader2, AlertCircle, Brain, Save, RefreshCw,
-  ChevronDown, ChevronRight, Info
+  ChevronDown, ChevronRight, Info, Users, ShoppingCart, Filter
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
@@ -53,8 +54,8 @@ interface TariffSuggestion {
   secondaryField: string | null;
   confidence: number;
   reason: string;
-  suggestedPrice?: number; // Price from data for manual review
-  userChoice?: string; // User's override choice
+  suggestedPrice?: number;
+  userChoice?: string;
 }
 
 interface DuplicateInfo {
@@ -64,7 +65,7 @@ interface DuplicateInfo {
 }
 
 interface ImportSettings {
-  statusFilter: string[];
+  onlyPaid: boolean; // Simplified: true = only paid statuses
   duplicateHandling: "skip" | "update";
   mergeEmailDuplicates: boolean;
   normalizeNames: boolean;
@@ -73,12 +74,14 @@ interface ImportSettings {
 }
 
 const STEPS = [
-  { id: 1, name: "Загрузка файла", icon: Upload },
-  { id: 2, name: "Маппинг колонок", icon: Brain },
-  { id: 3, name: "Маппинг тарифов", icon: Sparkles },
-  { id: 4, name: "Настройки", icon: RefreshCw },
-  { id: 5, name: "Импорт", icon: Check },
+  { id: 1, name: "Файл", icon: Upload },
+  { id: 2, name: "Колонки", icon: Brain },
+  { id: 3, name: "Тарифы", icon: Sparkles },
+  { id: 4, name: "Готово", icon: Check },
+  { id: 5, name: "Импорт", icon: ShoppingCart },
 ];
+
+const PAID_STATUSES = ["Оплачено", "Завершён"];
 
 const DEFAULT_MAPPING: ColumnMapping = {
   email: null,
@@ -96,8 +99,7 @@ const DEFAULT_MAPPING: ColumnMapping = {
 };
 
 const DEFAULT_SETTINGS: ImportSettings = {
-  // Пустой фильтр = импортировать все статусы (без отсечения)
-  statusFilter: [],
+  onlyPaid: false, // Import all by default
   duplicateHandling: "skip",
   mergeEmailDuplicates: true,
   normalizeNames: true,
@@ -119,11 +121,14 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>(DEFAULT_MAPPING);
   const [tariffField, setTariffField] = useState<string | null>(null);
   const [isAnalyzingColumns, setIsAnalyzingColumns] = useState(false);
+  const [columnsAnalyzed, setColumnsAnalyzed] = useState(false);
   
   // Step 3: Tariff mapping
   const [tariffSuggestions, setTariffSuggestions] = useState<TariffSuggestion[]>([]);
   const [isAnalyzingTariffs, setIsAnalyzingTariffs] = useState(false);
+  const [tariffsAnalyzed, setTariffsAnalyzed] = useState(false);
   const [expandedOffers, setExpandedOffers] = useState<Set<string>>(new Set());
+  const [showAllOffers, setShowAllOffers] = useState(false);
   
   // Step 4: Settings
   const [settings, setSettings] = useState<ImportSettings>(DEFAULT_SETTINGS);
@@ -203,6 +208,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       const { headers: parsedHeaders, rows: parsedRows } = await parseFile(uploadedFile);
       setHeaders(parsedHeaders);
       setRows(parsedRows);
+      setColumnsAnalyzed(false);
+      setTariffsAnalyzed(false);
       toast.success(`Загружено ${parsedRows.length} строк`);
     } catch (err) {
       toast.error("Ошибка при чтении файла");
@@ -231,6 +238,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         if (data.tariffField) {
           setTariffField(data.tariffField);
         }
+        setColumnsAnalyzed(true);
         toast.success("Колонки проанализированы");
       }
     } catch (err) {
@@ -240,6 +248,13 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       setIsAnalyzingColumns(false);
     }
   };
+
+  // Auto-analyze columns when entering step 2
+  useEffect(() => {
+    if (step === 2 && !columnsAnalyzed && !isAnalyzingColumns && headers.length > 0) {
+      analyzeColumns();
+    }
+  }, [step, columnsAnalyzed, isAnalyzingColumns, headers.length]);
 
   // Get unique offers from data
   const uniqueOffers = useMemo(() => {
@@ -258,7 +273,6 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           existing.samples.push(row);
         }
       } else {
-        // Extract amount from the first sample
         const amountValue = columnMapping.amount ? row[columnMapping.amount] : undefined;
         const amount = amountValue ? parseFloat(String(amountValue).replace(/[^\d.,]/g, '').replace(',', '.')) : undefined;
         offerCounts.set(offerName, { count: 1, samples: [row], amount: amount && !isNaN(amount) ? amount : undefined });
@@ -270,19 +284,16 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       .sort((a, b) => b.count - a.count);
   }, [rows, columnMapping.offerName, columnMapping.amount]);
 
-  // Helper function to normalize names (remove duplicates like "Иван Иванов Иван Иванов")
+  // Helper function to normalize names
   const normalizeName = useCallback((name: string): { firstName: string; lastName: string; fullName: string } => {
     if (!name) return { firstName: "", lastName: "", fullName: "" };
     
-    // Split and clean
     const parts = name.trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) return { firstName: "", lastName: "", fullName: "" };
     
-    // Capitalize each part
     const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
     const capitalizedParts = parts.map(capitalize);
     
-    // Detect and remove duplicates (e.g., "Иван Иванов Иван Иванов" -> "Иван Иванов")
     const halfLen = Math.floor(capitalizedParts.length / 2);
     if (capitalizedParts.length >= 4 && capitalizedParts.length % 2 === 0) {
       const firstHalf = capitalizedParts.slice(0, halfLen).join(" ");
@@ -296,7 +307,6 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       }
     }
     
-    // Standard case: first part is firstName, rest is lastName
     return {
       firstName: capitalizedParts[0],
       lastName: capitalizedParts.slice(1).join(" "),
@@ -304,38 +314,16 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     };
   }, []);
 
-  // Find email duplicates in the data
-  const emailDuplicates = useMemo((): DuplicateInfo[] => {
-    if (!columnMapping.email || !rows.length) return [];
-    
-    const emailMap = new Map<string, { count: number; names: Set<string> }>();
-    
+  // Get unique emails count
+  const uniqueEmailsCount = useMemo(() => {
+    if (!columnMapping.email || !rows.length) return 0;
+    const emails = new Set<string>();
     rows.forEach((row) => {
       const email = String(row[columnMapping.email!] || "").toLowerCase().trim();
-      if (!email || !email.includes("@")) return;
-      
-      const nameCol = columnMapping.fullName || columnMapping.firstName;
-      const name = nameCol ? String(row[nameCol] || "") : "";
-      
-      const existing = emailMap.get(email);
-      if (existing) {
-        existing.count++;
-        if (name) existing.names.add(name);
-      } else {
-        emailMap.set(email, { count: 1, names: new Set(name ? [name] : []) });
-      }
+      if (email && email.includes("@")) emails.add(email);
     });
-    
-    // Return only actual duplicates (count > 1)
-    return Array.from(emailMap.entries())
-      .filter(([_, data]) => data.count > 1)
-      .map(([email, data]) => ({
-        email,
-        count: data.count,
-        names: Array.from(data.names),
-      }))
-      .sort((a, b) => b.count - a.count);
-  }, [rows, columnMapping.email, columnMapping.fullName, columnMapping.firstName]);
+    return emails.size;
+  }, [rows, columnMapping.email]);
 
   // AI Tariff Analysis
   const analyzeTariffs = async () => {
@@ -365,18 +353,17 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       if (error) throw error;
       
       if (data.suggestions) {
-        // Keep AI suggestions as-is. We only skip rows when the user explicitly chooses "skip".
-        // This prevents a confusing "0" in preview when AI can't confidently map tariffs.
         const enrichedSuggestions: TariffSuggestion[] = data.suggestions.map((s: TariffSuggestion) => ({
           ...s,
         }));
 
         setTariffSuggestions(enrichedSuggestions);
+        setTariffsAnalyzed(true);
 
         const unknownCount = enrichedSuggestions.filter((s) => !s.targetTariffId).length;
 
         if (unknownCount > 0) {
-          toast.info(`${unknownCount} офферов без тарифа — выберите действие на шаге «Маппинг тарифов»`);
+          toast.info(`${unknownCount} офферов без тарифа`);
         } else {
           toast.success("Все тарифы определены");
         }
@@ -388,6 +375,13 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       setIsAnalyzingTariffs(false);
     }
   };
+
+  // Auto-analyze tariffs when entering step 3
+  useEffect(() => {
+    if (step === 3 && !tariffsAnalyzed && !isAnalyzingTariffs && uniqueOffers.length > 0 && tariffs?.length) {
+      analyzeTariffs();
+    }
+  }, [step, tariffsAnalyzed, isAnalyzingTariffs, uniqueOffers.length, tariffs?.length]);
 
   // Save mapping rule
   const saveMappingRule = useMutation({
@@ -433,14 +427,16 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
       console.log(`[SmartImport] Sending ${dealsToImport.length} deals to import (mode=${mode})`);
 
-      // Create abort controller for this request
       abortControllerRef.current = new AbortController();
 
       const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
         body: {
-          fileDeals: dealsToImport, // File import mode
-          settings,
-          instanceId, // Optional, for logging
+          fileDeals: dealsToImport,
+          settings: {
+            ...settings,
+            statusFilter: settings.onlyPaid ? PAID_STATUSES : [],
+          },
+          instanceId,
         },
       });
 
@@ -477,7 +473,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   const handleCancelImport = useCallback(() => {
     setImportCancelled(true);
     setIsImporting(false);
-    setStep(4); // Go back to settings
+    setStep(4);
     toast.info("Импорт отменён. Данные на сервере могли быть частично обработаны.");
   }, []);
 
@@ -488,28 +484,26 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
       const deals = rows
         .filter((row) => {
-          // Test mode or explicit override
           if (ignoreStatusFilter) return true;
-
-          // If no status column mapped, include all rows
           if (!columnMapping.status) return true;
 
           const status = String(row[columnMapping.status] || "");
-          // If no status filter or empty filter, include all rows
-          if (!settings.statusFilter || settings.statusFilter.length === 0) return true;
-
-          return settings.statusFilter.some((s) =>
-            status.toLowerCase().includes(s.toLowerCase())
-          );
+          
+          // If onlyPaid is enabled, filter by paid statuses
+          if (settings.onlyPaid) {
+            return PAID_STATUSES.some((s) =>
+              status.toLowerCase().includes(s.toLowerCase())
+            );
+          }
+          
+          return true; // Import all if onlyPaid is false
         })
         .filter((row) => {
           const offerName = String(row[columnMapping.offerName!] || "");
           const suggestion = tariffSuggestions.find((s) => s.pattern === offerName);
 
-          // Always honor explicit user decision
           if (suggestion?.userChoice === "skip") return false;
 
-          // Default: if status is "Ожидает анализа" and AI couldn't confidently map tariff → skip
           const status = columnMapping.status ? String(row[columnMapping.status] || "") : "";
           const isWaitingForAnalysis = status.toLowerCase().includes("ожидает анализа");
           const isTariffUnclearFromAi =
@@ -523,13 +517,11 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           return true;
         })
         .map((row) => {
-          // Find tariff based on suggestions
           const offerName = String(row[columnMapping.offerName!] || "");
           const suggestion = tariffSuggestions.find((s) => s.pattern === offerName);
 
           let tariffCode = "UNKNOWN";
 
-          // Handle archive_unknown - keep as special marker for club without tariff
           if (suggestion?.userChoice === "archive_unknown" || suggestion?.action === "archive_unknown") {
             tariffCode = "ARCHIVE_UNKNOWN";
           } else if (suggestion?.userChoice && suggestion.userChoice !== "skip") {
@@ -538,7 +530,6 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
             tariffCode = suggestion.targetTariffCode;
           }
 
-          // If using secondary field
           if (suggestion?.action === "use_secondary_field" && suggestion.secondaryField) {
             const secondaryValue = String(row[suggestion.secondaryField] || "").toLowerCase();
             if (secondaryValue.includes("chat")) tariffCode = "chat";
@@ -546,12 +537,10 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
             else if (secondaryValue.includes("business")) tariffCode = "business";
           }
 
-          // Get raw name
           let rawFullName = String(row[columnMapping.fullName!] || "");
           let firstName = columnMapping.firstName ? String(row[columnMapping.firstName] || "") : "";
           let lastName = columnMapping.lastName ? String(row[columnMapping.lastName] || "") : "";
 
-          // Normalize names if enabled
           if (settings.normalizeNames) {
             if (rawFullName) {
               const normalized = normalizeName(rawFullName);
@@ -567,7 +556,6 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           }
 
           return {
-            // Map to field names expected by edge function
             user_email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
             user_phone: String(row[columnMapping.phone!] || ""),
             user_full_name: rawFullName,
@@ -612,8 +600,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
 
       // Check status filter
-      if (columnMapping.status && settings.statusFilter.length > 0) {
-        const passesStatus = settings.statusFilter.some(s =>
+      if (columnMapping.status && settings.onlyPaid) {
+        const passesStatus = PAID_STATUSES.some(s =>
           status.toLowerCase().includes(s.toLowerCase())
         );
         if (!passesStatus) {
@@ -646,14 +634,22 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       uniqueEmails: uniqueEmails.size,
       unknownTariffCount,
       byTariff: Array.from(byTariff.entries()).sort((a, b) => b[1] - a[1]),
-      emailDuplicatesInFile: emailDuplicates.length,
-      totalDuplicateRows: emailDuplicates.reduce((sum, d) => sum + d.count, 0),
       skippedByStatus,
       skippedByUnclearTariff,
       skippedByUserSkip,
       totalRows: rows.length,
     };
-  }, [prepareDealsForImport, emailDuplicates, rows, columnMapping, tariffSuggestions, settings.statusFilter]);
+  }, [prepareDealsForImport, rows, columnMapping, tariffSuggestions, settings.onlyPaid]);
+
+  // Count undefined tariffs
+  const undefinedTariffsCount = useMemo(() => {
+    return tariffSuggestions.filter(s => 
+      !s.targetTariffId && 
+      !s.targetTariffCode && 
+      s.userChoice !== "archive_unknown" && 
+      s.action !== "archive_unknown"
+    ).length;
+  }, [tariffSuggestions]);
 
   // Reset wizard
   const resetWizard = () => {
@@ -668,6 +664,9 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     setImportResult(null);
     setIsImporting(false);
     setImportCancelled(false);
+    setColumnsAnalyzed(false);
+    setTariffsAnalyzed(false);
+    setShowAllOffers(false);
   };
 
   // Drag and drop handlers
@@ -701,46 +700,62 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     }
   };
 
+  // Set all undefined tariffs to archive
+  const setAllUndefinedToArchive = () => {
+    setTariffSuggestions(prev => prev.map(s => {
+      if (!s.targetTariffId && !s.targetTariffCode && s.userChoice !== "skip") {
+        return { ...s, userChoice: "archive_unknown" };
+      }
+      return s;
+    }));
+    toast.success("Все неопределённые тарифы → ARCHIVE");
+  };
+
+  // Visible offers for step 3
+  const visibleOffers = useMemo(() => {
+    return showAllOffers ? uniqueOffers : uniqueOffers.slice(0, 15);
+  }, [uniqueOffers, showAllOffers]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent className="w-full max-w-4xl max-h-[95vh] flex flex-col p-0">
+        <DialogHeader className="px-4 pt-4 pb-2">
+          <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-5 w-5 text-primary" />
-            Умный импорт сделок
+            Умный импорт
           </DialogTitle>
         </DialogHeader>
 
-        {/* Progress Steps */}
-        <div className="flex items-center justify-between px-4 py-2 bg-muted/50 rounded-lg">
+        {/* Progress Steps - Mobile Friendly */}
+        <div className="flex items-center gap-1 px-3 py-2 bg-muted/50 overflow-x-auto">
           {STEPS.map((s, idx) => (
             <React.Fragment key={s.id}>
               <div 
-                className={`flex items-center gap-2 ${
+                className={`flex items-center gap-1 shrink-0 ${
                   step === s.id ? "text-primary" : step > s.id ? "text-muted-foreground" : "text-muted-foreground/50"
                 }`}
               >
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 text-xs ${
                   step === s.id ? "border-primary bg-primary text-primary-foreground" : 
                   step > s.id ? "border-primary/50 bg-primary/20" : "border-muted"
                 }`}>
-                  {step > s.id ? <Check className="h-4 w-4" /> : <s.icon className="h-4 w-4" />}
+                  {step > s.id ? <Check className="h-3 w-3" /> : <s.icon className="h-3 w-3" />}
                 </div>
-                <span className="text-sm font-medium hidden md:inline">{s.name}</span>
+                <span className="text-xs font-medium hidden sm:inline">{s.name}</span>
               </div>
               {idx < STEPS.length - 1 && (
-                <div className={`flex-1 h-0.5 mx-2 ${step > s.id ? "bg-primary" : "bg-muted"}`} />
+                <div className={`flex-1 min-w-4 h-0.5 ${step > s.id ? "bg-primary" : "bg-muted"}`} />
               )}
             </React.Fragment>
           ))}
         </div>
 
-        <ScrollArea className="flex-1 min-h-0 px-1">
+        <ScrollArea className="flex-1 min-h-0">
           {/* Step 1: File Upload */}
           {step === 1 && (
             <div className="space-y-4 p-4">
               <div
-                className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                   isDragging ? "border-primary bg-primary/10" : "border-muted-foreground/25"
                 }`}
                 onDragOver={handleDragOver}
@@ -749,21 +764,21 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
               >
                 {file ? (
                   <div className="space-y-2">
-                    <FileSpreadsheet className="h-12 w-12 mx-auto text-green-500" />
-                    <p className="font-medium">{file.name}</p>
-                    <p className="text-sm text-muted-foreground">
+                    <FileSpreadsheet className="h-10 w-10 mx-auto text-green-500" />
+                    <p className="font-medium text-sm">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">
                       {rows.length} строк • {headers.length} колонок
                     </p>
                     <Button variant="outline" size="sm" onClick={() => { setFile(null); setHeaders([]); setRows([]); }}>
-                      Выбрать другой файл
+                      Другой файл
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <Upload className="h-12 w-12 mx-auto text-muted-foreground" />
+                  <div className="space-y-3">
+                    <Upload className="h-10 w-10 mx-auto text-muted-foreground" />
                     <div>
-                      <p className="font-medium">Перетащите Excel файл сюда</p>
-                      <p className="text-sm text-muted-foreground">или нажмите для выбора</p>
+                      <p className="font-medium text-sm">Перетащите Excel файл</p>
+                      <p className="text-xs text-muted-foreground">или нажмите для выбора</p>
                     </div>
                     <input
                       type="file"
@@ -775,7 +790,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                         if (f) handleFileUpload(f);
                       }}
                     />
-                    <Button variant="outline" asChild>
+                    <Button variant="outline" size="sm" asChild>
                       <label htmlFor="file-upload" className="cursor-pointer">Выбрать файл</label>
                     </Button>
                   </div>
@@ -783,12 +798,26 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
               </div>
 
               {rows.length > 0 && (
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    Найдено {headers.length} колонок. На следующем шаге ИИ проанализирует структуру файла.
-                  </AlertDescription>
-                </Alert>
+                <div className="grid grid-cols-2 gap-3">
+                  <Card className="p-3">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-lg font-bold">{uniqueEmailsCount}</p>
+                        <p className="text-xs text-muted-foreground">Уникальных клиентов</p>
+                      </div>
+                    </div>
+                  </Card>
+                  <Card className="p-3">
+                    <div className="flex items-center gap-2">
+                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-lg font-bold">{rows.length}</p>
+                        <p className="text-xs text-muted-foreground">Всего сделок</p>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
               )}
             </div>
           )}
@@ -796,63 +825,68 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           {/* Step 2: Column Mapping */}
           {step === 2 && (
             <div className="space-y-4 p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium">Маппинг колонок</h3>
-                <Button onClick={analyzeColumns} disabled={isAnalyzingColumns} size="sm">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-medium text-sm">Маппинг колонок</h3>
+                <Button onClick={analyzeColumns} disabled={isAnalyzingColumns} size="sm" variant="outline">
                   {isAnalyzingColumns ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Анализ...
-                    </>
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      <Brain className="h-4 w-4 mr-2" />
-                      Автоанализ ИИ
+                      <Brain className="h-4 w-4 mr-1" />
+                      <span className="hidden sm:inline">Повторить анализ</span>
                     </>
                   )}
                 </Button>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                {(Object.keys(columnMapping) as (keyof ColumnMapping)[]).map((field) => (
-                  <div key={field} className="space-y-1">
-                    <label className="text-sm font-medium capitalize">
-                      {field === "email" && "Email"}
-                      {field === "phone" && "Телефон"}
-                      {field === "fullName" && "ФИО"}
-                      {field === "firstName" && "Имя"}
-                      {field === "lastName" && "Фамилия"}
-                      {field === "offerName" && "Название оффера *"}
-                      {field === "amount" && "Сумма"}
-                      {field === "currency" && "Валюта"}
-                      {field === "status" && "Статус"}
-                      {field === "createdAt" && "Дата создания"}
-                      {field === "paidAt" && "Дата оплаты"}
-                      {field === "externalId" && "Внешний ID"}
-                    </label>
-                    <Select
-                      value={columnMapping[field] || "__none__"}
-                      onValueChange={(v) => setColumnMapping(prev => ({ ...prev, [field]: v === "__none__" ? null : v }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите колонку" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— Не выбрано —</SelectItem>
-                        {headers.filter(h => h && h.trim()).map((h) => (
-                          <SelectItem key={h} value={h}>{h}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
-              </div>
+              {isAnalyzingColumns && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              )}
+
+              {!isAnalyzingColumns && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(Object.keys(columnMapping) as (keyof ColumnMapping)[]).map((field) => (
+                    <div key={field} className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        {field === "email" && "Email *"}
+                        {field === "phone" && "Телефон"}
+                        {field === "fullName" && "ФИО"}
+                        {field === "firstName" && "Имя"}
+                        {field === "lastName" && "Фамилия"}
+                        {field === "offerName" && "Оффер *"}
+                        {field === "amount" && "Сумма"}
+                        {field === "currency" && "Валюта"}
+                        {field === "status" && "Статус"}
+                        {field === "createdAt" && "Создано"}
+                        {field === "paidAt" && "Оплачено"}
+                        {field === "externalId" && "Внешний ID"}
+                      </label>
+                      <Select
+                        value={columnMapping[field] || "__none__"}
+                        onValueChange={(v) => setColumnMapping(prev => ({ ...prev, [field]: v === "__none__" ? null : v }))}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— Не выбрано —</SelectItem>
+                          {headers.filter(h => h && h.trim()).map((h) => (
+                            <SelectItem key={h} value={h}>{h}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {tariffField && (
-                <Alert>
+                <Alert className="py-2">
                   <Sparkles className="h-4 w-4" />
-                  <AlertDescription>
-                    ИИ нашёл дополнительное поле с тарифом: <strong>{tariffField}</strong>
+                  <AlertDescription className="text-sm">
+                    Найдено поле тарифа: <strong>{tariffField}</strong>
                   </AlertDescription>
                 </Alert>
               )}
@@ -861,364 +895,299 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
           {/* Step 3: Tariff Mapping */}
           {step === 3 && (
-            <div className="space-y-4 p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium">Маппинг тарифов ({uniqueOffers.length} уникальных офферов)</h3>
-                <Button onClick={analyzeTariffs} disabled={isAnalyzingTariffs} size="sm">
-                  {isAnalyzingTariffs ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Анализ...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      ИИ-маппинг
-                    </>
+            <div className="space-y-3 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-medium text-sm">Маппинг тарифов</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {uniqueOffers.length} офферов
+                    {undefinedTariffsCount > 0 && (
+                      <span className="text-destructive ml-1">• {undefinedTariffsCount} без тарифа</span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {undefinedTariffsCount > 0 && (
+                    <Button onClick={setAllUndefinedToArchive} size="sm" variant="outline">
+                      Все → ARCHIVE
+                    </Button>
                   )}
-                </Button>
+                  <Button onClick={analyzeTariffs} disabled={isAnalyzingTariffs} size="sm" variant="outline">
+                    {isAnalyzingTariffs ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
               </div>
 
-              <div className="space-y-2">
-                {uniqueOffers.map((offer) => {
-                  const suggestion = tariffSuggestions.find(s => s.pattern === offer.name);
-                  const isExpanded = expandedOffers.has(offer.name);
-                  
-                  return (
-                    <Card key={offer.name} className="overflow-hidden">
-                      <CardHeader 
-                        className="py-2 px-3 cursor-pointer hover:bg-muted/50"
-                        onClick={() => {
-                          const next = new Set(expandedOffers);
-                          if (isExpanded) next.delete(offer.name);
-                          else next.add(offer.name);
-                          setExpandedOffers(next);
-                        }}
-                      >
-                        <div className="flex items-center justify-between">
+              {isAnalyzingTariffs && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              )}
+
+              {!isAnalyzingTariffs && (
+                <div className="space-y-2">
+                  {visibleOffers.map((offer) => {
+                    const suggestion = tariffSuggestions.find(s => s.pattern === offer.name);
+                    const isExpanded = expandedOffers.has(offer.name);
+                    
+                    return (
+                      <Card key={offer.name} className="overflow-hidden">
+                        <CardHeader 
+                          className="py-2 px-3 cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            const next = new Set(expandedOffers);
+                            if (isExpanded) next.delete(offer.name);
+                            else next.add(offer.name);
+                            setExpandedOffers(next);
+                          }}
+                        >
                           <div className="flex items-center gap-2">
-                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                            <span className="font-medium truncate max-w-[300px]">{offer.name}</span>
-                            <Badge variant="secondary">{offer.count}</Badge>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {suggestion ? (
-                              <Badge 
-                                variant={
-                                  suggestion.userChoice === "skip" || (suggestion.action === "skip" && !suggestion.userChoice)
-                                    ? "destructive" 
-                                    : suggestion.userChoice === "archive_unknown" || suggestion.action === "archive_unknown"
-                                    ? "outline"
-                                    : suggestion.targetTariffId || suggestion.userChoice
-                                    ? "default"
-                                    : "outline"
-                                }
-                              >
-                                {suggestion.userChoice === "archive_unknown" || suggestion.action === "archive_unknown"
-                                  ? "Не определён (архив)" 
-                                  : suggestion.userChoice === "skip" || (suggestion.action === "skip" && !suggestion.userChoice)
-                                  ? "Пропустить"
-                                  : suggestion.userChoice || suggestion.targetTariffCode || "Ожидает"}
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">Ожидает анализа</Badge>
-                            )}
-                            {offer.amount && (
-                              <Badge variant="outline" className="text-xs">
-                                ~{offer.amount.toFixed(0)} BYN
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </CardHeader>
-                      
-                      {isExpanded && (
-                        <CardContent className="py-2 px-3 bg-muted/30 space-y-2">
-                          {suggestion && (
-                            <p className="text-sm text-muted-foreground">{suggestion.reason}</p>
-                          )}
-                          
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">Тариф:</span>
-                            <Select
-                              value={suggestion?.userChoice || suggestion?.targetTariffId || ""}
-                              onValueChange={(v) => {
-                                const isSkip = v === "skip";
-                                const isArchive = v === "archive_unknown";
-                                const tariff = tariffs?.find(t => t.id === v);
-                                
-                                setTariffSuggestions(prev => {
-                                  const idx = prev.findIndex(s => s.pattern === offer.name);
-                                  const newSuggestion: TariffSuggestion = {
-                                    pattern: offer.name,
-                                    count: offer.count,
-                                    action: isSkip ? "skip" : isArchive ? "archive_unknown" : "map_to_tariff",
-                                    targetTariffId: isSkip || isArchive ? null : v,
-                                    targetTariffCode: tariff?.code || null,
-                                    secondaryField: null,
-                                    confidence: 1,
-                                    reason: "Выбрано вручную",
-                                    userChoice: isSkip ? "skip" : isArchive ? "archive_unknown" : (tariff?.code || v),
-                                  };
-                                  
-                                  if (idx >= 0) {
-                                    const updated = [...prev];
-                                    updated[idx] = newSuggestion;
-                                    return updated;
-                                  }
-                                  return [...prev, newSuggestion];
-                                });
-                              }}
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                              <span className="text-sm font-medium truncate">{offer.name}</span>
+                              <Badge variant="secondary" className="shrink-0 text-xs">{offer.count}</Badge>
+                            </div>
+                            <Badge 
+                              variant={
+                                suggestion?.userChoice === "skip" || (suggestion?.action === "skip" && !suggestion?.userChoice)
+                                  ? "destructive" 
+                                  : suggestion?.userChoice === "archive_unknown" || suggestion?.action === "archive_unknown"
+                                  ? "outline"
+                                  : suggestion?.targetTariffId || suggestion?.userChoice
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className="text-xs shrink-0"
                             >
-                            <SelectTrigger className="w-48">
-                                <SelectValue>
-                                  {suggestion?.userChoice === "skip" 
-                                    ? "🚫 Пропустить"
-                                    : suggestion?.userChoice === "archive_unknown"
-                                    ? "📦 Не определён"
-                                    : suggestion?.userChoice 
-                                    ? tariffs?.find(t => t.code === suggestion.userChoice || t.id === suggestion.userChoice)?.name || suggestion.userChoice
-                                    : suggestion?.targetTariffCode 
-                                    ? tariffs?.find(t => t.code === suggestion.targetTariffCode)?.name || suggestion.targetTariffCode
-                                    : "Выбрать тариф"}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="skip">🚫 Пропустить</SelectItem>
-                                <SelectItem value="archive_unknown">📦 Не определён (архивный)</SelectItem>
-                                <Separator className="my-1" />
-                                {tariffs?.map((t) => (
-                                  <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            
-                            {suggestion && (suggestion.targetTariffId || suggestion.userChoice === "archive_unknown") && (
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => saveMappingRule.mutate(suggestion)}
-                                disabled={saveMappingRule.isPending || !suggestion.targetTariffId}
-                              >
-                                <Save className="h-4 w-4 mr-1" />
-                                Сохранить правило
-                              </Button>
-                            )}
+                              {suggestion?.userChoice 
+                                ? (suggestion.userChoice === "skip" ? "SKIP" : suggestion.userChoice === "archive_unknown" ? "ARCHIVE" : suggestion.userChoice.toUpperCase())
+                                : suggestion?.action === "archive_unknown" 
+                                ? "ARCHIVE" 
+                                : suggestion?.targetTariffCode?.toUpperCase() || "?"}
+                            </Badge>
                           </div>
-                        </CardContent>
-                      )}
-                    </Card>
-                  );
-                })}
-                
-                {uniqueOffers.length > 20 && (
-                  <p className="text-sm text-muted-foreground text-center">
-                    Показано 20 из {uniqueOffers.length} офферов
-                  </p>
-                )}
-              </div>
+                        </CardHeader>
+                        
+                        {isExpanded && (
+                          <CardContent className="py-2 px-3 border-t space-y-2">
+                            {suggestion?.reason && (
+                              <p className="text-xs text-muted-foreground">{suggestion.reason}</p>
+                            )}
+                            
+                            <div className="flex flex-wrap gap-2">
+                              <Select
+                                value={suggestion?.userChoice || suggestion?.targetTariffCode || "__none__"}
+                                onValueChange={(v) => {
+                                  setTariffSuggestions(prev => prev.map(s => 
+                                    s.pattern === offer.name 
+                                      ? { ...s, userChoice: v === "__none__" ? undefined : v }
+                                      : s
+                                  ));
+                                }}
+                              >
+                                <SelectTrigger className="flex-1 min-w-[140px] h-8">
+                                  <SelectValue placeholder="Выбрать тариф" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">— Автоматически —</SelectItem>
+                                  <SelectItem value="skip">❌ Пропустить</SelectItem>
+                                  <SelectItem value="archive_unknown">📦 ARCHIVE (без тарифа)</SelectItem>
+                                  <Separator className="my-1" />
+                                  {tariffs?.map(t => (
+                                    <SelectItem key={t.id} value={t.code}>
+                                      {t.code.toUpperCase()} — {t.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              
+                              {suggestion && suggestion.targetTariffId && (
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost"
+                                  className="h-8"
+                                  onClick={() => saveMappingRule.mutate(suggestion)}
+                                  disabled={saveMappingRule.isPending}
+                                >
+                                  <Save className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </CardContent>
+                        )}
+                      </Card>
+                    );
+                  })}
+                  
+                  {uniqueOffers.length > 15 && !showAllOffers && (
+                    <Button 
+                      variant="ghost" 
+                      className="w-full text-sm"
+                      onClick={() => setShowAllOffers(true)}
+                    >
+                      Показать ещё {uniqueOffers.length - 15} офферов
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Step 4: Settings */}
+          {/* Step 4: Settings & Preview */}
           {step === 4 && (
             <div className="space-y-4 p-4">
-              <h3 className="font-medium">Настройки импорта</h3>
-              
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Фильтр статусов</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {[
-                    "Оплачено",
-                    "Завершён",
-                    "В процессе",
-                    "Ожидает анализа",
-                    "Отменён",
-                  ].map((status) => (
-                    <div key={status} className="flex items-center gap-2">
-                      <Checkbox
-                        id={status}
-                        checked={settings.statusFilter.includes(status)}
-                        onCheckedChange={(checked) => {
-                          setSettings(prev => ({
-                            ...prev,
-                            statusFilter: checked 
-                              ? [...prev.statusFilter, status]
-                              : prev.statusFilter.filter(s => s !== status)
-                          }));
-                        }}
-                      />
-                      <label htmlFor={status} className="text-sm">{status}</label>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Обработка дубликатов</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Select
-                    value={settings.duplicateHandling}
-                    onValueChange={(v: "skip" | "update") => setSettings(prev => ({ ...prev, duplicateHandling: v }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="skip">Пропускать существующие</SelectItem>
-                      <SelectItem value="update">Обновлять существующие</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Нормализация данных</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="normalizeNames"
-                      checked={settings.normalizeNames}
-                      onCheckedChange={(checked) => setSettings(prev => ({ ...prev, normalizeNames: !!checked }))}
-                    />
-                    <label htmlFor="normalizeNames" className="text-sm">
-                      Нормализовать имена (убрать дубли типа "Иван Иванов Иван Иванов")
-                    </label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="mergeEmailDuplicates"
-                      checked={settings.mergeEmailDuplicates}
-                      onCheckedChange={(checked) => setSettings(prev => ({ ...prev, mergeEmailDuplicates: !!checked }))}
-                    />
-                    <label htmlFor="mergeEmailDuplicates" className="text-sm">
-                      Объединять профили с одинаковым email
-                    </label>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Создание профилей</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="ghost"
-                      checked={settings.createGhostProfiles}
-                      onCheckedChange={(checked) => setSettings(prev => ({ ...prev, createGhostProfiles: !!checked }))}
-                    />
-                    <label htmlFor="ghost" className="text-sm">
-                      Создавать ghost-профили для новых пользователей
-                    </label>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Separator />
-
-              {/* Email duplicates warning */}
-              {emailDuplicates.length > 0 && (
-                <Alert variant="default" className="border-yellow-500/50 bg-yellow-500/10">
-                  <AlertCircle className="h-4 w-4 text-yellow-500" />
-                  <AlertDescription>
-                    <div className="space-y-2">
-                      <p className="font-medium text-yellow-600">
-                        Найдено {emailDuplicates.length} email с повторами ({previewStats.totalDuplicateRows} строк)
+              {/* Main toggle */}
+              <Card className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Filter className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium text-sm">Только оплаченные</p>
+                      <p className="text-xs text-muted-foreground">
+                        {settings.onlyPaid 
+                          ? `Только статусы: ${PAID_STATUSES.join(", ")}`
+                          : "Импорт всех статусов"
+                        }
                       </p>
-                      <div className="text-sm space-y-1 max-h-32 overflow-auto">
-                        {emailDuplicates.slice(0, 5).map((dup) => (
-                          <div key={dup.email} className="flex justify-between">
-                            <span className="truncate max-w-[200px]">{dup.email}</span>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="secondary">{dup.count}x</Badge>
-                              {dup.names.length > 0 && (
-                                <span className="text-muted-foreground text-xs truncate max-w-[150px]">
-                                  {dup.names[0]}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                        {emailDuplicates.length > 5 && (
-                          <p className="text-muted-foreground">
-                            ... и ещё {emailDuplicates.length - 5} email
-                          </p>
-                        )}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={settings.onlyPaid}
+                    onCheckedChange={(checked) => setSettings(prev => ({ ...prev, onlyPaid: checked }))}
+                  />
+                </div>
+              </Card>
+
+              {/* Preview Stats */}
+              <Card>
+                <CardHeader className="py-3 px-4">
+                  <CardTitle className="text-sm flex items-center justify-between">
+                    Превью импорта
+                    {previewStats.total === 0 && settings.onlyPaid && (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => setSettings(prev => ({ ...prev, onlyPaid: false }))}
+                      >
+                        Сбросить фильтр
+                      </Button>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-2xl font-bold">{previewStats.total}</p>
+                        <p className="text-xs text-muted-foreground">К импорту</p>
+                      </div>
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <p className="text-2xl font-bold">{previewStats.uniqueEmails}</p>
+                        <p className="text-xs text-muted-foreground">Клиентов</p>
                       </div>
                     </div>
-                  </AlertDescription>
-                </Alert>
-              )}
 
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Превью импорта</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Всего в файле:</span>
-                      <span className="font-medium text-muted-foreground">{previewStats.totalRows}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">К импорту:</span>
-                      <span className="text-2xl font-bold">{previewStats.total}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Уникальных email:</span>
-                      <span className="font-medium">{previewStats.uniqueEmails}</span>
-                    </div>
+                    {previewStats.total === 0 && (
+                      <Alert variant="destructive" className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          {settings.onlyPaid && previewStats.skippedByStatus > 0
+                            ? `Фильтр «только оплаченные» пропустил ${previewStats.skippedByStatus} сделок`
+                            : "Нет сделок для импорта. Проверьте маппинг тарифов."
+                          }
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
-                    {(previewStats.skippedByStatus > 0 || previewStats.skippedByUnclearTariff > 0 || previewStats.skippedByUserSkip > 0) && (
+                    {(previewStats.skippedByStatus > 0 || previewStats.skippedByUnclearTariff > 0 || previewStats.skippedByUserSkip > 0) && previewStats.total > 0 && (
                       <div className="text-xs text-muted-foreground space-y-0.5 border-t pt-2">
                         <p className="font-medium text-sm mb-1">Пропущено:</p>
                         {previewStats.skippedByStatus > 0 && (
                           <p>• По статусу: {previewStats.skippedByStatus}</p>
                         )}
                         {previewStats.skippedByUnclearTariff > 0 && (
-                          <p>• «Ожидает анализа» + непонятный тариф: {previewStats.skippedByUnclearTariff}</p>
+                          <p>• Непонятный тариф: {previewStats.skippedByUnclearTariff}</p>
                         )}
                         {previewStats.skippedByUserSkip > 0 && (
-                          <p>• Вручную пропущено: {previewStats.skippedByUserSkip}</p>
+                          <p>• Вручную: {previewStats.skippedByUserSkip}</p>
                         )}
                       </div>
                     )}
                     
-                    {previewStats.unknownTariffCount > 0 && (
-                      <Alert variant="destructive" className="py-2">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-sm">
-                          {previewStats.unknownTariffCount} сделок без определённого тарифа будут пропущены
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    
-                    <Separator />
-                    
-                    <div className="text-sm font-medium">По тарифам:</div>
-                    <div className="space-y-1">
-                      {previewStats.byTariff.map(([code, count]) => (
-                        <div key={code} className="flex justify-between text-sm">
-                          <span className={code === "UNKNOWN" ? "text-destructive" : ""}>
-                            {code === "UNKNOWN" ? "⚠️ UNKNOWN" : code.toUpperCase()}
-                          </span>
-                          <Badge variant={code === "UNKNOWN" ? "destructive" : "secondary"}>
-                            {count}
-                          </Badge>
+                    {previewStats.byTariff.length > 0 && (
+                      <>
+                        <Separator />
+                        <div className="text-xs font-medium">По тарифам:</div>
+                        <div className="space-y-1">
+                          {previewStats.byTariff.slice(0, 6).map(([code, count]) => (
+                            <div key={code} className="flex justify-between text-sm">
+                              <span className={code === "UNKNOWN" ? "text-destructive" : ""}>
+                                {code === "UNKNOWN" ? "⚠️ UNKNOWN" : code.toUpperCase()}
+                              </span>
+                              <Badge variant={code === "UNKNOWN" ? "destructive" : "secondary"} className="text-xs">
+                                {count}
+                              </Badge>
+                            </div>
+                          ))}
+                          {previewStats.byTariff.length > 6 && (
+                            <p className="text-xs text-muted-foreground">
+                              +{previewStats.byTariff.length - 6} тарифов
+                            </p>
+                          )}
                         </div>
-                      ))}
-                    </div>
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Additional settings - collapsed by default */}
+              <details className="group">
+                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-2">
+                  <ChevronRight className="h-4 w-4 group-open:rotate-90 transition-transform" />
+                  Дополнительные настройки
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <Card className="p-3">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="normalizeNames"
+                          checked={settings.normalizeNames}
+                          onCheckedChange={(checked) => setSettings(prev => ({ ...prev, normalizeNames: !!checked }))}
+                        />
+                        <label htmlFor="normalizeNames" className="text-sm">
+                          Нормализовать имена
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="mergeEmailDuplicates"
+                          checked={settings.mergeEmailDuplicates}
+                          onCheckedChange={(checked) => setSettings(prev => ({ ...prev, mergeEmailDuplicates: !!checked }))}
+                        />
+                        <label htmlFor="mergeEmailDuplicates" className="text-sm">
+                          Объединять профили по email
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="ghost"
+                          checked={settings.createGhostProfiles}
+                          onCheckedChange={(checked) => setSettings(prev => ({ ...prev, createGhostProfiles: !!checked }))}
+                        />
+                        <label htmlFor="ghost" className="text-sm">
+                          Создавать ghost-профили
+                        </label>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              </details>
             </div>
           )}
 
@@ -1226,17 +1195,23 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           {step === 5 && (
             <div className="space-y-4 p-4">
               {!importResult && !isImporting && (
-                <div className="text-center space-y-4 py-8">
-                  <h3 className="text-lg font-medium">Готово к импорту</h3>
-                  <p className="text-muted-foreground">
-                    Будет импортировано {previewStats.total} сделок
-                  </p>
+                <div className="text-center space-y-4 py-6">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
+                    <Upload className="h-8 w-8 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-medium">Готово к импорту</h3>
+                    <p className="text-muted-foreground text-sm">
+                      {previewStats.total} сделок → {previewStats.uniqueEmails} клиентов
+                    </p>
+                  </div>
+                  
                   {previewStats.total === 0 ? (
-                    <div className="space-y-4">
-                      <Alert variant="destructive">
+                    <div className="space-y-3">
+                      <Alert variant="destructive" className="text-left">
                         <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Нет сделок для импорта по текущим настройкам. Чаще всего это происходит из-за фильтра статусов.
+                        <AlertDescription className="text-sm">
+                          Нет сделок для импорта. Вернитесь назад и проверьте настройки.
                         </AlertDescription>
                       </Alert>
 
@@ -1246,14 +1221,18 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                           setIsImporting(true);
                           importMutation.mutate({ mode: "test5" });
                         }}
-                        size="lg"
+                        variant="outline"
                       >
                         <Upload className="h-4 w-4 mr-2" />
-                        Импортировать 5 сделок (тест)
+                        Тест: 5 сделок
                       </Button>
                     </div>
                   ) : (
-                    <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "full" }); }} size="lg">
+                    <Button 
+                      onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "full" }); }} 
+                      size="lg"
+                      className="w-full sm:w-auto"
+                    >
                       <Upload className="h-4 w-4 mr-2" />
                       Начать импорт
                     </Button>
@@ -1265,13 +1244,10 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                 <div className="text-center space-y-4 py-8">
                   <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
                   <p className="text-muted-foreground">Импорт в процессе...</p>
-                  <p className="text-xs text-muted-foreground">
-                    Обработка может занять несколько минут для большого количества сделок
-                  </p>
                   <Button 
                     variant="outline" 
                     onClick={handleCancelImport}
-                    className="mt-4"
+                    size="sm"
                   >
                     <X className="h-4 w-4 mr-2" />
                     Отменить
@@ -1281,23 +1257,38 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
               {importResult && (
                 <div className="space-y-4">
-                  <Alert variant={importResult.errors.length > 0 ? "destructive" : "default"}>
-                    <Check className="h-4 w-4" />
-                    <AlertDescription>
-                      Импортировано: {importResult.success} • Пропущено: {importResult.skipped} • Ошибок: {importResult.errors.length}
-                    </AlertDescription>
-                  </Alert>
+                  <div className="text-center py-4">
+                    <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+                      <Check className="h-8 w-8 text-green-500" />
+                    </div>
+                    <h3 className="text-lg font-medium">Импорт завершён</h3>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <Card className="p-3 text-center">
+                      <p className="text-xl font-bold text-green-600">{importResult.success}</p>
+                      <p className="text-xs text-muted-foreground">Создано</p>
+                    </Card>
+                    <Card className="p-3 text-center">
+                      <p className="text-xl font-bold">{importResult.skipped}</p>
+                      <p className="text-xs text-muted-foreground">Пропущено</p>
+                    </Card>
+                    <Card className="p-3 text-center">
+                      <p className="text-xl font-bold text-destructive">{importResult.errors.length}</p>
+                      <p className="text-xs text-muted-foreground">Ошибок</p>
+                    </Card>
+                  </div>
 
                   {importResult.errors.length > 0 && (
                     <Card>
-                      <CardHeader className="py-3">
+                      <CardHeader className="py-2 px-3">
                         <CardTitle className="text-sm text-destructive">Ошибки</CardTitle>
                       </CardHeader>
-                      <CardContent>
-                        <ScrollArea className="h-40">
+                      <CardContent className="px-3 pb-3">
+                        <ScrollArea className="h-32">
                           {importResult.errors.slice(0, 20).map((e, i) => (
-                            <p key={i} className="text-sm text-muted-foreground">
-                              Строка {e.row}: {e.error}
+                            <p key={i} className="text-xs text-muted-foreground py-0.5">
+                              {e.error}
                             </p>
                           ))}
                         </ScrollArea>
@@ -1314,23 +1305,25 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           )}
         </ScrollArea>
 
-        {/* Navigation */}
+        {/* Navigation - Fixed at bottom */}
         {step < 5 && (
-          <div className="flex justify-between pt-4 border-t">
+          <div className="flex justify-between p-4 border-t bg-background safe-area-inset-bottom">
             <Button
               variant="outline"
               onClick={() => setStep(s => Math.max(1, s - 1))}
               disabled={step === 1}
+              size="sm"
             >
-              <ArrowLeft className="h-4 w-4 mr-2" />
+              <ArrowLeft className="h-4 w-4 mr-1" />
               Назад
             </Button>
             <Button
               onClick={() => setStep(s => Math.min(5, s + 1))}
               disabled={!canProceedToStep(step + 1)}
+              size="sm"
             >
               Далее
-              <ArrowRight className="h-4 w-4 ml-2" />
+              <ArrowRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
         )}
