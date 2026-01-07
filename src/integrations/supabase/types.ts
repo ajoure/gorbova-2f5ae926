@@ -1224,6 +1224,8 @@ export type Database = {
       payment_methods: {
         Row: {
           brand: string | null
+          card_category: string | null
+          card_product: string | null
           created_at: string
           exp_month: number | null
           exp_year: number | null
@@ -1239,6 +1241,8 @@ export type Database = {
         }
         Insert: {
           brand?: string | null
+          card_category?: string | null
+          card_product?: string | null
           created_at?: string
           exp_month?: number | null
           exp_year?: number | null
@@ -1254,6 +1258,8 @@ export type Database = {
         }
         Update: {
           brand?: string | null
+          card_category?: string | null
+          card_product?: string | null
           created_at?: string
           exp_month?: number | null
           exp_year?: number | null
@@ -1776,6 +1782,53 @@ export type Database = {
           },
         ]
       }
+      rejected_card_attempts: {
+        Row: {
+          card_brand: string | null
+          card_category: string | null
+          card_last4: string | null
+          card_product: string | null
+          created_at: string | null
+          id: string
+          offer_id: string | null
+          raw_data: Json | null
+          reason: string
+          user_id: string | null
+        }
+        Insert: {
+          card_brand?: string | null
+          card_category?: string | null
+          card_last4?: string | null
+          card_product?: string | null
+          created_at?: string | null
+          id?: string
+          offer_id?: string | null
+          raw_data?: Json | null
+          reason: string
+          user_id?: string | null
+        }
+        Update: {
+          card_brand?: string | null
+          card_category?: string | null
+          card_last4?: string | null
+          card_product?: string | null
+          created_at?: string | null
+          id?: string
+          offer_id?: string | null
+          raw_data?: Json | null
+          reason?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rejected_card_attempts_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       role_permissions: {
         Row: {
           created_at: string
@@ -2092,6 +2145,7 @@ export type Database = {
           is_installment: boolean | null
           is_primary: boolean | null
           offer_type: string
+          reject_virtual_cards: boolean | null
           requires_card_tokenization: boolean | null
           sort_order: number | null
           tariff_id: string
@@ -2113,6 +2167,7 @@ export type Database = {
           is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type: string
+          reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
           tariff_id: string
@@ -2134,6 +2189,7 @@ export type Database = {
           is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type?: string
+          reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
           tariff_id?: string

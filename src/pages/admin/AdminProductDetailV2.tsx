@@ -112,6 +112,7 @@ export default function AdminProductDetailV2() {
     requires_card_tokenization: false,
     is_active: true,
     getcourse_offer_id: "",
+    reject_virtual_cards: false,
   });
 
   // Flow form
@@ -210,6 +211,7 @@ export default function AdminProductDetailV2() {
         requires_card_tokenization: offer.requires_card_tokenization ?? false,
         is_active: offer.is_active ?? true,
         getcourse_offer_id: offer.getcourse_offer_id || "",
+        reject_virtual_cards: offer.reject_virtual_cards ?? false,
       });
       setOfferDialog({ open: true, editing: offer });
     } else {
@@ -225,6 +227,7 @@ export default function AdminProductDetailV2() {
         requires_card_tokenization: false,
         is_active: true,
         getcourse_offer_id: "",
+        reject_virtual_cards: false,
       });
       setOfferDialog({ open: true, editing: null });
     }
@@ -251,6 +254,7 @@ export default function AdminProductDetailV2() {
       visible_to: null,
       sort_order: offerForm.offer_type === "trial" ? 1 : 0,
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
+      reject_virtual_cards: offerForm.reject_virtual_cards,
     };
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
@@ -832,6 +836,24 @@ export default function AdminProductDetailV2() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* Virtual card blocking - show when tokenization is required */}
+            {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial") && (
+              <div className="border-t pt-4">
+                <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <Switch
+                    checked={offerForm.reject_virtual_cards}
+                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, reject_virtual_cards: checked })}
+                  />
+                  <div>
+                    <Label className="cursor-pointer">Блокировать виртуальные карты</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Принимать только физические банковские карты (для рассрочки)
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
 
             <div className="border-t pt-4 space-y-2">
