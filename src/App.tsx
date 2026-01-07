@@ -53,6 +53,7 @@ import ProfileSettings from "./pages/settings/Profile";
 import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
 import ConsentsSettings from "./pages/settings/Consents";
 import AdminInstallments from "./pages/admin/AdminInstallments";
+import AdminConsents from "./pages/admin/AdminConsents";
 
 const queryClient = new QueryClient();
 
@@ -132,6 +133,7 @@ const App = () => (
               <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
               <Route path="/admin/installments" element={<ProtectedRoute><AdminInstallments /></ProtectedRoute>} />
+              <Route path="/admin/consents" element={<ProtectedRoute><AdminLayout><AdminConsents /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
