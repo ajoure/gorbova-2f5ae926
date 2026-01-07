@@ -47,6 +47,8 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
+        // IMPORTANT: persist our order number as deal_number so we can target the same deal later
+        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
