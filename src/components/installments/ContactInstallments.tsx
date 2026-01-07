@@ -455,54 +455,119 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
               <Card 
                 key={plan.subscriptionId} 
                 className={cn(
+                  "overflow-hidden",
                   isForgiven 
                     ? "bg-purple-500/5 border-purple-500/20" 
                     : "bg-muted/30 border-muted"
                 )}
               >
-                <CardContent className="py-3 px-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      {isForgiven ? (
-                        <Gift className="h-5 w-5 text-purple-500 mt-0.5" />
-                      ) : (
-                        <XCircle className="h-5 w-5 text-muted-foreground mt-0.5" />
-                      )}
-                      <div>
-                        <p className="font-medium">{plan.productName}</p>
-                        <p className="text-xs text-muted-foreground">{plan.tariffName}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge 
-                            variant="outline" 
-                            className={cn(
-                              "text-xs",
-                              isForgiven 
-                                ? "border-purple-500/30 text-purple-600 dark:text-purple-400" 
-                                : "text-muted-foreground"
-                            )}
-                          >
-                            {isForgiven ? "Прощено" : "Не оплачено"} • {formatAmount(cancelledAmount)} {currency}
-                          </Badge>
+                <Collapsible
+                  open={expandedPlans.has(plan.subscriptionId)}
+                  onOpenChange={() => togglePlan(plan.subscriptionId)}
+                >
+                  <CollapsibleTrigger asChild>
+                    <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3 px-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          {isForgiven ? (
+                            <Gift className="h-5 w-5 text-purple-500 mt-0.5" />
+                          ) : (
+                            <XCircle className="h-5 w-5 text-muted-foreground mt-0.5" />
+                          )}
+                          <div>
+                            <p className="font-medium">{plan.productName}</p>
+                            <p className="text-xs text-muted-foreground">{plan.tariffName}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs",
+                                  isForgiven 
+                                    ? "border-purple-500/30 text-purple-600 dark:text-purple-400" 
+                                    : "text-muted-foreground"
+                                )}
+                              >
+                                {isForgiven ? "Прощено" : "Не оплачено"} • {formatAmount(cancelledAmount)} {currency}
+                              </Badge>
+                            </div>
+                          </div>
                         </div>
-                        {plan.closeComment && (
-                          <p className="text-xs text-muted-foreground mt-1.5 italic">
-                            "{plan.closeComment}"
-                          </p>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <div className="text-right">
+                            <p className="text-sm">
+                              Оплачено: <span className="font-semibold">{formatAmount(plan.paidAmount)}</span> / {formatAmount(plan.totalAmount)}
+                            </p>
+                            {plan.closedAt && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Закрыто: {format(new Date(plan.closedAt), "d MMM yyyy", { locale: ru })}
+                              </p>
+                            )}
+                          </div>
+                          {expandedPlans.has(plan.subscriptionId) ? (
+                            <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm">
-                        Оплачено: <span className="font-semibold">{formatAmount(plan.paidAmount)}</span> / {formatAmount(plan.totalAmount)}
-                      </p>
-                      {plan.closedAt && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Закрыто: {format(new Date(plan.closedAt), "d MMM yyyy", { locale: ru })}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
+                    </CardHeader>
+                  </CollapsibleTrigger>
+
+                  <CollapsibleContent>
+                    <CardContent className="pt-0 px-4 pb-4">
+                      <Separator className="mb-4" />
+                      
+                      {/* Payment history */}
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium text-muted-foreground">История платежей</p>
+                        <InstallmentTimeline
+                          installments={plan.installments}
+                          currency={currency}
+                          onCharge={() => {}}
+                          isCharging={false}
+                        />
+                      </div>
+
+                      {/* Closure details */}
+                      <div className="mt-4 pt-4 border-t space-y-2">
+                        <p className="text-sm font-medium text-muted-foreground">Информация о закрытии</p>
+                        <div className="rounded-lg bg-muted/50 p-3 space-y-1.5">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Статус:</span>
+                            <Badge 
+                              variant="outline" 
+                              className={cn(
+                                "gap-1",
+                                isForgiven 
+                                  ? "border-purple-500/30 text-purple-600 dark:text-purple-400" 
+                                  : "text-muted-foreground"
+                              )}
+                            >
+                              {isForgiven ? <Gift className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                              {isForgiven ? "Прощено" : "Не оплачено"}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Списано:</span>
+                            <span className="font-medium">{formatAmount(cancelledAmount)} {currency}</span>
+                          </div>
+                          {plan.closedAt && (
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">Дата закрытия:</span>
+                              <span>{format(new Date(plan.closedAt), "d MMMM yyyy, HH:mm", { locale: ru })}</span>
+                            </div>
+                          )}
+                          {plan.closeComment && (
+                            <div className="pt-2 border-t mt-2">
+                              <p className="text-xs text-muted-foreground">Комментарий:</p>
+                              <p className="text-sm italic mt-0.5">"{plan.closeComment}"</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </CollapsibleContent>
+                </Collapsible>
               </Card>
             );
           })}
