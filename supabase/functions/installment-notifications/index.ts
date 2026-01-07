@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,35 +16,183 @@ interface NotificationRequest {
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+function b64Utf8(value: string): string {
+  return encode(encoder.encode(value).buffer);
+}
+
+function wrapBase64(value: string, lineLength = 76): string {
+  const lines: string[] = [];
+  for (let i = 0; i < value.length; i += lineLength) lines.push(value.slice(i, i + lineLength));
+  return lines.join("\r\n");
+}
+
+function parseSmtpCode(response: string): number {
+  const m = response.match(/^(\d{3})/m);
+  return m ? Number(m[1]) : 0;
+}
+
+async function sendEmailViaSMTP(params: {
+  to: string;
+  subject: string;
+  html: string;
+  smtpHost: string;
+  smtpPort: number;
+  username: string;
+  password: string;
+  fromName: string;
+  fromEmail: string;
+}): Promise<void> {
+  const { smtpHost, smtpPort, username, password, fromName, fromEmail } = params;
+
+  console.log(`Sending via SMTP: ${smtpHost}:${smtpPort} as ${username}`);
+
+  const conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
+
+  async function readResponse(): Promise<string> {
+    let out = "";
+    const buf = new Uint8Array(4096);
+    while (!out.includes("\n")) {
+      const n = await conn.read(buf);
+      if (n === null) break;
+      out += decoder.decode(buf.subarray(0, n));
+      if (n < buf.length) break;
+    }
+    return out;
+  }
+
+  async function sendCommand(cmd: string, expectCodes?: number[]): Promise<string> {
+    const safeCmd = cmd.startsWith("AUTH") ? "AUTH [hidden]" : 
+                    cmd.length > 50 && !cmd.startsWith("MAIL") && !cmd.startsWith("RCPT") 
+                    ? cmd.substring(0, 50) + "..." : cmd;
+    console.log(`SMTP > ${safeCmd}`);
+
+    await conn.write(encoder.encode(cmd + "\r\n"));
+    const response = await readResponse();
+    console.log(`SMTP < ${response.trim()}`);
+
+    if (expectCodes && expectCodes.length) {
+      const code = parseSmtpCode(response);
+      if (!expectCodes.includes(code)) {
+        throw new Error(`SMTP unexpected response ${code}: ${response.trim()}`);
+      }
+    }
+
+    return response;
+  }
+
+  try {
+    const greeting = await readResponse();
+    console.log(`SMTP < ${greeting.trim()}`);
+    const greetCode = parseSmtpCode(greeting);
+    if (greetCode !== 220) {
+      throw new Error(`SMTP greeting failed: ${greeting.trim()}`);
+    }
+
+    const domain = username.split("@")[1] || "gorbova.by";
+    await sendCommand(`EHLO ${domain}`, [250]);
+
+    await sendCommand("AUTH LOGIN", [334]);
+    await sendCommand(b64Utf8(username), [334]);
+
+    const passResp = await sendCommand(b64Utf8(password));
+    const passCode = parseSmtpCode(passResp);
+    if (passCode !== 235) {
+      throw new Error(`SMTP authentication failed (${passCode}).`);
+    }
+
+    await sendCommand(`MAIL FROM:<${fromEmail}>`, [250]);
+    await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
+    await sendCommand("DATA", [354]);
+
+    const boundary = `boundary_${crypto.randomUUID()}`;
+    const subjectEncoded = `=?UTF-8?B?${b64Utf8(params.subject)}?=`;
+    const htmlPart = wrapBase64(b64Utf8(params.html));
+
+    const dataLines = [
+      `From: "${fromName}" <${fromEmail}>`,
+      `To: ${params.to}`,
+      `Subject: ${subjectEncoded}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      `Content-Type: text/html; charset=UTF-8`,
+      `Content-Transfer-Encoding: base64`,
+      "",
+      htmlPart,
+      "",
+      `--${boundary}--`,
+      "",
+      ".",
+    ].join("\r\n");
+
+    await conn.write(encoder.encode(dataLines + "\r\n"));
+    const dataResp = await readResponse();
+    console.log(`SMTP < ${dataResp.trim()}`);
+    const dataCode = parseSmtpCode(dataResp);
+    if (dataCode !== 250) {
+      throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
+    }
+
+    try {
+      await sendCommand("QUIT");
+    } catch {
+      // ignore
+    }
+  } finally {
+    try {
+      conn.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const supabase = createClient(supabaseUrl, supabaseKey);
   
+  console.log(`Getting email account for sending to ${to}`);
+  
   // Get default email account
-  const { data: account } = await supabase
+  const { data: account, error } = await supabase
     .from("email_accounts")
     .select("*")
     .eq("is_active", true)
-    .eq("is_default", true)
+    .order("is_default", { ascending: false })
+    .limit(1)
     .maybeSingle();
+
+  console.log(`Email account query result: ${JSON.stringify({ account: account?.email, error: error?.message })}`);
 
   if (!account) {
     throw new Error("No active email account found");
   }
 
-  // Call send-email function internally
-  const response = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${supabaseKey}`,
-    },
-    body: JSON.stringify({ to, subject, html }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to send email: ${error}`);
+  let password = account.smtp_password;
+  
+  // Fallback for Yandex SMTP
+  if (!password && account.smtp_host?.includes("yandex")) {
+    password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
   }
+
+  if (!password) {
+    throw new Error(`SMTP password not set for ${account.email}`);
+  }
+
+  await sendEmailViaSMTP({
+    to,
+    subject,
+    html,
+    smtpHost: account.smtp_host || "smtp.yandex.ru",
+    smtpPort: account.smtp_port || 465,
+    username: account.email,
+    password,
+    fromName: account.from_name || "Gorbova Club",
+    fromEmail: account.from_email || account.email,
+  });
 }
 
 async function sendTestEmail(email: string): Promise<void> {
@@ -81,7 +230,6 @@ async function sendUpcomingPaymentNotification(installmentId: string): Promise<v
     throw new Error(`Installment not found: ${installmentId}`);
   }
 
-  // Get user email
   const { data: profile } = await supabase
     .from("profiles")
     .select("email, full_name")
@@ -248,11 +396,9 @@ async function sendFailedNotification(installmentId: string): Promise<void> {
   await sendEmail(profile.email, `❌ Ошибка при списании по рассрочке`, html);
 }
 
-// Send upcoming payment reminders (3 days before due date)
 async function sendUpcomingReminders(): Promise<{ sent: number; errors: string[] }> {
   const supabase = createClient(supabaseUrl, supabaseKey);
   
-  // Find installments due in 3 days
   const threeDaysFromNow = new Date();
   threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
   const startOfDay = new Date(threeDaysFromNow);
@@ -313,7 +459,6 @@ const handler = async (req: Request): Promise<Response> => {
             { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
           );
         } else {
-          // Send all upcoming reminders
           const result = await sendUpcomingReminders();
           return new Response(
             JSON.stringify({ success: true, ...result }),
