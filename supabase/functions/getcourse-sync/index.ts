@@ -434,8 +434,9 @@ Deno.serve(async (req) => {
 
       if (!anyInstance) {
         console.log('No GetCourse instance configured');
-        return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
-          status: 400,
+        // Return 200 so callers don't crash on non-2xx. Caller should check success flag.
+        return new Response(JSON.stringify({ success: false, error: 'GetCourse not configured' }), {
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
@@ -450,8 +451,8 @@ Deno.serve(async (req) => {
       .single()).data;
 
     if (!finalInstance) {
-      return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
-        status: 400,
+      return new Response(JSON.stringify({ success: false, error: 'GetCourse not configured' }), {
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -462,8 +463,8 @@ Deno.serve(async (req) => {
     };
 
     if (!config.account_name || !config.secret_key) {
-      return new Response(JSON.stringify({ error: 'GetCourse credentials not configured' }), {
-        status: 400,
+      return new Response(JSON.stringify({ success: false, error: 'GetCourse credentials not configured' }), {
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
