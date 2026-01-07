@@ -37,7 +37,10 @@ Deno.serve(async (req) => {
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
 
     // Find pending installments that are due with exponential backoff
+    // Explicitly exclude closed statuses (cancelled, forgiven) for safety
     const now = new Date();
+    console.log('Excluding closed installments with statuses: cancelled, forgiven');
+    
     const { data: dueInstallments, error: fetchError } = await supabase
       .from('installment_payments')
       .select(`
@@ -48,6 +51,7 @@ Deno.serve(async (req) => {
         )
       `)
       .eq('status', 'pending')
+      .not('status', 'in', '("cancelled","forgiven")')
       .lte('due_date', now.toISOString())
       .lt('charge_attempts', 5) // Max 5 attempts with backoff
       .order('due_date', { ascending: true })

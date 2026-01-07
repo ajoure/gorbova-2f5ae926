@@ -35,6 +35,35 @@ export function InstallmentTimeline({
     }).format(amount);
   };
 
+  // Translate common bePaid error messages to Russian
+  const translatePaymentError = (error: string): string => {
+    const translations: Record<string, string> = {
+      "insufficient funds": "Недостаточно средств на карте",
+      "card expired": "Срок действия карты истёк",
+      "invalid card number": "Неверный номер карты",
+      "transaction declined": "Транзакция отклонена банком",
+      "card blocked": "Карта заблокирована",
+      "payment limit exceeded": "Превышен лимит платежей",
+      "3d secure failed": "Ошибка подтверждения 3D Secure",
+      "3-d secure authorization failed": "Ошибка подтверждения 3D Secure",
+      "connection timeout": "Превышено время ожидания",
+      "system error": "Системная ошибка",
+      "do not honor": "Операция отклонена банком",
+      "expired card": "Срок действия карты истёк",
+      "lost card": "Карта потеряна",
+      "stolen card": "Карта украдена",
+      "suspected fraud": "Подозрение на мошенничество",
+    };
+    
+    const lowerError = error.toLowerCase();
+    for (const [eng, rus] of Object.entries(translations)) {
+      if (lowerError.includes(eng)) {
+        return rus;
+      }
+    }
+    return "Ошибка платежа";
+  };
+
   if (!installments.length) return null;
 
   return (
@@ -117,7 +146,7 @@ export function InstallmentTimeline({
                   {installment.error_message && (
                     <div className="text-xs text-destructive flex items-center gap-1">
                       <AlertTriangle className="h-3 w-3" />
-                      {installment.error_message}
+                      {translatePaymentError(installment.error_message)}
                     </div>
                   )}
                 </div>

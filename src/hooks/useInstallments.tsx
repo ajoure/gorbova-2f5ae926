@@ -171,6 +171,9 @@ export function useCloseInstallmentPlan() {
       closeReason: CloseReason;
       comment?: string;
     }) => {
+      // Get current user for audit
+      const { data: { user } } = await supabase.auth.getUser();
+      
       const { error } = await supabase
         .from("installment_payments")
         .update({ 
@@ -178,7 +181,9 @@ export function useCloseInstallmentPlan() {
           meta: { 
             close_reason: closeReason,
             close_comment: comment || null,
-            closed_at: new Date().toISOString()
+            closed_at: new Date().toISOString(),
+            closed_by: user?.id || null,
+            closed_by_email: user?.email || null,
           }
         })
         .eq("subscription_id", subscriptionId)
@@ -194,6 +199,7 @@ export function useCloseInstallmentPlan() {
       queryClient.invalidateQueries({ queryKey: ["admin-installments"] });
       queryClient.invalidateQueries({ queryKey: ["subscription-installments"] });
       queryClient.invalidateQueries({ queryKey: ["user-installments"] });
+      queryClient.invalidateQueries({ queryKey: ["user-all-installments"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
