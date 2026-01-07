@@ -51,6 +51,9 @@ import {
   History,
   Undo2,
   Download,
+  ShieldCheck,
+  ShieldX,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
@@ -221,6 +224,38 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
       return data;
     },
     enabled: !!contact?.duplicate_flag,
+  });
+
+  // Fetch consent data for this contact
+  const { data: profileConsent } = useQuery({
+    queryKey: ["contact-profile-consent", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return null;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("consent_version, consent_given_at, marketing_consent")
+        .eq("user_id", contact.user_id)
+        .maybeSingle();
+      if (error) return null;
+      return data;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // Fetch consent history
+  const { data: consentHistory, isLoading: consentLoading } = useQuery({
+    queryKey: ["contact-consent-history", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return [];
+      const { data, error } = await supabase
+        .from("consent_logs")
+        .select("*")
+        .eq("user_id", contact.user_id)
+        .order("created_at", { ascending: false });
+      if (error) return [];
+      return data;
+    },
+    enabled: !!contact?.user_id,
   });
 
   // Admin action mutation
@@ -466,6 +501,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
+              <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                Согласия
+                {profileConsent?.consent_version && (
+                  <Badge variant="secondary" className="ml-1 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">✓</Badge>
+                )}
+              </TabsTrigger>
               {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                 <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
               )}
@@ -960,6 +1001,135 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   </Card>
                 ))
               )}
+            </TabsContent>
+
+            {/* Consent Tab */}
+            <TabsContent value="consent" className="m-0 space-y-4">
+              {/* Current Status */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Текущий статус</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Privacy Policy */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Политика конфиденциальности</p>
+                        {profileConsent?.consent_version ? (
+                          <p className="text-xs text-muted-foreground">
+                            Версия: {profileConsent.consent_version}
+                            {profileConsent.consent_given_at && (
+                              <> • {format(new Date(profileConsent.consent_given_at), "dd MMM yyyy, HH:mm:ss", { locale: ru })}</>
+                            )}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Согласие не дано</p>
+                        )}
+                      </div>
+                    </div>
+                    {profileConsent?.consent_version ? (
+                      <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 shrink-0">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Дано
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 shrink-0">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Нет
+                      </Badge>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  {/* Marketing */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Маркетинговые рассылки</p>
+                        <p className="text-xs text-muted-foreground">
+                          {profileConsent?.marketing_consent ? "Пользователь разрешил рассылки" : "Рассылки отключены"}
+                        </p>
+                      </div>
+                    </div>
+                    {profileConsent?.marketing_consent ? (
+                      <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Да
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="shrink-0">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Нет
+                      </Badge>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Consent History */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">История изменений</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {consentLoading ? (
+                    <div className="space-y-3">
+                      {[...Array(3)].map((_, i) => (
+                        <Skeleton key={i} className="h-16 w-full" />
+                      ))}
+                    </div>
+                  ) : !consentHistory || consentHistory.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                      <p>История изменений пуста</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {consentHistory.map((log: any) => (
+                        <div key={log.id} className="border rounded-lg p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">
+                                {format(new Date(log.created_at), "dd MMM yyyy, HH:mm:ss", { locale: ru })}
+                              </span>
+                            </div>
+                            {log.granted ? (
+                              <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs">
+                                <ShieldCheck className="h-3 w-3 mr-1" />
+                                Дано
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 text-xs">
+                                <ShieldX className="h-3 w-3 mr-1" />
+                                Отозвано
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm font-medium">
+                            {log.consent_type === "privacy_policy" ? "Политика конфиденциальности" : 
+                             log.consent_type === "marketing" ? "Маркетинговые рассылки" : log.consent_type}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>Источник: {
+                              log.source === "modal" ? "Всплывающее окно" :
+                              log.source === "settings" ? "Настройки профиля" :
+                              log.source === "registration" ? "При регистрации" :
+                              log.source === "signup" ? "При регистрации" : log.source
+                            }</span>
+                            <span>•</span>
+                            <span>Версия: {log.policy_version}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Duplicates Tab */}
