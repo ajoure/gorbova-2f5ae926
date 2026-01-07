@@ -17,13 +17,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -40,23 +33,19 @@ import {
   Search,
   Handshake,
   RefreshCw,
-  Filter,
   Package,
-  CreditCard,
   Clock,
   Calendar,
   CheckCircle,
   XCircle,
   AlertTriangle,
   TrendingUp,
-  Upload,
   Sparkles,
   Trash2,
 } from "lucide-react";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
-
-type DealStatus = "all" | "draft" | "pending" | "paid" | "partial" | "cancelled" | "refunded" | "expired";
+import { AdvancedFilters, ActiveFilter, FilterField, applyFilters } from "@/components/admin/AdvancedFilters";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -70,8 +59,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 
 export default function AdminDeals() {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<DealStatus>("all");
-  const [productFilter, setProductFilter] = useState<string>("all");
+  const [advancedFilters, setAdvancedFilters] = useState<ActiveFilter[]>([]);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
@@ -80,9 +68,9 @@ export default function AdminDeals() {
 
   // Fetch deals (orders_v2) with related data
   const { data: deals, isLoading, refetch } = useQuery({
-    queryKey: ["admin-deals", statusFilter, productFilter],
+    queryKey: ["admin-deals"],
     queryFn: async () => {
-      let query = supabase
+      const { data, error } = await supabase
         .from("orders_v2")
         .select(`
           *,
@@ -92,16 +80,8 @@ export default function AdminDeals() {
           payments_v2(id, status, amount, paid_at)
         `)
         .order("created_at", { ascending: false })
-        .limit(200);
+        .limit(500);
 
-      if (statusFilter !== "all") {
-        query = query.eq("status", statusFilter as any);
-      }
-      if (productFilter !== "all") {
-        query = query.eq("product_id", productFilter);
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
@@ -132,6 +112,29 @@ export default function AdminDeals() {
     },
   });
 
+  // Build filter fields dynamically based on available products
+  const DEAL_FILTER_FIELDS: FilterField[] = useMemo(() => [
+    { key: "order_number", label: "№ заказа", type: "text" },
+    { key: "customer_email", label: "Email", type: "text" },
+    { key: "customer_phone", label: "Телефон", type: "text" },
+    { key: "contact_name", label: "Имя контакта", type: "text" },
+    { 
+      key: "status", 
+      label: "Статус", 
+      type: "select",
+      options: Object.entries(STATUS_CONFIG).map(([value, { label }]) => ({ value, label }))
+    },
+    { 
+      key: "product_id", 
+      label: "Продукт", 
+      type: "select",
+      options: products?.map(p => ({ value: p.id, label: p.name })) || []
+    },
+    { key: "final_price", label: "Сумма", type: "number" },
+    { key: "is_trial", label: "Триал", type: "boolean" },
+    { key: "created_at", label: "Дата создания", type: "date" },
+  ], [products]);
+
   // Calculate stats
   const stats = useMemo(() => {
     if (!deals) return { total: 0, paid: 0, pending: 0, revenue: 0 };
@@ -144,24 +147,42 @@ export default function AdminDeals() {
     return { total, paid, pending, revenue };
   }, [deals]);
 
+  const getDealFieldValue = (deal: any, fieldKey: string): any => {
+    switch (fieldKey) {
+      case "contact_name":
+        const profile = profilesMap?.get(deal.user_id);
+        return profile?.full_name || deal.customer_email || "";
+      case "product_name":
+        return (deal.products_v2 as any)?.name || "";
+      default:
+        return deal[fieldKey];
+    }
+  };
+
   // Filter deals
   const filteredDeals = useMemo(() => {
     if (!deals) return [];
-    if (!search) return deals;
     
-    const searchLower = search.toLowerCase();
-    return deals.filter(deal => {
-      const profile = profilesMap?.get(deal.user_id);
-      return (
-        deal.order_number?.toLowerCase().includes(searchLower) ||
-        deal.customer_email?.toLowerCase().includes(searchLower) ||
-        deal.customer_phone?.includes(search) ||
-        profile?.email?.toLowerCase().includes(searchLower) ||
-        profile?.full_name?.toLowerCase().includes(searchLower) ||
-        (deal.products_v2 as any)?.name?.toLowerCase().includes(searchLower)
-      );
-    });
-  }, [deals, search, profilesMap]);
+    // First apply search
+    let result = deals;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      result = result.filter(deal => {
+        const profile = profilesMap?.get(deal.user_id);
+        return (
+          deal.order_number?.toLowerCase().includes(searchLower) ||
+          deal.customer_email?.toLowerCase().includes(searchLower) ||
+          deal.customer_phone?.includes(search) ||
+          profile?.email?.toLowerCase().includes(searchLower) ||
+          profile?.full_name?.toLowerCase().includes(searchLower) ||
+          (deal.products_v2 as any)?.name?.toLowerCase().includes(searchLower)
+        );
+      });
+    }
+    
+    // Then apply advanced filters
+    return applyFilters(result, advancedFilters, getDealFieldValue);
+  }, [deals, search, advancedFilters, profilesMap]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
 
@@ -326,42 +347,24 @@ export default function AdminDeals() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск по номеру, email, телефону, продукту..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по номеру, email, телефону, продукту..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
         
-        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as DealStatus)}>
-          <SelectTrigger className="w-[180px]">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Статус" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все статусы</SelectItem>
-            {Object.entries(STATUS_CONFIG).map(([value, { label }]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={productFilter} onValueChange={setProductFilter}>
-          <SelectTrigger className="w-[200px]">
-            <Package className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Продукт" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все продукты</SelectItem>
-            {products?.map(p => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <AdvancedFilters
+          fields={DEAL_FILTER_FIELDS}
+          filters={advancedFilters}
+          onFiltersChange={setAdvancedFilters}
+        />
       </div>
 
       {/* Stats line & bulk actions */}
@@ -483,7 +486,7 @@ export default function AdminDeals() {
                     <TableCell>
                       {paidPayments.length > 0 ? (
                         <div className="flex items-center gap-1.5 text-sm">
-                          <CreditCard className="h-3 h-3 text-green-600" />
+                          <CheckCircle className="h-3 w-3 text-green-600" />
                           <span>{paidPayments.length} платеж{paidPayments.length > 1 ? "а" : ""}</span>
                         </div>
                       ) : (
