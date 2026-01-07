@@ -718,7 +718,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-4xl max-h-[95vh] flex flex-col p-0">
+      <DialogContent className="w-full max-w-4xl h-[95vh] max-h-[95vh] flex flex-col p-0">
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -750,7 +750,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           ))}
         </div>
 
-        <ScrollArea className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {/* Step 1: File Upload */}
           {step === 1 && (
             <div className="space-y-4 p-4">
@@ -1303,11 +1303,11 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
               )}
             </div>
           )}
-        </ScrollArea>
+        </div>
 
         {/* Navigation - Fixed at bottom */}
         {step < 5 && (
-          <div className="flex justify-between p-4 border-t bg-background safe-area-inset-bottom">
+          <div className="flex justify-between p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t bg-background">
             <Button
               variant="outline"
               onClick={() => setStep(s => Math.max(1, s - 1))}
