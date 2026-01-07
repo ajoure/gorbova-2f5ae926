@@ -65,12 +65,11 @@ async function cancelGetCourseOrder(
         refresh_if_exists: 1,
       },
       deal: {
-        // Persist our order number in GC so cancellation targets the same deal
-        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount, // Required field for GetCourse
         deal_status: 'cancelled', // Set status to cancelled
         deal_is_paid: 0,
+        // Store order number in comment since deal_number must be integer
         deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
       },
     };
@@ -148,12 +147,11 @@ async function updateGetCourseOrder(
         refresh_if_exists: 1,
       },
       deal: {
-        // Persist our order number in GC so updates target the same deal
-        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount,
         deal_status: 'in_work', // Active status
         deal_is_paid: 1,
+        // Store order number in comment since deal_number must be integer
         deal_comment: `Доступ продлён до ${newEndDate}. Order: ${orderNumber}`,
       },
     };

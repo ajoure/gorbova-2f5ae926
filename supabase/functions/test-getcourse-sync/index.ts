@@ -47,15 +47,14 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
-        // IMPORTANT: persist our order number as deal_number so we can target the same deal later
-        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
         manager_email: 'info@ajoure.by',
-        deal_comment: `Тестовая оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
+        // Store order number in comment since deal_number must be integer
+        deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
     
