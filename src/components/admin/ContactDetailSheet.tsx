@@ -395,57 +395,78 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         subscriptionId = newSub.id;
       }
 
+      // Track sync results
+      const syncResults: Record<string, { success: boolean; error?: string }> = {};
+
       // 4. Create telegram_access_grants and grant access if product has club
       if (product?.telegram_club_id) {
-        // Create access grant record
-        await supabase.from("telegram_access_grants").insert({
-          user_id: contact.user_id,
-          club_id: product.telegram_club_id,
-          source: "admin_grant",
-          source_id: orderV2.id,
-          start_at: now.toISOString(),
-          end_at: accessEnd.toISOString(),
-          status: "active",
-          meta: {
-            product_id: grantProductId,
-            tariff_id: grantTariffId,
-            granted_by: currentUser?.id,
-            granted_by_email: currentUser?.email,
-          },
-        });
-
-        // Grant Telegram access via edge function
-        await supabase.functions.invoke("telegram-grant-access", {
-          body: {
+        try {
+          // Create access grant record
+          await supabase.from("telegram_access_grants").insert({
             user_id: contact.user_id,
             club_id: product.telegram_club_id,
-            duration_days: grantDays,
             source: "admin_grant",
-          },
-        });
+            source_id: orderV2.id,
+            start_at: now.toISOString(),
+            end_at: accessEnd.toISOString(),
+            status: "active",
+            meta: {
+              product_id: grantProductId,
+              tariff_id: grantTariffId,
+              granted_by: currentUser?.id,
+              granted_by_email: currentUser?.email,
+            },
+          });
+
+          // Grant Telegram access via edge function
+          const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
+            body: {
+              user_id: contact.user_id,
+              club_id: product.telegram_club_id,
+              duration_days: grantDays,
+              source: "admin_grant",
+            },
+          });
+          
+          syncResults.telegram = { success: !tgError, error: tgError?.message };
+        } catch (err) {
+          syncResults.telegram = { success: false, error: (err as Error).message };
+        }
       }
 
       // 5. Sync to GetCourse with full deal data (same as payment flow)
       const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
       if (gcOfferId) {
-        const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
-          body: {
-            email: contact.email,
-            firstName: contact.full_name?.split(" ")[0] || null,
-            lastName: contact.full_name?.split(" ").slice(1).join(" ") || null,
-            phone: contact.phone || null,
-            offerId: typeof gcOfferId === 'string' ? parseInt(gcOfferId) : gcOfferId,
-            tariffCode: tariff?.code || "admin_grant",
-            amount: 0, // Admin grant - no charge
-          },
-        });
-        if (gcError) {
-          console.warn("GetCourse sync skipped:", gcError.message);
-        } else if (gcResult?.getcourse?.success) {
-          console.log("GetCourse sync success:", gcResult.getcourse.gcOrderId);
-        } else {
-          console.warn("GetCourse sync failed:", gcResult?.getcourse?.error);
+        try {
+          const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
+            body: {
+              email: contact.email,
+              firstName: contact.full_name?.split(" ")[0] || null,
+              lastName: contact.full_name?.split(" ").slice(1).join(" ") || null,
+              phone: contact.phone || null,
+              offerId: typeof gcOfferId === 'string' ? parseInt(gcOfferId) : gcOfferId,
+              tariffCode: tariff?.code || "admin_grant",
+              amount: 0, // Admin grant - no charge
+            },
+          });
+          
+          if (gcError) {
+            syncResults.getcourse = { success: false, error: gcError.message };
+          } else if (gcResult?.getcourse?.success) {
+            syncResults.getcourse = { success: true };
+          } else {
+            syncResults.getcourse = { success: false, error: gcResult?.getcourse?.error || 'Unknown error' };
+          }
+        } catch (err) {
+          syncResults.getcourse = { success: false, error: (err as Error).message };
         }
+      }
+
+      // Update subscription meta with sync results
+      if (Object.keys(syncResults).length > 0) {
+        await supabase.from("subscriptions_v2").update({
+          meta: { sync_results: syncResults, synced_at: now.toISOString() },
+        }).eq("id", subscriptionId);
       }
 
       // 6. Log action with full details
@@ -465,6 +486,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           extended_existing: !!existingSub,
           getcourse_offer_code: tariff?.getcourse_offer_code,
           telegram_club_id: product?.telegram_club_id,
+          sync_results: syncResults,
         },
       });
 
@@ -828,20 +850,60 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                           </div>
                         </div>
 
-                        {/* Access info badges */}
+                        {/* Access info badges with sync status */}
                         <div className="flex flex-wrap gap-1.5 mb-2">
-                          {product?.telegram_club_id && (
-                            <Badge variant="outline" className="text-xs gap-1 text-blue-600 border-blue-200">
-                              <Send className="w-3 h-3" />
-                              Telegram
-                            </Badge>
-                          )}
-                          {tariff?.getcourse_offer_code && (
-                            <Badge variant="outline" className="text-xs gap-1 text-purple-600 border-purple-200">
-                              <BookOpen className="w-3 h-3" />
-                              GetCourse
-                            </Badge>
-                          )}
+                          {product?.telegram_club_id && (() => {
+                            const syncResults = (sub.meta as any)?.sync_results;
+                            const tgSync = syncResults?.telegram;
+                            const hasSync = tgSync !== undefined;
+                            const isSuccess = tgSync?.success === true;
+                            
+                            return (
+                              <Badge 
+                                variant="outline" 
+                                className={`text-xs gap-1 ${
+                                  hasSync 
+                                    ? (isSuccess ? "text-blue-600 border-blue-200" : "text-muted-foreground border-muted") 
+                                    : "text-blue-600 border-blue-200"
+                                }`}
+                                title={tgSync?.error || (isSuccess ? "Синхронизировано" : "")}
+                              >
+                                <Send className="w-3 h-3" />
+                                Telegram
+                                {hasSync && (
+                                  isSuccess 
+                                    ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                                    : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
+                                )}
+                              </Badge>
+                            );
+                          })()}
+                          {tariff?.getcourse_offer_code && (() => {
+                            const syncResults = (sub.meta as any)?.sync_results;
+                            const gcSync = syncResults?.getcourse;
+                            const hasSync = gcSync !== undefined;
+                            const isSuccess = gcSync?.success === true;
+                            
+                            return (
+                              <Badge 
+                                variant="outline" 
+                                className={`text-xs gap-1 ${
+                                  hasSync 
+                                    ? (isSuccess ? "text-purple-600 border-purple-200" : "text-muted-foreground border-muted") 
+                                    : "text-purple-600 border-purple-200"
+                                }`}
+                                title={gcSync?.error || (isSuccess ? "Синхронизировано" : "")}
+                              >
+                                <BookOpen className="w-3 h-3" />
+                                GetCourse
+                                {hasSync && (
+                                  isSuccess 
+                                    ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                                    : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
+                                )}
+                              </Badge>
+                            );
+                          })()}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 text-xs mb-3">
