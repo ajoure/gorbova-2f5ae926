@@ -65,6 +65,8 @@ async function cancelGetCourseOrder(
         refresh_if_exists: 1,
       },
       deal: {
+        // Persist our order number in GC so cancellation targets the same deal
+        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount, // Required field for GetCourse
         deal_status: 'cancelled', // Set status to cancelled
@@ -146,6 +148,8 @@ async function updateGetCourseOrder(
         refresh_if_exists: 1,
       },
       deal: {
+        // Persist our order number in GC so updates target the same deal
+        deal_number: orderNumber,
         offer_code: offerId.toString(),
         deal_cost: amount,
         deal_status: 'in_work', // Active status
