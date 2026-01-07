@@ -364,21 +364,18 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       if (error) throw error;
       
       if (data.suggestions) {
-        // Auto-fill: mark unknown products as "skip" by default, with option to choose archive
-        const enrichedSuggestions = data.suggestions.map((s: TariffSuggestion) => {
-          if (s.action === "needs_review" || s.action === "skip") {
-            return { ...s, action: "skip" as const, userChoice: "skip" };
-          }
-          return s;
-        });
+        // Keep AI suggestions as-is. We only skip rows when the user explicitly chooses "skip".
+        // This prevents a confusing "0" in preview when AI can't confidently map tariffs.
+        const enrichedSuggestions: TariffSuggestion[] = data.suggestions.map((s: TariffSuggestion) => ({
+          ...s,
+        }));
+
         setTariffSuggestions(enrichedSuggestions);
-        
-        const unknownCount = enrichedSuggestions.filter((s: TariffSuggestion) => 
-          s.action === "skip" && !s.targetTariffId
-        ).length;
-        
+
+        const unknownCount = enrichedSuggestions.filter((s) => !s.targetTariffId).length;
+
         if (unknownCount > 0) {
-          toast.info(`${unknownCount} офферов без тарифа (по умолчанию пропускаются)`);
+          toast.info(`${unknownCount} офферов без тарифа — выберите действие на шаге «Маппинг тарифов»`);
         } else {
           toast.success("Все тарифы определены");
         }
