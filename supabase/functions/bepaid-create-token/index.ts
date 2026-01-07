@@ -17,6 +17,7 @@ interface CreateTokenRequest {
   skipRedirect?: boolean; // For admin test payments - just create order, don't create bePaid subscription
   isTrial?: boolean; // Trial payment flag
   trialDays?: number; // Trial duration in days
+  offerId?: string; // Offer ID for virtual card blocking check
 }
 
 interface ProductInfo {
@@ -77,7 +78,8 @@ Deno.serve(async (req) => {
       tariffCode,
       skipRedirect,
       isTrial,
-      trialDays
+      trialDays,
+      offerId,
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -456,6 +458,9 @@ Deno.serve(async (req) => {
 
     // For subscriptions requiring recurring payments, only allow card payments
     // ERIP, Apple Pay, Google Pay do not support server-initiated recurring charges
+    // Build tracking_id with offerId for virtual card blocking check
+    const trackingId = offerId ? `${order.id}_${offerId}` : order.id;
+
     const subscriptionPayload = {
       customer: {
         email: emailLower,
@@ -465,7 +470,7 @@ Deno.serve(async (req) => {
         ip: customerIp,
       },
       plan: planConfig,
-      tracking_id: order.id,
+      tracking_id: trackingId,
       // Always return to a "processing" state; UI will show success ONLY after confirmed provider status.
       return_url: buildReturnUrl(successUrl, 'processing'),
       notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
@@ -482,6 +487,7 @@ Deno.serve(async (req) => {
         order_id: order.id,
         product_id: productId,
         tariff_code: tariffCode || null,
+        offer_id: offerId || null,
         description: description || null,
         is_trial: isTrial || false,
         // Keep failUrl for audit/debug (bePaid subscriptions API has single return_url).

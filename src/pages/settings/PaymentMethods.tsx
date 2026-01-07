@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPendingInstallments } from "@/hooks/useInstallments";
@@ -35,7 +36,24 @@ interface Subscription {
 export default function PaymentMethodsSettings() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Check for virtual card rejection in URL params
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('tokenize') === 'rejected') {
+      const reason = params.get('reason');
+      if (reason === 'virtual_card_not_allowed') {
+        toast.error('Виртуальные карты не принимаются для рассрочки. Используйте физическую банковскую карту.');
+      } else {
+        toast.error('Карта отклонена. Попробуйте другую карту.');
+      }
+      // Clear the params
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, navigate, location.pathname]);
 
   // Check for pending installments - blocks card deletion
   const { data: pendingInstallments } = useUserPendingInstallments(user?.id);

@@ -19,6 +19,7 @@ export interface TariffOffer {
   visible_to: string | null;
   sort_order: number;
   getcourse_offer_id: string | null;
+  reject_virtual_cards: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -169,6 +170,7 @@ export function useCreateDefaultOffers() {
         visible_from: null,
         visible_to: null,
         sort_order: 0,
+        reject_virtual_cards: false,
       });
       
       // Create trial offer
@@ -187,6 +189,7 @@ export function useCreateDefaultOffers() {
         visible_from: null,
         visible_to: null,
         sort_order: 1,
+        reject_virtual_cards: false,
       });
     },
   });

@@ -37,8 +37,14 @@ serve(async (req) => {
     const cardExpMonth = transaction.credit_card?.exp_month;
     const cardExpYear = transaction.credit_card?.exp_year;
     const customerEmail = transaction.customer?.email;
+    
+    // Card type information from bePaid
+    const cardProduct = transaction.credit_card?.product; // F=Physical, V=Virtual, N=Prepaid, P=Premium
+    const cardCategory = transaction.credit_card?.card_category; // consumer, virtual, prepaid
+    const isVirtualFlag = transaction.credit_card?.is_virtual; // boolean if Extended BIN enabled
 
     console.log(`Tokenization status: ${status}, email: ${customerEmail}, token: ${cardToken ? 'present' : 'missing'}`);
+    console.log(`Card type info: product=${cardProduct}, category=${cardCategory}, is_virtual=${isVirtualFlag}`);
 
     if (status !== 'successful' || !cardToken) {
       console.log('Tokenization not successful or no token');
@@ -47,7 +53,7 @@ serve(async (req) => {
       });
     }
 
-    // Find user by email in profiles table (more reliable than listUsers which paginates)
+    // Find user by email in profiles table
     const emailLower = customerEmail?.toLowerCase().trim();
     const { data: profile } = await supabase
       .from('profiles')
@@ -64,6 +70,78 @@ serve(async (req) => {
     }
 
     const userId = profile.user_id;
+
+    // Parse tracking_id to get offer_id if present (format: orderId_offerId or just orderId)
+    let offerId: string | null = null;
+    if (trackingId && trackingId.includes('_')) {
+      const parts = trackingId.split('_');
+      if (parts.length >= 2) {
+        offerId = parts[1];
+      }
+    }
+
+    // Check if virtual card blocking is enabled for this offer
+    let rejectVirtualCards = false;
+    if (offerId) {
+      const { data: offer } = await supabase
+        .from('tariff_offers')
+        .select('reject_virtual_cards, requires_card_tokenization')
+        .eq('id', offerId)
+        .single();
+      
+      if (offer?.reject_virtual_cards) {
+        rejectVirtualCards = true;
+      }
+    }
+
+    // Determine if card is virtual/prepaid
+    const isVirtualCard = 
+      cardProduct === 'V' || 
+      cardProduct === 'N' ||
+      cardCategory === 'virtual' || 
+      cardCategory === 'prepaid' ||
+      isVirtualFlag === true;
+
+    console.log(`Virtual card check: rejectVirtualCards=${rejectVirtualCards}, isVirtualCard=${isVirtualCard}`);
+
+    // Reject virtual cards if configured
+    if (rejectVirtualCards && isVirtualCard) {
+      console.log('Rejecting virtual card for user:', userId);
+      
+      // Log the rejection attempt
+      await supabase.from('rejected_card_attempts').insert({
+        user_id: userId,
+        offer_id: offerId,
+        card_brand: cardBrand,
+        card_last4: cardLast4,
+        card_product: cardProduct,
+        card_category: cardCategory,
+        reason: 'virtual_card_blocked',
+        raw_data: transaction.credit_card,
+      });
+
+      // Also log to audit_logs
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        action: 'payment_method.rejected_virtual',
+        meta: { 
+          brand: cardBrand, 
+          last4: cardLast4, 
+          product: cardProduct,
+          category: cardCategory,
+          offer_id: offerId,
+        },
+      });
+
+      return new Response(JSON.stringify({ 
+        status: 'rejected',
+        reason: 'virtual_card_not_allowed',
+        message: 'Виртуальные карты не принимаются для рассрочки',
+      }), {
+        status: 422,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Check if this card already exists for the user
     const { data: existingCard } = await supabase
@@ -82,6 +160,8 @@ serve(async (req) => {
         .from('payment_methods')
         .update({
           provider_token: cardToken,
+          card_product: cardProduct,
+          card_category: cardCategory,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existingCard.id);
@@ -111,8 +191,10 @@ serve(async (req) => {
         last4: cardLast4,
         exp_month: cardExpMonth,
         exp_year: cardExpYear,
-        is_default: isFirstCard, // First card is default
+        is_default: isFirstCard,
         status: 'active',
+        card_product: cardProduct,
+        card_category: cardCategory,
         meta: {
           tracking_id: trackingId,
           transaction_id: transaction.uid,
@@ -131,10 +213,16 @@ serve(async (req) => {
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
       action: 'payment_method.added',
-      meta: { brand: cardBrand, last4: cardLast4, is_default: isFirstCard },
+      meta: { 
+        brand: cardBrand, 
+        last4: cardLast4, 
+        is_default: isFirstCard,
+        card_product: cardProduct,
+        card_category: cardCategory,
+      },
     });
 
-    console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4}`);
+    console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4} (product: ${cardProduct})`);
     
     return new Response(JSON.stringify({ status: 'created' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
