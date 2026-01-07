@@ -60,6 +60,10 @@ export function useAdminInstallments(status?: string) {
           query = query
             .eq("status", "pending")
             .lt("due_date", new Date().toISOString());
+        } else if (status === "cancelled") {
+          query = query.eq("status", "cancelled");
+        } else if (status === "forgiven") {
+          query = query.eq("status", "forgiven");
         } else {
           query = query.eq("status", status);
         }
@@ -151,27 +155,45 @@ export function useChargeInstallment() {
   });
 }
 
+export type CloseReason = 'cancelled' | 'forgiven';
+
 // Close installment plan early
 export function useCloseInstallmentPlan() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ subscriptionId, reason }: { subscriptionId: string; reason?: string }) => {
+    mutationFn: async ({ 
+      subscriptionId, 
+      closeReason, 
+      comment 
+    }: { 
+      subscriptionId: string; 
+      closeReason: CloseReason;
+      comment?: string;
+    }) => {
       const { error } = await supabase
         .from("installment_payments")
         .update({ 
-          status: "cancelled",
-          meta: { cancelled_reason: reason || "Досрочное закрытие" }
+          status: closeReason,
+          meta: { 
+            close_reason: closeReason,
+            close_comment: comment || null,
+            closed_at: new Date().toISOString()
+          }
         })
         .eq("subscription_id", subscriptionId)
         .eq("status", "pending");
 
       if (error) throw error;
     },
-    onSuccess: () => {
-      toast.success("Рассрочка закрыта");
+    onSuccess: (_, variables) => {
+      const message = variables.closeReason === 'forgiven' 
+        ? "Рассрочка прощена" 
+        : "Рассрочка закрыта";
+      toast.success(message);
       queryClient.invalidateQueries({ queryKey: ["admin-installments"] });
       queryClient.invalidateQueries({ queryKey: ["subscription-installments"] });
+      queryClient.invalidateQueries({ queryKey: ["user-installments"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);

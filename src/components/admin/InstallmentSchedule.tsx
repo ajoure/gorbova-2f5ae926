@@ -207,7 +207,7 @@ export function InstallmentSchedule({ subscriptionId, currency = "BYN" }: Instal
               <AlertDialogFooter>
                 <AlertDialogCancel>Отмена</AlertDialogCancel>
                 <AlertDialogAction
-                  onClick={() => closeInstallmentPlan.mutate({ subscriptionId })}
+                  onClick={() => closeInstallmentPlan.mutate({ subscriptionId, closeReason: "cancelled" })}
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 >
                   Закрыть рассрочку

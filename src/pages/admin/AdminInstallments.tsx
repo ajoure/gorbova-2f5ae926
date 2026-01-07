@@ -42,6 +42,8 @@ import {
   Mail,
   ChevronRight,
   Filter,
+  XCircle,
+  Gift,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -63,7 +65,8 @@ const statusConfig: Record<string, {
   pending: { label: "Ожидает", variant: "secondary", color: "text-amber-600" },
   processing: { label: "Обработка", variant: "outline", color: "text-blue-600" },
   failed: { label: "Ошибка", variant: "destructive", color: "text-red-600" },
-  cancelled: { label: "Отменён", variant: "outline", color: "text-muted-foreground" },
+  cancelled: { label: "Не оплачено", variant: "outline", color: "text-muted-foreground" },
+  forgiven: { label: "Прощено", variant: "outline", color: "text-purple-600" },
 };
 
 export default function AdminInstallments() {
@@ -235,6 +238,14 @@ export default function AdminInstallments() {
                   <Check className="h-3.5 w-3.5" />
                   Оплачены
                 </TabsTrigger>
+                <TabsTrigger value="cancelled" className="gap-1.5">
+                  <XCircle className="h-3.5 w-3.5" />
+                  Не оплачено
+                </TabsTrigger>
+                <TabsTrigger value="forgiven" className="gap-1.5">
+                  <Gift className="h-3.5 w-3.5" />
+                  Прощено
+                </TabsTrigger>
                 <TabsTrigger value="all">Все</TabsTrigger>
               </TabsList>
 
@@ -332,11 +343,17 @@ export default function AdminInstallments() {
                               <TableCell className="text-center">
                                 <Badge 
                                   variant={config.variant}
-                                  className={cn("gap-1", config.color)}
+                                  className={cn(
+                                    "gap-1", 
+                                    config.color,
+                                    installment.status === "forgiven" && "border-purple-500/30 bg-purple-500/10"
+                                  )}
                                 >
                                   {installment.status === "succeeded" && <Check className="h-3 w-3" />}
                                   {installment.status === "pending" && <Clock className="h-3 w-3" />}
                                   {installment.status === "failed" && <AlertTriangle className="h-3 w-3" />}
+                                  {installment.status === "cancelled" && <XCircle className="h-3 w-3" />}
+                                  {installment.status === "forgiven" && <Gift className="h-3 w-3" />}
                                   {config.label}
                                 </Badge>
                               </TableCell>
