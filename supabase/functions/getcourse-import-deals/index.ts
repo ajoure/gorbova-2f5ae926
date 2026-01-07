@@ -683,8 +683,9 @@ async function processFileDeals(
         continue;
       }
       
-      // Create order
-      const order = await createOrder(supabase, normalizedDeal, profile.user_id!, tariffId, productId);
+      // Create order - use profile.id for ghost profiles (user_id may be null)
+      const userIdForRecords = profile.user_id || profile.id;
+      const order = await createOrder(supabase, normalizedDeal, userIdForRecords, tariffId, productId);
       if (order.isNew) {
         result.orders_created++;
       } else {
@@ -693,7 +694,7 @@ async function processFileDeals(
       
       // Create subscription for paid deals
       const subscription = await createSubscription(
-        supabase, normalizedDeal, profile.user_id!, order.id, tariffId, productId
+        supabase, normalizedDeal, userIdForRecords, order.id, tariffId, productId
       );
       if (subscription?.isNew) {
         result.subscriptions_created++;
@@ -701,7 +702,8 @@ async function processFileDeals(
       
     } catch (error) {
       console.error(`[File Import] Error processing deal:`, error);
-      result.details.push(`Ошибка: ${deal.user_email} - ${error instanceof Error ? error.message : String(error)}`);
+      const errorMsg = error instanceof Error ? error.message : (typeof error === 'object' ? JSON.stringify(error) : String(error));
+      result.details.push(`Ошибка: ${deal.user_email} - ${errorMsg}`);
       result.errors++;
     }
   }
