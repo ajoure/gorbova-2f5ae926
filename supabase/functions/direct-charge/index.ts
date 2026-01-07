@@ -212,13 +212,26 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
 
-    const amount = offer?.amount ?? (isTrial ? tariff.trial_price : tariff.original_price) ?? 0;
+    // Check if this is an internal installment payment
+    const isInternalInstallment = offer?.payment_method === 'internal_installment' && offer?.installment_count > 1;
+    const installmentCount = isInternalInstallment ? offer.installment_count : 1;
+    const installmentIntervalDays = offer?.installment_interval_days ?? 30;
+    const firstPaymentDelayDays = offer?.first_payment_delay_days ?? 0;
+    
+    // For installments, amount is divided into payments
+    const totalAmount = offer?.amount ?? (isTrial ? tariff.trial_price : tariff.original_price) ?? 0;
+    const amount = isInternalInstallment 
+      ? Math.round((totalAmount / installmentCount) * 100) / 100 
+      : totalAmount;
+    
     const effectiveTrialDays = offer?.trial_days ?? trialDays ?? tariff.trial_days ?? 5;
     const autoChargeAmount = offer?.auto_charge_amount ?? tariff.original_price ?? 0;
     const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? tariff.trial_auto_charge ?? true;
     const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
+    
+    console.log(`Installment mode: ${isInternalInstallment}, count: ${installmentCount}, first payment: ${amount} ${product.currency}`);
 
-    console.log(`Charge amount: ${amount} ${product.currency}, trial=${isTrial}, days=${effectiveTrialDays}`);
+    console.log(`Charge amount: ${amount} ${product.currency} (total: ${totalAmount}), trial=${isTrial}, days=${effectiveTrialDays}`);
 
     // Check if user already has an active subscription for this product
     // For trial - block if already used trial for this product
@@ -346,7 +359,7 @@ Deno.serve(async (req) => {
     // Generate order number
     const orderNumber = `ORD-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
 
-    // Create order
+    // Create order - use total amount for installments
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -355,8 +368,8 @@ Deno.serve(async (req) => {
         product_id: productId,
         tariff_id: tariff.id,
         customer_email: user.email,
-        base_price: amount,
-        final_price: amount,
+        base_price: totalAmount,
+        final_price: totalAmount,
         currency: product.currency,
         is_trial: isTrial || false,
         trial_end_at: isTrial ? new Date(Date.now() + effectiveTrialDays * 24 * 60 * 60 * 1000).toISOString() : null,
@@ -366,6 +379,9 @@ Deno.serve(async (req) => {
           direct_charge: true,
           auto_charge_after_trial: autoChargeAfterTrial,
           auto_charge_amount: autoChargeAmount,
+          is_installment: isInternalInstallment,
+          installment_count: isInternalInstallment ? installmentCount : null,
+          first_payment_amount: isInternalInstallment ? amount : null,
         },
       })
       .select()
@@ -490,19 +506,24 @@ Deno.serve(async (req) => {
     // For paid transactions, charge the card
     console.log(`Charging ${amount} ${product.currency} using token ${paymentMethod.provider_token.substring(0, 8)}...`);
 
-    // Create payment record
+    // Create payment record (amount in BYN, not kopecks - DB stores decimal)
     const { data: payment, error: paymentError } = await supabase
       .from('payments_v2')
       .insert({
         order_id: order.id,
         user_id: user.id,
-        amount,
+        amount, // Store in BYN (the charge payload converts to kopecks separately)
         currency: product.currency,
         status: 'processing',
         provider: 'bepaid',
         payment_token: paymentMethod.provider_token,
-        is_recurring: false,
-        meta: { payment_method_id: paymentMethod.id },
+        is_recurring: isInternalInstallment, // Mark as recurring for installments
+        installment_number: isInternalInstallment ? 1 : null,
+        meta: { 
+          payment_method_id: paymentMethod.id,
+          is_installment: isInternalInstallment,
+          total_installments: isInternalInstallment ? installmentCount : null,
+        },
       })
       .select()
       .single();
@@ -534,11 +555,13 @@ Deno.serve(async (req) => {
 
     const chargePayload = {
       request: {
-        amount: Math.round(amount * 100), // minimal currency units
+        amount: Math.round(amount * 100), // minimal currency units (kopecks)
         currency: product.currency,
-        description: isTrial
-          ? `Trial: ${product.name} - ${tariff.name}`
-          : `${product.name} - ${tariff.name}`,
+        description: isInternalInstallment
+          ? `${product.name} - ${tariff.name} (платёж 1/${installmentCount})`
+          : (isTrial
+            ? `Trial: ${product.name} - ${tariff.name}`
+            : `${product.name} - ${tariff.name}`),
         tracking_id: payment.id,
         test: testMode,
         return_url: returnUrl,
@@ -782,6 +805,59 @@ Deno.serve(async (req) => {
             })
             .eq('id', existingSub.id);
         }
+      }
+
+      // Create installment payments schedule for internal installment offers
+      if (isInternalInstallment && subscription && installmentCount > 1) {
+        console.log(`Creating installment schedule: ${installmentCount} payments, interval ${installmentIntervalDays} days`);
+        
+        const installmentPayments = [];
+        const perPaymentAmount = Math.round((totalAmount / installmentCount) * 100) / 100;
+        
+        for (let i = 0; i < installmentCount; i++) {
+          const delayDays = firstPaymentDelayDays + (i * installmentIntervalDays);
+          const dueDate = new Date(Date.now() + delayDays * 24 * 60 * 60 * 1000);
+          
+          installmentPayments.push({
+            subscription_id: subscription.id,
+            order_id: order.id,
+            user_id: user.id,
+            payment_number: i + 1,
+            total_payments: installmentCount,
+            amount: perPaymentAmount,
+            currency: product.currency,
+            due_date: dueDate.toISOString(),
+            status: i === 0 ? 'succeeded' : 'pending', // First payment just completed
+            paid_at: i === 0 ? new Date().toISOString() : null,
+            payment_id: i === 0 ? payment.id : null,
+          });
+        }
+        
+        const { error: instError } = await supabase
+          .from('installment_payments')
+          .insert(installmentPayments);
+        
+        if (instError) {
+          console.error('Installment payments creation error:', instError);
+        } else {
+          console.log(`Created ${installmentCount} installment payment records`);
+        }
+        
+        // Update order to show only first payment as paid
+        await supabase
+          .from('orders_v2')
+          .update({
+            paid_amount: perPaymentAmount,
+            meta: {
+              ...(order.meta || {}),
+              bepaid_uid: txUid,
+              payment_id: payment.id,
+              is_installment: true,
+              installment_count: installmentCount,
+              total_amount: totalAmount,
+            },
+          })
+          .eq('id', order.id);
       }
 
       // Grant Telegram access
