@@ -747,15 +747,25 @@ Deno.serve(async (req) => {
                     .eq('user_id', orderV2.user_id)
                     .single();
 
-                  // Get bot token
-                  const { data: anyClub } = await supabase
+                  // Get bot token (reliable: via club.bot_id → telegram_bots)
+                  const { data: club } = await supabase
                     .from('telegram_clubs')
-                    .select('telegram_bots(bot_token_encrypted)')
+                    .select('bot_id')
                     .eq('is_active', true)
                     .limit(1)
                     .maybeSingle();
 
-                  const botToken = (anyClub as any)?.telegram_bots?.bot_token_encrypted;
+                  const botId = (club as any)?.bot_id;
+
+                  const { data: bot } = botId
+                    ? await supabase
+                        .from('telegram_bots')
+                        .select('bot_token_encrypted')
+                        .eq('id', botId)
+                        .maybeSingle()
+                    : { data: null };
+
+                  const botToken = (bot as any)?.bot_token_encrypted;
 
                   if (botToken) {
                     const amountFormatted = (paymentV2.amount / 100).toFixed(2);
@@ -774,7 +784,7 @@ Deno.serve(async (req) => {
                     // Send to all super admins with telegram
                     for (const admin of adminProfiles) {
                       try {
-                        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                        const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -783,6 +793,15 @@ Deno.serve(async (req) => {
                             parse_mode: 'HTML',
                           }),
                         });
+
+                        if (!resp.ok) {
+                          const body = await resp.text().catch(() => '');
+                          console.error('Failed to notify admin (telegram error):', {
+                            admin: admin.full_name,
+                            status: resp.status,
+                            body: body.slice(0, 300),
+                          });
+                        }
                       } catch (err) {
                         console.error('Failed to notify admin:', admin.full_name, err);
                       }
