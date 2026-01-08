@@ -47,29 +47,30 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
   const handleTouchEnd = useCallback(() => {
     if (!isPulling.current) return;
-    
+
     isPulling.current = false;
-    
-    if (currentPullDistance.current >= threshold) {
-      setRefreshing(true);
-      setPullDistance(threshold / 2);
-      
-      // Short delay then reload
-      setTimeout(() => {
-        if (onRefresh) {
-          onRefresh().finally(() => {
-            setRefreshing(false);
-            setPullDistance(0);
-            currentPullDistance.current = 0;
-          });
-        } else {
-          window.location.reload();
-        }
-      }, 100);
-    } else {
+
+    const shouldRefresh = currentPullDistance.current >= threshold;
+    currentPullDistance.current = 0;
+
+    if (!shouldRefresh) {
       setPullDistance(0);
-      currentPullDistance.current = 0;
+      return;
     }
+
+    // IMPORTANT: reload must happen synchronously after the gesture on mobile
+    if (!onRefresh) {
+      window.location.reload();
+      return;
+    }
+
+    setRefreshing(true);
+    setPullDistance(threshold / 2);
+
+    Promise.resolve(onRefresh()).finally(() => {
+      setRefreshing(false);
+      setPullDistance(0);
+    });
   }, [onRefresh]);
 
   const indicatorOpacity = Math.min(pullDistance / threshold, 1);
