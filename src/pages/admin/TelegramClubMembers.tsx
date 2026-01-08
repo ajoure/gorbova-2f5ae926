@@ -714,33 +714,35 @@ export default function TelegramClubMembers() {
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="all" className="gap-1.5">
-              <Users className="h-4 w-4" />
-              Все
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.all}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="clients" className="gap-1.5">
-              <Link2 className="h-4 w-4" />
-              Клиенты
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.clients}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="with_access" className="gap-1.5">
-              <UserCheck className="h-4 w-4" />
-              С доступом
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.with_access}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="violators" className="gap-1.5">
-              <AlertTriangle className="h-4 w-4" />
-              Нарушители
-              <Badge variant="destructive" className="ml-1 h-5 px-1.5">{counts.violators}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="removed" className="gap-1.5">
-              <MinusCircle className="h-4 w-4" />
-              Удалённые
-              <Badge variant="outline" className="ml-1 h-5 px-1.5">{counts.removed}</Badge>
-            </TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="inline-flex w-auto min-w-full sm:grid sm:w-full sm:grid-cols-5 gap-1">
+              <TabsTrigger value="all" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><Users className="h-4 w-4" /></span>
+                Все
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.all}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="clients" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><Link2 className="h-4 w-4" /></span>
+                Клиенты
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.clients}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="with_access" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><UserCheck className="h-4 w-4" /></span>
+                С доступом
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.with_access}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="violators" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><AlertTriangle className="h-4 w-4" /></span>
+                Нарушители
+                <Badge variant="destructive" className="h-5 px-1.5 text-xs">{counts.violators}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="removed" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><MinusCircle className="h-4 w-4" /></span>
+                Удалённые
+                <Badge variant="outline" className="h-5 px-1.5 text-xs">{counts.removed}</Badge>
+              </TabsTrigger>
+            </TabsList>
+          </div>
         </Tabs>
 
         {/* Actions */}
