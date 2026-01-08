@@ -145,11 +145,18 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('id', botId)
       .eq('status', 'active')
-      .single();
+      .maybeSingle();
 
-    if (botError || !bot) {
-      console.error('Bot not found:', botError);
-      return new Response(JSON.stringify({ ok: false }), {
+    if (botError) {
+      console.error('Bot query error:', botError);
+      return new Response(JSON.stringify({ ok: false, error: 'db_error' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!bot) {
+      console.error('Bot not found for id:', botId);
+      return new Response(JSON.stringify({ ok: false, error: 'bot_not_found' }), {
         status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

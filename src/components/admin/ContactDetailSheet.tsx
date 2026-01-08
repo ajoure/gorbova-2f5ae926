@@ -617,7 +617,27 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         },
       });
 
+      // 7. Notify super admins via Telegram about the new GIFT order
       const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
+      try {
+        const giftMessage = `🎁 Выдан доступ\n\n` +
+          `👤 <b>Клиент:</b> ${contact.full_name || 'Не указано'}\n` +
+          `📧 Email: ${contact.email || 'Не указан'}\n` +
+          `📱 Телефон: ${contact.phone || 'Не указан'}\n` +
+          (contact.telegram_username ? `💬 Telegram: @${contact.telegram_username}\n` : '') +
+          `\n📦 <b>Продукт:</b> ${product?.name || 'Не указан'}\n` +
+          `📋 Тариф: ${tariff?.name || 'Не указан'}\n` +
+          `📅 Период: ${dateStr}\n` +
+          `🆔 Заказ: ${orderNumber}\n` +
+          `👨‍💼 Выдал: ${currentUser?.email || 'Неизвестно'}`;
+
+        supabase.functions.invoke("telegram-notify-admins", {
+          body: { message: giftMessage },
+        }).catch((err) => console.error("Failed to notify admins:", err));
+      } catch (notifyErr) {
+        console.error("Error preparing admin notification:", notifyErr);
+      }
+
       toast.success(existingSub 
         ? `Доступ продлён (${dateStr})` 
         : `Доступ выдан (${dateStr})`
