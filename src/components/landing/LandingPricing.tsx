@@ -103,6 +103,7 @@ export function LandingPricing() {
     name: string;
     price: string;
     tariffCode: string;
+    offerId?: string;
     isTrial?: boolean;
     trialDays?: number;
   } | null>(null);
@@ -219,7 +220,8 @@ export function LandingPricing() {
     tariffCode: string,
     productId?: string,
     isTrial?: boolean,
-    trialDays?: number
+    trialDays?: number,
+    offerId?: string
   ) => {
     console.log(`[Analytics] click_pricing_plan_${planName.toLowerCase()}${isTrial ? '_trial' : ''}`);
 
@@ -238,6 +240,7 @@ export function LandingPricing() {
           : `${planName} — Месячная подписка`,
         price: `${planPrice} BYN`,
         tariffCode,
+        offerId,
         isTrial,
         trialDays,
       });
@@ -277,16 +280,20 @@ export function LandingPricing() {
             ? // Dynamic tariffs from DB
               (() => {
                 // Check if any tariff has trial
-                const anyHasTrial = tariffs.some(t => t.offers?.some(o => o.offer_type === "trial"));
-                
+                const anyHasTrial = tariffs.some((t) => t.offers?.some((o) => o.offer_type === "trial"));
+
                 return tariffs.map((tariff, index) => {
                   const visibleFeatures = tariff.features.filter(isFeatureVisible);
-                  // Primary pay offer takes precedence for price display
-                  const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now" && o.is_primary) 
-                    || tariff.offers?.find((o) => o.offer_type === "pay_now");
-                  const trialOffer = tariff.offers?.find((o) => o.offer_type === "trial");
-                  // Price comes from primary pay offer, not from tariff_prices
-                  const price = payOffer?.amount ?? tariff.current_price ?? tariff.original_price ?? 0;
+
+                  const payNowOffers = (tariff.offers || []).filter(
+                    (o) => o.offer_type === "pay_now"
+                  );
+                  const trialOffers = (tariff.offers || []).filter(
+                    (o) => o.offer_type === "trial"
+                  );
+
+                  const primaryPayOffer = payNowOffers.find((o) => o.is_primary) || payNowOffers[0];
+                  const price = primaryPayOffer?.amount ?? tariff.current_price ?? tariff.original_price ?? 0;
 
                   return (
                     <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 150}>
@@ -338,9 +345,7 @@ export function LandingPricing() {
                             >
                               <div
                                 className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                                  feature.is_bonus
-                                    ? "bg-amber-500/20"
-                                    : "bg-primary/10"
+                                  feature.is_bonus ? "bg-amber-500/20" : "bg-primary/10"
                                 }`}
                               >
                                 {feature.is_bonus ? (
@@ -351,9 +356,7 @@ export function LandingPricing() {
                               </div>
                               <span
                                 className={`text-sm ${
-                                  feature.is_bonus
-                                    ? "text-foreground font-medium"
-                                    : "text-muted-foreground"
+                                  feature.is_bonus ? "text-foreground font-medium" : "text-muted-foreground"
                                 }`}
                               >
                                 {feature.text}
@@ -367,69 +370,55 @@ export function LandingPricing() {
                           ))}
                         </ul>
 
-                        {/* Buttons Container - always at bottom */}
+                        {/* Buttons */}
                         <div className="mt-6 space-y-2">
-                          {/* Primary Button Row - fixed height for alignment */}
-                          <div className="h-10">
-                            {payOffer ? (
-                              <Button
-                                onClick={() =>
-                                  handleSelectPlan(
-                                    tariff.name,
-                                    String(payOffer.amount),
-                                    tariff.code,
-                                    productData?.product?.id
-                                  )
-                                }
-                                className="w-full h-full gap-2"
-                                variant={tariff.is_popular ? "default" : "outline"}
-                              >
-                                <CreditCard size={16} />
-                                {payOffer.button_label}
-                              </Button>
-                            ) : (
-                              <Button
-                                onClick={() =>
-                                  handleSelectPlan(
-                                    tariff.name,
-                                    String(price),
-                                    tariff.code,
-                                    productData?.product?.id
-                                  )
-                                }
-                                className="w-full h-full gap-2"
-                                variant={tariff.is_popular ? "default" : "outline"}
-                              >
-                                <CreditCard size={16} />
-                                Оплатить
-                              </Button>
-                            )}
-                          </div>
-                          
-                          {/* Trial Button Row - reserve space if any tariff has trial */}
+                          {payNowOffers.map((offer, idx) => (
+                            <Button
+                              key={offer.id}
+                              onClick={() =>
+                                handleSelectPlan(
+                                  tariff.name,
+                                  String(offer.amount),
+                                  tariff.code,
+                                  productData?.product?.id,
+                                  false,
+                                  undefined,
+                                  offer.id
+                                )
+                              }
+                              className="w-full gap-2"
+                              variant={tariff.is_popular && idx === 0 ? "default" : "outline"}
+                            >
+                              <CreditCard size={16} />
+                              {offer.button_label}
+                            </Button>
+                          ))}
+
                           {anyHasTrial && (
-                            <div className="h-10">
-                              {trialOffer ? (
-                                <Button
-                                  onClick={() =>
-                                    handleSelectPlan(
-                                      tariff.name,
-                                      String(trialOffer.amount),
-                                      tariff.code,
-                                      productData?.product?.id,
-                                      true,
-                                      trialOffer.trial_days || 5
-                                    )
-                                  }
-                                  className="w-full h-full gap-2"
-                                  variant="secondary"
-                                >
-                                  <Zap size={16} />
-                                  {trialOffer.button_label}
-                                </Button>
-                              ) : (
-                                <div className="h-full" /> /* Empty space for alignment */
-                              )}
+                            <div className="space-y-2">
+                              {trialOffers.length > 0
+                                ? trialOffers.map((offer) => (
+                                    <Button
+                                      key={offer.id}
+                                      onClick={() =>
+                                        handleSelectPlan(
+                                          tariff.name,
+                                          String(offer.amount),
+                                          tariff.code,
+                                          productData?.product?.id,
+                                          true,
+                                          offer.trial_days || 5,
+                                          offer.id
+                                        )
+                                      }
+                                      className="w-full gap-2"
+                                      variant="secondary"
+                                    >
+                                      <Zap size={16} />
+                                      {offer.button_label}
+                                    </Button>
+                                  ))
+                                : null}
                             </div>
                           )}
                         </div>
@@ -512,6 +501,7 @@ export function LandingPricing() {
           productName={selectedPlan.name}
           price={selectedPlan.price}
           tariffCode={selectedPlan.tariffCode}
+          offerId={selectedPlan.offerId}
           isTrial={selectedPlan.isTrial}
           trialDays={selectedPlan.trialDays}
         />
