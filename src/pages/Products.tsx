@@ -72,8 +72,8 @@ export default function Products() {
       title: "Клуб «Буква Закона»",
       description: "Закрытое сообщество для бухгалтеров и предпринимателей с доступом к базе знаний, видео-разборам и экспертной поддержке",
       badge: "Подписка",
-      link: "https://club.gorbova.by",
-      isExternal: true,
+      link: "/",
+      isExternal: false,
       price: "от 100 BYN/мес",
     },
     {

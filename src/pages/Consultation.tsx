@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { ConsultationHeader } from "@/components/consultation/ConsultationHeader";
-import { ConsultationFooter } from "@/components/consultation/ConsultationFooter";
+import { LandingFooter } from "@/components/landing/LandingFooter";
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { ConsultationPaymentDialog } from "@/components/payment/ConsultationPaymentDialog";
 import { 
@@ -368,7 +368,7 @@ export default function Consultation() {
         </div>
       </section>
 
-      <ConsultationFooter />
+      <LandingFooter />
 
       {/* Payment Dialog */}
       {selectedTariff && (
