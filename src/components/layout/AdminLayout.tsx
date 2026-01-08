@@ -3,6 +3,7 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { usePermissions } from "@/hooks/usePermissions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
+import { PullToRefresh } from "./PullToRefresh";
 import { Loader2, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 
@@ -106,16 +107,18 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               </Tooltip>
             </TooltipProvider>
           </header>
-          <div 
-            className="flex-1 p-4 md:p-6 overflow-auto"
-            style={{
-              paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
-              paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-              paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
-            }}
-          >
-            {children}
-          </div>
+          <PullToRefresh>
+            <div 
+              className="flex-1 p-4 md:p-6"
+              style={{
+                paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+                paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+                paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
+              }}
+            >
+              {children}
+            </div>
+          </PullToRefresh>
         </main>
       </div>
     </SidebarProvider>

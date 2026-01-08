@@ -4,6 +4,7 @@ import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/s
 import { AppSidebar } from "./AppSidebar";
 import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
+import { PullToRefresh } from "./PullToRefresh";
 import { Loader2 } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -38,16 +39,18 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <DashboardBreadcrumbs />
             <div className="flex-1" />
           </header>
-          <main 
-            className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden"
-            style={{
-              paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
-              paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-              paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
-            }}
-          >
-            {children}
-          </main>
+          <PullToRefresh>
+            <main 
+              className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden"
+              style={{
+                paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+                paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+                paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
+              }}
+            >
+              {children}
+            </main>
+          </PullToRefresh>
         </SidebarInset>
       </div>
     </SidebarProvider>
