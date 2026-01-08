@@ -391,7 +391,7 @@ export default function AdminContacts() {
       </div>
 
       {/* Contacts Table */}
-      <GlassCard className="p-0">
+      <GlassCard className="p-0 overflow-hidden">
         {isLoading ? (
           <div className="p-6 space-y-4">
             {[1, 2, 3, 4, 5].map((i) => (
@@ -404,6 +404,7 @@ export default function AdminContacts() {
             <p>Контакты не найдены</p>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -488,6 +489,7 @@ export default function AdminContacts() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </GlassCard>
 
