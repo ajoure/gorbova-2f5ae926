@@ -29,16 +29,16 @@ serve(async (req: Request) => {
     const data: PreregistrationData = await req.json();
     console.log("New preregistration:", data);
 
-    // Get default notification bot
+    // Get the primary/support bot (gorbovabybot)
     const { data: bots } = await supabaseAdmin
       .from("telegram_bots")
       .select("*")
-      .eq("is_notification_bot", true)
       .eq("status", "active")
+      .order("is_primary", { ascending: false })
       .limit(1);
 
     if (!bots || bots.length === 0) {
-      console.log("No notification bot configured, skipping Telegram notification");
+      console.log("No active bot found, skipping Telegram notification");
       return new Response(
         JSON.stringify({ success: true, notification_sent: false, reason: "no_bot" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -46,10 +46,18 @@ serve(async (req: Request) => {
     }
 
     const bot = bots[0];
-    const adminChatId = bot.admin_chat_id;
+    
+    // Get admin chat ID from payment_settings or use a default
+    const { data: settingsData } = await supabaseAdmin
+      .from("payment_settings")
+      .select("value")
+      .eq("key", "prereg_notification_chat_id")
+      .single();
+    
+    const adminChatId = settingsData?.value;
 
     if (!adminChatId) {
-      console.log("No admin chat ID configured for bot");
+      console.log("No admin chat ID configured in payment_settings (key: prereg_notification_chat_id)");
       return new Response(
         JSON.stringify({ success: true, notification_sent: false, reason: "no_admin_chat" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -113,10 +121,11 @@ ${data.tariff_name ? `📦 *Тариф:* ${escapeMarkdown(data.tariff_name)}` : 
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Error in course-prereg-notify:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
