@@ -36,6 +36,7 @@ import {
   ClipboardCheck,
   MessageCircle,
   ClipboardList,
+  Building2,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -344,6 +345,27 @@ export function AdminSidebar() {
                     >
                       <ClipboardCheck className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Согласия</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Исполнители */}
+              {hasRolesPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/admin/executors"}
+                    tooltip={collapsed ? "Исполнители" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/executors"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Building2 className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Исполнители</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
