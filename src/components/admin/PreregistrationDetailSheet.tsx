@@ -119,14 +119,15 @@ export function PreregistrationDetailSheet({
 
   const sendNotificationMutation = useMutation({
     mutationFn: async () => {
-      if (!preregistration?.profiles?.telegram_user_id) {
+      if (!preregistration?.user_id || !preregistration?.profiles?.telegram_user_id) {
         throw new Error("Telegram не привязан");
       }
 
       const { data, error } = await supabase.functions.invoke("telegram-send-notification", {
         body: {
-          telegram_user_id: preregistration.profiles.telegram_user_id,
-          message: `Здравствуйте, ${preregistration.name}!\n\nНапоминаем о вашей предзаписи на курс "${productNames[preregistration.product_code] || preregistration.product_code}".\n\nЕсли у вас есть вопросы, напишите нам!`,
+          user_id: preregistration.user_id,
+          message_type: "custom",
+          custom_message: `Здравствуйте, ${preregistration.name}!\n\nНапоминаем о вашей предзаписи на курс "${productNames[preregistration.product_code] || preregistration.product_code}".\n\nЕсли у вас есть вопросы, напишите нам!`,
         },
       });
 
