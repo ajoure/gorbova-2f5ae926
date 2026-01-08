@@ -12,8 +12,7 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const startY = useRef(0);
   const isPulling = useRef(false);
   const currentPullDistance = useRef(0);
-
-  const threshold = 80;
+  const threshold = 60;
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     // Check if we're at the top of the page
@@ -39,7 +38,8 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     
     if (diff > 0) {
       e.preventDefault();
-      const distance = Math.min(diff * 0.5, threshold * 1.5);
+      // Make the gesture feel natural: user pulls ~60px → refresh
+      const distance = Math.min(diff, threshold * 1.5);
       setPullDistance(distance);
       currentPullDistance.current = distance;
     }
