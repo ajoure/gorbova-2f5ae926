@@ -90,11 +90,11 @@ export function PaymentDialog({
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   
   // Telegram link hooks
-  const { data: telegramStatus, refetch: refetchTelegramStatus } = useTelegramLinkStatus();
+  const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
 
-  // Check if telegram prompt should be shown for club products
-  const shouldShowTelegramPrompt = isClubProduct && telegramStatus?.status !== 'active';
+  // Check if telegram is already linked
+  const isTelegramLinked = telegramStatus?.status === 'active';
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -114,7 +114,8 @@ export function PaymentDialog({
         setExistingUserId(user.id);
         
         // For club products without linked Telegram, show telegram prompt first
-        if (isClubProduct && telegramStatus?.status !== 'active') {
+        // But only if telegram status is loaded and not active
+        if (isClubProduct && !isTelegramStatusLoading && !isTelegramLinked) {
           setStep("telegram_prompt");
         } else {
           setStep("ready");
@@ -153,7 +154,7 @@ export function PaymentDialog({
       setLoginError(null);
       setPrivacyConsent(false);
     }
-  }, [open, user, session]);
+  }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,8 +328,8 @@ export function PaymentDialog({
       return;
     }
 
-    // For club products (new user flow), show telegram prompt
-    if (isClubProduct) {
+    // For club products (new user flow), show telegram prompt only if not already linked
+    if (isClubProduct && !isTelegramLinked) {
       setStep("telegram_prompt");
     } else {
       setStep("ready");
