@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { LandingHeader } from "@/components/landing/LandingHeader";
-import { LandingFooter } from "@/components/landing/LandingFooter";
+import { CourseHeader } from "@/components/course/CourseHeader";
+import { CourseFooter } from "@/components/course/CourseFooter";
 import { CourseHero } from "@/components/course/CourseHero";
 import { CourseAudience } from "@/components/course/CourseAudience";
 import { CourseExpert } from "@/components/course/CourseExpert";
@@ -43,7 +43,7 @@ export default function CourseAccountant() {
 
   return (
     <div className="min-h-screen bg-background">
-      <LandingHeader />
+      <CourseHeader />
       
       <main>
         <CourseHero />
@@ -57,7 +57,7 @@ export default function CourseAccountant() {
         />
       </main>
 
-      <LandingFooter />
+      <CourseFooter />
 
       <PreregistrationDialog
         open={preregOpen}
