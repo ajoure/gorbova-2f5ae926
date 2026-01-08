@@ -10,6 +10,7 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
 import Landing from "./pages/Landing";
+import { DomainHomePage } from "./components/layout/DomainRouter";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Accountant from "./pages/Accountant";
@@ -73,7 +74,7 @@ const App = () => (
             <div className="impersonation-offset">
               <Routes>
               {/* Public routes */}
-              <Route path="/" element={<Landing />} />
+              <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
               <Route path="/order-payment" element={<OrderPayment />} />
