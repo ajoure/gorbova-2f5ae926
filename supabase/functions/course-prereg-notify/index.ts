@@ -29,7 +29,22 @@ serve(async (req: Request) => {
     const data: PreregistrationData = await req.json();
     console.log("New preregistration:", data);
 
-    // Get the primary/support bot (gorbovabybot)
+    // Find user profile by email to get telegram_user_id
+    const { data: profile } = await supabaseAdmin
+      .from("profiles")
+      .select("id, telegram_user_id, telegram_username, full_name")
+      .eq("email", data.email)
+      .single();
+
+    if (!profile?.telegram_user_id) {
+      console.log("User has no linked Telegram, skipping notification. Email:", data.email);
+      return new Response(
+        JSON.stringify({ success: true, notification_sent: false, reason: "no_telegram_linked" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Get the support bot (gorbovabybot)
     const { data: bots } = await supabaseAdmin
       .from("telegram_bots")
       .select("*")
@@ -46,45 +61,30 @@ serve(async (req: Request) => {
     }
 
     const bot = bots[0];
-    
-    // Get admin chat ID from payment_settings or use a default
-    const { data: settingsData } = await supabaseAdmin
-      .from("payment_settings")
-      .select("value")
-      .eq("key", "prereg_notification_chat_id")
-      .single();
-    
-    const adminChatId = settingsData?.value;
+    const botToken = bot.bot_token_encrypted; // Token stored in this field
 
-    if (!adminChatId) {
-      console.log("No admin chat ID configured in payment_settings (key: prereg_notification_chat_id)");
-      return new Response(
-        JSON.stringify({ success: true, notification_sent: false, reason: "no_admin_chat" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Format confirmation message for the CLIENT
+    const productName = data.product_code === "cb20_predzapis" ? "«Ценный бухгалтер»" : data.product_code;
+    const message = `✅ *Спасибо за предзапись\\!*
 
-    // Format message
-    const message = `📝 *Новая предзапись на курс*
+Вы успешно записались на курс ${escapeMarkdown(productName)}\\. 
 
-👤 *Имя:* ${escapeMarkdown(data.name)}
-📧 *Email:* ${escapeMarkdown(data.email)}
-${data.phone ? `📞 *Телефон:* ${escapeMarkdown(data.phone)}` : ""}
 ${data.tariff_name ? `📦 *Тариф:* ${escapeMarkdown(data.tariff_name)}` : ""}
-🎓 *Продукт:* ${escapeMarkdown(data.product_code)}
 
-🕐 *Время:* ${new Date().toLocaleString("ru-RU", { timeZone: "Europe/Minsk" })}`;
+Мы свяжемся с вами, когда откроется набор на курс\\.
 
-    // Send via Telegram API
+Если у вас есть вопросы — напишите нам\\!`;
+
+    // Send confirmation to the CLIENT via Telegram
     const telegramResponse = await fetch(
-      `https://api.telegram.org/bot${bot.token}/sendMessage`,
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: adminChatId,
+          chat_id: profile.telegram_user_id,
           text: message,
-          parse_mode: "Markdown",
+          parse_mode: "MarkdownV2",
         }),
       }
     );
@@ -97,13 +97,13 @@ ${data.tariff_name ? `📦 *Тариф:* ${escapeMarkdown(data.tariff_name)}` : 
       // Log the error but don't fail the request
       await supabaseAdmin.from("telegram_logs").insert({
         bot_id: bot.id,
-        event_type: "notification_failed",
-        user_id: null,
+        event_type: "prereg_notification_failed",
+        user_id: profile.id,
         payload: { error: telegramResult, preregistration_id: data.id },
       });
       
       return new Response(
-        JSON.stringify({ success: true, notification_sent: false, reason: "telegram_error" }),
+        JSON.stringify({ success: true, notification_sent: false, reason: "telegram_error", error: telegramResult }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -111,26 +111,29 @@ ${data.tariff_name ? `📦 *Тариф:* ${escapeMarkdown(data.tariff_name)}` : 
     // Log success
     await supabaseAdmin.from("telegram_logs").insert({
       bot_id: bot.id,
-      event_type: "course_prereg_notification",
-      user_id: null,
+      event_type: "course_prereg_confirmation",
+      user_id: profile.id,
       payload: { preregistration_id: data.id, message_id: telegramResult.result?.message_id },
     });
 
+    console.log("Confirmation sent to user:", profile.telegram_user_id);
+
     return new Response(
-      JSON.stringify({ success: true, notification_sent: true }),
+      JSON.stringify({ success: true, notification_sent: true, telegram_user_id: profile.telegram_user_id }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error: unknown) {
     console.error("Error in course-prereg-notify:", error);
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
 
 function escapeMarkdown(text: string): string {
-  return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, "\\$&");
+  // Escape special characters for MarkdownV2
+  return text.replace(/[_*[\]()~`>#+=|{}.!\\-]/g, "\\$&");
 }
