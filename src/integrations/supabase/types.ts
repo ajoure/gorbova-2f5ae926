@@ -1211,10 +1211,13 @@ export type Database = {
           final_price: number
           flow_id: string | null
           id: string
+          invoice_email: string | null
+          invoice_sent_at: string | null
           is_trial: boolean
           meta: Json | null
           order_number: string
           paid_amount: number | null
+          payer_type: string | null
           payment_plan_id: string | null
           pricing_stage_id: string | null
           product_id: string | null
@@ -1236,10 +1239,13 @@ export type Database = {
           final_price: number
           flow_id?: string | null
           id?: string
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
           is_trial?: boolean
           meta?: Json | null
           order_number: string
           paid_amount?: number | null
+          payer_type?: string | null
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
@@ -1261,10 +1267,13 @@ export type Database = {
           final_price?: number
           flow_id?: string | null
           id?: string
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
           is_trial?: boolean
           meta?: Json | null
           order_number?: string
           paid_amount?: number | null
+          payer_type?: string | null
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null

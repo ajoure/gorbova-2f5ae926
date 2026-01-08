@@ -54,6 +54,8 @@ import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
 import ConsentsSettings from "./pages/settings/Consents";
 import AdminInstallments from "./pages/admin/AdminInstallments";
 import AdminConsents from "./pages/admin/AdminConsents";
+import Products from "./pages/Products";
+import Consultation from "./pages/Consultation";
 
 const queryClient = new QueryClient();
 
@@ -80,8 +82,10 @@ const App = () => (
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/help" element={<Help />} />
+              <Route path="/consultation" element={<Consultation />} />
               
               {/* Protected routes */}
+              <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
               <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
