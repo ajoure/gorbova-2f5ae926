@@ -3,6 +3,7 @@ import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
 import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
 import Landing from "@/pages/Landing";
+import CourseAccountant from "@/pages/CourseAccountant";
 import { Loader2 } from "lucide-react";
 
 export function DomainHomePage() {
@@ -16,6 +17,14 @@ export function DomainHomePage() {
                        hostname === "gorbova.by" ||
                        hostname.includes(".lovable.app") ||
                        hostname.includes(".lovableproject.com");
+  
+  // Check for course domain
+  const isCourseDomain = hostname === "cb.gorbova.by";
+  
+  // Course domain → show course landing
+  if (isCourseDomain) {
+    return <CourseAccountant />;
+  }
   
   // Fetch product data for the current domain
   const { data: productData, isLoading, error } = usePublicProduct(
