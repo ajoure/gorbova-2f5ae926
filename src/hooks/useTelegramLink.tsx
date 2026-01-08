@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-
 export type TelegramLinkStatus = 'not_linked' | 'pending' | 'active' | 'inactive';
 
 export interface TelegramLinkState {
@@ -140,6 +139,10 @@ export function useCheckTelegramStatus() {
       queryClient.setQueryData(['telegram-link-status'], data);
       if (data.status === 'active') {
         toast.success('Связь активна');
+        // Trigger processing of pending notifications
+        supabase.functions.invoke('telegram-process-pending', {
+          body: { action: 'process_pending' }
+        }).catch(err => console.error('Error processing pending:', err));
       } else if (data.status === 'inactive') {
         toast.warning('Связь с ботом потеряна');
       }
@@ -148,6 +151,25 @@ export function useCheckTelegramStatus() {
       console.error('Check status error:', error);
       toast.error('Не удалось проверить статус');
     },
+  });
+}
+
+export function usePendingNotificationsCount() {
+  return useQuery({
+    queryKey: ['pending-telegram-notifications-count'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return 0;
+      
+      const { count } = await supabase
+        .from('pending_telegram_notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'pending');
+      
+      return count || 0;
+    },
+    staleTime: 60000,
   });
 }
 

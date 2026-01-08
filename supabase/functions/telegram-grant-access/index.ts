@@ -115,11 +115,60 @@ Deno.serve(async (req) => {
     }
 
     if (!profile.telegram_user_id) {
-      await supabase.from('telegram_logs').insert({
-        user_id, action: 'GRANT_FAILED', status: 'error', error_message: 'Telegram not linked',
+      // Queue notification for when user links telegram
+      console.log('Telegram not linked, queueing notification');
+      
+      // Get club info for context
+      let targetClubId = club_id;
+      if (!targetClubId) {
+        const { data: defaultClub } = await supabase
+          .from('telegram_clubs')
+          .select('id')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        targetClubId = defaultClub?.id;
+      }
+
+      // Queue access granted notification
+      await supabase.from('pending_telegram_notifications').insert({
+        user_id,
+        notification_type: 'access_granted',
+        club_id: targetClubId,
+        payload: {
+          pending_access: true,
+          source: source || (is_manual ? 'manual' : 'system'),
+          comment,
+          valid_until,
+        },
+        priority: 10, // High priority for access notifications
       });
-      return new Response(JSON.stringify({ error: 'Telegram not linked', code: 'TG_NOT_LINKED' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+
+      // Mark telegram_access as pending
+      if (targetClubId) {
+        await supabase.from('telegram_access').upsert({
+          user_id,
+          club_id: targetClubId,
+          state_chat: 'pending',
+          state_channel: 'pending',
+          invites_pending: true,
+          active_until: valid_until || null,
+        }, { onConflict: 'user_id,club_id' });
+      }
+
+      await supabase.from('telegram_logs').insert({
+        user_id, action: 'GRANT_QUEUED', status: 'ok', 
+        error_message: 'Telegram not linked - notification queued',
+        club_id: targetClubId,
+      });
+
+      return new Response(JSON.stringify({ 
+        success: true, 
+        queued: true,
+        message: 'Notification queued - will be sent when user links Telegram',
+        code: 'TG_NOT_LINKED_QUEUED' 
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
