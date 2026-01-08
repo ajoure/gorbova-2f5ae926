@@ -70,6 +70,8 @@ import { DealDetailSheet } from "./DealDetailSheet";
 import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";
+import { ContactTelegramChat } from "./ContactTelegramChat";
+import { ContactEmailHistory } from "./ContactEmailHistory";
 
 interface Contact {
   id: string;
@@ -628,6 +630,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           <div className="flex-shrink-0 border-b overflow-x-auto">
             <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <MessageCircle className="w-3 h-3 mr-1" />
+                Telegram
+              </TabsTrigger>
+              <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Mail className="w-3 h-3 mr-1" />
+                Письма
+              </TabsTrigger>
               <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
               </TabsTrigger>
@@ -744,6 +754,23 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Telegram Chat Tab */}
+            <TabsContent value="telegram" className="m-0">
+              <ContactTelegramChat
+                userId={contact.user_id || ""}
+                telegramUserId={contact.telegram_user_id}
+                telegramUsername={contact.telegram_username}
+              />
+            </TabsContent>
+
+            {/* Email History Tab */}
+            <TabsContent value="email" className="m-0">
+              <ContactEmailHistory
+                userId={contact.user_id}
+                email={contact.email}
+              />
             </TabsContent>
 
             {/* Access/Subscriptions Tab */}

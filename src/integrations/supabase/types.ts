@@ -448,6 +448,77 @@ export type Database = {
         }
         Relationships: []
       }
+      email_logs: {
+        Row: {
+          body_html: string | null
+          body_text: string | null
+          clicked_at: string | null
+          created_at: string
+          direction: string
+          error_message: string | null
+          from_email: string
+          id: string
+          meta: Json | null
+          opened_at: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_message_id: string | null
+          status: string
+          subject: string | null
+          template_code: string | null
+          to_email: string
+          user_id: string | null
+        }
+        Insert: {
+          body_html?: string | null
+          body_text?: string | null
+          clicked_at?: string | null
+          created_at?: string
+          direction: string
+          error_message?: string | null
+          from_email: string
+          id?: string
+          meta?: Json | null
+          opened_at?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
+          status?: string
+          subject?: string | null
+          template_code?: string | null
+          to_email: string
+          user_id?: string | null
+        }
+        Update: {
+          body_html?: string | null
+          body_text?: string | null
+          clicked_at?: string | null
+          created_at?: string
+          direction?: string
+          error_message?: string | null
+          from_email?: string
+          id?: string
+          meta?: Json | null
+          opened_at?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
+          status?: string
+          subject?: string | null
+          template_code?: string | null
+          to_email?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_logs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_templates: {
         Row: {
           body_html: string
@@ -3207,6 +3278,62 @@ export type Database = {
             columns: ["club_id"]
             isOneToOne: false
             referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_messages: {
+        Row: {
+          bot_id: string | null
+          created_at: string
+          direction: string
+          error_message: string | null
+          id: string
+          message_id: number | null
+          message_text: string | null
+          meta: Json | null
+          reply_to_message_id: number | null
+          sent_by_admin: string | null
+          status: string
+          telegram_user_id: number
+          user_id: string
+        }
+        Insert: {
+          bot_id?: string | null
+          created_at?: string
+          direction: string
+          error_message?: string | null
+          id?: string
+          message_id?: number | null
+          message_text?: string | null
+          meta?: Json | null
+          reply_to_message_id?: number | null
+          sent_by_admin?: string | null
+          status?: string
+          telegram_user_id: number
+          user_id: string
+        }
+        Update: {
+          bot_id?: string | null
+          created_at?: string
+          direction?: string
+          error_message?: string | null
+          id?: string
+          message_id?: number | null
+          message_text?: string | null
+          meta?: Json | null
+          reply_to_message_id?: number | null
+          sent_by_admin?: string | null
+          status?: string
+          telegram_user_id?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_messages_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
             referencedColumns: ["id"]
           },
         ]
