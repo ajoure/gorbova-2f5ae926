@@ -14,7 +14,8 @@ export function DomainHomePage() {
                        hostname === "127.0.0.1" ||
                        hostname === "club.gorbova.by" ||
                        hostname === "gorbova.by" ||
-                       hostname.includes(".lovable.app");
+                       hostname.includes(".lovable.app") ||
+                       hostname.includes(".lovableproject.com");
   
   // Fetch product data for the current domain
   const { data: productData, isLoading, error } = usePublicProduct(
