@@ -39,6 +39,54 @@ const phoneSchema = z.string().refine((val) => isValidPhoneNumber(val), {
 });
 const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
 
+// Translate payment errors to Russian
+function translatePaymentError(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Insufficient funds': 'Недостаточно средств на карте',
+    'insufficient_funds': 'Недостаточно средств на карте',
+    'Declined': 'Платёж отклонён банком',
+    'declined': 'Платёж отклонён банком',
+    'Expired card': 'Срок действия карты истёк',
+    'expired_card': 'Срок действия карты истёк',
+    'Card restricted': 'На карте установлены ограничения',
+    'card_restricted': 'На карте установлены ограничения',
+    'Transaction not permitted': 'Операция не разрешена для данной карты',
+    'transaction_not_permitted': 'Операция не разрешена для данной карты',
+    'Invalid amount': 'Неверная сумма платежа',
+    'invalid_amount': 'Неверная сумма платежа',
+    'Authentication failed': 'Ошибка аутентификации 3D Secure',
+    'authentication_failed': 'Ошибка аутентификации 3D Secure',
+    '3-D Secure authentication failed': 'Ошибка подтверждения 3D Secure',
+    'Payment failed': 'Платёж не прошёл',
+    'payment_failed': 'Платёж не прошёл',
+    'Token expired': 'Сохранённая карта устарела',
+    'token_expired': 'Сохранённая карта устарела',
+    'Invalid token': 'Ошибка привязанной карты',
+    'invalid_token': 'Ошибка привязанной карты',
+    'Do not honor': 'Платёж отклонён банком',
+    'do_not_honor': 'Платёж отклонён банком',
+    'Lost card': 'Карта заблокирована (утеряна)',
+    'lost_card': 'Карта заблокирована (утеряна)',
+    'Stolen card': 'Карта заблокирована',
+    'stolen_card': 'Карта заблокирована',
+    'Invalid card': 'Неверные данные карты',
+    'invalid_card': 'Неверные данные карты',
+    'Check the account balance': 'Недостаточно средств на карте',
+  };
+
+  // Try exact match first
+  if (errorMap[error]) return errorMap[error];
+  
+  // Try case-insensitive partial match
+  const lowerError = error.toLowerCase();
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (lowerError.includes(key.toLowerCase())) return value;
+  }
+  
+  // Return default message if no translation found
+  return "Не удалось провести платёж. Попробуйте другую карту.";
+}
+
 interface UserFormData {
   email: string;
   firstName: string;
@@ -406,8 +454,9 @@ export function PaymentDialog({
           } else {
             // Payment failed (e.g., insufficient funds) - fall back to redirect flow
             console.log("Direct charge failed, falling back to redirect flow:", data.error);
-            toast.warning(data.error || "Не удалось списать средства с сохранённой карты. Попробуйте оплатить через форму.", {
-              duration: 5000,
+            const russianError = translatePaymentError(data.error || "");
+            toast.warning(russianError + " Попробуйте оплатить другой картой.", {
+              duration: 6000,
             });
             // Continue to fallback bepaid-create-token below
           }
