@@ -1,6 +1,7 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { TelegramCard } from "@/components/telegram/TelegramCard";
+import { TelegramCompactCard } from "@/components/telegram/TelegramCompactCard";
+import { TelegramLinkReminder } from "@/components/telegram/TelegramLinkReminder";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { 
@@ -115,11 +116,14 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Telegram Card */}
+          {/* Telegram Card - Compact version */}
           <div className="lg:col-span-1">
-            <TelegramCard />
+            <TelegramCompactCard />
           </div>
         </div>
+
+        {/* Telegram Link Reminder Popup */}
+        <TelegramLinkReminder />
 
         {/* Quick links grid */}
         <div>

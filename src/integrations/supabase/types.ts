@@ -1575,6 +1575,59 @@ export type Database = {
           },
         ]
       }
+      pending_telegram_notifications: {
+        Row: {
+          attempts: number | null
+          club_id: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          notification_type: string
+          payload: Json
+          priority: number | null
+          scheduled_for: string | null
+          sent_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          attempts?: number | null
+          club_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          notification_type: string
+          payload?: Json
+          priority?: number | null
+          scheduled_for?: string | null
+          sent_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          attempts?: number | null
+          club_id?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          notification_type?: string
+          payload?: Json
+          priority?: number | null
+          scheduled_for?: string | null
+          sent_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_telegram_notifications_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       permissions: {
         Row: {
           category: string | null
@@ -2602,6 +2655,7 @@ export type Database = {
           club_id: string
           created_at: string
           id: string
+          invites_pending: boolean | null
           last_sync_at: string | null
           state_channel: string
           state_chat: string
@@ -2613,6 +2667,7 @@ export type Database = {
           club_id: string
           created_at?: string
           id?: string
+          invites_pending?: boolean | null
           last_sync_at?: string | null
           state_channel?: string
           state_chat?: string
@@ -2624,6 +2679,7 @@ export type Database = {
           club_id?: string
           created_at?: string
           id?: string
+          invites_pending?: boolean | null
           last_sync_at?: string | null
           state_channel?: string
           state_chat?: string
@@ -3474,6 +3530,17 @@ export type Database = {
     }
     Functions: {
       generate_order_number: { Args: never; Returns: string }
+      get_pending_notifications_for_user: {
+        Args: { p_user_id: string }
+        Returns: {
+          club_id: string
+          created_at: string
+          id: string
+          notification_type: string
+          payload: Json
+          priority: number
+        }[]
+      }
       get_user_permissions: { Args: { _user_id: string }; Returns: string[] }
       get_user_role: {
         Args: { _user_id: string }
@@ -3491,6 +3558,16 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      queue_telegram_notification: {
+        Args: {
+          p_club_id?: string
+          p_notification_type: string
+          p_payload?: Json
+          p_priority?: number
+          p_user_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
