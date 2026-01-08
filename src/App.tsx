@@ -57,6 +57,7 @@ import AdminInstallments from "./pages/admin/AdminInstallments";
 import AdminConsents from "./pages/admin/AdminConsents";
 import Products from "./pages/Products";
 import Consultation from "./pages/Consultation";
+import CourseAccountant from "./pages/CourseAccountant";
 
 const queryClient = new QueryClient();
 
@@ -84,6 +85,7 @@ const App = () => (
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/help" element={<Help />} />
               <Route path="/consultation" element={<Consultation />} />
+              <Route path="/course-accountant" element={<CourseAccountant />} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
