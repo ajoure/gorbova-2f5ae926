@@ -70,33 +70,13 @@ export function ConsultationPaymentDialog({
         throw new Error("Тариф не найден");
       }
 
-      // Create order
-      const { data: order, error: orderError } = await supabase
-        .from("orders_v2")
-        .insert({
-          user_id: user.id,
-          tariff_id: tariff.id,
-          product_id: tariff.product_id,
-          order_number: `ORD-${Date.now()}`,
-          base_price: price * 100,
-          final_price: price * 100,
-          status: "pending",
-          payer_type: "individual",
-          customer_email: user.email,
-        })
-        .select()
-        .single();
-
-      if (orderError) throw orderError;
-
-      // Initialize payment via bePaid
+      // Initialize payment via bePaid - it creates order internally
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
-          orderId: order.id,
-          amount: price * 100,
-          currency: "BYN",
+          productId: tariff.product_id,
+          customerEmail: user.email,
+          tariffCode: tariffCode,
           description: tariffName,
-          email: user.email,
         },
       });
 
@@ -104,6 +84,8 @@ export function ConsultationPaymentDialog({
 
       if (data?.checkout?.redirect_url) {
         window.location.href = data.checkout.redirect_url;
+      } else if (data?.error) {
+        throw new Error(data.error);
       } else {
         throw new Error("Не удалось получить ссылку на оплату");
       }
