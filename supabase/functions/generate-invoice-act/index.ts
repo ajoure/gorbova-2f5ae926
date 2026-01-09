@@ -9,7 +9,7 @@ const corsHeaders = {
 
 interface GenerateRequest {
   order_id: string;
-  document_type: "invoice" | "act";
+  document_type?: "invoice_act"; // Only one type now
   client_details_id?: string;
   executor_id?: string;
   send_email?: boolean;
@@ -128,10 +128,11 @@ serve(async (req) => {
       });
     }
 
-    const { order_id, document_type, client_details_id, executor_id, send_email, send_telegram }: GenerateRequest = await req.json();
+    const { order_id, client_details_id, executor_id, send_email, send_telegram }: GenerateRequest = await req.json();
+    const document_type = "invoice_act"; // Always generate combined document
 
-    if (!order_id || !document_type) {
-      return new Response(JSON.stringify({ error: "order_id and document_type required" }), {
+    if (!order_id) {
+      return new Response(JSON.stringify({ error: "order_id required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -237,19 +238,17 @@ serve(async (req) => {
 
     // Generate document number
     const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, "0");
-    const day = String(new Date().getDate()).padStart(2, "0");
-    const docPrefix = document_type === "invoice" ? "СЧ" : "АКТ";
+    const docPrefix = "СА"; // Счёт-акт
     
-    // Get next sequence number for this type
+    // Get next sequence number
     const { count } = await supabase
       .from("generated_documents")
       .select("*", { count: "exact", head: true })
-      .eq("document_type", document_type)
+      .eq("document_type", "invoice_act")
       .gte("created_at", `${year}-01-01`);
 
     const seqNum = (count || 0) + 1;
-    const documentNumber = `${docPrefix}-${year}${month}${day}-${String(seqNum).padStart(4, "0")}`;
+    const documentNumber = `${docPrefix}-${String(year).slice(-2)}-${String(seqNum).padStart(5, "0")}`;
 
     // Create snapshots
     const clientSnapshot = clientDetails || {
@@ -340,7 +339,7 @@ serve(async (req) => {
         try {
           const emailAccount = await getEmailAccount(supabase);
           if (emailAccount) {
-            const docTypeName = document_type === "invoice" ? "Счёт" : "Акт выполненных работ";
+            const docTypeName = "Счёт-акт";
             const serviceName = orderSnapshot.tariff_name 
               ? `${orderSnapshot.product_name} — ${orderSnapshot.tariff_name}`
               : orderSnapshot.product_name;
@@ -399,7 +398,7 @@ serve(async (req) => {
         try {
           const botToken = await getTelegramBotToken(supabase);
           if (botToken) {
-            const docTypeName = document_type === "invoice" ? "📄 Счёт" : "✅ Акт выполненных работ";
+            const docTypeName = "📄 Счёт-акт";
             const serviceName = orderSnapshot.tariff_name 
               ? `${orderSnapshot.product_name} — ${orderSnapshot.tariff_name}`
               : orderSnapshot.product_name;
@@ -577,8 +576,67 @@ function generateTelegramMessage(data: {
 Документ также доступен в вашем личном кабинете в разделе «Мои покупки» → «Документы».`;
 }
 
+// Number to Russian words converter
+function numberToWordsRu(num: number): string {
+  const ones = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+  const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+  
+  if (num === 0) return 'ноль';
+  if (num < 0) return 'минус ' + numberToWordsRu(-num);
+  
+  let result = '';
+  
+  if (num >= 1000) {
+    const thousands = Math.floor(num / 1000);
+    if (thousands === 1) result += 'одна тысяча ';
+    else if (thousands === 2) result += 'две тысячи ';
+    else if (thousands >= 3 && thousands <= 4) result += ones[thousands] + ' тысячи ';
+    else result += ones[thousands] + ' тысяч ';
+    num %= 1000;
+  }
+  
+  if (num >= 100) {
+    result += hundreds[Math.floor(num / 100)] + ' ';
+    num %= 100;
+  }
+  
+  if (num >= 10 && num < 20) {
+    result += teens[num - 10] + ' ';
+  } else {
+    if (num >= 20) {
+      result += tens[Math.floor(num / 10)] + ' ';
+      num %= 10;
+    }
+    if (num > 0) {
+      result += ones[num] + ' ';
+    }
+  }
+  
+  return result.trim();
+}
+
+// Date to Russian format
+function dateToRussianFormat(date: Date): string {
+  const months = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+  ];
+  return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+// Short name from full name
+function fullNameToInitials(fullName: string): string {
+  if (!fullName) return '';
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`;
+  return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
+}
+
 function generateDocumentHtml(
-  type: "invoice" | "act",
+  _type: string,
   data: {
     documentNumber: string;
     documentDate: string;
@@ -587,158 +645,155 @@ function generateDocumentHtml(
     order: any;
   }
 ) {
-  const { documentNumber, documentDate, executor, client, order } = data;
+  const { documentNumber, executor, client, order } = data;
+  const docDate = new Date();
+  const dateFormatted = dateToRussianFormat(docDate);
   
   const executorName = executor.short_name || executor.full_name;
-  const clientName = client.ind_full_name || client.ent_name || client.leg_name || client.name || "Заказчик";
   const serviceName = order.tariff_name 
     ? `${order.product_name} — ${order.tariff_name}`
     : order.product_name;
-
-  if (type === "invoice") {
-    return `
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <title>Счёт ${documentNumber}</title>
-  <style>
-    body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; margin: 40px; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .title { font-size: 16pt; font-weight: bold; margin-bottom: 20px; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { border: 1px solid #000; padding: 8px; text-align: left; }
-    th { background: #f0f0f0; }
-    .total { font-weight: bold; }
-    .requisites { margin-top: 30px; font-size: 10pt; }
-    .signature { margin-top: 50px; }
-    @media print { body { margin: 20px; } }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div class="title">СЧЁТ № ${documentNumber}</div>
-    <div>от ${documentDate}</div>
-  </div>
+  const price = order.final_price;
+  const currency = order.currency || 'BYN';
+  const priceInWords = numberToWordsRu(Math.floor(price));
   
-  <p><strong>Исполнитель:</strong> ${executor.legal_form || ""} "${executorName}", УНП ${executor.unp}</p>
-  <p>${executor.legal_address}</p>
-  <p>р/с ${executor.bank_account} в ${executor.bank_name}, БИК ${executor.bank_code}</p>
+  // Client name based on type
+  let clientName = '';
+  let clientSignature = '';
+  const clientType = client.client_type || 'individual';
   
-  <p style="margin-top: 20px;"><strong>Заказчик:</strong> ${clientName}</p>
-  ${client.ind_personal_number ? `<p>Личный номер: ${client.ind_personal_number}</p>` : ""}
-  ${client.ent_unp || client.leg_unp ? `<p>УНП: ${client.ent_unp || client.leg_unp}</p>` : ""}
-  
-  <table>
-    <thead>
-      <tr>
-        <th>№</th>
-        <th>Наименование</th>
-        <th>Кол-во</th>
-        <th>Ед.</th>
-        <th>Цена</th>
-        <th>Сумма</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>1</td>
-        <td>${serviceName}</td>
-        <td>1</td>
-        <td>усл.</td>
-        <td>${order.final_price.toFixed(2)}</td>
-        <td>${order.final_price.toFixed(2)}</td>
-      </tr>
-    </tbody>
-    <tfoot>
-      <tr class="total">
-        <td colspan="5" style="text-align: right;">Итого:</td>
-        <td>${order.final_price.toFixed(2)} ${order.currency}</td>
-      </tr>
-    </tfoot>
-  </table>
-  
-  <p>НДС не облагается.</p>
-  
-  <div class="signature">
-    <p>${executor.director_position || "Руководитель"} _________________ ${executor.director_short_name || ""}</p>
-  </div>
-</body>
-</html>`;
+  if (clientType === 'individual') {
+    clientName = client.ind_full_name || client.name || 'Физическое лицо';
+    clientSignature = fullNameToInitials(clientName);
+  } else if (clientType === 'entrepreneur') {
+    clientName = client.ent_name || 'ИП';
+    clientSignature = fullNameToInitials(clientName);
+  } else {
+    clientName = client.leg_name || 'Юридическое лицо';
+    clientSignature = fullNameToInitials(client.leg_director_name || clientName);
   }
+  
+  const clientPhone = client.phone || '';
+  const clientEmail = client.email || '';
 
-  // Act
-  return `
-<!DOCTYPE html>
-<html lang="ru">
+  return `<!DOCTYPE html>
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Акт ${documentNumber}</title>
   <style>
-    body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; margin: 40px; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .title { font-size: 16pt; font-weight: bold; margin-bottom: 20px; }
+    @page { size: A4; margin: 20mm; }
+    body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.4; }
+    .header { text-align: right; margin-bottom: 20px; }
+    .title { text-align: center; font-weight: bold; margin: 20px 0; }
+    .parties { margin-bottom: 20px; text-align: justify; }
+    .terms { margin-bottom: 20px; }
+    .terms ol { padding-left: 20px; }
     table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { border: 1px solid #000; padding: 8px; text-align: left; }
-    th { background: #f0f0f0; }
-    .total { font-weight: bold; }
-    .signatures { display: flex; justify-content: space-between; margin-top: 50px; }
+    th, td { border: 1px solid black; padding: 8px; text-align: center; font-size: 10pt; }
+    th { background-color: #f0f0f0; }
+    .total-row { font-weight: bold; }
+    .sum-text { margin: 15px 0; }
+    .details { margin: 20px 0; }
+    .signatures { margin-top: 40px; display: flex; justify-content: space-between; }
     .signature-block { width: 45%; }
-    @media print { body { margin: 20px; } }
+    .signature-line { border-bottom: 1px solid black; margin-top: 40px; }
+    @media print { body { margin: 15mm; } }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">АКТ ВЫПОЛНЕННЫХ РАБОТ (ОКАЗАННЫХ УСЛУГ)</div>
-    <div>№ ${documentNumber} от ${documentDate}</div>
+    <strong>оказанных услуг</strong>
   </div>
   
-  <p><strong>Исполнитель:</strong> ${executor.legal_form || ""} "${executorName}", УНП ${executor.unp}, ${executor.legal_address}</p>
-  <p><strong>Заказчик:</strong> ${clientName}</p>
+  <div class="title">
+    СЧЁТ-АКТ<br>
+    № ${documentNumber}<br>
+    г. Минск ${dateFormatted} года
+  </div>
   
-  <p style="margin-top: 20px;">Мы, нижеподписавшиеся, составили настоящий акт о том, что Исполнитель оказал, а Заказчик принял следующие услуги:</p>
+  <div class="parties">
+    ${executor.full_name}, именуемый в дальнейшем «Исполнитель», действующий на основании ${executor.acts_on_basis || 'Устава'}, с одной стороны и ${clientType === 'individual' ? `физическое лицо ${clientName}` : clientName}, именуемое в дальнейшем «Заказчик» с другой стороны, вместе именуемые «Стороны», составили настоящий счёт-акт (далее Счёт) о том, что:
+  </div>
+  
+  <div class="terms">
+    <ol>
+      <li>Заказчик подтверждает, что ознакомлен с условиями публичного Договора, размещенного в сети интернет по адресу: http://gorbova.by/dokuments.</li>
+      <li>Счёт является основанием для оплаты услуг Исполнителя и его оплата является акцептом публичного Договора, указанного в п. 1 настоящего счёт-акта.</li>
+      <li>Стороны пришли к соглашению, что подписание Сторонами Счёта подтверждает оказание услуг Исполнителем в полном объёме. После подписания Заказчик и Исполнитель друг к другу претензий не имеют.</li>
+      <li>Если Счёт составлен в валюте, то оплата его производится в белорусских рублях по курсу Национального Банка Республики Беларусь на дату проведения банком платежа.</li>
+    </ol>
+  </div>
   
   <table>
     <thead>
       <tr>
-        <th>№</th>
-        <th>Наименование услуги</th>
-        <th>Кол-во</th>
-        <th>Ед.</th>
-        <th>Цена</th>
-        <th>Сумма</th>
+        <th>Наименование оказываемых услуг</th>
+        <th>Единица измерения</th>
+        <th>Количество</th>
+        <th>Цена без НДС, ${currency}</th>
+        <th>Сумма без НДС, ${currency}</th>
+        <th>Ставка НДС</th>
+        <th>Сумма с НДС, ${currency}</th>
       </tr>
     </thead>
     <tbody>
       <tr>
+        <td style="text-align: left;">${serviceName}</td>
+        <td>услуга</td>
         <td>1</td>
-        <td>${serviceName}</td>
+        <td>${price.toFixed(2)}</td>
+        <td>${price.toFixed(2)}</td>
+        <td>—</td>
+        <td>${price.toFixed(2)}</td>
+      </tr>
+      <tr class="total-row">
+        <td>Итого:</td>
+        <td></td>
         <td>1</td>
-        <td>усл.</td>
-        <td>${order.final_price.toFixed(2)}</td>
-        <td>${order.final_price.toFixed(2)}</td>
+        <td></td>
+        <td>${price.toFixed(2)}</td>
+        <td>—</td>
+        <td>${price.toFixed(2)}</td>
       </tr>
     </tbody>
-    <tfoot>
-      <tr class="total">
-        <td colspan="5" style="text-align: right;">Итого:</td>
-        <td>${order.final_price.toFixed(2)} ${order.currency}</td>
-      </tr>
-    </tfoot>
   </table>
   
-  <p>НДС не облагается.</p>
-  <p>Услуги оказаны полностью и в срок. Заказчик претензий по объёму, качеству и срокам оказания услуг не имеет.</p>
+  <div class="sum-text">
+    Сумма НДС: без НДС (согласно ст. 326 Налогового Кодекса Республики Беларусь).<br><br>
+    Всего: ${priceInWords} ${currency === 'BYN' ? 'рублей' : currency}, 00 копеек.
+  </div>
+  
+  <div class="terms-payment">
+    Срок оплаты: 3 (три) рабочих дня.<br><br>
+    Срок оказания услуг: 5 (пять) рабочих дней с даты перечисления предоплаты Заказчиком.
+  </div>
+  
+  <div class="details">
+    <strong>Заказчик:</strong><br>
+    ${clientType === 'individual' ? 'Физическое лицо: ' : ''}${clientName}.<br>
+    ${clientPhone ? `Телефон: ${clientPhone}. ` : ''}${clientEmail ? `Электронная почта: ${clientEmail}.` : ''}<br><br>
+    
+    <strong>ИСПОЛНИТЕЛЬ:</strong><br>
+    ${executorName}, УНП ${executor.unp}.<br>
+    Адрес: ${executor.legal_address}.<br>
+    Банковские реквизиты: расчетный счет ${executor.bank_account} в ${executor.bank_name}, код ${executor.bank_code}.<br>
+    ${executor.phone ? `Контактные данные: телефон ${executor.phone}` : ''}${executor.email ? `, электронная почта ${executor.email}` : ''}.
+  </div>
   
   <div class="signatures">
     <div class="signature-block">
-      <p><strong>Исполнитель:</strong></p>
-      <p style="margin-top: 30px;">${executor.director_position || "Руководитель"}</p>
-      <p style="margin-top: 20px;">_________________ ${executor.director_short_name || ""}</p>
+      <strong>ПОДПИСИ СТОРОН:</strong><br><br>
+      Заказчик:<br>
+      ${clientType === 'individual' ? 'физическое лицо' : clientName}<br>
+      <div class="signature-line"></div>
+      <small>/${clientSignature}/</small>
     </div>
     <div class="signature-block">
-      <p><strong>Заказчик:</strong></p>
-      <p style="margin-top: 50px;">_________________</p>
+      <br><br>
+      Исполнитель:<br>
+      ${executor.director_position || 'Директор'}<br>
+      <div class="signature-line"></div>
+      <small>/${executor.director_short_name || fullNameToInitials(executor.director_full_name || '')}/</small>
     </div>
   </div>
 </body>
