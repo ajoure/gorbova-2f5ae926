@@ -351,6 +351,63 @@ Deno.serve(async (req) => {
           });
         }
 
+        // If file was sent successfully, download from Telegram and upload to Storage
+        let fileUrl: string | null = null;
+        if (sendResult.ok && file) {
+          try {
+            // Get file_id from response based on file type
+            let fileId: string | null = null;
+            const result = sendResult.result;
+            
+            if (result.video_note) {
+              fileId = result.video_note.file_id;
+            } else if (result.video) {
+              fileId = result.video.file_id;
+            } else if (result.photo && result.photo.length > 0) {
+              // Get the largest photo (last in array)
+              fileId = result.photo[result.photo.length - 1].file_id;
+            } else if (result.audio) {
+              fileId = result.audio.file_id;
+            } else if (result.document) {
+              fileId = result.document.file_id;
+            }
+            
+            if (fileId) {
+              // Get file path from Telegram
+              const fileInfoRes = await fetch(
+                `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
+              );
+              const fileInfo = await fileInfoRes.json();
+              
+              if (fileInfo.ok && fileInfo.result?.file_path) {
+                // Download file from Telegram
+                const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+                const fileResponse = await fetch(telegramFileUrl);
+                const fileBlob = await fileResponse.blob();
+                
+                // Upload to Supabase Storage
+                const storagePath = `chat-media/${user_id}/${Date.now()}_${file.name}`;
+                const { data: uploadData, error: uploadError } = await supabase.storage
+                  .from('documents')
+                  .upload(storagePath, fileBlob, { 
+                    contentType: guessMimeType(file.name, file.type),
+                    upsert: false 
+                  });
+                
+                if (uploadData && !uploadError) {
+                  const { data: { publicUrl } } = supabase.storage
+                    .from('documents')
+                    .getPublicUrl(storagePath);
+                  fileUrl = publicUrl;
+                }
+              }
+            }
+          } catch (uploadErr) {
+            console.error("Failed to upload file to storage:", uploadErr);
+            // Continue without file_url - message still sent
+          }
+        }
+
         // Log the message
         const messageLogData = {
           user_id,
@@ -366,6 +423,7 @@ Deno.serve(async (req) => {
             telegram_response: sendResult,
             file_type: file?.type || null,
             file_name: file?.name || null,
+            file_url: fileUrl,
           },
         };
 
