@@ -127,7 +127,12 @@ export function ContactTelegramChat({
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const didInitialScrollRef = useRef(false);
+  const lastUserIdRef = useRef<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch messages - optimized with shorter stale time
@@ -259,17 +264,35 @@ export function ContactTelegramChat({
     },
   });
 
-  // Scroll to bottom when items change
+  // Scroll to bottom when opening a chat and when new items arrive
   useEffect(() => {
-    // ScrollArea uses a viewport inside, need to access it
-    const viewport = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-    if (viewport) {
-      // Use setTimeout to ensure content is rendered
-      setTimeout(() => {
-        viewport.scrollTop = viewport.scrollHeight;
-      }, 50);
+    if (!userId) return;
+    if (isLoading) return;
+
+    // Reset “initial scroll” when switching contact
+    if (lastUserIdRef.current !== userId) {
+      lastUserIdRef.current = userId;
+      didInitialScrollRef.current = false;
     }
-  }, [chatItems]);
+
+    const root = scrollRef.current;
+    const viewport = root?.querySelector(
+      "[data-radix-scroll-area-viewport]",
+    ) as HTMLElement | null;
+
+    const isNearBottom = viewport
+      ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
+      : true;
+
+    const shouldScroll = !didInitialScrollRef.current || isNearBottom;
+    if (!shouldScroll) return;
+
+    // Wait for DOM paint
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+      didInitialScrollRef.current = true;
+    });
+  }, [userId, isLoading, chatItems.length]);
 
   const handleSend = () => {
     const trimmed = message.trim();
@@ -448,6 +471,7 @@ export function ContactTelegramChat({
         ) : (
           <div className="space-y-3 pr-4">
             {chatItems.map(renderChatItem)}
+            <div ref={bottomRef} />
           </div>
         )}
       </ScrollArea>
