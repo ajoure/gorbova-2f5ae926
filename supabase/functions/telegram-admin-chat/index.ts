@@ -468,7 +468,7 @@ Deno.serve(async (req) => {
           .select(`
             *,
             telegram_bots(id, bot_name, bot_username),
-            admin_profile:profiles!telegram_messages_sent_by_admin_fkey(full_name)
+            admin_profile:profiles!telegram_messages_sent_by_admin_fkey(full_name, avatar_url)
           `)
           .eq("user_id", user_id)
           .order("created_at", { ascending: true })
@@ -498,23 +498,23 @@ Deno.serve(async (req) => {
             .filter((m: any) => m.sent_by_admin)
             .map((m: any) => m.sent_by_admin))];
           
-          let adminProfiles: Record<string, string> = {};
+          let adminProfiles: Record<string, { full_name: string | null; avatar_url: string | null }> = {};
           if (adminIds.length > 0) {
             const { data: profiles } = await supabase
               .from("profiles")
-              .select("user_id, full_name")
+              .select("user_id, full_name, avatar_url")
               .in("user_id", adminIds);
             
             if (profiles) {
               profiles.forEach((p: any) => {
-                adminProfiles[p.user_id] = p.full_name;
+                adminProfiles[p.user_id] = { full_name: p.full_name, avatar_url: p.avatar_url };
               });
             }
           }
           
           const enrichedMessages = (fallbackMessages || []).map((m: any) => ({
             ...m,
-            admin_profile: m.sent_by_admin ? { full_name: adminProfiles[m.sent_by_admin] || null } : null,
+            admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
           }));
           
           return new Response(JSON.stringify({ messages: enrichedMessages }), {

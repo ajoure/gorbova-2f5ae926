@@ -53,6 +53,7 @@ import {
   Edit2,
   Trash2,
   MoreVertical,
+  Play,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -79,6 +80,7 @@ interface TelegramMessage {
   sent_by_admin?: string | null;
   admin_profile?: {
     full_name: string | null;
+    avatar_url: string | null;
   } | null;
   meta?: {
     file_type?: string | null;
@@ -620,7 +622,11 @@ export function ContactTelegramChat({
           >
             <div className="flex items-center gap-1.5 mb-1">
               {msg.direction === "outgoing" ? (
-                <Bot className="w-3 h-3 flex-shrink-0" />
+                msg.admin_profile?.avatar_url ? (
+                  <img src={msg.admin_profile.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                ) : (
+                  <Bot className="w-3 h-3 flex-shrink-0" />
+                )
               ) : (
                 avatarUrl ? (
                   <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
@@ -628,7 +634,7 @@ export function ContactTelegramChat({
                   <User className="w-3 h-3 flex-shrink-0" />
                 )
               )}
-              <span className="text-xs opacity-70 whitespace-nowrap truncate max-w-[140px]">
+              <span className="text-xs opacity-70 whitespace-nowrap">
                 {msg.direction === "outgoing" 
                   ? (msg.admin_profile?.full_name || "Администратор") 
                   : (clientName || "Клиент")}
@@ -645,15 +651,27 @@ export function ContactTelegramChat({
                     className="max-w-full max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity" 
                     onClick={() => window.open(msg.meta?.file_url as string, '_blank')}
                   />
-                ) : (fileType === "video" || fileType === "video_note") && msg.meta?.file_url ? (
-                  <video 
-                    src={msg.meta.file_url as string} 
-                    controls 
-                    className={cn(
-                      "max-h-48",
-                      fileType === "video_note" ? "w-48 h-48 rounded-full object-cover" : "max-w-full rounded"
-                    )}
-                  />
+                ) : (fileType === "video" || fileType === "video_note") ? (
+                  msg.meta?.file_url ? (
+                    <video 
+                      src={msg.meta.file_url as string} 
+                      controls 
+                      className={cn(
+                        "max-h-48",
+                        fileType === "video_note" ? "w-48 h-48 rounded-full object-cover" : "max-w-full rounded"
+                      )}
+                    />
+                  ) : (
+                    <div className={cn(
+                      "flex items-center justify-center bg-muted/30 border border-border/30",
+                      fileType === "video_note" ? "w-32 h-32 rounded-full" : "w-48 h-32 rounded-lg"
+                    )}>
+                      <div className="text-center">
+                        <Play className="w-8 h-8 mx-auto opacity-50 mb-1" />
+                        <span className="text-xs opacity-60 block">Видео-сообщение</span>
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
                     {getFileIcon(fileType)}
