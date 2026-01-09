@@ -41,6 +41,7 @@ import {
   FileStack,
   Inbox,
   Send,
+  GraduationCap,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -366,6 +367,26 @@ export function AdminSidebar() {
                     >
                       <FileText className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Контент</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Тренинги */}
+              {hasContentPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname.startsWith("/admin/training")}
+                    tooltip={collapsed ? "Тренинги" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/training-modules"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <GraduationCap className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Тренинги</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
