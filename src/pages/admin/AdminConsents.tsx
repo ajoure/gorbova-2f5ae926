@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery } from "@tanstack/react-query";
@@ -49,6 +50,7 @@ interface ProfileWithConsent {
 }
 
 export default function AdminConsents() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "with" | "without">("all");
   const [selectedProfile, setSelectedProfile] = useState<ProfileWithConsent | null>(null);
@@ -236,10 +238,20 @@ export default function AdminConsents() {
                     filteredProfiles.map((profile) => (
                       <TableRow 
                         key={profile.id} 
-                        className="cursor-pointer hover:bg-muted/50"
+                        className="hover:bg-muted/50"
                         onClick={() => handleRowClick(profile)}
                       >
-                        <TableCell className="font-medium">{getDisplayName(profile)}</TableCell>
+                        <TableCell>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/admin/contacts?contact=${profile.user_id}&from=consents`);
+                            }}
+                            className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                          >
+                            {getDisplayName(profile)}
+                          </button>
+                        </TableCell>
                         <TableCell className="text-muted-foreground">{profile.email || "—"}</TableCell>
                         <TableCell>
                           {profile.consent_version ? (

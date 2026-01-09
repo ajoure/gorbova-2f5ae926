@@ -292,9 +292,15 @@ export default function AdminInstallments() {
                                     <Users className="h-4 w-4 text-primary" />
                                   </div>
                                   <div>
-                                    <p className="font-medium line-clamp-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/admin/contacts?contact=${installment.user_id}&from=installments`);
+                                      }}
+                                      className="font-medium line-clamp-1 text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                    >
                                       {installment.profiles?.full_name || "—"}
-                                    </p>
+                                    </button>
                                     <p className="text-xs text-muted-foreground line-clamp-1">
                                       {installment.profiles?.email}
                                     </p>
