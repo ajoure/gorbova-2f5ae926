@@ -172,14 +172,15 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       if (vTrack) {
         setCameraLabel(vTrack.label || null);
         
-        // CRITICAL: Camera disconnection should NOT reset preview state
+        // CRITICAL: Camera disconnection should NOT reset preview/recording states
         vTrack.onended = () => {
           stopStream();
-          // Only show error if NOT in preview - video is already saved there
-          if (stateRef.current !== "preview") {
+          // Only show error if in idle/ready - during recording/preview video is in blob
+          if (stateRef.current === "idle" || stateRef.current === "ready") {
             setError("Камера отключилась. Нажмите «Включить камеру» ещё раз.");
             setState("error");
           }
+          // Do nothing for recording/preview - data is already captured
         };
       }
 
@@ -324,10 +325,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
         recordedBlobRef.current = blob;
         setRecordedUrl(URL.createObjectURL(blob));
         
-        // CRITICAL: Transition to preview - this state is protected
+        // CRITICAL: Update stateRef BEFORE stopStream() 
+        // so vTrack.onended sees "preview" and doesn't reset to error
+        stateRef.current = "preview";
         setState("preview");
         
-        // Stop camera after successful recording (saves battery)
+        // NOW safe to stop camera - onended will see stateRef === "preview"
         stopStream();
       }, 150);
     };
@@ -440,7 +443,8 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   }, [facingMode]);
 
   const showCamera = state === "ready" || state === "recording";
-  const showPreview = state === "preview" && recordedUrl;
+  // Show preview as soon as state is preview, even if URL still loading
+  const showPreview = state === "preview";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -471,14 +475,20 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
               )}
 
               {showPreview && (
-                <video
-                  ref={previewVideoRef}
-                  src={recordedUrl}
-                  autoPlay
-                  loop
-                  playsInline
-                  className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
-                />
+                recordedUrl ? (
+                  <video
+                    ref={previewVideoRef}
+                    src={recordedUrl}
+                    autoPlay
+                    loop
+                    playsInline
+                    className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
+                  />
+                ) : (
+                  <div className="w-[280px] h-[280px] rounded-full border-4 border-primary bg-muted flex items-center justify-center">
+                    <span className="text-sm text-muted-foreground">Обработка видео...</span>
+                  </div>
+                )
               )}
 
               {(state === "idle" || state === "error") && (
