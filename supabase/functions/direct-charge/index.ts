@@ -676,11 +676,18 @@ Deno.serve(async (req) => {
         test: testMode,
         return_url: returnUrl,
         notification_url: notificationUrl,
+        // CRITICAL: Skip 3DS for MIT (Merchant Initiated Transactions) with saved card token
+        skip_three_d_secure_verification: true,
         credit_card: {
           token: paymentMethod.provider_token,
         },
         additional_data: {
           contract: ["recurring", "unscheduled"],
+          // Card on file parameters for MIT - tells bePaid this is a merchant-initiated charge
+          card_on_file: {
+            initiator: "merchant",
+            type: "delayed_charge",
+          },
           order_id: order.id,
           payment_id: payment.id,
         },
