@@ -131,6 +131,10 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
         } else if (e?.name === "NotFoundError") {
           toast.message("Микрофон недоступен — запись будет без звука.");
           stream = await navigator.mediaDevices.getUserMedia({ video: strictVideo, audio: false });
+        } else if (e?.name === "NotAllowedError") {
+          // Часто это запрет именно на микрофон (особенно в iOS Safari) — пробуем без аудио.
+          toast.message("Нет доступа к микрофону — запись будет без звука.");
+          stream = await navigator.mediaDevices.getUserMedia({ video: strictVideo, audio: false });
         } else {
           throw e;
         }
