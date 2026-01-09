@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { Loader2, Save } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
 
 const schema = z.object({
   // Required fields
@@ -85,12 +84,15 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
+      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6" autoComplete="off">
         {/* Personal Info - Required */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Основные данные <span className="text-destructive">*</span>
-          </h3>
+        <div className="rounded-xl border bg-card p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-primary" />
+            <h3 className="text-base font-semibold">
+              Основные данные
+            </h3>
+          </div>
           
           <FormField
             control={form.control}
@@ -99,14 +101,18 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               <FormItem>
                 <FormLabel>ФИО полностью *</FormLabel>
                 <FormControl>
-                  <Input placeholder="Иванов Иван Иванович" {...field} />
+                  <Input 
+                    placeholder="Иванов Иван Иванович" 
+                    autoComplete="off"
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="ind_birth_date"
@@ -114,7 +120,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Дата рождения *</FormLabel>
                   <FormControl>
-                    <Input type="date" {...field} />
+                    <Input type="date" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -130,7 +136,8 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormControl>
                     <Input 
                       placeholder="3140583A009PB1" 
-                      maxLength={14} 
+                      maxLength={14}
+                      autoComplete="off"
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />
@@ -142,7 +149,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="email"
@@ -150,7 +157,12 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Email *</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="email@example.com" {...field} />
+                    <Input 
+                      type="email" 
+                      placeholder="email@example.com" 
+                      autoComplete="off"
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -163,7 +175,11 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Телефон *</FormLabel>
                   <FormControl>
-                    <Input placeholder="+375 44 7500084" {...field} />
+                    <Input 
+                      placeholder="+375 44 7500084" 
+                      autoComplete="off"
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -172,25 +188,28 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
           </div>
         </div>
 
-        <Separator />
-
         {/* Passport - Optional */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Паспортные данные <span className="font-normal">(опционально)</span>
-          </h3>
+        <div className="rounded-xl border bg-muted/30 p-5 sm:p-6 space-y-5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+            <h3 className="text-base font-medium text-muted-foreground">
+              Паспортные данные
+            </h3>
+            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">опционально</span>
+          </div>
           
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <FormField
               control={form.control}
               name="ind_passport_series"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Серия (2 буквы)</FormLabel>
+                  <FormLabel>Серия</FormLabel>
                   <FormControl>
                     <Input 
                       placeholder="MP" 
-                      maxLength={2} 
+                      maxLength={2}
+                      autoComplete="off"
                       {...field} 
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />
@@ -204,9 +223,35 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               name="ind_passport_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Номер (7 цифр)</FormLabel>
+                  <FormLabel>Номер</FormLabel>
                   <FormControl>
-                    <Input placeholder="1234567" maxLength={7} {...field} />
+                    <Input placeholder="1234567" maxLength={7} autoComplete="off" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="ind_passport_issued_date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Дата выдачи</FormLabel>
+                  <FormControl>
+                    <Input type="date" autoComplete="off" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="ind_passport_valid_until"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Действ. до</FormLabel>
+                  <FormControl>
+                    <Input type="date" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -221,51 +266,23 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               <FormItem>
                 <FormLabel>Кем выдан</FormLabel>
                 <FormControl>
-                  <Input placeholder="Фрунзенским РУВД г. Минска" {...field} />
+                  <Input placeholder="Фрунзенским РУВД г. Минска" autoComplete="off" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
-
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="ind_passport_issued_date"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Дата выдачи</FormLabel>
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="ind_passport_valid_until"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Действителен до</FormLabel>
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
         </div>
 
-        <Separator />
-
         {/* Address - Optional */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Адрес регистрации <span className="font-normal">(опционально)</span>
-          </h3>
+        <div className="rounded-xl border bg-muted/30 p-5 sm:p-6 space-y-5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+            <h3 className="text-base font-medium text-muted-foreground">
+              Адрес регистрации
+            </h3>
+            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">опционально</span>
+          </div>
           
           <div className="grid grid-cols-3 gap-4">
             <FormField
@@ -275,7 +292,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Индекс</FormLabel>
                   <FormControl>
-                    <Input placeholder="222840" {...field} />
+                    <Input placeholder="222840" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -288,7 +305,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem className="col-span-2">
                   <FormLabel>Область</FormLabel>
                   <FormControl>
-                    <Input placeholder="Минская область" {...field} />
+                    <Input placeholder="Минская область" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -296,7 +313,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="ind_address_district"
@@ -304,7 +321,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Район (если есть)</FormLabel>
                   <FormControl>
-                    <Input placeholder="Пуховичский район" {...field} />
+                    <Input placeholder="Пуховичский район" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -317,7 +334,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Населённый пункт</FormLabel>
                   <FormControl>
-                    <Input placeholder="г. Минск / аг. Дукора" {...field} />
+                    <Input placeholder="г. Минск / аг. Дукора" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -333,7 +350,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem className="col-span-2">
                   <FormLabel>Улица</FormLabel>
                   <FormControl>
-                    <Input placeholder="ул. Блашко" {...field} />
+                    <Input placeholder="ул. Блашко" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -347,7 +364,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormItem>
                     <FormLabel>Дом</FormLabel>
                     <FormControl>
-                      <Input placeholder="25" {...field} />
+                      <Input placeholder="25" autoComplete="off" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -360,7 +377,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormItem>
                     <FormLabel>Кв.</FormLabel>
                     <FormControl>
-                      <Input placeholder="12" {...field} />
+                      <Input placeholder="12" autoComplete="off" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -370,13 +387,15 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
           </div>
         </div>
 
-        <Separator />
-
         {/* Bank Details (optional) */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Банковские реквизиты <span className="font-normal">(опционально)</span>
-          </h3>
+        <div className="rounded-xl border bg-muted/30 p-5 sm:p-6 space-y-5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+            <h3 className="text-base font-medium text-muted-foreground">
+              Банковские реквизиты
+            </h3>
+            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">опционально</span>
+          </div>
           
           <FormField
             control={form.control}
@@ -388,6 +407,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <Input 
                     placeholder="BY58ALFA30143083440050270000" 
                     maxLength={28}
+                    autoComplete="off"
                     {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
                   />
@@ -398,7 +418,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
             )}
           />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="bank_name"
@@ -406,7 +426,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Банк</FormLabel>
                   <FormControl>
-                    <Input placeholder='ЗАО "Альфа-Банк"' {...field} />
+                    <Input placeholder='ЗАО "Альфа-Банк"' autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -421,6 +441,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 
+                      autoComplete="off"
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />
@@ -432,8 +453,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
           </div>
         </div>
 
-
-        <Button type="submit" disabled={isSubmitting} className="w-full gap-2">
+        <Button type="submit" disabled={isSubmitting} className="w-full gap-2" size="lg">
           {isSubmitting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
