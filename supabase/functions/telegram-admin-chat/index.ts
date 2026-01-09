@@ -103,6 +103,30 @@ async function telegramRequest(botToken: string, method: string, body: object) {
   return response.json();
 }
 
+function guessMimeType(fileName: string, kind: FileData["type"]) {
+  const lower = fileName.toLowerCase();
+  if (kind === "photo") {
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".webp")) return "image/webp";
+    return "image/jpeg";
+  }
+  if (kind === "audio") {
+    if (lower.endsWith(".mp3")) return "audio/mpeg";
+    if (lower.endsWith(".m4a")) return "audio/mp4";
+    if (lower.endsWith(".wav")) return "audio/wav";
+    return "audio/mpeg";
+  }
+  if (kind === "video" || kind === "video_note") {
+    if (lower.endsWith(".mp4")) return "video/mp4";
+    if (lower.endsWith(".mov")) return "video/quicktime";
+    if (lower.endsWith(".webm")) return "video/webm";
+    return "video/mp4";
+  }
+  // document
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
 async function telegramSendFile(
   botToken: string,
   chatId: number,
@@ -115,7 +139,9 @@ async function telegramSendFile(
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-  const blob = new Blob([bytes]);
+
+  const contentType = guessMimeType(file.name, file.type);
+  const blob = new Blob([bytes], { type: contentType });
 
   const formData = new FormData();
   formData.append("chat_id", chatId.toString());
@@ -124,7 +150,7 @@ async function telegramSendFile(
   // Determine the method and field name based on file type
   let method: string;
   let fieldName: string;
-  
+
   switch (file.type) {
     case "photo":
       method = "sendPhoto";
@@ -143,6 +169,8 @@ async function telegramSendFile(
       fieldName = "video_note";
       // Video notes don't support captions
       formData.delete("caption");
+      // Helps Telegram render correctly on some clients
+      formData.append("length", "280");
       break;
     default:
       method = "sendDocument";
@@ -155,7 +183,7 @@ async function telegramSendFile(
     method: "POST",
     body: formData,
   });
-  
+
   return response.json();
 }
 
