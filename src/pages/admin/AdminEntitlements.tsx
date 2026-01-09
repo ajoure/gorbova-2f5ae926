@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -76,6 +77,7 @@ const PRODUCT_CODES = [
 ];
 
 export default function AdminEntitlements() {
+  const navigate = useNavigate();
   const { hasPermission } = usePermissions();
   const [entitlements, setEntitlements] = useState<Entitlement[]>([]);
   const [users, setUsers] = useState<{ user_id: string; email: string; full_name: string }[]>([]);
@@ -292,7 +294,12 @@ export default function AdminEntitlements() {
               <TableRow key={ent.id}>
                 <TableCell>
                   <div>
-                    <div className="font-medium">{ent.user_name || "—"}</div>
+                    <button
+                      onClick={() => navigate(`/admin/contacts?contact=${ent.user_id}&from=entitlements`)}
+                      className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                    >
+                      {ent.user_name || "—"}
+                    </button>
                     <div className="text-sm text-muted-foreground">{ent.user_email}</div>
                   </div>
                 </TableCell>

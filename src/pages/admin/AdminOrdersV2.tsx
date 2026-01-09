@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +67,7 @@ const ORDER_STATUS_LABELS: Record<string, { label: string; variant: "default" | 
 };
 
 export default function AdminOrdersV2() {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const { isSuperAdmin } = usePermissions();
@@ -118,7 +120,22 @@ export default function AdminOrdersV2() {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+      
+      // Fetch profiles for user_ids
+      const userIds = data?.map(o => o.user_id).filter(Boolean) as string[] || [];
+      if (userIds.length === 0) return data?.map(o => ({ ...o, profile: null })) || [];
+      
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, email")
+        .in("user_id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+      
+      return data?.map(o => ({
+        ...o,
+        profile: o.user_id ? profileMap.get(o.user_id) || null : null,
+      })) || [];
     },
   });
 
@@ -145,10 +162,12 @@ export default function AdminOrdersV2() {
   const filteredOrders = orders?.filter((order) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
+    const profile = (order as any).profile;
     return (
       order.order_number?.toLowerCase().includes(query) ||
       order.customer_email?.toLowerCase().includes(query) ||
       order.customer_phone?.includes(query) ||
+      profile?.full_name?.toLowerCase().includes(query) ||
       order.products_v2?.name?.toLowerCase().includes(query)
     );
   });
@@ -278,6 +297,7 @@ export default function AdminOrdersV2() {
                 <TableBody>
                   {filteredOrders.map((order) => {
                     const statusConfig = ORDER_STATUS_LABELS[order.status] || { label: order.status, variant: "secondary" as const };
+                    const profile = (order as any).profile;
                     return (
                       <TableRow key={order.id}>
                         <TableCell>
@@ -287,11 +307,25 @@ export default function AdminOrdersV2() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div className="font-medium">
-                            {order.customer_email || "—"}
-                          </div>
-                          {order.customer_phone && (
-                            <div className="text-xs text-muted-foreground">{order.customer_phone}</div>
+                          {profile ? (
+                            <div>
+                              <button
+                                onClick={() => navigate(`/admin/contacts?contact=${order.user_id}&from=orders`)}
+                                className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                              >
+                                {profile.full_name || order.customer_email || "—"}
+                              </button>
+                              <div className="text-xs text-muted-foreground">{profile.email || order.customer_phone}</div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="font-medium">
+                                {order.customer_email || "—"}
+                              </div>
+                              {order.customer_phone && (
+                                <div className="text-xs text-muted-foreground">{order.customer_phone}</div>
+                              )}
+                            </div>
                           )}
                         </TableCell>
                         <TableCell>

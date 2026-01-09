@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -71,6 +72,7 @@ const productNames: Record<string, string> = {
 };
 
 export default function AdminPreregistrations() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [productFilter, setProductFilter] = useState<string>("all");
@@ -337,7 +339,21 @@ export default function AdminPreregistrations() {
                           className="cursor-pointer hover:bg-muted/50"
                           onClick={() => openDetail(prereg)}
                         >
-                          <TableCell className="font-medium">{prereg.name}</TableCell>
+                          <TableCell>
+                            {prereg.user_id ? (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/admin/contacts?contact=${prereg.user_id}&from=preregistrations`);
+                                }}
+                                className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                              >
+                                {prereg.name}
+                              </button>
+                            ) : (
+                              <span className="font-medium">{prereg.name}</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="text-sm">
                               <div>{prereg.email}</div>

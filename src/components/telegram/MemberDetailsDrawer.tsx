@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -81,6 +82,7 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
   
   // Form states
   const [grantDays, setGrantDays] = useState(30);
+  const navigate = useNavigate();
   const [grantComment, setGrantComment] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
   const [extendDays, setExtendDays] = useState(30);
@@ -371,7 +373,16 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                       <Separator />
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">ФИО</span>
-                        <span>{member.profiles.full_name || '—'}</span>
+                        {member.profiles.user_id ? (
+                          <button
+                            onClick={() => navigate(`/admin/contacts?contact=${member.profiles.user_id}&from=telegram`)}
+                            className="hover:text-primary hover:underline transition-colors cursor-pointer"
+                          >
+                            {member.profiles.full_name || '—'}
+                          </button>
+                        ) : (
+                          <span>{member.profiles.full_name || '—'}</span>
+                        )}
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Email</span>

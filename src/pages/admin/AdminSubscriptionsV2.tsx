@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,7 @@ const SUBSCRIPTION_STATUS_CONFIG: Record<string, { label: string; icon: typeof C
 };
 
 export default function AdminSubscriptionsV2() {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
@@ -75,7 +77,22 @@ export default function AdminSubscriptionsV2() {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+      
+      // Fetch profiles for user_ids
+      const userIds = data?.map(s => s.user_id).filter(Boolean) || [];
+      if (userIds.length === 0) return data?.map(s => ({ ...s, profile: null })) || [];
+      
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, email")
+        .in("user_id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+      
+      return data?.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) || null,
+      })) || [];
     },
   });
 
@@ -101,8 +118,11 @@ export default function AdminSubscriptionsV2() {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     const product = sub.products_v2 as any;
+    const profile = (sub as any).profile;
     return (
       product?.name?.toLowerCase().includes(query) ||
+      profile?.full_name?.toLowerCase().includes(query) ||
+      profile?.email?.toLowerCase().includes(query) ||
       (sub as any).user_id?.includes(query)
     );
   });
@@ -225,6 +245,7 @@ export default function AdminSubscriptionsV2() {
                   {filteredSubscriptions.map((sub) => {
                     const product = sub.products_v2 as any;
                     const tariff = sub.tariffs as any;
+                    const profile = (sub as any).profile;
                     const statusConfig = SUBSCRIPTION_STATUS_CONFIG[sub.status] || 
                       { label: sub.status, icon: Clock, className: "text-muted-foreground" };
                     const StatusIcon = statusConfig.icon;
@@ -236,9 +257,21 @@ export default function AdminSubscriptionsV2() {
                     return (
                       <TableRow key={sub.id}>
                         <TableCell>
-                          <div className="font-medium">
-                            User: {sub.user_id?.slice(0, 8)}...
-                          </div>
+                          {profile ? (
+                            <div>
+                              <button
+                                onClick={() => navigate(`/admin/contacts?contact=${sub.user_id}&from=subscriptions`)}
+                                className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                              >
+                                {profile.full_name || "—"}
+                              </button>
+                              <div className="text-sm text-muted-foreground">{profile.email}</div>
+                            </div>
+                          ) : (
+                            <div className="font-medium text-muted-foreground">
+                              User: {sub.user_id?.slice(0, 8)}...
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="font-medium">{product?.name || "—"}</div>
