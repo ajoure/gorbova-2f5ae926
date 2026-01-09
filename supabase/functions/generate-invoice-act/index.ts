@@ -250,11 +250,12 @@ serve(async (req) => {
     const seqNum = (count || 0) + 1;
     const documentNumber = `${docPrefix}-${String(year).slice(-2)}-${String(seqNum).padStart(5, "0")}`;
 
-    // Create snapshots
+    // Create snapshots - if no legal details, use profile data
     const clientSnapshot = clientDetails || {
-      type: "individual",
-      name: order.customer_email || profile?.full_name || "Физическое лицо",
-      email: order.customer_email || profile?.email,
+      client_type: "individual",
+      name: profile?.full_name || "Физическое лицо",
+      phone: order.customer_phone || null,
+      email: order.customer_email || profile?.email || null,
     };
 
     const executorSnapshot = {
@@ -441,10 +442,13 @@ serve(async (req) => {
         id: docRecord.id,
         document_number: documentNumber,
         document_type,
-        html: documentHtml,
         executor: executorSnapshot,
         client: clientSnapshot,
         order: orderSnapshot,
+        profile: {
+          full_name: profile?.full_name || null,
+          email: profile?.email || null,
+        },
       },
       send_results: results,
     }), {
