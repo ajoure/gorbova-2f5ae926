@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Circle, X, Send, RefreshCw } from "lucide-react";
+import { Circle, RefreshCw, Send, X } from "lucide-react";
+import { toast } from "sonner";
 
 interface VideoNoteRecorderProps {
   open: boolean;
@@ -9,105 +10,37 @@ interface VideoNoteRecorderProps {
   onRecorded: (file: File) => void;
 }
 
+type RecorderState = "idle" | "ready" | "recording" | "preview" | "error";
+
 export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const animationRef = useRef<number | null>(null);
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
-  const [recordingTime, setRecordingTime] = useState(0);
+  const [state, setState] = useState<RecorderState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
 
-  const MAX_DURATION = 60; // 60 seconds max for video notes
+  const MAX_DURATION_SEC = 60;
 
-  // Draw circular video on canvas
-  const drawCircularFrame = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) {
-      animationRef.current = requestAnimationFrame(drawCircularFrame);
-      return;
-    }
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const size = 384; // Circle size
-    canvas.width = size;
-    canvas.height = size;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, size, size);
-
-    // Create circular clipping path
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-
-    // Calculate crop to make video square (center crop)
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    const minDim = Math.min(vw, vh);
-    const sx = (vw - minDim) / 2;
-    const sy = (vh - minDim) / 2;
-
-    // Draw the video centered and cropped to square
-    ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, size, size);
-
-    // Continue animation
-    animationRef.current = requestAnimationFrame(drawCircularFrame);
+  const mimeType = useMemo(() => {
+    if (typeof MediaRecorder === "undefined") return null;
+    const candidates = [
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      "video/mp4",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ];
+    return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? null;
   }, []);
 
-  // Start camera
-  const startCamera = useCallback(async () => {
-    try {
-      setError(null);
-      
-      // Stop existing stream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode,
-          width: { ideal: 640 },
-          height: { ideal: 640 },
-          aspectRatio: { ideal: 1 }
-        },
-        audio: true
-      });
-
-      streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      // Start drawing circular frames
-      animationRef.current = requestAnimationFrame(drawCircularFrame);
-    } catch (err) {
-      console.error("Camera access error:", err);
-      setError("Не удалось получить доступ к камере");
-    }
-  }, [facingMode, drawCircularFrame]);
-
-  // Stop camera
-  const stopCamera = useCallback(() => {
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
+  const stopStream = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -115,273 +48,288 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }
   }, []);
 
-  // Start recording
-  const startRecording = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !streamRef.current) return;
-
-    chunksRef.current = [];
+  const resetRecording = useCallback(() => {
     setRecordingTime(0);
     setRecordedBlob(null);
+    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     setRecordedUrl(null);
+  }, [recordedUrl]);
 
-    // Get audio track from the original stream
-    const audioTracks = streamRef.current.getAudioTracks();
-    
-    // Create a new stream from canvas with audio
-    const canvasStream = canvas.captureStream(30);
-    if (audioTracks.length > 0) {
-      canvasStream.addTrack(audioTracks[0]);
-    }
-
-    const options = { mimeType: "video/webm;codecs=vp8,opus" };
-    let mediaRecorder: MediaRecorder;
-    
+  const startCamera = useCallback(async () => {
     try {
-      mediaRecorder = new MediaRecorder(canvasStream, options);
-    } catch (e) {
-      // Fallback to default codec
-      mediaRecorder = new MediaRecorder(canvasStream);
+      setError(null);
+
+      // Always stop previous stream first (important on iOS Safari)
+      stopStream();
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode,
+          // iOS Safari ignores many constraints, but these help where possible
+          width: { ideal: 720 },
+          height: { ideal: 720 },
+          aspectRatio: { ideal: 1 },
+        },
+        audio: true,
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      setState("ready");
+    } catch (e: any) {
+      console.error("VideoNoteRecorder camera error", e);
+      const msg =
+        e?.name === "NotAllowedError"
+          ? "Нет доступа к камере. Разрешите доступ в настройках браузера."
+          : "Не удалось получить доступ к камере.";
+      setError(msg);
+      setState("error");
+    }
+  }, [facingMode, stopStream]);
+
+  const stopRecording = useCallback(() => {
+    const mr = mediaRecorderRef.current;
+    if (!mr) return;
+
+    try {
+      mr.stop();
+    } catch {
+      // ignore
     }
 
-    mediaRecorderRef.current = mediaRecorder;
+    mediaRecorderRef.current = null;
+    setState("preview");
+  }, []);
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunksRef.current.push(e.data);
-      }
+  const startRecording = useCallback(async () => {
+    if (!mimeType) {
+      toast.error("Запись видео не поддерживается этим браузером");
+      return;
+    }
+
+    if (!streamRef.current) {
+      // On iOS Safari permission works reliably only from a user gesture.
+      // We call startCamera here so "Запись" also works as the gesture.
+      await startCamera();
+      if (!streamRef.current) return;
+    }
+
+    resetRecording();
+    chunksRef.current = [];
+
+    const stream = streamRef.current;
+    const opts = mimeType ? { mimeType } : undefined;
+    let mr: MediaRecorder;
+
+    try {
+      mr = new MediaRecorder(stream, opts as any);
+    } catch {
+      mr = new MediaRecorder(stream);
+    }
+
+    mediaRecorderRef.current = mr;
+
+    mr.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) chunksRef.current.push(ev.data);
     };
 
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: "video/webm" });
+    mr.onstop = () => {
+      const blobType = mimeType ?? "video/mp4";
+      const blob = new Blob(chunksRef.current, { type: blobType });
       setRecordedBlob(blob);
       setRecordedUrl(URL.createObjectURL(blob));
     };
 
-    mediaRecorder.start(100);
-    setIsRecording(true);
+    mr.start(250);
+    setState("recording");
 
-    // Timer
-    const startTime = Date.now();
-    const timerInterval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      setRecordingTime(elapsed);
-      
-      if (elapsed >= MAX_DURATION) {
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      const sec = Math.floor((Date.now() - start) / 1000);
+      setRecordingTime(sec);
+      if (sec >= MAX_DURATION_SEC) {
+        window.clearInterval(timer);
         stopRecording();
-        clearInterval(timerInterval);
       }
-    }, 100);
+    }, 250);
 
-    // Store interval for cleanup
-    (mediaRecorderRef.current as any)._timerInterval = timerInterval;
+    // store timer for cleanup
+    (mr as any)._timer = timer;
+  }, [mimeType, resetRecording, startCamera, stopRecording]);
+
+  const handleStopRecordingClick = useCallback(() => {
+    const mr = mediaRecorderRef.current as any;
+    if (mr?._timer) window.clearInterval(mr._timer);
+    stopRecording();
+  }, [stopRecording]);
+
+  const switchCamera = useCallback(async () => {
+    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
   }, []);
 
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      const timerInterval = (mediaRecorderRef.current as any)._timerInterval;
-      if (timerInterval) clearInterval(timerInterval);
-      
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  }, [isRecording]);
-
-  // Switch camera
-  const switchCamera = useCallback(() => {
-    setFacingMode(prev => prev === "user" ? "environment" : "user");
-  }, []);
-
-  // Handle send
   const handleSend = useCallback(() => {
-    if (recordedBlob) {
-      const file = new File([recordedBlob], `video_note_${Date.now()}.webm`, { type: "video/webm" });
-      onRecorded(file);
-      onOpenChange(false);
-    }
-  }, [recordedBlob, onRecorded, onOpenChange]);
+    if (!recordedBlob) return;
 
-  // Reset to record again
-  const handleRetry = useCallback(() => {
-    setRecordedBlob(null);
-    setRecordedUrl(null);
-    setRecordingTime(0);
-  }, []);
+    const ext = mimeType?.includes("mp4") ? "mp4" : "webm";
+    const fileType = mimeType?.includes("mp4") ? "video/mp4" : "video/webm";
 
-  // Effects
+    const file = new File([recordedBlob], `video_note_${Date.now()}.${ext}`, {
+      type: fileType,
+    });
+
+    onRecorded(file);
+    onOpenChange(false);
+  }, [mimeType, onOpenChange, onRecorded, recordedBlob]);
+
+  // Manage lifecycle
   useEffect(() => {
-    if (open && !recordedBlob) {
-      startCamera();
-    }
+    if (!open) return;
+
+    // reset every open
+    setState("idle");
+    setError(null);
+    resetRecording();
+
     return () => {
-      if (!open) {
-        stopCamera();
-        setRecordedBlob(null);
-        setRecordedUrl(null);
-        setRecordingTime(0);
-        setIsRecording(false);
+      // always release camera
+      try {
+        const mr = mediaRecorderRef.current as any;
+        if (mr?._timer) window.clearInterval(mr._timer);
+      } catch {
+        // ignore
       }
+      mediaRecorderRef.current = null;
+      stopStream();
     };
-  }, [open, startCamera, stopCamera, recordedBlob]);
+  }, [open, resetRecording, stopStream]);
 
+  // Restart camera when switching lens (only if user already enabled camera)
   useEffect(() => {
-    if (open && facingMode && !recordedBlob) {
-      startCamera();
-    }
-  }, [facingMode, open, startCamera, recordedBlob]);
+    if (!open) return;
+    if (state !== "ready") return;
+    startCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facingMode]);
 
-  // Cleanup URLs
-  useEffect(() => {
-    return () => {
-      if (recordedUrl) {
-        URL.revokeObjectURL(recordedUrl);
-      }
-    };
-  }, [recordedUrl]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+  const showCamera = state === "ready" || state === "recording";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-black border-none">
-        <div className="relative flex flex-col items-center justify-center p-4 min-h-[500px]">
-          {/* Close button */}
+      <DialogContent className="sm:max-w-md p-0 overflow-hidden">
+        <div className="relative flex flex-col items-center justify-center p-4 min-h-[520px]">
           <Button
             variant="ghost"
             size="icon"
-            className="absolute top-2 right-2 z-10 text-white hover:bg-white/20"
+            className="absolute top-2 right-2 z-10"
             onClick={() => onOpenChange(false)}
           >
             <X className="w-5 h-5" />
           </Button>
 
-          {/* Error display */}
-          {error && (
-            <div className="text-red-500 text-center p-4">
-              <p>{error}</p>
-              <Button variant="outline" className="mt-2" onClick={startCamera}>
-                Попробовать снова
-              </Button>
-            </div>
-          )}
-
-          {/* Video preview (hidden, used as source) */}
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="hidden"
-          />
-
-          {/* Circular canvas preview */}
-          {!recordedBlob && !error && (
+          <div className="flex flex-col items-center gap-4">
+            {/* Preview */}
             <div className="relative">
-              <canvas
-                ref={canvasRef}
-                className="rounded-full border-4 border-primary"
-                style={{ width: 280, height: 280 }}
-              />
-              
-              {/* Recording indicator */}
-              {isRecording && (
-                <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-500 px-3 py-1 rounded-full flex items-center gap-2">
-                  <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                  <span className="text-white text-sm font-medium">
-                    {formatTime(recordingTime)}
+              {showCamera && (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
+                />
+              )}
+
+              {state === "preview" && recordedUrl && (
+                <video
+                  src={recordedUrl}
+                  autoPlay
+                  loop
+                  playsInline
+                  className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
+                />
+              )}
+
+              {(state === "idle" || state === "error") && (
+                <div className="w-[280px] h-[280px] rounded-full border-4 border-border bg-muted flex items-center justify-center">
+                  <div className="text-center px-6">
+                    <p className="text-sm text-muted-foreground">
+                      {error ?? "Для записи кружка нужен доступ к камере"}
+                    </p>
+                    <Button
+                      className="mt-3"
+                      onClick={() => startCamera()}
+                      disabled={!navigator?.mediaDevices?.getUserMedia}
+                    >
+                      Включить камеру
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* timer */}
+              {state === "recording" && (
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 rounded-full bg-destructive px-3 py-1 flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
+                  <span className="text-sm font-medium text-destructive-foreground">
+                    {recordingTime}s
                   </span>
                 </div>
               )}
             </div>
-          )}
 
-          {/* Recorded video preview */}
-          {recordedBlob && recordedUrl && (
-            <div className="relative">
-              <video
-                src={recordedUrl}
-                autoPlay
-                loop
-                playsInline
-                className="rounded-full border-4 border-primary object-cover"
-                style={{ width: 280, height: 280 }}
-              />
-            </div>
-          )}
+            {/* Controls */}
+            <div className="flex items-center justify-center gap-4">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={switchCamera}
+                disabled={state === "recording" || state === "preview"}
+                title="Переключить камеру"
+              >
+                <RefreshCw className="w-5 h-5" />
+              </Button>
 
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-4 mt-6">
-            {!recordedBlob ? (
-              <>
-                {/* Switch camera */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-white hover:bg-white/20"
-                  onClick={switchCamera}
-                  disabled={isRecording}
-                >
-                  <RefreshCw className="w-5 h-5" />
-                </Button>
-
-                {/* Record button */}
+              {state !== "preview" ? (
                 <button
-                  className={`w-16 h-16 rounded-full border-4 border-white flex items-center justify-center transition-all ${
-                    isRecording ? "bg-red-500" : "bg-transparent hover:bg-white/10"
+                  type="button"
+                  className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-colors ${
+                    state === "recording"
+                      ? "border-destructive bg-destructive"
+                      : "border-border bg-background hover:bg-muted"
                   }`}
-                  onClick={isRecording ? stopRecording : startRecording}
+                  onClick={state === "recording" ? handleStopRecordingClick : startRecording}
                 >
-                  {isRecording ? (
-                    <div className="w-6 h-6 bg-white rounded-sm" />
+                  {state === "recording" ? (
+                    <div className="w-6 h-6 rounded-sm bg-destructive-foreground" />
                   ) : (
-                    <Circle className="w-12 h-12 text-red-500 fill-red-500" />
+                    <Circle className="w-12 h-12 text-destructive fill-destructive" />
                   )}
                 </button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={resetRecording}>
+                    Заново
+                  </Button>
+                  <Button className="gap-2" onClick={handleSend}>
+                    <Send className="w-4 h-4" />
+                    Отправить
+                  </Button>
+                </>
+              )}
 
-                {/* Placeholder for symmetry */}
-                <div className="w-10 h-10" />
-              </>
-            ) : (
-              <>
-                {/* Retry */}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-white hover:bg-white/20"
-                  onClick={handleRetry}
-                >
-                  <RefreshCw className="w-5 h-5" />
-                </Button>
+              <div className="w-10" />
+            </div>
 
-                {/* Send */}
-                <Button
-                  size="lg"
-                  className="rounded-full w-16 h-16"
-                  onClick={handleSend}
-                >
-                  <Send className="w-6 h-6" />
-                </Button>
-
-                {/* Placeholder for symmetry */}
-                <div className="w-10 h-10" />
-              </>
-            )}
+            <p className="text-xs text-muted-foreground text-center max-w-[320px]">
+              {mimeType?.includes("mp4")
+                ? "Запись будет отправлена как кружок." 
+                : "Ваш браузер может отправить кружок некорректно. Рекомендуется Chrome/Android или Safari iOS 17+."}
+            </p>
           </div>
-
-          {/* Hint text */}
-          <p className="text-white/60 text-sm mt-4 text-center">
-            {isRecording 
-              ? "Нажмите для остановки записи" 
-              : recordedBlob 
-                ? "Нажмите отправить или запишите заново"
-                : "Нажмите для начала записи кружка"
-            }
-          </p>
         </div>
       </DialogContent>
     </Dialog>
