@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -92,6 +92,7 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
 
 export default function AdminContacts() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
@@ -99,6 +100,9 @@ export default function AdminContacts() {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  
+  // Check for contact query param to auto-open contact card
+  const contactFromUrl = searchParams.get("contact");
 
   // Fetch contacts with deals count
   const { data: contacts, isLoading, refetch } = useQuery({
@@ -149,6 +153,19 @@ export default function AdminContacts() {
       return contactsList;
     },
   });
+
+  // Auto-open contact card when contact param is in URL
+  useEffect(() => {
+    if (contactFromUrl && contacts) {
+      // Find contact by user_id
+      const contact = contacts.find(c => c.user_id === contactFromUrl);
+      if (contact) {
+        setSelectedContactId(contact.id);
+        // Clear the URL param without reload
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [contactFromUrl, contacts, setSearchParams]);
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({

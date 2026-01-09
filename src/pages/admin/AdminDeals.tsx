@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -58,6 +59,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 };
 
 export default function AdminDeals() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
@@ -475,7 +477,7 @@ export default function AdminDeals() {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (deal.user_id && profile) {
-                          window.location.href = `/admin/contacts?contact=${profile.user_id}`;
+                          navigate(`/admin/contacts?contact=${profile.user_id}`);
                         }
                       }}
                       className={deal.user_id && profile ? "cursor-pointer hover:text-primary" : ""}
