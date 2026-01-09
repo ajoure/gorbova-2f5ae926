@@ -14,6 +14,44 @@ async function telegramRequest(botToken: string, method: string, params?: Record
   return response.json();
 }
 
+async function telegramUploadMedia(
+  botToken: string,
+  method: string,
+  chatId: string | number,
+  mediaType: string,
+  fileBuffer: ArrayBuffer,
+  fileName: string,
+  caption?: string,
+  keyboard?: unknown
+) {
+  const formData = new FormData();
+  formData.append('chat_id', String(chatId));
+  
+  const blob = new Blob([fileBuffer]);
+  formData.append(mediaType, blob, fileName);
+  
+  if (caption) {
+    formData.append('caption', caption);
+    formData.append('parse_mode', 'Markdown');
+  }
+  
+  if (keyboard) {
+    formData.append('reply_markup', JSON.stringify(keyboard));
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: 'POST',
+    body: formData,
+  });
+  return response.json();
+}
+
+interface BroadcastFilters {
+  hasActiveSubscription?: boolean;
+  productId?: string;
+  clubId?: string;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -57,51 +95,103 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { message, include_button, button_text } = await req.json();
+    // Parse request - support both JSON and FormData
+    let message = '';
+    let includeButton = false;
+    let buttonText = '';
+    let filters: BroadcastFilters = {};
+    let mediaType: string | null = null;
+    let mediaBuffer: ArrayBuffer | null = null;
+    let mediaFileName: string | null = null;
 
-    if (!message) {
+    const contentType = req.headers.get('content-type') || '';
+    
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await req.formData();
+      message = formData.get('message') as string || '';
+      includeButton = formData.get('include_button') === 'true';
+      buttonText = formData.get('button_text') as string || '';
+      
+      const filtersStr = formData.get('filters') as string;
+      if (filtersStr) {
+        filters = JSON.parse(filtersStr);
+      }
+      
+      mediaType = formData.get('media_type') as string || null;
+      const mediaFile = formData.get('media') as File | null;
+      
+      if (mediaFile) {
+        mediaBuffer = await mediaFile.arrayBuffer();
+        mediaFileName = mediaFile.name;
+      }
+    } else {
+      const body = await req.json();
+      message = body.message || '';
+      includeButton = body.include_button || false;
+      buttonText = body.button_text || '';
+      filters = body.filters || {};
+    }
+
+    if (!message && !mediaBuffer) {
       return new Response(
-        JSON.stringify({ error: 'Message is required' }),
+        JSON.stringify({ error: 'Message or media is required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log('Starting mass broadcast...');
+    console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType });
 
-    // Get all users with active subscriptions and linked Telegram
-    const { data: activeUsers, error: usersError } = await supabase
-      .from('telegram_access')
-      .select(`
-        user_id,
-        club_id,
-        active_until
-      `)
-      .or('active_until.is.null,active_until.gt.now()');
-
-    if (usersError) {
-      console.error('Error fetching active users:', usersError);
-      throw usersError;
-    }
-
-    console.log(`Found ${activeUsers?.length || 0} active telegram access records`);
-
-    // Get unique user IDs
-    const uniqueUserIds = [...new Set(activeUsers?.map(u => u.user_id) || [])];
-    console.log(`Unique users: ${uniqueUserIds.length}`);
-
-    // Get profiles with Telegram IDs
-    const { data: profiles, error: profilesError } = await supabase
+    // Build user query based on filters
+    let query = supabase
       .from('profiles')
       .select('user_id, telegram_user_id, full_name')
-      .in('user_id', uniqueUserIds)
       .not('telegram_user_id', 'is', null);
 
-    if (profilesError) {
-      console.error('Error fetching profiles:', profilesError);
-      throw profilesError;
+    const { data: allProfiles } = await query.limit(1000);
+    
+    if (!allProfiles?.length) {
+      return new Response(
+        JSON.stringify({ error: 'No users with Telegram found', sent: 0, failed: 0 }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    console.log(`Found ${profiles?.length || 0} profiles with Telegram`);
+    let profiles = allProfiles;
+
+    // Apply filters
+    if (filters.hasActiveSubscription) {
+      const { data: activeSubs } = await supabase
+        .from('subscriptions_v2')
+        .select('user_id')
+        .eq('status', 'active');
+      
+      const activeUserIds = new Set(activeSubs?.map(s => s.user_id) || []);
+      profiles = profiles.filter(p => activeUserIds.has(p.user_id));
+    }
+
+    if (filters.productId) {
+      const { data: productSubs } = await supabase
+        .from('subscriptions_v2')
+        .select('user_id')
+        .eq('product_id', filters.productId)
+        .eq('status', 'active');
+
+      const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
+      profiles = profiles.filter(p => productUserIds.has(p.user_id));
+    }
+
+    if (filters.clubId) {
+      const { data: clubAccess } = await supabase
+        .from('telegram_access')
+        .select('user_id')
+        .eq('club_id', filters.clubId)
+        .or('active_until.is.null,active_until.gt.now()');
+
+      const clubUserIds = new Set(clubAccess?.map(a => a.user_id) || []);
+      profiles = profiles.filter(p => clubUserIds.has(p.user_id));
+    }
+
+    console.log(`Found ${profiles.length} matching profiles`);
 
     // Get first available bot token
     const { data: bots, error: botsError } = await supabase
@@ -124,21 +214,63 @@ Deno.serve(async (req) => {
     let sent = 0;
     let failed = 0;
 
-    // Send messages
-    for (const profile of profiles || []) {
-      try {
-        const keyboard = include_button ? {
-          inline_keyboard: [[
-            { text: button_text || 'Открыть платформу', url: appUrl }
-          ]]
-        } : undefined;
+    const keyboard = includeButton ? {
+      inline_keyboard: [[
+        { text: buttonText || 'Открыть платформу', url: appUrl }
+      ]]
+    } : undefined;
 
-        const result = await telegramRequest(botToken, 'sendMessage', {
-          chat_id: profile.telegram_user_id,
-          text: message,
-          parse_mode: 'Markdown',
-          reply_markup: keyboard,
-        });
+    // Send messages
+    for (const profile of profiles) {
+      try {
+        let result;
+        
+        if (mediaBuffer && mediaType && mediaFileName) {
+          // Send media message
+          let method: string;
+          let mediaField: string;
+          
+          switch (mediaType) {
+            case 'photo':
+              method = 'sendPhoto';
+              mediaField = 'photo';
+              break;
+            case 'video':
+              method = 'sendVideo';
+              mediaField = 'video';
+              break;
+            case 'audio':
+              method = 'sendAudio';
+              mediaField = 'audio';
+              break;
+            case 'video_note':
+              method = 'sendVideoNote';
+              mediaField = 'video_note';
+              break;
+            default:
+              method = 'sendDocument';
+              mediaField = 'document';
+          }
+          
+          result = await telegramUploadMedia(
+            botToken,
+            method,
+            profile.telegram_user_id,
+            mediaField,
+            mediaBuffer,
+            mediaFileName,
+            message || undefined,
+            keyboard
+          );
+        } else {
+          // Send text message
+          result = await telegramRequest(botToken, 'sendMessage', {
+            chat_id: profile.telegram_user_id,
+            text: message,
+            parse_mode: 'Markdown',
+            reply_markup: keyboard,
+          });
+        }
 
         if (result.ok) {
           sent++;
@@ -166,6 +298,9 @@ Deno.serve(async (req) => {
         total_users: sent + failed,
         sent,
         failed,
+        has_media: !!mediaBuffer,
+        media_type: mediaType,
+        filters,
       },
     });
 
@@ -178,6 +313,9 @@ Deno.serve(async (req) => {
         failed,
         total: sent + failed,
         message_preview: message.substring(0, 50),
+        has_media: !!mediaBuffer,
+        media_type: mediaType,
+        filters,
       },
     });
 

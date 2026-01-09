@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -38,11 +37,15 @@ import {
   History,
   CheckCircle,
   XCircle,
-  Clock,
-  AlertCircle,
   Sparkles,
   Eye,
   ChevronRight,
+  Image,
+  Video,
+  Music,
+  Circle,
+  X,
+  Paperclip,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -54,6 +57,7 @@ interface BroadcastFilters {
   hasEmail: boolean;
   productId: string;
   tariffId: string;
+  clubId: string;
 }
 
 interface AudiencePreview {
@@ -70,6 +74,14 @@ interface AudiencePreview {
   }>;
 }
 
+type MediaType = "photo" | "video" | "audio" | "video_note" | null;
+
+interface MediaFile {
+  type: MediaType;
+  file: File;
+  preview?: string;
+}
+
 export default function AdminBroadcasts() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
@@ -78,15 +90,18 @@ export default function AdminBroadcasts() {
   const [emailBody, setEmailBody] = useState("");
   const [includeButton, setIncludeButton] = useState(true);
   const [buttonText, setButtonText] = useState("Открыть платформу");
-  const [isSending, setIsSending] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [filters, setFilters] = useState<BroadcastFilters>({
-    hasActiveSubscription: true,
+    hasActiveSubscription: false,
     hasTelegram: true,
     hasEmail: false,
     productId: "",
     tariffId: "",
+    clubId: "",
   });
 
   // Fetch products
@@ -102,11 +117,24 @@ export default function AdminBroadcasts() {
     },
   });
 
+  // Fetch telegram clubs
+  const { data: clubs } = useQuery({
+    queryKey: ["broadcast-clubs"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("telegram_clubs")
+        .select("id, club_name")
+        .eq("is_active", true)
+        .order("club_name");
+      return data || [];
+    },
+  });
+
   // Fetch audience preview based on filters
   const { data: audience, isLoading: audienceLoading } = useQuery({
     queryKey: ["broadcast-audience", filters],
     queryFn: async () => {
-      // Build query based on filters
+      // Build query - start with all profiles with telegram
       let query = supabase
         .from("profiles")
         .select("id, user_id, full_name, email, telegram_user_id, telegram_username");
@@ -115,7 +143,7 @@ export default function AdminBroadcasts() {
         query = query.not("telegram_user_id", "is", null);
       }
 
-      const { data: profiles } = await query.limit(500);
+      const { data: profiles } = await query.limit(1000);
 
       if (!profiles) return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] };
 
@@ -123,12 +151,12 @@ export default function AdminBroadcasts() {
 
       // Filter by active subscription if needed
       if (filters.hasActiveSubscription) {
-        const { data: activeAccess } = await supabase
-          .from("telegram_access")
+        const { data: activeSubs } = await supabase
+          .from("subscriptions_v2")
           .select("user_id")
-          .or("active_until.is.null,active_until.gt.now()");
+          .eq("status", "active");
 
-        const activeUserIds = new Set(activeAccess?.map((a) => a.user_id) || []);
+        const activeUserIds = new Set(activeSubs?.map((a) => a.user_id) || []);
         filteredProfiles = filteredProfiles.filter((p) => activeUserIds.has(p.user_id));
       }
 
@@ -142,6 +170,18 @@ export default function AdminBroadcasts() {
 
         const productUserIds = new Set(productSubs?.map((s) => s.user_id) || []);
         filteredProfiles = filteredProfiles.filter((p) => productUserIds.has(p.user_id));
+      }
+
+      // Filter by club if selected
+      if (filters.clubId) {
+        const { data: clubAccess } = await supabase
+          .from("telegram_access")
+          .select("user_id")
+          .eq("club_id", filters.clubId)
+          .or("active_until.is.null,active_until.gt.now()");
+
+        const clubUserIds = new Set(clubAccess?.map((a) => a.user_id) || []);
+        filteredProfiles = filteredProfiles.filter((p) => clubUserIds.has(p.user_id));
       }
 
       const telegramCount = filteredProfiles.filter((p) => p.telegram_user_id).length;
@@ -178,9 +218,70 @@ export default function AdminBroadcasts() {
     },
   });
 
+  // Handle file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (50MB max for video, 10MB for others)
+    const maxSize = type === "video" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Файл слишком большой. Максимум: ${type === "video" ? "50" : "10"} МБ`);
+      return;
+    }
+
+    let preview: string | undefined;
+    if (type === "photo" || type === "video") {
+      preview = URL.createObjectURL(file);
+    }
+
+    setMediaFile({ type, file, preview });
+  };
+
+  const removeMedia = () => {
+    if (mediaFile?.preview) {
+      URL.revokeObjectURL(mediaFile.preview);
+    }
+    setMediaFile(null);
+  };
+
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
     mutationFn: async () => {
+      // Prepare form data if there's media
+      if (mediaFile) {
+        const formData = new FormData();
+        formData.append("message", message.trim());
+        formData.append("include_button", String(includeButton));
+        if (includeButton) {
+          formData.append("button_text", buttonText);
+        }
+        formData.append("filters", JSON.stringify(filters));
+        formData.append("media_type", mediaFile.type || "");
+        formData.append("media", mediaFile.file);
+
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-mass-broadcast`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session?.access_token}`,
+            },
+            body: formData,
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to send broadcast");
+        }
+
+        return response.json();
+      }
+
+      // Text-only broadcast
       const { data, error } = await supabase.functions.invoke("telegram-mass-broadcast", {
         body: {
           message: message.trim(),
@@ -195,6 +296,7 @@ export default function AdminBroadcasts() {
     onSuccess: (data) => {
       toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
       setMessage("");
+      removeMedia();
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
@@ -228,8 +330,8 @@ export default function AdminBroadcasts() {
 
   const handleSend = () => {
     if (activeTab === "telegram") {
-      if (!message.trim()) {
-        toast.error("Введите текст сообщения");
+      if (!message.trim() && !mediaFile) {
+        toast.error("Введите текст сообщения или добавьте медиа");
         return;
       }
       sendTelegramMutation.mutate();
@@ -243,7 +345,7 @@ export default function AdminBroadcasts() {
   };
 
   const isSendDisabled =
-    (activeTab === "telegram" && !message.trim()) ||
+    (activeTab === "telegram" && !message.trim() && !mediaFile) ||
     (activeTab === "email" && (!emailSubject.trim() || !emailBody.trim())) ||
     sendTelegramMutation.isPending ||
     sendEmailMutation.isPending;
@@ -299,8 +401,138 @@ export default function AdminBroadcasts() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Media attachment */}
+                    {mediaFile ? (
+                      <div className="relative rounded-lg border p-3 bg-muted/50">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6"
+                          onClick={removeMedia}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                        <div className="flex items-center gap-3">
+                          {mediaFile.type === "photo" && mediaFile.preview && (
+                            <img
+                              src={mediaFile.preview}
+                              alt="Preview"
+                              className="w-20 h-20 object-cover rounded"
+                            />
+                          )}
+                          {mediaFile.type === "video" && (
+                            <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                              <Video className="h-8 w-8 text-muted-foreground" />
+                            </div>
+                          )}
+                          {mediaFile.type === "audio" && (
+                            <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                              <Music className="h-8 w-8 text-muted-foreground" />
+                            </div>
+                          )}
+                          {mediaFile.type === "video_note" && (
+                            <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
+                              <Circle className="h-8 w-8 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label>Вложение</Label>
+                        <div className="flex gap-2 flex-wrap">
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            accept="image/*,video/*,audio/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const type = file.type.startsWith("image/")
+                                  ? "photo"
+                                  : file.type.startsWith("video/")
+                                  ? "video"
+                                  : file.type.startsWith("audio/")
+                                  ? "audio"
+                                  : null;
+                                if (type) {
+                                  handleFileSelect(e, type);
+                                }
+                              }
+                            }}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                              if (fileInputRef.current) {
+                                fileInputRef.current.accept = "image/*";
+                                fileInputRef.current.click();
+                              }
+                            }}
+                          >
+                            <Image className="h-4 w-4" />
+                            Фото
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                              if (fileInputRef.current) {
+                                fileInputRef.current.accept = "video/*";
+                                fileInputRef.current.click();
+                              }
+                            }}
+                          >
+                            <Video className="h-4 w-4" />
+                            Видео
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                              if (fileInputRef.current) {
+                                fileInputRef.current.accept = "audio/*";
+                                fileInputRef.current.click();
+                              }
+                            }}
+                          >
+                            <Music className="h-4 w-4" />
+                            Аудио
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                              if (fileInputRef.current) {
+                                fileInputRef.current.accept = "video/mp4";
+                                fileInputRef.current.click();
+                              }
+                            }}
+                          >
+                            <Circle className="h-4 w-4" />
+                            Кружок
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Фото/аудио до 10 МБ, видео до 50 МБ
+                        </p>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
-                      <Label>Текст сообщения</Label>
+                      <Label>Текст сообщения {mediaFile && "(подпись)"}</Label>
                       <Textarea
                         placeholder="Введите текст сообщения для рассылки..."
                         value={message}
@@ -483,7 +715,7 @@ export default function AdminBroadcasts() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="activeSubscription" className="cursor-pointer">
+                  <Label htmlFor="activeSubscription" className="cursor-pointer text-sm">
                     Только с активной подпиской
                   </Label>
                   <Switch
@@ -513,6 +745,28 @@ export default function AdminBroadcasts() {
                       {products?.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Telegram-клуб</Label>
+                  <Select
+                    value={filters.clubId || "all"}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, clubId: v === "all" ? "" : v }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Все клубы" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все клубы</SelectItem>
+                      {clubs?.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.club_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
