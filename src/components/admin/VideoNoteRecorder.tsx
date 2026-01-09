@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Circle, RefreshCw, Send, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Circle, RefreshCw, Send } from "lucide-react";
 import { toast } from "sonner";
 
 interface VideoNoteRecorderProps {
@@ -50,6 +56,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // Visible + loggable version marker to ensure you test the latest build
+  const VERSION = "2026-01-09.2";
+  useEffect(() => {
+    console.log("VideoNoteRecorder version", VERSION);
+  }, []);
 
   const isSafari = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -450,15 +462,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md p-0 overflow-hidden">
         <div className="relative flex flex-col items-center justify-center p-4 min-h-[520px] pb-[env(safe-area-inset-bottom,16px)]">
-          {/* Single close button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-2 right-2 z-10"
-            onClick={() => onOpenChange(false)}
-          >
-            <X className="w-5 h-5" />
-          </Button>
+          <DialogHeader className="w-full text-center">
+            <DialogTitle>Запись кружка</DialogTitle>
+            <DialogDescription>
+              До 60 секунд. После остановки появятся кнопки отправки.
+            </DialogDescription>
+          </DialogHeader>
 
           <div className="flex flex-col items-center gap-4">
             {/* Video display */}
@@ -595,6 +604,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                 Диагностика
               </summary>
               <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <div>Версия: {VERSION}</div>
                 <div>Состояние: {state}</div>
                 <div>Формат: {diagActualMime ?? "—"}</div>
                 <div>Чанков: {diagChunkCount}</div>
