@@ -55,6 +55,7 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 
 interface ContactTelegramChatProps {
@@ -76,9 +77,13 @@ interface TelegramMessage {
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
+  admin_profile?: {
+    full_name: string | null;
+  } | null;
   meta?: {
     file_type?: string | null;
     file_name?: string | null;
+    file_url?: string | null;
     edited?: boolean;
     deleted?: boolean;
     [key: string]: unknown;
@@ -624,14 +629,37 @@ export function ContactTelegramChat({
                 )
               )}
               <span className="text-xs opacity-70">
-                {msg.direction === "outgoing" ? "Вы" : (clientName || "Клиент")}
+                {msg.direction === "outgoing" 
+                  ? (msg.admin_profile?.full_name || "Администратор") 
+                  : (clientName || "Клиент")}
               </span>
             </div>
             
+            {/* Media preview */}
             {fileType && (
-              <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
-                {getFileIcon(fileType)}
-                <span className="text-xs truncate">{fileName || "Файл"}</span>
+              <div className="mb-2 rounded overflow-hidden">
+                {fileType === "photo" && msg.meta?.file_url ? (
+                  <img 
+                    src={msg.meta.file_url as string} 
+                    alt="" 
+                    className="max-w-full max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity" 
+                    onClick={() => window.open(msg.meta?.file_url as string, '_blank')}
+                  />
+                ) : (fileType === "video" || fileType === "video_note") && msg.meta?.file_url ? (
+                  <video 
+                    src={msg.meta.file_url as string} 
+                    controls 
+                    className={cn(
+                      "max-h-48",
+                      fileType === "video_note" ? "w-48 h-48 rounded-full object-cover" : "max-w-full rounded"
+                    )}
+                  />
+                ) : (
+                  <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
+                    {getFileIcon(fileType)}
+                    <span className="text-xs truncate">{fileName || "Файл"}</span>
+                  </div>
+                )}
               </div>
             )}
             
@@ -662,36 +690,26 @@ export function ContactTelegramChat({
 
   return (
     <div className="flex flex-col h-full min-w-0 overflow-x-hidden">
-      {/* Header - minimal, only refresh button (photo button hidden via prop) */}
-      <div className="flex items-center justify-end pb-2 border-b border-border/30">
-        <div className="flex items-center gap-1">
-          {!hidePhotoButton && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => fetchPhotoMutation.mutate()}
-              disabled={fetchPhotoMutation.isPending}
-              className="h-8 px-2 text-xs"
-              title="Загрузить фото из Telegram"
-            >
-              {fetchPhotoMutation.isPending ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <ImageIcon className="w-4 h-4" />
-              )}
-              <span className="ml-1 hidden sm:inline">Фото TG</span>
-            </Button>
-          )}
+      {/* Header - only show if photo button is visible */}
+      {!hidePhotoButton && (
+        <div className="flex items-center justify-end pb-2 border-b border-border/30">
           <Button
             variant="ghost"
             size="sm"
-            onClick={refetch}
-            className="h-8 w-8 p-0"
+            onClick={() => fetchPhotoMutation.mutate()}
+            disabled={fetchPhotoMutation.isPending}
+            className="h-7 px-2 text-xs"
+            title="Загрузить фото из Telegram"
           >
-            <RefreshCw className="w-4 h-4" />
+            {fetchPhotoMutation.isPending ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ImageIcon className="w-3.5 h-3.5" />
+            )}
+            <span className="ml-1">Фото TG</span>
           </Button>
         </div>
-      </div>
+      )}
 
       {/* Messages + Events */}
       <ScrollArea className="flex-1 py-3" ref={scrollRef}>

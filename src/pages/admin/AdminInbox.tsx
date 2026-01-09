@@ -835,7 +835,7 @@ export default function AdminInbox() {
                             </span>
                             {dialog.is_favorite && <Star className="h-3 w-3 text-amber-500 fill-amber-500 shrink-0" />}
                           </div>
-                          <span className="text-[10px] text-muted-foreground shrink-0 ml-1">
+                          <span className="text-[11px] text-muted-foreground shrink-0 ml-1">
                             {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                           </span>
                         </div>
@@ -859,15 +859,15 @@ export default function AdminInbox() {
 
                       {/* Quick Actions - appear on hover (not in selection mode) */}
                       {!selectionMode && (
-                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm rounded-lg p-0.5">
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0 opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded p-0.5">
                           {dialog.unread_count > 0 && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-6 w-6 rounded-md" onClick={(e) => markChatAsRead(dialog.user_id, e)}>
-                                  <CheckCheck className="h-3 w-3" />
+                                <Button size="icon" variant="ghost" className="h-5 w-5 rounded" onClick={(e) => markChatAsRead(dialog.user_id, e)}>
+                                  <CheckCheck className="h-2.5 w-2.5" />
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>Прочитано</TooltipContent>
+                              <TooltipContent side="top" className="text-xs">Прочитано</TooltipContent>
                             </Tooltip>
                           )}
                           <Tooltip>
@@ -875,32 +875,32 @@ export default function AdminInbox() {
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className={cn("h-6 w-6 rounded-md", dialog.is_favorite && "text-amber-500")}
+                                className={cn("h-5 w-5 rounded", dialog.is_favorite && "text-amber-500")}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_favorite", value: !dialog.is_favorite });
                                 }}
                               >
-                                <Star className={cn("h-3 w-3", dialog.is_favorite && "fill-amber-500")} />
+                                <Star className={cn("h-2.5 w-2.5", dialog.is_favorite && "fill-amber-500")} />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>{dialog.is_favorite ? "Убрать из избранного" : "В избранное"}</TooltipContent>
+                            <TooltipContent side="top" className="text-xs">{dialog.is_favorite ? "Убрать" : "Избранное"}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className={cn("h-6 w-6 rounded-md", dialog.is_pinned && "text-amber-500")}
+                                className={cn("h-5 w-5 rounded", dialog.is_pinned && "text-amber-500")}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_pinned", value: !dialog.is_pinned });
                                 }}
                               >
-                                <Pin className={cn("h-3 w-3", dialog.is_pinned && "fill-amber-500")} />
+                                <Pin className={cn("h-2.5 w-2.5", dialog.is_pinned && "fill-amber-500")} />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>{dialog.is_pinned ? "Открепить" : "Закрепить"}</TooltipContent>
+                            <TooltipContent side="top" className="text-xs">{dialog.is_pinned ? "Открепить" : "Закрепить"}</TooltipContent>
                           </Tooltip>
                         </div>
                       )}
@@ -931,22 +931,22 @@ export default function AdminInbox() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-sm truncate">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-medium text-base truncate">
                         {selectedDialog.profile?.full_name || selectedDialog.profile?.telegram_username || "Без имени"}
                       </h3>
+                      {selectedDialog.profile?.telegram_username && (
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">@{selectedDialog.profile.telegram_username}</span>
+                      )}
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => navigate(`/admin/contacts?contact=${selectedUserId}`)}>
-                            <ExternalLink className="h-3.5 w-3.5" />
+                          <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => navigate(`/admin/contacts?contact=${selectedUserId}`)}>
+                            <ExternalLink className="h-3 w-3" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>Открыть карточку</TooltipContent>
                       </Tooltip>
                     </div>
-                    {selectedDialog.profile?.telegram_username && (
-                      <p className="text-xs text-muted-foreground">@{selectedDialog.profile.telegram_username}</p>
-                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     {selectedDialog.unread_count > 0 && (
