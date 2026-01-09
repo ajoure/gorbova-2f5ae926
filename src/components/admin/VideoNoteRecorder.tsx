@@ -64,21 +64,53 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       setError(null);
       stopStream();
 
-      // Request square video for video_note
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode,
-          width: { ideal: 384, max: 512 },
-          height: { ideal: 384, max: 512 },
-          aspectRatio: { ideal: 1 },
-        },
-        audio: true,
-      });
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        setError("Браузер не поддерживает доступ к камере");
+        setState("error");
+        return;
+      }
+
+      // Request square-ish video (Telegram crops to circle anyway). On some devices
+      // strict constraints can fail, so we fallback to a simpler request.
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode,
+            width: { ideal: 384 },
+            height: { ideal: 384 },
+            aspectRatio: { ideal: 1 },
+          },
+          audio: true,
+        });
+      } catch (e: any) {
+        if (e?.name === "OverconstrainedError") {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode },
+            audio: true,
+          });
+        } else {
+          throw e;
+        }
+      }
+
+      // If browser/OS revokes camera later, show a recoverable error.
+      const vTrack = stream.getVideoTracks()?.[0];
+      if (vTrack) {
+        vTrack.onended = () => {
+          stopStream();
+          setError("Камера отключилась. Нажмите «Включить камеру» ещё раз.");
+          setState("error");
+        };
+      }
 
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        // Don't fail hard if autoplay is blocked (common on iOS)
+        videoRef.current.play().catch(() => {
+          /* ignore */
+        });
       }
 
       setState("ready");
@@ -86,8 +118,10 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       console.error("VideoNoteRecorder camera error", e);
       const msg =
         e?.name === "NotAllowedError"
-          ? "Нет доступа к камере. Разрешите доступ в настройках браузера."
-          : "Не удалось получить доступ к камере.";
+          ? "Нет доступа к камере/микрофону. Разрешите доступ в настройках браузера."
+          : e?.name === "NotReadableError"
+            ? "Камера занята другим приложением. Закройте его и попробуйте снова."
+            : "Не удалось получить доступ к камере.";
       setError(msg);
       setState("error");
     }
