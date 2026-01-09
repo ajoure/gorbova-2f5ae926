@@ -76,6 +76,19 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(chunk) as any);
+  }
+
+  return btoa(binary);
+}
+
 const EMOJI_LIST = [
   "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
   "😉", "😌", "😍", "🥰", "😘", "😋", "😛", "😜", "🤪", "😎",
@@ -209,10 +222,15 @@ export function ContactTelegramChat({
       
       if (file) {
         setIsUploading(true);
-        const buffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
+
+        let base64: string;
+        try {
+          const buffer = await file.arrayBuffer();
+          base64 = arrayBufferToBase64(buffer);
+        } catch (e) {
+          console.error("Failed to encode file to base64", e);
+          throw new Error("Не удалось подготовить файл для отправки");
+        }
         
         // Use provided fileType or auto-detect
         let type = fileType || "document";
