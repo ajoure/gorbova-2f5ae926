@@ -352,11 +352,13 @@ Deno.serve(async (req) => {
         }
 
         // If file was sent successfully, download from Telegram and upload to Storage
-        let fileUrl: string | null = null;
+        let storageBucket: string | null = null;
+        let storagePath: string | null = null;
+        let fileId: string | null = null;
+        
         if (sendResult.ok && file) {
           try {
             // Get file_id from response based on file type
-            let fileId: string | null = null;
             const result = sendResult.result;
             
             if (result.video_note) {
@@ -364,10 +366,11 @@ Deno.serve(async (req) => {
             } else if (result.video) {
               fileId = result.video.file_id;
             } else if (result.photo && result.photo.length > 0) {
-              // Get the largest photo (last in array)
               fileId = result.photo[result.photo.length - 1].file_id;
             } else if (result.audio) {
               fileId = result.audio.file_id;
+            } else if (result.voice) {
+              fileId = result.voice.file_id;
             } else if (result.document) {
               fileId = result.document.file_id;
             }
@@ -380,31 +383,34 @@ Deno.serve(async (req) => {
               const fileInfo = await fileInfoRes.json();
               
               if (fileInfo.ok && fileInfo.result?.file_path) {
-                // Download file from Telegram
+                // Download file using arrayBuffer (more reliable)
                 const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
                 const fileResponse = await fetch(telegramFileUrl);
-                const fileBlob = await fileResponse.blob();
+                const arrayBuffer = await fileResponse.arrayBuffer();
                 
                 // Upload to Supabase Storage
-                const storagePath = `chat-media/${user_id}/${Date.now()}_${file.name}`;
+                storageBucket = 'documents';
+                storagePath = `chat-media/${user_id}/${Date.now()}_${file.name}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
-                  .from('documents')
-                  .upload(storagePath, fileBlob, { 
+                  .from(storageBucket)
+                  .upload(storagePath, arrayBuffer, { 
                     contentType: guessMimeType(file.name, file.type),
                     upsert: false 
                   });
                 
                 if (uploadData && !uploadError) {
-                  const { data: { publicUrl } } = supabase.storage
-                    .from('documents')
-                    .getPublicUrl(storagePath);
-                  fileUrl = publicUrl;
+                  console.log(`Uploaded outgoing file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
+                } else {
+                  console.error(`Upload error for ${storagePath}:`, uploadError);
+                  storageBucket = null;
+                  storagePath = null;
                 }
               }
             }
           } catch (uploadErr) {
             console.error("Failed to upload file to storage:", uploadErr);
-            // Continue without file_url - message still sent
+            storageBucket = null;
+            storagePath = null;
           }
         }
 
@@ -423,7 +429,9 @@ Deno.serve(async (req) => {
             telegram_response: sendResult,
             file_type: file?.type || null,
             file_name: file?.name || null,
-            file_url: fileUrl,
+            file_id: fileId,
+            storage_bucket: storageBucket,
+            storage_path: storagePath,
           },
         };
 
@@ -474,6 +482,28 @@ Deno.serve(async (req) => {
           .order("created_at", { ascending: true })
           .limit(limit);
 
+        // Helper to generate signed URL for a message
+        const enrichMessageWithSignedUrl = async (msg: any) => {
+          const meta = msg.meta || {};
+          
+          // If we have storage_path, create signed URL
+          if (meta.storage_bucket && meta.storage_path) {
+            try {
+              const { data: signedData, error: signedError } = await supabase.storage
+                .from(meta.storage_bucket)
+                .createSignedUrl(meta.storage_path, 3600); // 1 hour
+              
+              if (signedData && !signedError) {
+                meta.file_url = signedData.signedUrl;
+              }
+            } catch (e) {
+              console.error("Error creating signed URL:", e);
+            }
+          }
+          
+          return { ...msg, meta };
+        };
+
         if (messagesError) {
           // Fallback without admin profile join if FK doesn't exist
           const { data: fallbackMessages, error: fallbackError } = await supabase
@@ -512,9 +542,13 @@ Deno.serve(async (req) => {
             }
           }
           
-          const enrichedMessages = (fallbackMessages || []).map((m: any) => ({
-            ...m,
-            admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
+          // Enrich with admin profile and signed URLs
+          const enrichedMessages = await Promise.all((fallbackMessages || []).map(async (m: any) => {
+            const withAdmin = {
+              ...m,
+              admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
+            };
+            return enrichMessageWithSignedUrl(withAdmin);
           }));
           
           return new Response(JSON.stringify({ messages: enrichedMessages }), {
@@ -522,7 +556,10 @@ Deno.serve(async (req) => {
           });
         }
 
-        return new Response(JSON.stringify({ messages: messages || [] }), {
+        // Enrich all messages with signed URLs
+        const enrichedMessages = await Promise.all((messages || []).map(enrichMessageWithSignedUrl));
+
+        return new Response(JSON.stringify({ messages: enrichedMessages }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

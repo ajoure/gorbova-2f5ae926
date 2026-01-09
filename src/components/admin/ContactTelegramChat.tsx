@@ -614,7 +614,7 @@ export function ContactTelegramChat({
             </DropdownMenu>
           )}
           <div
-            className={`max-w-[80%] rounded-lg p-3 ${
+            className={`max-w-[95%] rounded-lg p-3 ${
               msg.direction === "outgoing"
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted"
@@ -634,7 +634,7 @@ export function ContactTelegramChat({
                   <User className="w-3 h-3 flex-shrink-0" />
                 )
               )}
-              <span className="text-xs opacity-70 whitespace-nowrap">
+              <span className="text-xs opacity-70">
                 {msg.direction === "outgoing" 
                   ? (msg.admin_profile?.full_name || "Администратор") 
                   : (clientName || "Клиент")}
