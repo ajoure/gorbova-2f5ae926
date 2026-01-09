@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -96,6 +97,7 @@ const getActionLabel = (action: string): string => {
 
 export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Fetch full payments for this deal
@@ -325,10 +327,25 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const contactUserId = profile?.user_id || deal?.user_id;
+                      if (!contactUserId) return;
+                      onOpenChange(false);
+                      navigate(`/admin/contacts?contact=${contactUserId}`);
+                    }}
+                    disabled={!(profile?.user_id || deal?.user_id)}
+                    className={cn(
+                      "flex items-center gap-2 text-left",
+                      (profile?.user_id || deal?.user_id) && "cursor-pointer hover:underline text-primary",
+                      !(profile?.user_id || deal?.user_id) && "cursor-default"
+                    )}
+                  >
                     <User className="w-4 h-4 text-muted-foreground" />
                     <span>{profile?.full_name || "—"}</span>
-                  </div>
+                    {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
+                  </button>
                 </div>
                 <Separator />
                 <div className="flex items-center justify-between">
@@ -503,9 +520,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           <div className="text-xs text-muted-foreground">
                             <span>Выполнил: </span>
                             <button
+                              type="button"
                               onClick={() => {
-                                // Navigate to contact
-                                window.location.href = `/admin/contacts?user=${log.actor_user_id}`;
+                                if (!log.actor_user_id) return;
+                                onOpenChange(false);
+                                navigate(`/admin/contacts?contact=${log.actor_user_id}`);
                               }}
                               className="text-primary hover:underline inline-flex items-center gap-1"
                             >
