@@ -330,7 +330,16 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
     return false;
   }
   
-  const keyPem = publicKeyPem || BEPAID_PUBLIC_KEY;
+  // Use provided key or fallback to default bePaid key
+  let keyPem = publicKeyPem || BEPAID_PUBLIC_KEY;
+  
+  // Add PEM wrapper if missing
+  if (!keyPem.includes('-----BEGIN')) {
+    keyPem = `-----BEGIN PUBLIC KEY-----\n${keyPem}\n-----END PUBLIC KEY-----`;
+  }
+  
+  console.log('Using public key (first 50 chars):', keyPem.substring(0, 50));
+  console.log('Signature length:', signature.length);
   
   try {
     // Decode base64 signature
@@ -341,6 +350,9 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
     const pemFooter = '-----END PUBLIC KEY-----';
     const pemContents = keyPem.replace(pemHeader, '').replace(pemFooter, '').replace(/\s/g, '');
     const keyBytes = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+    
+    console.log('Key bytes length:', keyBytes.length);
+    console.log('Signature bytes length:', signatureBytes.length);
     
     // Import public key for RSA-SHA256 verification
     const cryptoKey = await crypto.subtle.importKey(
@@ -364,9 +376,6 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
     return isValid;
   } catch (error) {
     console.error('RSA signature verification error:', error);
-    
-    // If RSA verification fails, don't try HMAC - just return false
-    // The signature is clearly RSA (344 chars base64), not HMAC
     return false;
   }
 }
