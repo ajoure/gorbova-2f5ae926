@@ -544,6 +544,9 @@ Deno.serve(async (req) => {
           }
           
           // Download file from Telegram and upload to Storage
+          let storageBucket: string | null = null;
+          let storagePath: string | null = null;
+          
           if (fileId && botToken) {
             try {
               // Get file path from Telegram
@@ -553,10 +556,10 @@ Deno.serve(async (req) => {
               const fileInfo = await fileInfoRes.json();
               
               if (fileInfo.ok && fileInfo.result?.file_path) {
-                // Download file from Telegram
+                // Download file from Telegram using arrayBuffer (more reliable)
                 const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
                 const fileResponse = await fetch(telegramFileUrl);
-                const fileBlob = await fileResponse.blob();
+                const arrayBuffer = await fileResponse.arrayBuffer();
                 
                 // Determine content type
                 let contentType = 'application/octet-stream';
@@ -566,25 +569,27 @@ Deno.serve(async (req) => {
                 else if (fileType === 'audio') contentType = 'audio/mpeg';
                 
                 // Upload to Supabase Storage
-                const storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
+                storageBucket = 'documents';
+                storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
-                  .from('documents')
-                  .upload(storagePath, fileBlob, { 
+                  .from(storageBucket)
+                  .upload(storagePath, arrayBuffer, { 
                     contentType,
                     upsert: false 
                   });
                 
                 if (uploadData && !uploadError) {
-                  const { data: { publicUrl } } = supabase.storage
-                    .from('documents')
-                    .getPublicUrl(storagePath);
-                  fileUrl = publicUrl;
-                  console.log(`Uploaded incoming file to storage: ${storagePath}`);
+                  console.log(`Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
+                } else {
+                  console.error(`Upload error for ${storagePath}:`, uploadError);
+                  storageBucket = null;
+                  storagePath = null;
                 }
               }
             } catch (uploadErr) {
               console.error("Failed to upload incoming file to storage:", uploadErr);
-              // Continue without file_url - message still saved
+              storageBucket = null;
+              storagePath = null;
             }
           }
 
@@ -600,7 +605,9 @@ Deno.serve(async (req) => {
             meta: { 
               file_type: fileType, 
               file_name: fileName,
-              file_url: fileUrl,
+              file_id: fileId,
+              storage_bucket: storageBucket,
+              storage_path: storagePath,
               raw: msg 
             },
           });
