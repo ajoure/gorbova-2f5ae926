@@ -6,6 +6,20 @@ interface PullToRefreshProps {
   onRefresh?: () => Promise<void>;
 }
 
+function isEditableElement(el: Element | null) {
+  if (!el) return false;
+  return (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLElement && el.isContentEditable)
+  );
+}
+
+function isInsideEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest('input, textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]');
+}
+
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -14,36 +28,54 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const currentPullDistance = useRef(0);
   const threshold = 60;
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    // Check if we're at the top of the page
-    if (window.scrollY === 0 && !refreshing) {
-      startY.current = e.touches[0].clientY;
-      isPulling.current = true;
-    }
-  }, [refreshing]);
+  const blurIfNeeded = useCallback((e: React.SyntheticEvent) => {
+    const active = document.activeElement;
+    if (!isEditableElement(active)) return;
+    if (isInsideEditableTarget(e.target)) return;
+    (active as HTMLElement).blur();
+  }, []);
 
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isPulling.current || refreshing) return;
-    
-    // Stop if user scrolled down
-    if (window.scrollY > 0) {
-      isPulling.current = false;
-      setPullDistance(0);
-      currentPullDistance.current = 0;
-      return;
-    }
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      // If a text input is focused, don't start pull-to-refresh.
+      if (isEditableElement(document.activeElement)) return;
 
-    const currentY = e.touches[0].clientY;
-    const diff = currentY - startY.current;
-    
-    if (diff > 0) {
-      e.preventDefault();
-      // Make the gesture feel natural: user pulls ~60px → refresh
-      const distance = Math.min(diff, threshold * 1.5);
-      setPullDistance(distance);
-      currentPullDistance.current = distance;
-    }
-  }, [refreshing]);
+      // Check if we're at the top of the page
+      if (window.scrollY === 0 && !refreshing) {
+        startY.current = e.touches[0].clientY;
+        isPulling.current = true;
+      }
+    },
+    [refreshing]
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      // Never interfere with typing: this is a common reason why mobile can't dismiss the keyboard.
+      if (isEditableElement(document.activeElement)) return;
+      if (!isPulling.current || refreshing) return;
+
+      // Stop if user scrolled down
+      if (window.scrollY > 0) {
+        isPulling.current = false;
+        setPullDistance(0);
+        currentPullDistance.current = 0;
+        return;
+      }
+
+      const currentY = e.touches[0].clientY;
+      const diff = currentY - startY.current;
+
+      if (diff > 0) {
+        e.preventDefault();
+        // Make the gesture feel natural: user pulls ~60px → refresh
+        const distance = Math.min(diff, threshold * 1.5);
+        setPullDistance(distance);
+        currentPullDistance.current = distance;
+      }
+    },
+    [refreshing]
+  );
 
   const handleTouchEnd = useCallback(() => {
     if (!isPulling.current) return;
@@ -74,11 +106,12 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   }, [onRefresh]);
 
   const indicatorOpacity = Math.min(pullDistance / threshold, 1);
-  const indicatorScale = 0.5 + (indicatorOpacity * 0.5);
+  const indicatorScale = 0.5 + indicatorOpacity * 0.5;
 
   return (
     <div
       className="flex-1 flex flex-col relative touch-pan-y"
+      onPointerDownCapture={blurIfNeeded}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -94,10 +127,10 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
           }}
         >
           <div className="bg-background border border-border rounded-full p-2 shadow-lg">
-            <Loader2 
-              className={`h-5 w-5 text-primary ${refreshing ? 'animate-spin' : ''}`}
+            <Loader2
+              className={`h-5 w-5 text-primary ${refreshing ? "animate-spin" : ""}`}
               style={{
-                transform: refreshing ? 'none' : `rotate(${pullDistance * 4}deg)`,
+                transform: refreshing ? "none" : `rotate(${pullDistance * 4}deg)`,
               }}
             />
           </div>
@@ -108,8 +141,8 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       <div
         className="flex-1 min-h-full"
         style={{
-          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : 'none',
-          transition: isPulling.current ? 'none' : 'transform 0.2s ease-out',
+          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : "none",
+          transition: isPulling.current ? "none" : "transform 0.2s ease-out",
         }}
       >
         {children}
@@ -117,3 +150,4 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     </div>
   );
 }
+
