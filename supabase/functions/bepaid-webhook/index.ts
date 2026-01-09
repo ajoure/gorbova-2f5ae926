@@ -377,9 +377,13 @@ Deno.serve(async (req) => {
     console.log(`[WEBHOOK-RECEIVED] Timestamp: ${new Date().toISOString()}, Size: ${bodyText.length} bytes`);
     
     // Log webhook signature header for debugging
-    const signatureHeader = req.headers.get('X-Webhook-Signature') || 
+    // bePaid uses Content-Signature header (primary), fallback to X-Signature or X-Webhook-Signature
+    const signatureHeader = req.headers.get('Content-Signature') || 
+                            req.headers.get('X-Signature') ||
+                            req.headers.get('X-Webhook-Signature') || 
                             req.headers.get('Authorization')?.replace('Bearer ', '') || null;
-    console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing');
+    console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing', 
+      'Headers checked: Content-Signature, X-Signature, X-Webhook-Signature');
     
     // SECURITY: Enforce webhook signature verification when secret is configured
     if (bepaidWebhookSecret) {
