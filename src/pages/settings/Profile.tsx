@@ -10,8 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { User, Mail, Phone, Save, X, FileText, ChevronRight } from "lucide-react";
-
+import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2 } from "lucide-react";
 interface ProfileData {
   id: string;
   user_id: string;
@@ -141,6 +140,173 @@ export default function ProfileSettings() {
     setIsDirty(true);
   };
 
+  // Password change component
+  const PasswordChangeCard = () => {
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [showCurrent, setShowCurrent] = useState(false);
+    const [showNew, setShowNew] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
+    const [isChanging, setIsChanging] = useState(false);
+
+    const handleChangePassword = async () => {
+      if (!currentPassword.trim()) {
+        toast.error("Введите текущий пароль");
+        return;
+      }
+      if (!newPassword.trim()) {
+        toast.error("Введите новый пароль");
+        return;
+      }
+      if (newPassword.length < 6) {
+        toast.error("Новый пароль должен быть не менее 6 символов");
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        toast.error("Пароли не совпадают");
+        return;
+      }
+
+      setIsChanging(true);
+      try {
+        // First verify current password by re-authenticating
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: user?.email || "",
+          password: currentPassword,
+        });
+
+        if (signInError) {
+          toast.error("Неверный текущий пароль");
+          setIsChanging(false);
+          return;
+        }
+
+        // Update password
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (updateError) {
+          toast.error("Ошибка при изменении пароля: " + updateError.message);
+          setIsChanging(false);
+          return;
+        }
+
+        // Log the action
+        await supabase.from("audit_logs").insert({
+          actor_user_id: user?.id,
+          action: "profile.password_changed",
+          meta: { method: "self_change" },
+        });
+
+        toast.success("Пароль успешно изменён");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } catch (error) {
+        toast.error("Ошибка: " + (error as Error).message);
+      } finally {
+        setIsChanging(false);
+      }
+    };
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Key className="h-5 w-5" />
+            Изменить пароль
+          </CardTitle>
+          <CardDescription>
+            Введите текущий пароль и новый для изменения
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="currentPassword">Текущий пароль</Label>
+            <div className="relative">
+              <Input
+                id="currentPassword"
+                type={showCurrent ? "text" : "password"}
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Введите текущий пароль"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                onClick={() => setShowCurrent(!showCurrent)}
+              >
+                {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="newPassword">Новый пароль</Label>
+            <div className="relative">
+              <Input
+                id="newPassword"
+                type={showNew ? "text" : "password"}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Введите новый пароль"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                onClick={() => setShowNew(!showNew)}
+              >
+                {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Минимум 6 символов</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Подтвердите новый пароль</Label>
+            <div className="relative">
+              <Input
+                id="confirmPassword"
+                type={showConfirm ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Повторите новый пароль"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                onClick={() => setShowConfirm(!showConfirm)}
+              >
+                {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <Button
+            onClick={handleChangePassword}
+            disabled={isChanging || !currentPassword || !newPassword || !confirmPassword}
+            className="gap-2"
+          >
+            {isChanging ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Key className="h-4 w-4" />
+            )}
+            Изменить пароль
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-2xl mx-auto space-y-6">
@@ -256,6 +422,9 @@ export default function ProfileSettings() {
             )}
           </CardContent>
         </Card>
+
+        {/* Password Change Card */}
+        <PasswordChangeCard />
 
         {/* Legal Details Card */}
         <Card 

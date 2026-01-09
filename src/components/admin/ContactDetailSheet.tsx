@@ -115,7 +115,7 @@ interface ContactDetailSheetProps {
 export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetailSheetProps) {
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin } = usePermissions();
-  const { startImpersonation } = useAdminUsers();
+  const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -140,6 +140,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   // Sync days input with date range
   const handleDaysChange = (days: number) => {
@@ -967,7 +968,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               )}
 
               {/* Admin Actions Card */}
-              {contact.user_id && hasPermission("users.impersonate") && (
+              {contact.user_id && (hasPermission("users.impersonate") || hasPermission("users.reset_password")) && (
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -976,19 +977,43 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <Button
-                      variant="outline"
-                      className="w-full gap-2"
-                      onClick={handleImpersonate}
-                      disabled={isImpersonating}
-                    >
-                      {isImpersonating ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <LogIn className="w-4 h-4" />
-                      )}
-                      Войти от имени клиента
-                    </Button>
+                    {hasPermission("users.impersonate") && (
+                      <Button
+                        variant="outline"
+                        className="w-full gap-2"
+                        onClick={handleImpersonate}
+                        disabled={isImpersonating}
+                      >
+                        {isImpersonating ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <LogIn className="w-4 h-4" />
+                        )}
+                        Войти от имени клиента
+                      </Button>
+                    )}
+                    {hasPermission("users.reset_password") && contact.email && (
+                      <Button
+                        variant="outline"
+                        className="w-full gap-2"
+                        onClick={async () => {
+                          setIsResettingPassword(true);
+                          try {
+                            await resetPassword(contact.email!, contact.user_id!);
+                          } finally {
+                            setIsResettingPassword(false);
+                          }
+                        }}
+                        disabled={isResettingPassword}
+                      >
+                        {isResettingPassword ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Key className="w-4 h-4" />
+                        )}
+                        Сбросить пароль
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               )}
