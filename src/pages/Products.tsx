@@ -96,7 +96,7 @@ export default function Products() {
   const products = [
     {
       title: "Клуб «Буква Закона»",
-      description: "Закрытое сообщество для бухгалтеров и предпринимателей с доступом к базе знаний, видео-разборам и экспертной поддержке",
+      description: "База знаний, экспертная поддержка и закрытое сообщество профессионалов",
       badge: "Подписка",
       link: "/",
       isExternal: false,
@@ -105,7 +105,7 @@ export default function Products() {
     },
     {
       title: "Курс «Ценный бухгалтер»",
-      description: "7-недельный курс по методологии бухучета: 25 модулей, практические конференции и подготовка к проверкам",
+      description: "25 модулей за 7 недель: от методологии до подготовки к проверкам",
       badge: "Курс",
       link: "/course-accountant",
       isExternal: false,
@@ -113,8 +113,8 @@ export default function Products() {
       image: productCourseImage,
     },
     {
-      title: "Платная консультация",
-      description: "Индивидуальная консультация Катерины Горбова по вопросам налогообложения, защиты бизнеса и работы с законодательством",
+      title: "Консультация эксперта",
+      description: "Персональный разбор вопросов по налогам, учёту и защите бизнеса",
       badge: "Услуга",
       link: "/consultation",
       isExternal: false,
