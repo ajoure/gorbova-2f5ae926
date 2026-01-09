@@ -620,15 +620,15 @@ export function ContactTelegramChat({
           >
             <div className="flex items-center gap-1.5 mb-1">
               {msg.direction === "outgoing" ? (
-                <Bot className="w-3 h-3" />
+                <Bot className="w-3 h-3 flex-shrink-0" />
               ) : (
                 avatarUrl ? (
-                  <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover" />
+                  <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
                 ) : (
-                  <User className="w-3 h-3" />
+                  <User className="w-3 h-3 flex-shrink-0" />
                 )
               )}
-              <span className="text-xs opacity-70">
+              <span className="text-xs opacity-70 whitespace-nowrap truncate max-w-[140px]">
                 {msg.direction === "outgoing" 
                   ? (msg.admin_profile?.full_name || "Администратор") 
                   : (clientName || "Клиент")}
