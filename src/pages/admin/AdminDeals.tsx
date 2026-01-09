@@ -471,7 +471,15 @@ export default function AdminDeals() {
                         {deal.order_number}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (deal.user_id && profile) {
+                          window.location.href = `/admin/contacts?contact=${profile.user_id}`;
+                        }
+                      }}
+                      className={deal.user_id && profile ? "cursor-pointer hover:text-primary" : ""}
+                    >
                       <div className="font-medium">
                         {profile?.full_name || deal.customer_email || "—"}
                       </div>

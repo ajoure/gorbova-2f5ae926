@@ -7,9 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 interface GenerateFromTemplateRequest {
   order_id: string;
@@ -232,7 +229,7 @@ serve(async (req) => {
     const templateBuffer = new Uint8Array(await templateFile.arrayBuffer());
     const documentDate = new Date();
     const documentNumber = generateDocumentNumber('СА');
-    const priceAmount = order.final_price / 100; // Convert from kopecks
+    const priceAmount = Number(order.final_price); // Already in BYN
 
     // Build client info from profile if no legal details
     const getClientName = () => {

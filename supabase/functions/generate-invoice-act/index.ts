@@ -142,7 +142,7 @@ serve(async (req) => {
     const { data: order, error: orderError } = await supabase
       .from("orders_v2")
       .select(`
-        id, order_number, final_price, currency, status, created_at, customer_email,
+        id, order_number, final_price, currency, status, created_at, customer_email, customer_phone,
         payer_type, purchase_snapshot, user_id,
         products_v2(id, name, code),
         tariffs(id, name, code)

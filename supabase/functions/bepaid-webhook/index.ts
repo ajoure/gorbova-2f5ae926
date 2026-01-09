@@ -115,7 +115,7 @@ async function sendToGetCourse(
         // CRITICAL: Pass our own deal_number so we can update this deal later
         deal_number: dealNumber,
         offer_code: offerId.toString(),
-        deal_cost: amount / 100, // Convert from kopecks
+        deal_cost: amount, // Already in BYN, not kopecks
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
@@ -764,7 +764,7 @@ Deno.serve(async (req) => {
                     ?.[0]?.bot_token_encrypted as string | undefined;
 
                   if (primaryBotToken || botsById.size > 0) {
-                    const amountFormatted = (paymentV2.amount / 100).toFixed(2);
+                    const amountFormatted = Number(paymentV2.amount).toFixed(2);
                     const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
 
                     const message = `${paymentType}\n\n` +
@@ -1654,7 +1654,7 @@ ${userName}, к сожалению, не удалось провести опл�
         const customerName = meta.customer_first_name 
           ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()
           : 'Уважаемый клиент';
-        const priceFormatted = `${(order.amount / 100).toFixed(2)} ${order.currency}`;
+        const priceFormatted = `${Number(order.amount).toFixed(2)} ${order.currency}`;
 
         let emailHtml = `
           <!DOCTYPE html>

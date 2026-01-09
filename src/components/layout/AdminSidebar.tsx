@@ -123,6 +123,27 @@ export function AdminSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
+              {/* Сделки - первыми */}
+              {hasEntitlementsPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isDealsActive}
+                    tooltip={collapsed ? "Сделки" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/deals"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Handshake className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Сделки</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
               {/* Контакты */}
               {hasClientsPermission && (
                 <SidebarMenuItem>
@@ -151,27 +172,6 @@ export function AdminSidebar() {
                           )}
                         </>
                       )}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Сделки */}
-              {hasEntitlementsPermission && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isDealsActive}
-                    tooltip={collapsed ? "Сделки" : undefined}
-                  >
-                    <NavLink
-                      to="/admin/deals"
-                      end
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
-                      activeClassName="bg-sidebar-accent text-sidebar-primary"
-                    >
-                      <Handshake className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span>Сделки</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
