@@ -316,7 +316,12 @@ export default function AdminDeals() {
             <Sparkles className="h-4 w-4 mr-2" />
             Умный импорт
           </Button>
-          <Button variant="outline" onClick={() => refetch()}>
+          <Button variant="outline" onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+            queryClient.invalidateQueries({ queryKey: ["profiles-map"] });
+            queryClient.invalidateQueries({ queryKey: ["products-filter"] });
+            toast.success("Данные обновлены");
+          }}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Обновить
           </Button>

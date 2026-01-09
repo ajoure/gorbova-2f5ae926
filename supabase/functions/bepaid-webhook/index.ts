@@ -767,12 +767,16 @@ Deno.serve(async (req) => {
                     .eq('status', 'active');
 
                   const botsById = new Map<string, string>();
+                  let firstBotToken: string | null = null;
                   for (const b of (bots || []) as any[]) {
-                    if (b?.id && b?.bot_token_encrypted) botsById.set(b.id, b.bot_token_encrypted);
+                    if (b?.id && b?.bot_token_encrypted) {
+                      botsById.set(b.id, b.bot_token_encrypted);
+                      if (!firstBotToken) firstBotToken = b.bot_token_encrypted;
+                    }
                   }
+                  // Primary bot or any first available bot
                   const primaryBotToken = ((bots || []) as any[])
-                    ?.sort((a, b) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0))
-                    ?.[0]?.bot_token_encrypted as string | undefined;
+                    ?.find((b: any) => b?.is_primary)?.bot_token_encrypted || firstBotToken;
 
                   if (primaryBotToken || botsById.size > 0) {
                     const amountFormatted = Number(paymentV2.amount).toFixed(2);
@@ -789,10 +793,12 @@ Deno.serve(async (req) => {
                       `🆔 Заказ: ${orderV2.order_number}`;
 
                     // Send to all super admins with telegram
+                    console.log(`Sending payment notification to ${adminProfiles.length} admins, botsById size: ${botsById.size}, primaryBotToken: ${primaryBotToken ? 'yes' : 'no'}`);
                     for (const admin of adminProfiles as any[]) {
-                      const botTokenForAdmin = (admin?.telegram_link_bot_id && botsById.get(admin.telegram_link_bot_id))
+                      // Use admin's linked bot if available, otherwise use primary or first available
+                      const botTokenForAdmin = (admin?.telegram_link_bot_id && botsById.has(admin.telegram_link_bot_id))
                         ? botsById.get(admin.telegram_link_bot_id)
-                        : (primaryBotToken || Array.from(botsById.values())[0]);
+                        : (primaryBotToken || firstBotToken);
 
                       if (!botTokenForAdmin) continue;
 
