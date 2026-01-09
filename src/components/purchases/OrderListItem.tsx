@@ -89,6 +89,7 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
         executor: data.document.executor,
         client: data.document.client,
         order: data.document.order,
+        profile: data.document.profile,
       });
     } catch (error) {
       console.error("Preview error:", error);

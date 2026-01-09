@@ -2,6 +2,8 @@ import { useState, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Download, Loader2 } from "lucide-react";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
 interface DocumentData {
   documentNumber: string;
@@ -9,6 +11,7 @@ interface DocumentData {
   executor: { full_name: string; short_name?: string; unp: string; legal_address: string; bank_name: string; bank_code: string; bank_account: string; director_position?: string; director_full_name?: string; director_short_name?: string; acts_on_basis?: string; phone?: string; email?: string; };
   client: { client_type?: string; ind_full_name?: string; ent_name?: string; leg_name?: string; leg_director_name?: string; name?: string; phone?: string; email?: string; };
   order: { product_name: string; tariff_name?: string; final_price: number; currency: string; customer_email?: string; customer_phone?: string; };
+  profile?: { full_name?: string | null; email?: string | null; };
 }
 
 interface InvoiceActPreviewDialogProps {
@@ -46,25 +49,144 @@ function dateToRussianFormat(d: string): string {
 
 function getClientInfo(data: DocumentData) {
   const ct = data.client.client_type || 'individual';
-  const has = ct === 'individual' ? !!data.client.ind_full_name : ct === 'entrepreneur' ? !!data.client.ent_name : !!data.client.leg_name;
-  if (has) {
+  // Check if legal details are filled
+  const hasLegalDetails = ct === 'individual' 
+    ? !!data.client.ind_full_name 
+    : ct === 'entrepreneur' 
+      ? !!data.client.ent_name 
+      : !!data.client.leg_name;
+  
+  if (hasLegalDetails) {
     const nm = ct === 'individual' ? data.client.ind_full_name : ct === 'entrepreneur' ? data.client.ent_name : data.client.leg_name;
-    return { name: nm || '', phone: data.client.phone || data.order.customer_phone || '', email: data.client.email || data.order.customer_email || '' };
+    return { 
+      name: nm || '', 
+      phone: data.client.phone || data.order.customer_phone || '', 
+      email: data.client.email || data.order.customer_email || '' 
+    };
   }
-  return { name: data.client.name || '', phone: data.order.customer_phone || data.client.phone || '', email: data.order.customer_email || data.client.email || '' };
+  
+  // Use profile full_name if no legal details
+  const clientName = data.profile?.full_name || data.client.name || '';
+  return { 
+    name: clientName, 
+    phone: data.order.customer_phone || data.client.phone || '', 
+    email: data.order.customer_email || data.client.email || data.profile?.email || '' 
+  };
 }
 
 export function InvoiceActPreviewDialog({ open, onOpenChange, data, isLoading }: InvoiceActPreviewDialogProps) {
   const [generating, setGenerating] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const handlePrint = () => {
-    if (!ref.current) return;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>Счёт-акт ${data?.documentNumber}</title><link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap" rel="stylesheet"><style>body{font-family:'PT Sans',sans-serif;padding:20px;}</style></head><body>${ref.current.innerHTML}</body></html>`);
-    w.document.close();
-    setTimeout(() => { w.print(); }, 500);
+  const handleDownloadPdf = async () => {
+    if (!data) return;
+    setGenerating(true);
+    
+    try {
+      const info = getClientInfo(data);
+      const ct = data.client.client_type || 'individual';
+      
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      
+      // Set default font
+      doc.setFont('helvetica');
+      
+      // Header
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      doc.text('оказанных услуг', 200, 15, { align: 'right' });
+      
+      // Title
+      doc.setFontSize(14);
+      doc.setTextColor(0);
+      doc.setFont('helvetica', 'bold');
+      doc.text('СЧЁТ-АКТ', 105, 30, { align: 'center' });
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`№ ${data.documentNumber}`, 105, 37, { align: 'center' });
+      
+      doc.setFontSize(10);
+      doc.text(`г. Минск ${dateToRussianFormat(data.documentDate)} года`, 105, 44, { align: 'center' });
+      
+      // Intro paragraph
+      doc.setFontSize(9);
+      const introText = `${data.executor.full_name}, именуемый в дальнейшем «Исполнитель», действующий на основании ${data.executor.acts_on_basis || 'Устава'}, с одной стороны и ${ct === 'individual' ? `физическое лицо ${info.name}` : info.name}, именуемое в дальнейшем «Заказчик», составили настоящий счёт-акт:`;
+      const splitIntro = doc.splitTextToSize(introText, 180);
+      doc.text(splitIntro, 15, 55);
+      
+      // Table
+      const tableY = 55 + splitIntro.length * 5 + 5;
+      const serviceName = data.order.tariff_name 
+        ? `${data.order.product_name} — ${data.order.tariff_name}` 
+        : data.order.product_name;
+      
+      (doc as any).autoTable({
+        startY: tableY,
+        head: [['Наименование', 'Ед.', 'Кол.', `Цена, ${data.order.currency}`, `Итого, ${data.order.currency}`]],
+        body: [[serviceName, 'услуга', '1', data.order.final_price.toFixed(2), data.order.final_price.toFixed(2)]],
+        theme: 'grid',
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        columnStyles: {
+          0: { cellWidth: 90 },
+          1: { cellWidth: 20, halign: 'center' },
+          2: { cellWidth: 15, halign: 'center' },
+          3: { cellWidth: 30, halign: 'center' },
+          4: { cellWidth: 30, halign: 'center' },
+        },
+        margin: { left: 15, right: 15 },
+      });
+      
+      const afterTableY = (doc as any).lastAutoTable.finalY + 8;
+      
+      // Total in words
+      doc.setFontSize(9);
+      const currency = data.order.currency === 'BYN' ? 'рублей' : data.order.currency;
+      doc.text(`Всего: ${numberToWordsRu(Math.floor(data.order.final_price))} ${currency}.`, 15, afterTableY);
+      
+      // Client info
+      doc.setFont('helvetica', 'bold');
+      doc.text('Заказчик:', 15, afterTableY + 12);
+      doc.setFont('helvetica', 'normal');
+      let clientLine = ct === 'individual' ? `Физ. лицо: ${info.name}` : info.name;
+      if (info.phone) clientLine += `. Тел: ${info.phone}`;
+      if (info.email) clientLine += `. Email: ${info.email}`;
+      const splitClient = doc.splitTextToSize(clientLine, 180);
+      doc.text(splitClient, 15, afterTableY + 18);
+      
+      const clientEndY = afterTableY + 18 + splitClient.length * 4;
+      
+      // Executor info
+      doc.setFont('helvetica', 'bold');
+      doc.text('Исполнитель:', 15, clientEndY + 8);
+      doc.setFont('helvetica', 'normal');
+      const execLine = `${data.executor.short_name || data.executor.full_name}, УНП ${data.executor.unp}, ${data.executor.legal_address}`;
+      const splitExec = doc.splitTextToSize(execLine, 180);
+      doc.text(splitExec, 15, clientEndY + 14);
+      
+      const execEndY = clientEndY + 14 + splitExec.length * 4;
+      
+      // Signatures
+      const sigY = execEndY + 20;
+      doc.text('Заказчик:', 15, sigY);
+      doc.line(15, sigY + 15, 85, sigY + 15);
+      doc.setFontSize(7);
+      doc.text(`/${fullNameToInitials(info.name)}/`, 15, sigY + 20);
+      
+      doc.setFontSize(9);
+      doc.text('Исполнитель:', 115, sigY);
+      doc.line(115, sigY + 15, 195, sigY + 15);
+      doc.setFontSize(7);
+      doc.text(`/${data.executor.director_short_name || fullNameToInitials(data.executor.director_full_name || '')}/`, 115, sigY + 20);
+      
+      // Save PDF
+      doc.save(`Счёт-акт_${data.documentNumber}.pdf`);
+    } catch (error) {
+      console.error('PDF generation error:', error);
+    } finally {
+      setGenerating(false);
+    }
   };
 
   if (!data && !isLoading) return null;
@@ -77,7 +199,12 @@ export function InvoiceActPreviewDialog({ open, onOpenChange, data, isLoading }:
         <DialogHeader className="flex-shrink-0">
           <div className="flex items-center justify-between">
             <DialogTitle>{isLoading ? 'Формирование...' : `Счёт-акт № ${data?.documentNumber}`}</DialogTitle>
-            {!isLoading && data && <Button onClick={handlePrint} className="mr-8"><Download className="h-4 w-4 mr-2" />Скачать PDF</Button>}
+            {!isLoading && data && (
+              <Button onClick={handleDownloadPdf} disabled={generating} className="mr-8">
+                {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+                Скачать PDF
+              </Button>
+            )}
           </div>
         </DialogHeader>
         <div className="flex-1 overflow-auto bg-muted/30 rounded-lg p-4">
