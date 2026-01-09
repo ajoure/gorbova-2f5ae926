@@ -863,7 +863,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
-                Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
+                Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
               <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">

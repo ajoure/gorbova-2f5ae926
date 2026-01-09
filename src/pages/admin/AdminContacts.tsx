@@ -121,13 +121,14 @@ export default function AdminContacts() {
       
       if (profilesError) throw profilesError;
 
-      // Get orders count per user
+      // Get only PAID orders count per user (unpaid orders are payment attempts, not deals)
       const { data: orders } = await supabase
         .from("orders_v2")
-        .select("user_id, created_at")
+        .select("user_id, created_at, status")
+        .eq("status", "paid")
         .order("created_at", { ascending: false });
 
-      // Group orders by user
+      // Group paid orders by user
       const ordersByUser = new Map<string, { count: number; lastAt: string | null }>();
       orders?.forEach(order => {
         const existing = ordersByUser.get(order.user_id);

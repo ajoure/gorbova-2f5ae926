@@ -1,11 +1,12 @@
 import { ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useConsent } from "@/hooks/useConsent";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
 import { PullToRefresh } from "./PullToRefresh";
-import { Loader2 } from "lucide-react";
+import { Loader2, Shield } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -13,8 +14,9 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { loading } = useAuth();
+  const { needsConsentUpdate, isLoading: consentLoading } = useConsent();
 
-  if (loading) {
+  if (loading || consentLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -22,9 +24,24 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     );
   }
 
+  // Block all content if consent is required - only show the modal
+  if (needsConsentUpdate) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
+        <ConsentUpdateModal />
+        <div className="text-center p-8 max-w-md">
+          <Shield className="h-16 w-16 mx-auto mb-4 text-muted-foreground/50" />
+          <h2 className="text-xl font-semibold mb-2">Требуется согласие</h2>
+          <p className="text-muted-foreground">
+            Для продолжения использования сервиса необходимо подтвердить согласие с политикой конфиденциальности.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <SidebarProvider>
-      <ConsentUpdateModal />
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
