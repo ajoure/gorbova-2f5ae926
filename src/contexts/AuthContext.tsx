@@ -52,15 +52,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // Set up auth state listener FIRST
+    let isMounted = true;
+
+    // FIRST check for existing session (to restore immediately on page load)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        fetchUserRole(session.user.id).then((r) => {
+          if (isMounted) setRole(r);
+        });
+      }
+      setLoading(false);
+    });
+
+    // THEN set up auth state listener for future changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        if (!isMounted) return;
+        
+        // Skip INITIAL_SESSION event since we already handled it above
+        if (event === 'INITIAL_SESSION') return;
+        
         setSession(session);
         setUser(session?.user ?? null);
         
         if (session?.user) {
+          // Use setTimeout to avoid potential race conditions with Supabase internals
           setTimeout(() => {
-            fetchUserRole(session.user.id).then(setRole);
+            if (isMounted) {
+              fetchUserRole(session.user.id).then((r) => {
+                if (isMounted) setRole(r);
+              });
+            }
           }, 0);
         } else {
           setRole("user");
@@ -69,18 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        fetchUserRole(session.user.id).then(setRole);
-      }
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
