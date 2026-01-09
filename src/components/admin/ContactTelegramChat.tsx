@@ -15,6 +15,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Send,
   MessageCircle,
   Bot,
@@ -544,85 +550,86 @@ export function ContactTelegramChat({
               </PopoverContent>
             </Popover>
             
-            <Popover open={showMediaMenu} onOpenChange={setShowMediaMenu}>
-              <PopoverTrigger asChild>
+            <DropdownMenu open={showMediaMenu} onOpenChange={setShowMediaMenu}>
+              <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                   <Paperclip className="w-4 h-4" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-48 p-2" align="start">
-                <div className="space-y-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    onClick={() => {
-                      if (fileInputRef.current) {
-                        fileInputRef.current.accept = "image/*";
-                        fileInputRef.current.click();
-                      }
-                    }}
-                  >
-                    <ImageIcon className="w-4 h-4" />
-                    Фото
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    onClick={() => {
-                      if (fileInputRef.current) {
-                        fileInputRef.current.accept = "video/*";
-                        fileInputRef.current.click();
-                      }
-                    }}
-                  >
-                    <Video className="w-4 h-4" />
-                    Видео
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    onClick={() => {
-                      setShowMediaMenu(false);
-                      setShowVideoNoteRecorder(true);
-                    }}
-                  >
-                    <Circle className="w-4 h-4" />
-                    Записать кружок
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    onClick={() => {
-                      if (fileInputRef.current) {
-                        fileInputRef.current.accept = "audio/*";
-                        fileInputRef.current.click();
-                      }
-                    }}
-                  >
-                    <Music className="w-4 h-4" />
-                    Аудио
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    onClick={() => {
-                      if (fileInputRef.current) {
-                        fileInputRef.current.accept = "*/*";
-                        fileInputRef.current.click();
-                      }
-                    }}
-                  >
-                    <FileText className="w-4 h-4" />
-                    Документ
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-48 p-2" align="start">
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "image/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <ImageIcon className="w-4 h-4" />
+                  Фото
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "video/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <Video className="w-4 h-4" />
+                  Видео
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
+                    setShowVideoNoteRecorder(true);
+                  }}
+                >
+                  <Circle className="w-4 h-4" />
+                  Записать кружок
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "audio/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <Music className="w-4 h-4" />
+                  Аудио
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  className="gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowMediaMenu(false);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "*/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <FileText className="w-4 h-4" />
+                  Документ
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <input
               ref={fileInputRef}
               type="file"
