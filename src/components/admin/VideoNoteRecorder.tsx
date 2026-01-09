@@ -337,9 +337,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
             </div>
 
             <p className="text-xs text-muted-foreground text-center max-w-[320px]">
-              {mimeType?.includes("mp4")
-                ? "Кружок будет отправлен в формате MP4."
-                : "Видео будет конвертировано на сервере для совместимости с Telegram."}
+              Удерживайте кнопку записи до 60 секунд.
             </p>
           </div>
         </div>

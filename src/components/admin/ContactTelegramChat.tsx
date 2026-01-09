@@ -261,8 +261,13 @@ export function ContactTelegramChat({
 
   // Scroll to bottom when items change
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    // ScrollArea uses a viewport inside, need to access it
+    const viewport = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+    if (viewport) {
+      // Use setTimeout to ensure content is rendered
+      setTimeout(() => {
+        viewport.scrollTop = viewport.scrollHeight;
+      }, 50);
     }
   }, [chatItems]);
 
