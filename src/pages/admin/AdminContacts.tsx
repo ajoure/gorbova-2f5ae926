@@ -48,6 +48,8 @@ import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } f
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { SortableTableHead } from "@/components/ui/sortable-table-head";
+import { useTableSort } from "@/hooks/useTableSort";
 
 interface Contact {
   id: string;
@@ -191,7 +193,7 @@ export default function AdminContacts() {
     },
   });
 
-  const getContactFieldValue = (contact: Contact, fieldKey: string): any => {
+  const getContactFieldValue = useCallback((contact: Contact, fieldKey: string): any => {
     switch (fieldKey) {
       case "has_telegram":
         return !!contact.telegram_user_id;
@@ -200,7 +202,7 @@ export default function AdminContacts() {
       default:
         return (contact as any)[fieldKey];
     }
-  };
+  }, []);
 
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
@@ -219,7 +221,15 @@ export default function AdminContacts() {
     
     // Then apply filters
     return applyFilters(result, activeFilters, getContactFieldValue);
-  }, [contacts, search, activeFilters]);
+  }, [contacts, search, activeFilters, getContactFieldValue]);
+
+  // Sorting
+  const { sortedData: sortedContacts, sortKey, sortDirection, handleSort } = useTableSort({
+    data: filteredContacts,
+    defaultSortKey: "created_at",
+    defaultSortDirection: "desc",
+    getFieldValue: getContactFieldValue,
+  });
 
   // Calculate counts for presets
   const presetCounts = useMemo(() => {
@@ -257,7 +267,7 @@ export default function AdminContacts() {
 
   const selectedContact = contacts?.find(c => c.id === selectedContactId);
 
-  // Drag select hook
+  // Drag select hook - use sortedContacts for consistent selection
   const {
     selectedIds: selectedContactIds,
     setSelectedIds: setSelectedContactIds,
@@ -273,7 +283,7 @@ export default function AdminContacts() {
     selectedCount,
     hasSelection,
   } = useDragSelect({
-    items: filteredContacts,
+    items: sortedContacts,
     getItemId: (contact) => contact.id,
   });
 
@@ -507,20 +517,32 @@ export default function AdminContacts() {
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
-                    checked={filteredContacts.length > 0 && selectedContactIds.size === filteredContacts.length}
-                    onCheckedChange={() => selectedContactIds.size === filteredContacts.length ? clearSelection() : selectAll()}
+                    checked={sortedContacts.length > 0 && selectedContactIds.size === sortedContacts.length}
+                    onCheckedChange={() => selectedContactIds.size === sortedContacts.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
-                <TableHead>Имя / Email</TableHead>
-                <TableHead>Телефон</TableHead>
-                <TableHead>Telegram</TableHead>
-                <TableHead className="text-center">Сделок</TableHead>
-                <TableHead>Последняя сделка</TableHead>
-                <TableHead>Статус</TableHead>
+                <SortableTableHead sortKey="full_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Имя / Email
+                </SortableTableHead>
+                <SortableTableHead sortKey="phone" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Телефон
+                </SortableTableHead>
+                <SortableTableHead sortKey="telegram_username" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Telegram
+                </SortableTableHead>
+                <SortableTableHead sortKey="deals_count" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-center">
+                  Сделок
+                </SortableTableHead>
+                <SortableTableHead sortKey="last_deal_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Последняя сделка
+                </SortableTableHead>
+                <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Статус
+                </SortableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredContacts.map((contact) => (
+              {sortedContacts.map((contact) => (
                 <TableRow 
                   key={contact.id}
                   ref={(el) => registerItemRef(contact.id, el)}
@@ -641,7 +663,7 @@ export default function AdminContacts() {
         selectedCount={selectedCount}
         onClearSelection={clearSelection}
         onBulkDelete={() => setShowDeleteDialog(true)}
-        totalCount={filteredContacts.length}
+        totalCount={sortedContacts.length}
         entityName="контактов"
         onSelectAll={selectAll}
       />

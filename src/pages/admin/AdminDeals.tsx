@@ -51,6 +51,8 @@ import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } f
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { SortableTableHead } from "@/components/ui/sortable-table-head";
+import { useTableSort } from "@/hooks/useTableSort";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -153,17 +155,21 @@ export default function AdminDeals() {
     return { total, paid, pending, revenue };
   }, [deals]);
 
-  const getDealFieldValue = (deal: any, fieldKey: string): any => {
+
+  // Get field value for sorting/filtering
+  const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
       case "contact_name":
         const profile = profilesMap?.get(deal.user_id);
         return profile?.full_name || deal.customer_email || "";
       case "product_name":
         return (deal.products_v2 as any)?.name || "";
+      case "tariff_name":
+        return (deal.tariffs as any)?.name || "";
       default:
         return deal[fieldKey];
     }
-  };
+  }, [profilesMap]);
 
   // Filter deals
   const filteredDeals = useMemo(() => {
@@ -188,7 +194,15 @@ export default function AdminDeals() {
     
     // Then apply filters
     return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [deals, search, activeFilters, profilesMap]);
+  }, [deals, search, activeFilters, profilesMap, getDealFieldValue]);
+
+  // Sorting
+  const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
+    data: filteredDeals,
+    defaultSortKey: "created_at",
+    defaultSortDirection: "desc",
+    getFieldValue: getDealFieldValue,
+  });
 
   // Preset counts
   const presetCounts = useMemo(() => {
@@ -211,7 +225,7 @@ export default function AdminDeals() {
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
 
-  // Drag select hook
+  // Drag select hook - use sortedDeals for consistent selection
   const {
     selectedIds: selectedDealIds,
     setSelectedIds: setSelectedDealIds,
@@ -227,7 +241,7 @@ export default function AdminDeals() {
     selectedCount,
     hasSelection,
   } = useDragSelect({
-    items: filteredDeals,
+    items: sortedDeals,
     getItemId: (deal) => deal.id,
   });
 
@@ -431,21 +445,33 @@ export default function AdminDeals() {
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
-                    checked={filteredDeals.length > 0 && selectedDealIds.size === filteredDeals.length}
-                    onCheckedChange={() => selectedDealIds.size === filteredDeals.length ? clearSelection() : selectAll()}
+                    checked={sortedDeals.length > 0 && selectedDealIds.size === sortedDeals.length}
+                    onCheckedChange={() => selectedDealIds.size === sortedDeals.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
-                <TableHead>Дата</TableHead>
-                <TableHead>Контакт</TableHead>
-                <TableHead>Продукт / Тариф</TableHead>
-                <TableHead className="text-right">Сумма</TableHead>
-                <TableHead>Статус</TableHead>
+                <SortableTableHead sortKey="created_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Дата
+                </SortableTableHead>
+                <SortableTableHead sortKey="contact_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Контакт
+                </SortableTableHead>
+                <SortableTableHead sortKey="product_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Продукт / Тариф
+                </SortableTableHead>
+                <SortableTableHead sortKey="final_price" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-right">
+                  Сумма
+                </SortableTableHead>
+                <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Статус
+                </SortableTableHead>
                 <TableHead>Оплата</TableHead>
-                <TableHead>Доступ до</TableHead>
+                <SortableTableHead sortKey="trial_end_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Доступ до
+                </SortableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDeals.map((deal) => {
+              {sortedDeals.map((deal) => {
                 const profile = profilesMap?.get(deal.user_id);
                 const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
                 const StatusIcon = statusConfig.icon;
@@ -594,7 +620,7 @@ export default function AdminDeals() {
         selectedCount={selectedCount}
         onClearSelection={clearSelection}
         onBulkDelete={() => setShowDeleteDialog(true)}
-        totalCount={filteredDeals.length}
+        totalCount={sortedDeals.length}
         entityName="сделок"
         onSelectAll={selectAll}
       />

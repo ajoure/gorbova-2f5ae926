@@ -109,8 +109,14 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
 
   // Mouse down handler
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only start drag if clicking on container background, not on items
-    if ((e.target as HTMLElement).closest("[data-selectable-item]")) {
+    // Only start drag if clicking on container background, not on items or interactive elements
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-selectable-item]")) {
+      return;
+    }
+    
+    // Don't start drag on interactive elements
+    if (target.closest("button, input, [role=checkbox], a, [data-radix-collection-item]")) {
       return;
     }
 
