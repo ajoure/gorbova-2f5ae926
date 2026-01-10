@@ -113,13 +113,13 @@ export function useLessonBlocks(lessonId?: string) {
 
       const { data: newBlock, error } = await supabase
         .from("lesson_blocks")
-        .insert({
+        .insert([{
           lesson_id: lessonId,
           block_type: data.block_type,
-          content: data.content as unknown as Record<string, unknown>,
+          content: data.content,
           sort_order: data.sort_order ?? maxOrder + 1,
-          settings: (data.settings || {}) as unknown as Record<string, unknown>,
-        })
+          settings: data.settings || {},
+        }] as any)
         .select()
         .single();
 
@@ -138,13 +138,13 @@ export function useLessonBlocks(lessonId?: string) {
     try {
       const updateData: Record<string, unknown> = {};
       if (data.block_type !== undefined) updateData.block_type = data.block_type;
-      if (data.content !== undefined) updateData.content = data.content as unknown as Record<string, unknown>;
+      if (data.content !== undefined) updateData.content = data.content;
       if (data.sort_order !== undefined) updateData.sort_order = data.sort_order;
-      if (data.settings !== undefined) updateData.settings = data.settings as unknown as Record<string, unknown>;
+      if (data.settings !== undefined) updateData.settings = data.settings;
 
       const { error } = await supabase
         .from("lesson_blocks")
-        .update(updateData)
+        .update(updateData as any)
         .eq("id", id);
 
       if (error) throw error;
@@ -208,14 +208,14 @@ export function useLessonBlocks(lessonId?: string) {
       const insertData = blocksData.map((data, index) => ({
         lesson_id: lessonId,
         block_type: data.block_type,
-        content: data.content as unknown as Record<string, unknown>,
+        content: data.content,
         sort_order: data.sort_order ?? maxOrder + 1 + index,
-        settings: (data.settings || {}) as unknown as Record<string, unknown>,
+        settings: data.settings || {},
       }));
 
       const { error } = await supabase
         .from("lesson_blocks")
-        .insert(insertData);
+        .insert(insertData as any);
 
       if (error) throw error;
       
