@@ -80,6 +80,58 @@ async function logAudit(supabase: any, event: any) {
   await supabase.from('telegram_access_audit').insert(event);
 }
 
+// Helper to find club_id if not provided
+async function findClubId(supabase: any, userId: string | null, telegramUserId: number | null): Promise<string | null> {
+  // Try from telegram_access first
+  if (userId) {
+    const { data: access } = await supabase
+      .from('telegram_access')
+      .select('club_id')
+      .eq('user_id', userId)
+      .in('state_chat', ['joined', 'invited'])
+      .limit(1)
+      .single();
+    
+    if (access?.club_id) return access.club_id;
+  }
+  
+  // Try from active subscription
+  if (userId) {
+    const { data: sub } = await supabase
+      .from('subscriptions_v2')
+      .select('product_id, products_v2(telegram_club_id)')
+      .eq('user_id', userId)
+      .in('status', ['active', 'trial'])
+      .limit(1)
+      .single();
+    
+    if (sub?.products_v2?.telegram_club_id) return sub.products_v2.telegram_club_id;
+  }
+  
+  // Try from telegram_club_members
+  if (telegramUserId) {
+    const { data: member } = await supabase
+      .from('telegram_club_members')
+      .select('club_id')
+      .eq('telegram_user_id', telegramUserId)
+      .in('access_status', ['active', 'joined'])
+      .limit(1)
+      .single();
+    
+    if (member?.club_id) return member.club_id;
+  }
+  
+  // Fallback: get any active club
+  const { data: anyClub } = await supabase
+    .from('telegram_clubs')
+    .select('id')
+    .eq('is_active', true)
+    .limit(1)
+    .single();
+  
+  return anyClub?.id || null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -91,7 +143,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: RevokeAccessRequest = await req.json();
-    const { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
+    let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
 
     console.log('Revoke access request:', body);
 
@@ -101,33 +153,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (!club_id) {
-      return new Response(JSON.stringify({ error: 'club_id required' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Get club with bot
-    const { data: club, error: clubError } = await supabase
-      .from('telegram_clubs')
-      .select('*, telegram_bots(*)')
-      .eq('id', club_id)
-      .single();
-
-    if (clubError || !club) {
-      return new Response(JSON.stringify({ error: 'Club not found' }), {
-        status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const bot = club.telegram_bots;
-    if (!bot || bot.status !== 'active') {
-      return new Response(JSON.stringify({ error: 'Bot inactive' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Determine telegram_user_id
+    // Determine telegram_user_id and profileUserId first
     let telegramUserId: number | null = telegram_user_id || null;
     let profileUserId: string | null = user_id || null;
 
@@ -164,6 +190,41 @@ Deno.serve(async (req) => {
       if (profile?.user_id) {
         profileUserId = profile.user_id;
       }
+    }
+
+    // If club_id not provided, try to find it
+    if (!club_id) {
+      console.log('No club_id provided, attempting to find...');
+      const foundClubId = await findClubId(supabase, profileUserId, telegramUserId);
+      club_id = foundClubId || undefined;
+      console.log('Found club_id:', club_id);
+    }
+
+    if (!club_id) {
+      console.error('Could not determine club_id for user', { user_id, telegram_user_id });
+      return new Response(JSON.stringify({ error: 'club_id required and could not be determined' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Get club with bot
+    const { data: club, error: clubError } = await supabase
+      .from('telegram_clubs')
+      .select('*, telegram_bots(*)')
+      .eq('id', club_id)
+      .single();
+
+    if (clubError || !club) {
+      return new Response(JSON.stringify({ error: 'Club not found' }), {
+        status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const bot = club.telegram_bots;
+    if (!bot || bot.status !== 'active') {
+      return new Response(JSON.stringify({ error: 'Bot inactive' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     if (!telegramUserId) {
@@ -272,7 +333,7 @@ Deno.serve(async (req) => {
     });
 
 
-    console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked });
+    console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked, dm_sent: dmResult?.ok });
 
     return new Response(JSON.stringify({
       success: true,
@@ -280,6 +341,7 @@ Deno.serve(async (req) => {
       channel_revoked: channelRevoked,
       chat_error: chatKickResult?.error,
       channel_error: channelKickResult?.error,
+      dm_sent: dmResult?.ok,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
