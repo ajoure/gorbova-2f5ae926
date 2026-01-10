@@ -69,8 +69,8 @@ export function LandingPricing() {
   } | null>(null);
 
   // Use the hook that calls public-product edge function with user_id for reentry pricing
-  const domain = getCurrentDomain() || "club.gorbova.by";
-  const { data: productData, isLoading } = usePublicProduct(domain, user?.id);
+  // Always use the production domain for the club landing, not preview domains
+  const { data: productData, isLoading } = usePublicProduct("club.gorbova.by", user?.id);
 
   const handleSelectPlan = (
     planName: string,
