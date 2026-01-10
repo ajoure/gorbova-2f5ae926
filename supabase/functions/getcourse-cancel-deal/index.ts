@@ -47,11 +47,14 @@ async function cancelInGetCourse(
     console.log(`[getcourse-cancel] Updating deal: email=${email}, offerId=${offerId}, gcDealId=${gcDealId}`);
     
     // To UPDATE an existing deal, we use deal_id (not deal_number!)
-    // Setting deal_status to "ложный" (false) marks the payment as cancelled
+    // Setting deal_status to "false" marks the payment as cancelled in GetCourse
+    // IMPORTANT: GetCourse expects status in Latin characters: "false", not "ложный"
+    // IMPORTANT: GetCourse requires deal_cost even when cancelling
     const dealParams: Record<string, any> = {
       offer_code: offerId.toString(),
-      deal_id: gcDealId, // Use deal_id for updating existing deal!
-      deal_status: 'ложный', // Set status to "false" in GetCourse
+      deal_id: Number(gcDealId), // Use deal_id for updating existing deal! Must be number
+      deal_status: 'false', // Use Latin "false" not Cyrillic "ложный"
+      deal_cost: amount, // GetCourse requires cost even for cancellation
       deal_is_paid: 0, // Also set payment flag to unpaid
       deal_comment: `Отмена: ${reason}. Order: ${orderNumber}`,
     };
@@ -87,12 +90,18 @@ async function cancelInGetCourse(
       return { success: false, error: `Invalid response: ${responseText}` };
     }
     
-    if (result.result?.success === true || result.success === true) {
-      console.log('[getcourse-cancel] Success - deal updated to status "ложный"');
+    // CRITICAL: Check the inner result.result.success, not the outer result.success
+    // GetCourse returns { success: true, result: { success: false, error_message: "..." } }
+    // when validation fails
+    if (result.result?.success === true) {
+      console.log('[getcourse-cancel] Success - deal updated to status "false"');
       return { success: true };
     }
     
-    return { success: false, error: result.error_message || result.result?.error_message || 'Unknown error' };
+    // Error case - extract the error message properly
+    const errorMsg = result.result?.error_message || result.error_message || JSON.stringify(result);
+    console.error('[getcourse-cancel] GetCourse returned error:', errorMsg);
+    return { success: false, error: errorMsg };
   } catch (error) {
     console.error('[getcourse-cancel] Error:', error);
     return { success: false, error: String(error) };
