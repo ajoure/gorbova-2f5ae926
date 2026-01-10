@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Lock, BookOpen, Video, FileText, Music, Files, ChevronRight } from "lucide-react";
+import { Lock, BookOpen, Video, FileText, Music, Files, ChevronRight, Construction } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const contentTypeIcons = {
   video: Video,
@@ -18,6 +19,7 @@ const contentTypeIcons = {
 export default function Library() {
   const { modules, loading } = useTrainingModules();
   const navigate = useNavigate();
+  const { isAdmin, loading: permissionsLoading } = usePermissions();
 
   const accessibleModules = modules.filter(m => m.is_active);
 
@@ -26,6 +28,25 @@ export default function Library() {
       navigate(`/library/${module.slug}`);
     }
   };
+
+  // В режиме разработки доступно только администраторам
+  if (!permissionsLoading && !isAdmin()) {
+    return (
+      <DashboardLayout>
+        <div className="container mx-auto px-4 py-6 max-w-6xl">
+          <Card className="text-center py-16">
+            <CardContent>
+              <Construction className="h-20 w-20 mx-auto text-muted-foreground mb-6" />
+              <h2 className="text-2xl font-bold mb-3">База знаний в разработке</h2>
+              <p className="text-muted-foreground max-w-md mx-auto">
+                Мы готовим для вас обучающие материалы. Скоро они станут доступны всем участникам клуба.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
