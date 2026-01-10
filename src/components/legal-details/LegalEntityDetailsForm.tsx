@@ -104,7 +104,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                 <FormItem className="col-span-2">
                   <FormLabel>Название</FormLabel>
                   <FormControl>
-                    <Input placeholder='"Солнечный путь"' {...field} />
+                    <Input placeholder='"АЖУР инкам"' {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -119,7 +119,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
               <FormItem>
                 <FormLabel>УНП</FormLabel>
                 <FormControl>
-                  <Input placeholder="100000001" maxLength={9} {...field} />
+                  <Input placeholder="193405000" maxLength={9} {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -133,7 +133,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
               <FormItem>
                 <FormLabel>Юридический адрес</FormLabel>
                 <FormControl>
-                  <Input placeholder="220000, г. Минск, ул. Центральная, 15, оф. 100" {...field} />
+                  <Input placeholder="220035, г. Минск, ул. Панфилова, 2, офис 49Л" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -168,7 +168,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                 <FormItem>
                   <FormLabel>ФИО</FormLabel>
                   <FormControl>
-                    <Input placeholder="Петров Пётр Петрович" {...field} />
+                    <Input placeholder="Иванов Иван Иванович" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -204,10 +204,10 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
               <FormItem>
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
-                    <Input 
-                      placeholder="BY00XXXX00000000000000000000" 
-                      maxLength={28}
-                      {...field}
+                  <Input 
+                    placeholder="BY47ALFA30122C35190010270000" 
+                    maxLength={28}
+                    {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
                   />
                 </FormControl>
@@ -224,7 +224,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                 <FormItem>
                   <FormLabel>Банк</FormLabel>
                   <FormControl>
-                    <Input placeholder='ОАО "Беларусбанк"' {...field} />
+                    <Input placeholder='ЗАО "Альфа-Банк"' {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -238,7 +238,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                   <FormLabel>БИК/Код</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="AKBBBY2X" 
+                      placeholder="ALFABY2X" 
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />

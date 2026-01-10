@@ -4,9 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Lock, BookOpen, Video, FileText, Music, Files, ChevronRight, Construction } from "lucide-react";
+import { Lock, BookOpen, Video, FileText, Music, Files, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { usePermissions } from "@/hooks/usePermissions";
 
 const contentTypeIcons = {
   video: Video,
@@ -19,7 +18,6 @@ const contentTypeIcons = {
 export default function Library() {
   const { modules, loading } = useTrainingModules();
   const navigate = useNavigate();
-  const { isAdmin, loading: permissionsLoading } = usePermissions();
 
   const accessibleModules = modules.filter(m => m.is_active);
 
@@ -28,50 +26,6 @@ export default function Library() {
       navigate(`/library/${module.slug}`);
     }
   };
-
-  // В режиме разработки доступно только администраторам
-  // Показываем заглушку пока проверяем права или если не админ
-  if (permissionsLoading) {
-    return (
-      <DashboardLayout>
-        <div className="container mx-auto px-4 py-6 max-w-6xl">
-          <div className="mb-8">
-            <Skeleton className="h-9 w-48 mb-2" />
-            <Skeleton className="h-5 w-96" />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="overflow-hidden">
-                <Skeleton className="h-40 w-full" />
-                <CardHeader>
-                  <Skeleton className="h-6 w-3/4" />
-                  <Skeleton className="h-4 w-full mt-2" />
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (!isAdmin()) {
-    return (
-      <DashboardLayout>
-        <div className="container mx-auto px-4 py-6 max-w-6xl">
-          <Card className="text-center py-16">
-            <CardContent>
-              <Construction className="h-20 w-20 mx-auto text-muted-foreground mb-6" />
-              <h2 className="text-2xl font-bold mb-3">База знаний в разработке</h2>
-              <p className="text-muted-foreground max-w-md mx-auto">
-                Мы готовим для вас обучающие материалы. Скоро они станут доступны всем участникам клуба.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </DashboardLayout>
-    );
-  }
 
   return (
     <DashboardLayout>
