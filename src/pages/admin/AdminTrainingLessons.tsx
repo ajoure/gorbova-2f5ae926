@@ -51,6 +51,7 @@ import {
   EyeOff,
   Clock,
   ChevronRight,
+  Blocks,
 } from "lucide-react";
 
 const contentTypeOptions = [
@@ -428,6 +429,14 @@ export default function AdminTrainingLessons() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/admin/training-lessons/${moduleId}/edit/${lesson.id}`)}
+                      >
+                        <Blocks className="h-4 w-4 mr-1" />
+                        Контент
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

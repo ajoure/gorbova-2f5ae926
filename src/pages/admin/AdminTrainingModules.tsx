@@ -48,8 +48,10 @@ import {
   EyeOff,
   ExternalLink,
   Download,
+  FileSpreadsheet,
 } from "lucide-react";
 import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
+import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
 
 const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -68,6 +70,7 @@ export default function AdminTrainingModules() {
   const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formData, setFormData] = useState<TrainingModuleFormData>({
     title: "",
@@ -314,6 +317,10 @@ export default function AdminTrainingModules() {
             <p className="text-muted-foreground">Управление модулями и уроками</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setIsExcelImportOpen(true)}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Импорт из Excel
+            </Button>
             <Button variant="outline" onClick={() => setIsImportDialogOpen(true)}>
               <Download className="mr-2 h-4 w-4" />
               Импорт из GetCourse
@@ -480,6 +487,13 @@ export default function AdminTrainingModules() {
         <GetCourseContentImportDialog
           open={isImportDialogOpen}
           onOpenChange={setIsImportDialogOpen}
+          onImportComplete={refetch}
+        />
+
+        {/* Excel Import Dialog */}
+        <ExcelTrainingImportDialog
+          open={isExcelImportOpen}
+          onOpenChange={setIsExcelImportOpen}
           onImportComplete={refetch}
         />
       </div>

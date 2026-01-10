@@ -366,10 +366,10 @@ export function ExcelTrainingImportDialog({
             .insert(blocksToInsert.map(block => ({
               lesson_id: newLesson.id,
               block_type: block.block_type,
-              content: block.content as unknown as Record<string, unknown>,
+              content: block.content,
               sort_order: block.sort_order,
               settings: {},
-            })));
+            })) as any);
 
           if (blocksError) {
             addLog('error', `Ошибка создания блоков для: ${lesson.title}`);
