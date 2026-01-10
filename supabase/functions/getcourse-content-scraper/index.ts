@@ -93,7 +93,7 @@ async function scrapeWithFirecrawl(opts: {
 }
 
 // In-memory session storage (temporary - resets on function cold start)
-const sessionStore = new Map<string, { cookies: string; expires: number }>();
+const sessionStore = new Map<string, { cookies: string; expires: number; checkUrl: string }>();
 
 const DEFAULT_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
@@ -162,7 +162,8 @@ async function performLogin(
   email: string,
   password: string,
   twoFactorCode?: string,
-  sessionId?: string
+  sessionId?: string,
+  postLoginCheckUrl?: string
 ): Promise<{ success: boolean; cookies?: string; needsTwoFactor?: boolean; sessionId?: string; error?: string }> {
   // Cleanup expired sessions
   const now = Date.now();
@@ -171,6 +172,7 @@ async function performLogin(
   }
 
   const cookieJar = new Map<string, string>();
+  const checkUrl = postLoginCheckUrl || `${baseUrl}/teach/control/stream`;
 
   // If we have a session ID with pending 2FA, restore cookies
   if (sessionId && sessionStore.has(sessionId)) {
@@ -201,7 +203,8 @@ async function performLogin(
     console.log("Submitting 2FA code...");
 
     // Try to fetch the current challenge page to detect field name + hidden inputs
-    const challenge = await fetchText(`${baseUrl}/teach/control/stream`, {
+    const challengeUrl = sessionStore.get(sessionId)?.checkUrl || checkUrl;
+    const challenge = await fetchText(challengeUrl, {
       Cookie: cookieHeaderFromJar(cookieJar),
       "User-Agent": DEFAULT_UA,
       Referer: loginUrl,
@@ -231,14 +234,15 @@ async function performLogin(
     upsertCookies(cookieJar, getSetCookieValues(twoFaResponse));
     await followRedirects(baseUrl, twoFaResponse.headers.get("location"), cookieJar);
 
-    // Clean up session store
-    sessionStore.delete(sessionId);
-
     // Verify
-    const test = await fetchText(`${baseUrl}/teach/control/stream`, {
+    const test = await fetchText(challengeUrl, {
       Cookie: cookieHeaderFromJar(cookieJar),
       "User-Agent": DEFAULT_UA,
     });
+
+    // Clean up session store
+    sessionStore.delete(sessionId);
+
 
     if (isLikelyTwoFactorPage(test.text)) {
       return { success: false, error: "2FA code incorrect or expired" };
@@ -276,7 +280,7 @@ async function performLogin(
   await followRedirects(baseUrl, loginResponse.headers.get("location"), cookieJar);
 
   // Verify on a protected page
-  const check = await fetchText(`${baseUrl}/teach/control/stream`, {
+  const check = await fetchText(checkUrl, {
     Cookie: cookieHeaderFromJar(cookieJar),
     "User-Agent": DEFAULT_UA,
     Referer: loginUrl,
@@ -286,6 +290,7 @@ async function performLogin(
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
       cookies: cookieHeaderFromJar(cookieJar),
+      checkUrl,
       expires: Date.now() + 5 * 60 * 1000,
     });
     console.log("2FA required, waiting for code...");
@@ -347,7 +352,8 @@ Deno.serve(async (req) => {
     console.log("Base URL:", baseUrl);
 
     // Perform login (with optional 2FA)
-    const loginResult = await performLogin(baseUrl, email, password, two_factor_code, session_id);
+    const postLoginCheckUrl = action === "parse_training" && training_url ? training_url : `${baseUrl}/teach/control/stream`;
+    const loginResult = await performLogin(baseUrl, email, password, two_factor_code, session_id, postLoginCheckUrl);
 
     if (!loginResult.success) {
       if (loginResult.needsTwoFactor) {
@@ -452,13 +458,43 @@ Deno.serve(async (req) => {
 
       // Fallback: direct fetch (non-JS) if Firecrawl didn't return HTML
       if (!html) {
-        const directRes = await fetch(training_url, { headers: { Cookie: cookies } });
-        html = await directRes.text();
+        const directRes = await fetch(training_url, {
+          headers: {
+            Cookie: cookies,
+            "User-Agent": DEFAULT_UA,
+            Referer: `${baseUrl}/teach/control/stream`,
+          },
+          redirect: "manual",
+        });
+
+        const location = directRes.headers.get("location");
+        if (directRes.status >= 300 && directRes.status < 400 && location) {
+          const resolved = location.startsWith("http") ? location : `${baseUrl}${location}`;
+          const follow = await fetch(resolved, {
+            headers: {
+              Cookie: cookies,
+              "User-Agent": DEFAULT_UA,
+              Referer: `${baseUrl}/teach/control/stream`,
+            },
+            redirect: "manual",
+          });
+          html = await follow.text();
+        } else {
+          html = await directRes.text();
+        }
       }
 
-      // Detect if we got redirected to a login page / access denied
-      if (/cms\/system\/login|name=["']email["']|Войти|Sign in/i.test(html)) {
-        throw new Error("Не удалось получить доступ к тренингу (похоже, требуется доступ/логин). Проверьте, что аккаунт имеет доступ к этому тренингу.");
+      const looksLikeLogin = /cms\/system\/login/i.test(html) && /name=["']email["']|name=["']password["']/i.test(html);
+      const looksLikeAccessDenied = /доступ\s+запрещ|нет\s+доступа|access\s+denied|\b403\b/i.test(html);
+
+      if (looksLikeLogin) {
+        throw new Error(
+          "Не удалось получить доступ к тренингу (сессия не применяется). " +
+            "Если включена двухфакторная авторизация — введите код из письма и повторите."
+        );
+      }
+      if (looksLikeAccessDenied) {
+        throw new Error("Нет доступа к этому тренингу для указанного аккаунта GetCourse.");
       }
 
       // Extract training title
