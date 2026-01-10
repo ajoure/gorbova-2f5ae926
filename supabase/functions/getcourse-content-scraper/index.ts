@@ -94,10 +94,17 @@ async function scrapeWithFirecrawl(opts: {
 }
 
 // In-memory session storage (temporary - resets on function cold start)
-const sessionStore = new Map<string, { cookies: string; expires: number; checkUrl: string }>();
+// Used only to bridge the short-lived 2FA flow between "login" and "submit code" calls.
+type PendingSession = {
+  cookies: string;
+  expires: number;
+  postLoginCheckUrl: string;
+  challengeUrl: string;
+};
+
+const sessionStore = new Map<string, PendingSession>();
 
 const DEFAULT_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
 function parseHiddenInputs(html: string): Record<string, string> {
   const inputs: Record<string, string> = {};
@@ -127,11 +134,19 @@ function guessTwoFactorFieldName(html: string): string {
 }
 
 function isLikelyLoginPage(html: string) {
-  return /cms\/system\/login|name=["']email["']|name=["']password["']|Войти|Sign in/i.test(html);
+  return /cms\/system\/login|name=["']email["']|name=["']password["']|Страница\s+входа|Sign\s*in|Войти/i.test(html);
+}
+
+function hasTwoFactorCodeInput(html: string) {
+  return /<input[^>]+name=["'][^"']*(?:code|otp|token|confirm)[^"']*["']/i.test(html);
 }
 
 function isLikelyTwoFactorPage(html: string) {
-  return /введите\s*код|код\s*подтверждения|enter\s*code|confirmation\s*code|one[-\s]?time\s*password|otp/i.test(html);
+  return (
+    /введите\s*код|код\s*подтверждения|код\s+из\s+письма|одноразов(?:ый|ого)\s+код|enter\s*code|confirmation\s*code|one[-\s]?time\s*password|otp/i.test(
+      html
+    ) || hasTwoFactorCodeInput(html)
+  );
 }
 
 async function fetchText(url: string, headers: Record<string, string>) {
@@ -203,13 +218,17 @@ async function performLogin(
   if (twoFactorCode && sessionId) {
     console.log("Submitting 2FA code...");
 
+    const stored = sessionStore.get(sessionId);
+    const challengeUrl = stored?.challengeUrl || loginUrl;
+    const postLoginUrl = stored?.postLoginCheckUrl || checkUrl;
+
     // Try to fetch the current challenge page to detect field name + hidden inputs
-    const challengeUrl = sessionStore.get(sessionId)?.checkUrl || checkUrl;
     const challenge = await fetchText(challengeUrl, {
       Cookie: cookieHeaderFromJar(cookieJar),
       "User-Agent": DEFAULT_UA,
       Referer: loginUrl,
     });
+
     const challengeHidden = parseHiddenInputs(challenge.text);
     const codeField = guessTwoFactorFieldName(challenge.text);
 
@@ -232,11 +251,13 @@ async function performLogin(
       redirect: "manual",
     });
 
+    const twoFaHtml = await twoFaResponse.text().catch(() => "");
+
     upsertCookies(cookieJar, getSetCookieValues(twoFaResponse));
     await followRedirects(baseUrl, twoFaResponse.headers.get("location"), cookieJar);
 
-    // Verify
-    const test = await fetchText(challengeUrl, {
+    // Verify on a protected page (not on the challenge page)
+    const test = await fetchText(postLoginUrl, {
       Cookie: cookieHeaderFromJar(cookieJar),
       "User-Agent": DEFAULT_UA,
     });
@@ -244,11 +265,10 @@ async function performLogin(
     // Clean up session store
     sessionStore.delete(sessionId);
 
-
-    if (isLikelyTwoFactorPage(test.text)) {
+    if (isLikelyTwoFactorPage(twoFaHtml) || isLikelyTwoFactorPage(test.text)) {
       return { success: false, error: "2FA code incorrect or expired" };
     }
-    if (isLikelyLoginPage(test.text) && test.text.length < 20000) {
+    if (isLikelyLoginPage(test.text)) {
       return { success: false, error: "Login failed after 2FA" };
     }
 
@@ -277,8 +297,28 @@ async function performLogin(
     redirect: "manual",
   });
 
+  const loginResponseHtml = await loginResponse.text().catch(() => "");
+
   upsertCookies(cookieJar, getSetCookieValues(loginResponse));
   await followRedirects(baseUrl, loginResponse.headers.get("location"), cookieJar);
+
+  // IMPORTANT: GetCourse may return the 2FA challenge page directly as the login response (status 200)
+  if (isLikelyTwoFactorPage(loginResponseHtml)) {
+    const newSessionId = crypto.randomUUID();
+    sessionStore.set(newSessionId, {
+      cookies: cookieHeaderFromJar(cookieJar),
+      challengeUrl: loginUrl,
+      postLoginCheckUrl: checkUrl,
+      expires: Date.now() + 5 * 60 * 1000,
+    });
+    console.log("2FA required (challenge returned on login), waiting for code...");
+    return { success: false, needsTwoFactor: true, sessionId: newSessionId };
+  }
+
+  // If we are still on a login-like page after submitting credentials, treat as failure
+  if (isLikelyLoginPage(loginResponseHtml) && !loginResponse.headers.get("location")) {
+    return { success: false, error: "Login failed - check credentials" };
+  }
 
   // Verify on a protected page
   const check = await fetchText(checkUrl, {
@@ -287,18 +327,19 @@ async function performLogin(
     Referer: loginUrl,
   });
 
-  if (isLikelyTwoFactorPage(check.text) && check.text.length < 50000) {
+  if (isLikelyTwoFactorPage(check.text)) {
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
       cookies: cookieHeaderFromJar(cookieJar),
-      checkUrl,
+      challengeUrl: checkUrl,
+      postLoginCheckUrl: checkUrl,
       expires: Date.now() + 5 * 60 * 1000,
     });
     console.log("2FA required, waiting for code...");
     return { success: false, needsTwoFactor: true, sessionId: newSessionId };
   }
 
-  if (isLikelyLoginPage(check.text) && check.text.length < 50000) {
+  if (isLikelyLoginPage(check.text)) {
     return { success: false, error: "Login failed - check credentials" };
   }
 
@@ -519,13 +560,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      const looksLikeLogin = /cms\/system\/login/i.test(html) && /name=["']email["']|name=["']password["']/i.test(html);
+      const looksLikeLogin = !hasLessonLinks && isLikelyLoginPage(html);
       const looksLikeAccessDenied = /доступ\s+запрещ|нет\s+доступа|access\s+denied|\b403\b/i.test(html);
 
       if (looksLikeLogin) {
         throw new Error(
-          "Не удалось получить доступ к тренингу (сессия не применяется). " +
-            "Если включена двухфакторная авторизация — введите код из письма и повторите."
+          "GetCourse вернул страницу входа — значит сессия ещё не подтверждена. " +
+            "Если на аккаунте включено подтверждение по коду, введите код из письма и повторите."
         );
       }
       if (looksLikeAccessDenied) {
