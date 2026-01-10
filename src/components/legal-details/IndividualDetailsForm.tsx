@@ -102,7 +102,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormLabel>ФИО полностью *</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="Иванов Иван Иванович" 
+                    placeholder="Петров Пётр Петрович" 
                     autoComplete="off"
                     {...field} 
                   />
@@ -135,7 +135,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormLabel>Личный номер *</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="3140583A009PB1" 
+                      placeholder="1234567A001PB1" 
                       maxLength={14}
                       autoComplete="off"
                       {...field}
@@ -176,7 +176,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormLabel>Телефон *</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="+375 44 7500084" 
+                      placeholder="+375 29 1234567" 
                       autoComplete="off"
                       {...field} 
                     />
@@ -266,7 +266,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               <FormItem>
                 <FormLabel>Кем выдан</FormLabel>
                 <FormControl>
-                  <Input placeholder="Фрунзенским РУВД г. Минска" autoComplete="off" {...field} />
+                  <Input placeholder="Советским РУВД г. Минска" autoComplete="off" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -292,7 +292,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Индекс</FormLabel>
                   <FormControl>
-                    <Input placeholder="222840" autoComplete="off" {...field} />
+                    <Input placeholder="220000" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -321,7 +321,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Район (если есть)</FormLabel>
                   <FormControl>
-                    <Input placeholder="Пуховичский район" autoComplete="off" {...field} />
+                    <Input placeholder="Минский район" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -334,7 +334,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Населённый пункт</FormLabel>
                   <FormControl>
-                    <Input placeholder="г. Минск / аг. Дукора" autoComplete="off" {...field} />
+                    <Input placeholder="г. Минск / аг. Колодищи" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -350,7 +350,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem className="col-span-2">
                   <FormLabel>Улица</FormLabel>
                   <FormControl>
-                    <Input placeholder="ул. Блашко" autoComplete="off" {...field} />
+                    <Input placeholder="ул. Солнечная" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -364,7 +364,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormItem>
                     <FormLabel>Дом</FormLabel>
                     <FormControl>
-                      <Input placeholder="25" autoComplete="off" {...field} />
+                      <Input placeholder="10" autoComplete="off" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -377,7 +377,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormItem>
                     <FormLabel>Кв.</FormLabel>
                     <FormControl>
-                      <Input placeholder="12" autoComplete="off" {...field} />
+                      <Input placeholder="5" autoComplete="off" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -404,10 +404,10 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               <FormItem>
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
-                  <Input 
-                    placeholder="BY58ALFA30143083440050270000" 
-                    maxLength={28}
-                    autoComplete="off"
+                    <Input 
+                      placeholder="BY00XXXX00000000000000000000" 
+                      maxLength={28}
+                      autoComplete="off"
                     {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
                   />
@@ -426,7 +426,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                 <FormItem>
                   <FormLabel>Банк</FormLabel>
                   <FormControl>
-                    <Input placeholder='ЗАО "Альфа-Банк"' autoComplete="off" {...field} />
+                    <Input placeholder='ОАО "Беларусбанк"' autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -440,7 +440,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
                   <FormLabel>БИК/Код</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="ALFABY2X" 
+                      placeholder="AKBBBY2X" 
                       autoComplete="off"
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}

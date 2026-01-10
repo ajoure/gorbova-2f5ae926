@@ -73,7 +73,7 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
               <FormItem>
                 <FormLabel>Наименование ИП</FormLabel>
                 <FormControl>
-                  <Input placeholder="ИП Федорчук Сергей Валерьевич" {...field} />
+                  <Input placeholder="ИП Сидоров Алексей Николаевич" {...field} />
                 </FormControl>
                 <FormDescription>Полное наименование как в свидетельстве</FormDescription>
                 <FormMessage />
@@ -102,7 +102,7 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
               <FormItem>
                 <FormLabel>Юридический адрес</FormLabel>
                 <FormControl>
-                  <Input placeholder="220035, г. Минск, ул. Примерная, д. 1, оф. 10" {...field} />
+                  <Input placeholder="220000, г. Минск, ул. Примерная, д. 1, оф. 10" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -137,10 +137,10 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
               <FormItem>
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
-                  <Input 
-                    placeholder="BY58ALFA30143083440050270000" 
-                    maxLength={28}
-                    {...field}
+                    <Input 
+                      placeholder="BY00XXXX00000000000000000000" 
+                      maxLength={28}
+                      {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
                   />
                 </FormControl>
@@ -157,7 +157,7 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
                 <FormItem>
                   <FormLabel>Банк</FormLabel>
                   <FormControl>
-                    <Input placeholder='ЗАО "Альфа-Банк"' {...field} />
+                    <Input placeholder='ОАО "Беларусбанк"' {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -171,7 +171,7 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
                   <FormLabel>БИК/Код</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="ALFABY2X" 
+                      placeholder="AKBBBY2X" 
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />
@@ -197,7 +197,7 @@ export function EntrepreneurDetailsForm({ initialData, onSubmit, isSubmitting }:
                 <FormItem>
                   <FormLabel>Телефон</FormLabel>
                   <FormControl>
-                    <Input placeholder="+375 44 7500084" {...field} />
+                    <Input placeholder="+375 29 1234567" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
