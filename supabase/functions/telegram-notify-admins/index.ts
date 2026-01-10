@@ -56,20 +56,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get super admin user IDs
-    const { data: superAdmins } = await supabase
-      .from('user_roles_v2')
-      .select(`user_id, roles!inner(code)`)
-      .eq('roles.code', 'super_admin');
+    // Get super admin role IDs first
+    const { data: adminRoles } = await supabase
+      .from('roles')
+      .select('id')
+      .in('code', ['admin', 'super_admin']);
 
-    if (!superAdmins || superAdmins.length === 0) {
-      console.log('No super admins found');
+    if (!adminRoles || adminRoles.length === 0) {
+      console.log('No admin roles defined in system');
+      return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_admin_roles' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const adminRoleIds = adminRoles.map((r: any) => r.id);
+
+    // Get user_ids with admin roles
+    const { data: adminUserRoles } = await supabase
+      .from('user_roles_v2')
+      .select('user_id')
+      .in('role_id', adminRoleIds);
+
+    if (!adminUserRoles || adminUserRoles.length === 0) {
+      console.log('No users with admin roles found');
       return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_super_admins' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const superAdminUserIds = superAdmins.map((sa: any) => sa.user_id);
+    const superAdminUserIds = adminUserRoles.map((ur: any) => ur.user_id);
+    console.log(`Found ${superAdminUserIds.length} admin users to notify`);
 
     // Get admin profiles with telegram info
     const { data: adminProfiles } = await supabase
