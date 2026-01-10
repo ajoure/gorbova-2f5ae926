@@ -69,7 +69,11 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
 }
 
 function getSiteUrl(): string {
-  return Deno.env.get('SITE_URL') || 'https://fsby.lovable.app';
+  return Deno.env.get('SITE_URL') || 'https://gorbova.club';
+}
+
+function getPricingUrl(): string {
+  return `${getSiteUrl()}/club#pricing`;
 }
 
 async function logAudit(supabase: any, event: any) {
@@ -224,7 +228,7 @@ Deno.serve(async (req) => {
     // Send notification
     let dmResult: any = null;
     const keyboard = {
-      inline_keyboard: [[{ text: '💳 Продлить подписку', url: `${getSiteUrl()}/pricing` }]],
+      inline_keyboard: [[{ text: '💳 Продлить подписку', url: getPricingUrl() }]],
     };
     dmResult = await sendMessage(
       botToken,
