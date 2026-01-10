@@ -47,7 +47,9 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  Download,
 } from "lucide-react";
+import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
 
 const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -62,9 +64,10 @@ const gradientOptions = [
 
 export default function AdminTrainingModules() {
   const navigate = useNavigate();
-  const { modules, loading, createModule, updateModule, deleteModule } = useTrainingModules();
+  const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
   const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formData, setFormData] = useState<TrainingModuleFormData>({
     title: "",
@@ -310,10 +313,16 @@ export default function AdminTrainingModules() {
             <h1 className="text-2xl font-bold">База знаний</h1>
             <p className="text-muted-foreground">Управление модулями и уроками</p>
           </div>
-          <Button onClick={openCreateDialog}>
-            <Plus className="mr-2 h-4 w-4" />
-            Добавить модуль
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setIsImportDialogOpen(true)}>
+              <Download className="mr-2 h-4 w-4" />
+              Импорт из GetCourse
+            </Button>
+            <Button onClick={openCreateDialog}>
+              <Plus className="mr-2 h-4 w-4" />
+              Добавить модуль
+            </Button>
+          </div>
         </div>
 
         {/* Modules List */}
@@ -466,6 +475,13 @@ export default function AdminTrainingModules() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* GetCourse Import Dialog */}
+        <GetCourseContentImportDialog
+          open={isImportDialogOpen}
+          onOpenChange={setIsImportDialogOpen}
+          onImportComplete={refetch}
+        />
       </div>
     </AdminLayout>
   );

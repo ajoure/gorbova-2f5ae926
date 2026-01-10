@@ -173,6 +173,15 @@ export default function LibraryLesson() {
                   allow="autoplay; fullscreen; picture-in-picture"
                   allowFullScreen
                 />
+              ) : currentLesson.video_url.includes("kinescope.io") ? (
+                <iframe
+                  src={currentLesson.video_url.includes("/embed/")
+                    ? currentLesson.video_url
+                    : `https://kinescope.io/embed/${currentLesson.video_url.split('/').pop()}`}
+                  className="w-full h-full"
+                  allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
+                  allowFullScreen
+                />
               ) : (
                 <video
                   src={currentLesson.video_url}
