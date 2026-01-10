@@ -142,7 +142,9 @@ Deno.serve(async (req) => {
 
     // Prepare message based on type
     let message = '';
-    const pricingUrl = `${supabaseUrl.replace('.supabase.co', '.lovable.app')}/pricing`;
+    // Use SITE_URL env var or construct from product landing page with pricing anchor
+    const siteUrl = Deno.env.get('SITE_URL') || 'https://gorbova.club';
+    const pricingUrl = `${siteUrl}/club#pricing`;
     
     const messageTemplates: Record<string, string> = {
       reminder_3_days: `⏰ Небольшое напоминание
