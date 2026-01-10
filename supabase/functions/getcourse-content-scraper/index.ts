@@ -92,13 +92,145 @@ async function scrapeWithFirecrawl(opts: {
   };
 }
 
+// In-memory session storage (temporary - resets on function cold start)
+const sessionStore = new Map<string, { cookies: string; expires: number }>();
+
+async function performLogin(
+  baseUrl: string,
+  email: string,
+  password: string,
+  twoFactorCode?: string,
+  sessionId?: string
+): Promise<{ success: boolean; cookies?: string; needsTwoFactor?: boolean; sessionId?: string; error?: string }> {
+  const cookieJar = new Map<string, string>();
+
+  // If we have a session ID with pending 2FA, restore cookies
+  if (sessionId && sessionStore.has(sessionId)) {
+    const stored = sessionStore.get(sessionId)!;
+    for (const pair of stored.cookies.split("; ")) {
+      const [k, v] = pair.split("=");
+      if (k && v) cookieJar.set(k, v);
+    }
+  }
+
+  // If submitting 2FA code
+  if (twoFactorCode && sessionId) {
+    console.log("Submitting 2FA code...");
+    const twoFaResponse = await fetch(`${baseUrl}/cms/system/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieHeaderFromJar(cookieJar),
+      },
+      body: new URLSearchParams({
+        code: twoFactorCode,
+        action: "processXd498",
+      }),
+      redirect: "manual",
+    });
+
+    upsertCookies(cookieJar, getSetCookieValues(twoFaResponse));
+
+    // Follow redirects
+    let redirectUrl = twoFaResponse.headers.get("location");
+    for (let i = 0; i < 3 && redirectUrl; i++) {
+      const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
+      const follow = await fetch(resolved, {
+        method: "GET",
+        headers: { Cookie: cookieHeaderFromJar(cookieJar) },
+        redirect: "manual",
+      });
+      upsertCookies(cookieJar, getSetCookieValues(follow));
+      redirectUrl = follow.headers.get("location");
+    }
+
+    // Clean up session store
+    sessionStore.delete(sessionId);
+
+    // Verify login success by checking a protected page
+    const testRes = await fetch(`${baseUrl}/teach/control/stream`, {
+      headers: { Cookie: cookieHeaderFromJar(cookieJar) },
+      redirect: "manual",
+    });
+    const testHtml = await testRes.text();
+
+    if (/cms\/system\/login|Войти|Sign in/i.test(testHtml) && testHtml.length < 5000) {
+      return { success: false, error: "2FA code incorrect or expired" };
+    }
+
+    return { success: true, cookies: cookieHeaderFromJar(cookieJar) };
+  }
+
+  // Initial login
+  console.log("Performing initial login...");
+  const loginResponse = await fetch(`${baseUrl}/cms/system/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      email,
+      password,
+      action: "processXd498",
+    }),
+    redirect: "manual",
+  });
+
+  upsertCookies(cookieJar, getSetCookieValues(loginResponse));
+
+  // Follow redirects
+  let redirectUrl = loginResponse.headers.get("location");
+  for (let i = 0; i < 3 && redirectUrl; i++) {
+    const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
+    const follow = await fetch(resolved, {
+      method: "GET",
+      headers: { Cookie: cookieHeaderFromJar(cookieJar) },
+      redirect: "manual",
+    });
+    upsertCookies(cookieJar, getSetCookieValues(follow));
+    redirectUrl = follow.headers.get("location");
+  }
+
+  if (!cookieJar.has("PHPSESSID")) {
+    return { success: false, error: "Login failed - check credentials" };
+  }
+
+  // Check if 2FA is required by looking at the response page
+  const checkRes = await fetch(`${baseUrl}/teach/control/stream`, {
+    headers: { Cookie: cookieHeaderFromJar(cookieJar) },
+    redirect: "manual",
+  });
+  const checkHtml = await checkRes.text();
+
+  // Detect 2FA prompt (GetCourse shows code input form)
+  if (/введите\s*код|enter.*code|code.*confirmation|подтверд/i.test(checkHtml) && checkHtml.length < 10000) {
+    // Store session for 2FA completion
+    const newSessionId = crypto.randomUUID();
+    sessionStore.set(newSessionId, {
+      cookies: cookieHeaderFromJar(cookieJar),
+      expires: Date.now() + 5 * 60 * 1000, // 5 minutes
+    });
+
+    console.log("2FA required, waiting for code...");
+    return { success: false, needsTwoFactor: true, sessionId: newSessionId };
+  }
+
+  // Check if we're still on login page (wrong credentials)
+  if (/cms\/system\/login|name=["']email["'].*name=["']password["']/i.test(checkHtml) && checkHtml.length < 5000) {
+    return { success: false, error: "Login failed - check credentials" };
+  }
+
+  return { success: true, cookies: cookieHeaderFromJar(cookieJar) };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { action, training_url } = await req.json();
+    const body = await req.json();
+    const { action, training_url, two_factor_code, session_id } = body;
     
     const email = Deno.env.get("GETCOURSE_EMAIL");
     const password = Deno.env.get("GETCOURSE_PASSWORD");
@@ -125,49 +257,28 @@ Deno.serve(async (req) => {
 
     console.log("Base URL:", baseUrl);
 
-    // Step 1: Login to GetCourse
-    console.log("Logging into GetCourse...");
+    // Perform login (with optional 2FA)
+    const loginResult = await performLogin(baseUrl, email, password, two_factor_code, session_id);
 
-    const cookieJar = new Map<string, string>();
-
-    const loginResponse = await fetch(`${baseUrl}/cms/system/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        email,
-        password,
-        action: "processXd498",
-      }),
-      redirect: "manual",
-    });
-
-    upsertCookies(cookieJar, getSetCookieValues(loginResponse));
-
-    // Follow redirects (some instances set extra cookies on redirect)
-    let redirectUrl = loginResponse.headers.get("location");
-    for (let i = 0; i < 3 && redirectUrl; i++) {
-      const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
-      const follow = await fetch(resolved, {
-        method: "GET",
-        headers: { Cookie: cookieHeaderFromJar(cookieJar) },
-        redirect: "manual",
-      });
-      upsertCookies(cookieJar, getSetCookieValues(follow));
-      redirectUrl = follow.headers.get("location");
-    }
-
-    const cookies = cookieHeaderFromJar(cookieJar);
-
-    if (!cookieJar.has("PHPSESSID")) {
-      console.error("Login failed - no PHPSESSID cookie received");
+    if (!loginResult.success) {
+      if (loginResult.needsTwoFactor) {
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            needs_two_factor: true, 
+            session_id: loginResult.sessionId,
+            message: "Введите код подтверждения, отправленный на вашу почту" 
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       return new Response(
-        JSON.stringify({ success: false, error: "Login failed - check credentials" }),
+        JSON.stringify({ success: false, error: loginResult.error }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    const cookies = loginResult.cookies!;
     console.log("Login successful, got session cookies");
 
     if (action === "list_trainings") {

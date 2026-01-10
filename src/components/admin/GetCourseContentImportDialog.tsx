@@ -82,7 +82,7 @@ export function GetCourseContentImportDialog({
 }: GetCourseContentImportDialogProps) {
   const { createModule } = useTrainingModules();
   
-  const [step, setStep] = useState<"select" | "preview" | "importing" | "complete">("select");
+  const [step, setStep] = useState<"select" | "two_factor" | "preview" | "importing" | "complete">("select");
   const [trainingUrl, setTrainingUrl] = useState("");
   const [trainings, setTrainings] = useState<TrainingListItem[]>([]);
   const [loadingTrainings, setLoadingTrainings] = useState(false);
@@ -92,6 +92,9 @@ export function GetCourseContentImportDialog({
   const [importProgress, setImportProgress] = useState(0);
   const [importLog, setImportLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorSessionId, setTwoFactorSessionId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ action: string; url?: string } | null>(null);
 
   const resetDialog = () => {
     setStep("select");
@@ -101,6 +104,9 @@ export function GetCourseContentImportDialog({
     setImportProgress(0);
     setImportLog([]);
     setError(null);
+    setTwoFactorCode("");
+    setTwoFactorSessionId(null);
+    setPendingAction(null);
   };
 
   const handleClose = () => {
@@ -108,19 +114,35 @@ export function GetCourseContentImportDialog({
     onOpenChange(false);
   };
 
-  const loadTrainingsList = async () => {
+  const loadTrainingsList = async (sessionId?: string, code?: string) => {
     setLoadingTrainings(true);
     setError(null);
     
     try {
       const { data, error } = await supabase.functions.invoke("getcourse-content-scraper", {
-        body: { action: "list_trainings" },
+        body: { 
+          action: "list_trainings",
+          session_id: sessionId,
+          two_factor_code: code,
+        },
       });
 
       if (error) throw error;
+      
+      // Handle 2FA requirement
+      if (data.needs_two_factor) {
+        setTwoFactorSessionId(data.session_id);
+        setPendingAction({ action: "list_trainings" });
+        setStep("two_factor");
+        return;
+      }
+      
       if (!data.success) throw new Error(data.error);
 
       setTrainings(data.trainings || []);
+      setStep("select");
+      setTwoFactorSessionId(null);
+      setPendingAction(null);
       
       if (data.trainings?.length === 0) {
         toast.info("Тренинги не найдены. Проверьте доступ к аккаунту.");
@@ -134,16 +156,30 @@ export function GetCourseContentImportDialog({
     }
   };
 
-  const parseTraining = async (url: string) => {
+  const parseTraining = async (url: string, sessionId?: string, code?: string) => {
     setParsingTraining(true);
     setError(null);
     
     try {
       const { data, error } = await supabase.functions.invoke("getcourse-content-scraper", {
-        body: { action: "parse_training", training_url: url },
+        body: { 
+          action: "parse_training", 
+          training_url: url,
+          session_id: sessionId,
+          two_factor_code: code,
+        },
       });
 
       if (error) throw error;
+      
+      // Handle 2FA requirement
+      if (data.needs_two_factor) {
+        setTwoFactorSessionId(data.session_id);
+        setPendingAction({ action: "parse_training", url });
+        setStep("two_factor");
+        return;
+      }
+      
       if (!data.success) throw new Error(data.error);
 
       // Mark all modules and lessons as selected by default
@@ -156,6 +192,8 @@ export function GetCourseContentImportDialog({
 
       setParsedTraining(training);
       setStep("preview");
+      setTwoFactorSessionId(null);
+      setPendingAction(null);
     } catch (err) {
       console.error("Error parsing training:", err);
       setError(err instanceof Error ? err.message : "Ошибка парсинга тренинга");
@@ -163,6 +201,20 @@ export function GetCourseContentImportDialog({
     } finally {
       setParsingTraining(false);
     }
+  };
+
+  const submitTwoFactorCode = async () => {
+    if (!twoFactorCode || !twoFactorSessionId || !pendingAction) return;
+    
+    setError(null);
+    
+    if (pendingAction.action === "list_trainings") {
+      await loadTrainingsList(twoFactorSessionId, twoFactorCode);
+    } else if (pendingAction.action === "parse_training" && pendingAction.url) {
+      await parseTraining(pendingAction.url, twoFactorSessionId, twoFactorCode);
+    }
+    
+    setTwoFactorCode("");
   };
 
   const toggleModule = (moduleIndex: number) => {
@@ -341,6 +393,7 @@ export function GetCourseContentImportDialog({
           </DialogTitle>
           <DialogDescription>
             {step === "select" && "Загрузите структуру курса из GetCourse"}
+            {step === "two_factor" && "Введите код подтверждения из почты"}
             {step === "preview" && "Выберите модули и уроки для импорта"}
             {step === "importing" && "Импорт в процессе..."}
             {step === "complete" && "Импорт завершён"}
@@ -396,7 +449,7 @@ export function GetCourseContentImportDialog({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={loadTrainingsList}
+                    onClick={() => loadTrainingsList()}
                     disabled={loadingTrainings}
                   >
                     {loadingTrainings ? (
@@ -438,6 +491,64 @@ export function GetCourseContentImportDialog({
                     Нажмите "Загрузить список" для получения тренингов
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {step === "two_factor" && (
+            <div className="space-y-4 py-4">
+              {error && (
+                <div className="bg-destructive/10 text-destructive p-3 rounded-lg flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  {error}
+                </div>
+              )}
+
+              <div className="text-center space-y-4">
+                <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
+                  <AlertCircle className="h-8 w-8 text-primary" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">Требуется подтверждение</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    GetCourse отправил код подтверждения на вашу почту. 
+                    Введите его ниже для продолжения.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-w-sm mx-auto">
+                <Label htmlFor="twoFactorCode">Код подтверждения</Label>
+                <Input
+                  id="twoFactorCode"
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value)}
+                  placeholder="Введите код из письма"
+                  className="text-center text-lg tracking-widest"
+                  autoFocus
+                />
+                <Button
+                  onClick={submitTwoFactorCode}
+                  disabled={!twoFactorCode || loadingTrainings || parsingTraining}
+                  className="w-full"
+                >
+                  {(loadingTrainings || parsingTraining) ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : null}
+                  Подтвердить
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setStep("select");
+                    setTwoFactorCode("");
+                    setTwoFactorSessionId(null);
+                    setPendingAction(null);
+                  }}
+                  className="w-full"
+                >
+                  Отмена
+                </Button>
               </div>
             </div>
           )}
