@@ -502,6 +502,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       };
       toast.success(messages[action]);
       refetchReentry();
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -1773,112 +1774,110 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           </div>
                         )}
 
-                        {/* Quick actions - mobile friendly */}
-                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                          {/* Extend mode */}
-                          {isSelected ? (
-                            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
-                              <div className="flex gap-1 items-center">
-                              <Input
-                                  type="number"
-                                  value={extendDays === 0 ? "" : extendDays}
-                                  onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
-                                  onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
-                                  className="h-9 sm:h-8 w-20"
-                                  min={1}
-                                />
-                                <span className="text-xs">дней</span>
+                        {/* Quick actions - mobile friendly - only show for active subscriptions */}
+                        {isActive && (
+                          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                            {/* Extend mode */}
+                            {isSelected ? (
+                              <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
+                                <div className="flex gap-1 items-center">
+                                <Input
+                                    type="number"
+                                    value={extendDays === 0 ? "" : extendDays}
+                                    onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                                    onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
+                                    className="h-9 sm:h-8 w-20"
+                                    min={1}
+                                  />
+                                  <span className="text-xs">дней</span>
+                                </div>
+                                <div className="flex gap-1 flex-1">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
+                                    disabled={isProcessing}
+                                    className="h-9 sm:h-8 flex-1 sm:flex-none gap-1 text-xs sm:text-sm"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    Продлить
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setSelectedSubscription(null)}
+                                    className="h-9 sm:h-8 px-3"
+                                  >
+                                    ✕
+                                  </Button>
+                                </div>
                               </div>
-                              <div className="flex gap-1 flex-1">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
-                                  disabled={isProcessing}
-                                  className="h-9 sm:h-8 flex-1 sm:flex-none gap-1 text-xs sm:text-sm"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  Продлить
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setSelectedSubscription(null)}
-                                  className="h-9 sm:h-8 px-3"
-                                >
-                                  ✕
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setSelectedSubscription(sub)}
-                                className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
-                              >
-                                <Settings className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                <span className="hidden xs:inline">Управление</span>
-                                <span className="xs:hidden">⚙</span>
-                              </Button>
-                              
-                              {isCanceled && isActive ? (
+                            ) : (
+                              <>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleSubscriptionAction("resume", sub.id)}
-                                  disabled={isProcessing}
+                                  onClick={() => setSelectedSubscription(sub)}
                                   className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
                                 >
-                                  <RotateCcw className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                  Возобновить
+                                  <Settings className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                  <span className="hidden xs:inline">Управление</span>
+                                  <span className="xs:hidden">⚙</span>
                                 </Button>
-                              ) : isActive ? (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={isProcessing}
-                                      className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
-                                    >
-                                      <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                      <span className="hidden sm:inline">Управление доступом</span>
-                                      <span className="sm:hidden">Доступ</span>
-                                      <ChevronDown className="w-3 h-3 ml-1" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="start" className="w-56">
-                                    <DropdownMenuItem
-                                      onClick={() => handleSubscriptionAction("cancel", sub.id)}
-                                      className="gap-2 text-amber-600"
-                                    >
-                                      <Ban className="w-4 h-4" />
-                                      <div>
-                                        <div className="font-medium">Отменить автопродление</div>
-                                        <div className="text-xs text-muted-foreground">Доступ сохранится до конца периода</div>
-                                      </div>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
-                                      className="gap-2 text-destructive"
-                                    >
-                                      <XCircle className="w-4 h-4" />
-                                      <div>
-                                        <div className="font-medium">Заблокировать сейчас</div>
-                                        <div className="text-xs text-muted-foreground">Немедленно закрыть доступ</div>
-                                      </div>
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ) : (
-                                <span className="text-xs text-muted-foreground italic">
-                                  Для восстановления используйте «Выдать новый доступ»
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </div>
+                                
+                                {isCanceled ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleSubscriptionAction("resume", sub.id)}
+                                    disabled={isProcessing}
+                                    className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                    Возобновить
+                                  </Button>
+                                ) : (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={isProcessing}
+                                        className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                      >
+                                        <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                        <span className="hidden sm:inline">Управление доступом</span>
+                                        <span className="sm:hidden">Доступ</span>
+                                        <ChevronDown className="w-3 h-3 ml-1" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="w-56">
+                                      <DropdownMenuItem
+                                        onClick={() => handleSubscriptionAction("cancel", sub.id)}
+                                        className="gap-2 text-amber-600"
+                                      >
+                                        <Ban className="w-4 h-4" />
+                                        <div>
+                                          <div className="font-medium">Отменить автопродление</div>
+                                          <div className="text-xs text-muted-foreground">Доступ сохранится до конца периода</div>
+                                        </div>
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
+                                        className="gap-2 text-destructive"
+                                      >
+                                        <XCircle className="w-4 h-4" />
+                                        <div>
+                                          <div className="font-medium">Заблокировать сейчас</div>
+                                          <div className="text-xs text-muted-foreground">Немедленно закрыть доступ</div>
+                                        </div>
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   );
