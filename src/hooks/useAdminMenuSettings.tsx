@@ -1,0 +1,212 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import {
+  Users,
+  Shield,
+  ScrollText,
+  Settings,
+  FileText,
+  Plug,
+  Handshake,
+  Package,
+  Wrench,
+  CalendarClock,
+  ClipboardCheck,
+  MessageCircle,
+  ClipboardList,
+  Building2,
+  FileStack,
+  Inbox,
+  Send,
+  GraduationCap,
+  LucideIcon,
+} from "lucide-react";
+
+export interface MenuItem {
+  id: string;
+  label: string;
+  path: string;
+  icon: string;
+  order: number;
+  permission?: string;
+  badge?: "unread" | "duplicates";
+}
+
+export interface MenuGroup {
+  id: string;
+  label: string;
+  order: number;
+  items: MenuItem[];
+}
+
+export type MenuSettings = MenuGroup[];
+
+// Icon mapping
+export const MENU_ICONS: Record<string, LucideIcon> = {
+  Users,
+  Shield,
+  ScrollText,
+  Settings,
+  FileText,
+  Plug,
+  Handshake,
+  Package,
+  Wrench,
+  CalendarClock,
+  ClipboardCheck,
+  MessageCircle,
+  ClipboardList,
+  Building2,
+  FileStack,
+  Inbox,
+  Send,
+  GraduationCap,
+};
+
+// Default menu configuration
+export const DEFAULT_MENU: MenuSettings = [
+  {
+    id: "crm",
+    label: "CRM",
+    order: 0,
+    items: [
+      { id: "inbox", label: "Входящие", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
+      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
+      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
+      { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 3, permission: "entitlements.view" },
+      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 4, permission: "entitlements.view" },
+      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 5, permission: "users.view" },
+      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 6, permission: "users.view" },
+      { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 7, permission: "entitlements.view" },
+    ],
+  },
+  {
+    id: "service",
+    label: "Служебные",
+    order: 1,
+    items: [
+      { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 0, permission: "roles.view" },
+      { id: "content", label: "Контент", path: "/admin/content", icon: "FileText", order: 1, permission: "content.view" },
+      { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 2, permission: "content.view" },
+      { id: "audit", label: "Аудит-лог", path: "/admin/audit", icon: "ScrollText", order: 3, permission: "audit.view" },
+      { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 4, permission: "users.view" },
+      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 5, permission: "roles.view" },
+      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 6, permission: "roles.view" },
+      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 7 },
+      { id: "system-audit", label: "Аудит системы", path: "/admin/system/audit", icon: "Wrench", order: 8 },
+    ],
+  },
+];
+
+export function useAdminMenuSettings() {
+  const queryClient = useQueryClient();
+
+  const { data: menuSettings, isLoading } = useQuery({
+    queryKey: ["admin-menu-settings"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("admin_menu_settings")
+        .select("*")
+        .limit(1)
+        .single();
+      
+      if (error) {
+        // If no settings or RLS blocks, use default
+        console.log("Using default menu:", error.message);
+        return DEFAULT_MENU;
+      }
+      
+      // If items is empty array or invalid, use default
+      const items = data?.items;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return DEFAULT_MENU;
+      }
+      
+      return items as unknown as MenuSettings;
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (newSettings: MenuSettings) => {
+      const { data: existingData } = await supabase
+        .from("admin_menu_settings")
+        .select("id")
+        .limit(1)
+        .single();
+
+      if (existingData) {
+        const { error } = await supabase
+          .from("admin_menu_settings")
+          .update({
+            items: newSettings as any,
+            updated_at: new Date().toISOString(),
+            updated_by: (await supabase.auth.getUser()).data.user?.id,
+          })
+          .eq("id", existingData.id);
+        
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("admin_menu_settings")
+          .insert({
+            items: newSettings as any,
+            updated_by: (await supabase.auth.getUser()).data.user?.id,
+          });
+        
+        if (error) throw error;
+      }
+      
+      return newSettings;
+    },
+    onSuccess: () => {
+      toast.success("Настройки меню сохранены");
+      queryClient.invalidateQueries({ queryKey: ["admin-menu-settings"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      const { data: existingData } = await supabase
+        .from("admin_menu_settings")
+        .select("id")
+        .limit(1)
+        .single();
+
+      if (existingData) {
+        const { error } = await supabase
+          .from("admin_menu_settings")
+          .update({
+            items: DEFAULT_MENU as any,
+            updated_at: new Date().toISOString(),
+            updated_by: (await supabase.auth.getUser()).data.user?.id,
+          })
+          .eq("id", existingData.id);
+        
+        if (error) throw error;
+      }
+      
+      return DEFAULT_MENU;
+    },
+    onSuccess: () => {
+      toast.success("Меню сброшено к настройкам по умолчанию");
+      queryClient.invalidateQueries({ queryKey: ["admin-menu-settings"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
+  return {
+    menuSettings: menuSettings || DEFAULT_MENU,
+    isLoading,
+    updateSettings: updateMutation.mutate,
+    resetSettings: resetMutation.mutate,
+    isUpdating: updateMutation.isPending,
+    isResetting: resetMutation.isPending,
+  };
+}

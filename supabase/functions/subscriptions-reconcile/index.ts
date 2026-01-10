@@ -19,6 +19,29 @@ serve(async (req) => {
     console.log('Starting subscription reconciliation...');
     const now = new Date();
 
+    // Helper function to get club_id for a subscription
+    async function getClubIdForSubscription(userId: string, productId: string): Promise<string | null> {
+      // First try to get from product
+      const { data: product } = await supabase
+        .from('products_v2')
+        .select('telegram_club_id')
+        .eq('id', productId)
+        .single();
+      
+      if (product?.telegram_club_id) return product.telegram_club_id;
+      
+      // Fallback: get from active telegram_access
+      const { data: access } = await supabase
+        .from('telegram_access')
+        .select('club_id')
+        .eq('user_id', userId)
+        .in('state_chat', ['joined', 'invited'])
+        .limit(1)
+        .single();
+      
+      return access?.club_id || null;
+    }
+
     // 1. Find subscriptions that should be canceled (cancel_at passed)
     const { data: expiredCancellations, error: cancelError } = await supabase
       .from('subscriptions_v2')
@@ -42,12 +65,17 @@ serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // Revoke Telegram access
+        // Revoke Telegram access with club_id
         try {
+          const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
           await supabase.functions.invoke('telegram-revoke-access', {
-            body: { user_id: sub.user_id, reason: 'subscription_expired' },
+            body: { 
+              user_id: sub.user_id, 
+              club_id: clubId,
+              reason: 'subscription_expired' 
+            },
           });
-          console.log(`Revoked Telegram access for user ${sub.user_id}`);
+          console.log(`Revoked Telegram access for user ${sub.user_id}, club ${clubId}`);
         } catch (e) {
           console.error(`Failed to revoke Telegram access for user ${sub.user_id}:`, e);
         }
@@ -88,10 +116,15 @@ serve(async (req) => {
             })
             .eq('id', sub.id);
 
-          // Revoke Telegram access
+          // Revoke Telegram access with club_id
           try {
+            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
             await supabase.functions.invoke('telegram-revoke-access', {
-              body: { user_id: sub.user_id, reason: 'trial_canceled' },
+              body: { 
+                user_id: sub.user_id, 
+                club_id: clubId,
+                reason: 'trial_canceled' 
+              },
             });
           } catch (e) {
             console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
@@ -106,7 +139,7 @@ serve(async (req) => {
     // 3. Close access for subscriptions with expired access_end_at
     const { data: expiredAccess, error: accessError } = await supabase
       .from('subscriptions_v2')
-      .select('id, user_id, access_end_at, status')
+      .select('id, user_id, product_id, access_end_at, status')
       .lt('access_end_at', now.toISOString())
       .in('status', ['active', 'past_due']);
 
@@ -124,10 +157,15 @@ serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // Revoke Telegram access
+        // Revoke Telegram access with club_id
         try {
+          const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
           await supabase.functions.invoke('telegram-revoke-access', {
-            body: { user_id: sub.user_id, reason: 'access_expired' },
+            body: { 
+              user_id: sub.user_id, 
+              club_id: clubId,
+              reason: 'access_expired' 
+            },
           });
         } catch (e) {
           console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
@@ -163,7 +201,11 @@ serve(async (req) => {
             console.log(`User ${access.user_id} has no valid subscription, revoking Telegram access`);
             try {
               await supabase.functions.invoke('telegram-revoke-access', {
-                body: { user_id: access.user_id, reason: 'no_valid_subscription' },
+                body: { 
+                  user_id: access.user_id, 
+                  club_id: access.club_id,
+                  reason: 'no_valid_subscription' 
+                },
               });
             } catch (e) {
               console.error(`Failed to revoke Telegram for user ${access.user_id}:`, e);

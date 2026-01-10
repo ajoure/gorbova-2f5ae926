@@ -95,6 +95,11 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
     label: "Дубль", 
     type: "boolean" 
   },
+  {
+    key: "was_club_member",
+    label: "Бывший участник клуба",
+    type: "boolean"
+  },
   { key: "created_at", label: "Дата создания", type: "date" },
 ];
 

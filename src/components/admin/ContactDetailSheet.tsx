@@ -441,7 +441,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Update reentry penalty status
   const updateReentryMutation = useMutation({
-    mutationFn: async ({ action }: { action: 'waive' | 'restore' | 'reset' }) => {
+    mutationFn: async ({ action }: { action: 'waive' | 'restore' | 'reset' | 'mark_as_former' }) => {
       if (!contact?.user_id) throw new Error("No user ID");
       const currentUser = (await supabase.auth.getUser()).data.user;
       
@@ -468,6 +468,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           reentry_penalty_waived_by: null,
           reentry_penalty_waived_at: null,
         };
+      } else if (action === 'mark_as_former') {
+        updates = {
+          was_club_member: true,
+          club_exit_at: new Date().toISOString(),
+          club_exit_reason: 'manual_admin',
+        };
       }
       
       const { error } = await supabase
@@ -488,10 +494,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       return action;
     },
     onSuccess: (action) => {
-      const messages = {
+      const messages: Record<string, string> = {
         waive: "Повышенные тарифы отменены",
         restore: "Повышенные тарифы восстановлены",
         reset: "Статус бывшего участника сброшен",
+        mark_as_former: "Контакт отмечен как бывший участник клуба",
       };
       toast.success(messages[action]);
       refetchReentry();
@@ -1214,16 +1221,36 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </Card>
               )}
 
-              {/* Former Club Member Status Card */}
-              {contact.user_id && reentryStatus?.was_club_member && (
-                <Card className="border-amber-200 dark:border-amber-800">
+              {/* Club Member Status Card - show for all contacts with user_id */}
+              {contact.user_id && (
+                <Card className={reentryStatus?.was_club_member ? "border-amber-200 dark:border-amber-800" : ""}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
+                    <CardTitle className={`text-sm flex items-center gap-2 ${reentryStatus?.was_club_member ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
                       <UserX className="w-4 h-4" />
-                      Бывший участник клуба
+                      {reentryStatus?.was_club_member ? "Бывший участник клуба" : "Статус участия в клубе"}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    {!reentryStatus?.was_club_member ? (
+                      <div className="text-center py-2">
+                        <p className="text-sm text-muted-foreground mb-3">Не отмечен как бывший участник</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          onClick={() => updateReentryMutation.mutate({ action: 'mark_as_former' })}
+                          disabled={updateReentryMutation.isPending}
+                        >
+                          {updateReentryMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <UserX className="w-4 h-4" />
+                          )}
+                          Пометить как бывшего участника
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
                     <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 space-y-2">
                       {reentryStatus.club_exit_at && (
                         <div className="flex items-center justify-between text-sm">
@@ -1296,6 +1323,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         Сбросить статус бывшего участника
                       </Button>
                     </div>
+                      </>
+                    )}
                   </CardContent>
                 </Card>
               )}
