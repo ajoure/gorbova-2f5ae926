@@ -4863,6 +4863,7 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
       queue_telegram_notification: {
         Args: {
           p_club_id?: string

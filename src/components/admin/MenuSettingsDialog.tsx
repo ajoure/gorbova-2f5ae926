@@ -18,6 +18,9 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverEvent,
+  DragStartEvent,
+  DragOverlay,
 } from "@dnd-kit/core";
 import {
   arrayMove,
@@ -431,6 +434,7 @@ export function MenuSettingsDialog({
   const [localSettings, setLocalSettings] = useState<MenuSettings>(menuSettings);
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [addItemGroupId, setAddItemGroupId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   // Reset local settings when dialog opens
   const handleOpenChange = (open: boolean) => {
@@ -447,32 +451,100 @@ export function MenuSettingsDialog({
     })
   );
 
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(String(event.active.id));
+  };
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeIdStr = String(active.id);
+    const overIdStr = String(over.id);
+
+    // Only handle item-to-item or item-to-group dragging
+    const isItemDrag = activeIdStr.includes("-");
+    if (!isItemDrag) return;
+
+    const [activeGroupId, activeItemId] = activeIdStr.split("-");
+    
+    // Determine target group
+    let overGroupId: string;
+    let overItemId: string | null = null;
+    
+    if (overIdStr.includes("-")) {
+      // Dragging over another item
+      [overGroupId, overItemId] = overIdStr.split("-");
+    } else {
+      // Dragging over a group header
+      overGroupId = overIdStr;
+    }
+
+    // If moving to a different group
+    if (activeGroupId !== overGroupId) {
+      setLocalSettings((prev) => {
+        const activeGroup = prev.find((g) => g.id === activeGroupId);
+        const overGroup = prev.find((g) => g.id === overGroupId);
+        
+        if (!activeGroup || !overGroup) return prev;
+        
+        const activeItem = activeGroup.items.find((i) => i.id === activeItemId);
+        if (!activeItem) return prev;
+        
+        // Remove from source group
+        const newSourceItems = activeGroup.items.filter((i) => i.id !== activeItemId);
+        
+        // Add to target group
+        let insertIndex = overGroup.items.length;
+        if (overItemId) {
+          const overIndex = overGroup.items.findIndex((i) => i.id === overItemId);
+          if (overIndex !== -1) insertIndex = overIndex;
+        }
+        
+        const newTargetItems = [...overGroup.items];
+        newTargetItems.splice(insertIndex, 0, { ...activeItem, order: insertIndex });
+        
+        return prev.map((group) => {
+          if (group.id === activeGroupId) {
+            return { ...group, items: newSourceItems.map((item, i) => ({ ...item, order: i })) };
+          }
+          if (group.id === overGroupId) {
+            return { ...group, items: newTargetItems.map((item, i) => ({ ...item, order: i })) };
+          }
+          return group;
+        });
+      });
+    }
+  }, []);
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveId(null);
+    
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const activeId = String(active.id);
-    const overId = String(over.id);
+    const activeIdStr = String(active.id);
+    const overIdStr = String(over.id);
 
     // Check if dragging groups or items
-    const isGroupDrag = !activeId.includes("-");
+    const isGroupDrag = !activeIdStr.includes("-");
 
     if (isGroupDrag) {
       // Reorder groups
       setLocalSettings((prev) => {
-        const oldIndex = prev.findIndex((g) => g.id === activeId);
-        const newIndex = prev.findIndex((g) => g.id === overId);
+        const oldIndex = prev.findIndex((g) => g.id === activeIdStr);
+        const newIndex = prev.findIndex((g) => g.id === overIdStr);
         if (oldIndex === -1 || newIndex === -1) return prev;
 
         const newGroups = arrayMove(prev, oldIndex, newIndex);
         return newGroups.map((g, i) => ({ ...g, order: i }));
       });
     } else {
-      // Reorder items within group
-      const [activeGroupId, activeItemId] = activeId.split("-");
-      const [overGroupId, overItemId] = overId.split("-");
+      // Reorder items within same group (cross-group already handled in dragOver)
+      const [activeGroupId, activeItemId] = activeIdStr.split("-");
+      const [overGroupId, overItemId] = overIdStr.split("-");
 
-      if (activeGroupId === overGroupId) {
+      if (activeGroupId === overGroupId && overItemId) {
         setLocalSettings((prev) =>
           prev.map((group) => {
             if (group.id !== activeGroupId) return group;
@@ -585,10 +657,15 @@ export function MenuSettingsDialog({
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={localSettings.map((g) => g.id)}
+                items={[
+                  ...localSettings.map((g) => g.id),
+                  ...localSettings.flatMap((g) => g.items.map((i) => `${g.id}-${i.id}`)),
+                ]}
                 strategy={verticalListSortingStrategy}
               >
                 <div className="space-y-3">
