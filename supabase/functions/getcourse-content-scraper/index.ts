@@ -150,6 +150,64 @@ function isLikelyTwoFactorPage(html: string) {
   );
 }
 
+function extractTwoFactorResendUrl(baseUrl: string, html: string): string | null {
+  // Best-effort: different GetCourse setups use different endpoints.
+  // We look for explicit "send/resend code" links or JS-configured URLs.
+  const candidates: string[] = [];
+
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = hrefRegex.exec(html)) !== null) {
+    const href = m[1];
+    if (!href) continue;
+    if (/send|resend|repeat|again|otp|code|confirm/i.test(href) && /code|confirm|otp/i.test(href)) {
+      candidates.push(href);
+    }
+    // Some pages have explicit endpoints
+    if (/cms\/system\/(?:send|resend)/i.test(href)) candidates.push(href);
+  }
+
+  const jsUrlRegex = /(?:send|resend)[^\n\r"']{0,40}(?:url|path)[^\n\r"']{0,10}["']([^"']+)["']/gi;
+  while ((m = jsUrlRegex.exec(html)) !== null) {
+    const url = m[1];
+    if (url) candidates.push(url);
+  }
+
+  const first = candidates.find(Boolean);
+  if (!first) return null;
+  return first.startsWith("http") ? first : `${baseUrl}${first.startsWith("/") ? first : `/${first}`}`;
+}
+
+async function tryTriggerTwoFactorEmail(opts: {
+  baseUrl: string;
+  html: string;
+  cookieJar: Map<string, string>;
+  referer: string;
+}) {
+  const resendUrl = extractTwoFactorResendUrl(opts.baseUrl, opts.html);
+  if (!resendUrl) {
+    console.log("2FA page detected but resend URL not found");
+    return;
+  }
+
+  try {
+    console.log("Attempting to trigger 2FA email via:", resendUrl);
+    const res = await fetch(resendUrl, {
+      method: "GET",
+      headers: {
+        Cookie: cookieHeaderFromJar(opts.cookieJar),
+        "User-Agent": DEFAULT_UA,
+        Referer: opts.referer,
+      },
+      redirect: "manual",
+    });
+    upsertCookies(opts.cookieJar, getSetCookieValues(res));
+    console.log("2FA resend trigger status:", res.status);
+  } catch (e) {
+    console.log("2FA resend trigger failed:", e instanceof Error ? e.message : String(e));
+  }
+}
+
 async function fetchText(url: string, headers: Record<string, string>) {
   const res = await fetch(url, { method: "GET", headers, redirect: "manual" });
   const text = await res.text().catch(() => "");
@@ -305,6 +363,14 @@ async function performLogin(
 
   // IMPORTANT: GetCourse may return the 2FA challenge page directly as the login response (status 200)
   if (isLikelyTwoFactorPage(loginResponseHtml)) {
+    // Some setups send the email only after the challenge page is loaded / resend link is hit.
+    await tryTriggerTwoFactorEmail({
+      baseUrl,
+      html: loginResponseHtml,
+      cookieJar,
+      referer: loginUrl,
+    });
+
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
       cookies: cookieHeaderFromJar(cookieJar),
@@ -329,6 +395,13 @@ async function performLogin(
   });
 
   if (isLikelyTwoFactorPage(check.text)) {
+    await tryTriggerTwoFactorEmail({
+      baseUrl,
+      html: check.text,
+      cookieJar,
+      referer: checkUrl,
+    });
+
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
       cookies: cookieHeaderFromJar(cookieJar),
