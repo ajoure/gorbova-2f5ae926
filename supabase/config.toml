@@ -143,3 +143,6 @@ verify_jwt = false
 
 [functions.bepaid-fetch-transactions]
 verify_jwt = false
+
+[functions.getcourse-content-scraper]
+verify_jwt = false
