@@ -241,21 +241,26 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
 
 // Determine if a transaction is an acquiring fee (not a real customer payment)
 function isFeeTransaction(tx: ParsedTransaction): boolean {
-  // Any amount less than 1 BYN is a fee (acquiring commissions are typically 0.01-0.50 BYN)
-  if (tx.amount < 1.0) {
+  const type = (tx.transaction_type || '').toLowerCase();
+  
+  // Cancellations (Отмена) are fees/adjustments, not real payments
+  if (type.includes('отмен') || type.includes('cancel')) {
     return true;
   }
   
-  const type = (tx.transaction_type || '').toLowerCase();
+  // Refunds are NOT fees - they're relevant for tracking
+  if (type.includes('возврат') || type.includes('refund')) {
+    return false;
+  }
   
   // If transaction type is NOT a payment (Платеж/Payment), it's likely a fee
   const isPaymentType = type.includes('платеж') || type.includes('payment') || type === '';
-  
   if (!isPaymentType) {
-    // But refunds and cancels are still relevant for tracking
-    if (tx.status_normalized === 'refund' || tx.status_normalized === 'cancel') {
-      return false;
-    }
+    return true;
+  }
+  
+  // Very small amounts (less than 1 BYN) are typically acquiring fees
+  if (tx.amount < 1.0) {
     return true;
   }
   

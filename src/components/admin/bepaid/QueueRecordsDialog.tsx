@@ -66,7 +66,7 @@ export default function QueueRecordsDialog({
         return {
           id: record.id,
           created_at: record.created_at,
-          amount: record.amount ? record.amount / 100 : (plan.amount ? plan.amount / 100 : null),
+          amount: record.amount ?? (plan.amount ? plan.amount / 100 : null),
           currency: record.currency || plan.currency || "BYN",
           customer_email: record.customer_email,
           card_holder: card.holder || null,
