@@ -283,6 +283,8 @@ serve(async (req) => {
           const subCreatedAt = new Date(sub.created_at);
           
           if (subCreatedAt >= filterFrom && subCreatedAt <= filterTo) {
+            const { productName, tariffName } = parseProductFromDescription(sub.plan?.title || "");
+            
             allSubscriptions.push({
               id: sub.id,
               type: "subscription",
@@ -303,7 +305,51 @@ serve(async (req) => {
               card_holder: sub.credit_card?.holder,
               transactions_count: sub.transactions?.length || 0,
               transactions: sub.transactions || [],
+              product_name: productName,
+              tariff_name: tariffName,
             });
+            
+            // Extract transactions from subscription and add to allTransactions
+            if (sub.transactions && Array.isArray(sub.transactions)) {
+              for (const tx of sub.transactions) {
+                const txCreatedAt = new Date(tx.created_at || tx.paid_at);
+                // Only include transactions within filter range
+                if (txCreatedAt >= filterFrom && txCreatedAt <= filterTo) {
+                  const { productName: txProductName, tariffName: txTariffName } = parseProductFromDescription(
+                    tx.description || sub.plan?.title || ""
+                  );
+                  
+                  allTransactions.push({
+                    uid: tx.uid,
+                    type: "subscription_payment",
+                    subscription_id: sub.id,
+                    status: tx.status,
+                    amount: (tx.amount || 0) / 100,
+                    currency: tx.currency || sub.plan?.currency || "BYN",
+                    description: tx.description || sub.plan?.title,
+                    paid_at: tx.paid_at,
+                    created_at: tx.created_at,
+                    receipt_url: tx.receipt_url,
+                    tracking_id: tx.tracking_id || sub.tracking_id,
+                    message: tx.message || tx.additional_data?.message,
+                    ip_address: tx.customer?.ip || sub.customer?.ip,
+                    customer_email: tx.customer?.email || sub.customer?.email,
+                    customer_name: [tx.customer?.first_name || sub.customer?.first_name, tx.customer?.last_name || sub.customer?.last_name].filter(Boolean).join(" ") || null,
+                    customer_phone: tx.customer?.phone || sub.customer?.phone,
+                    card_last_4: tx.credit_card?.last_4 || sub.credit_card?.last_4,
+                    card_brand: tx.credit_card?.brand || sub.credit_card?.brand,
+                    card_holder: tx.credit_card?.holder || sub.credit_card?.holder,
+                    bank_code: tx.additional_data?.bank_code,
+                    rrn: tx.additional_data?.rrn,
+                    auth_code: tx.additional_data?.auth_code,
+                    product_name: txProductName || productName,
+                    tariff_name: txTariffName || tariffName,
+                    plan_title: sub.plan?.title,
+                    _source: "bepaid_subscription",
+                  });
+                }
+              }
+            }
           }
         }
 

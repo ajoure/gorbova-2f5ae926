@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -8,12 +9,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { 
   RefreshCw, Download, CreditCard, Mail, Phone, User, 
   CheckCircle2, AlertCircle, FileText, ArrowRightLeft, Loader2,
-  ExternalLink, Globe, Receipt, Package, UserCheck, Link2
+  ExternalLink, Globe, Receipt, Package, UserCheck, Link2, 
+  ShoppingCart, Repeat
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { ClickableContactName } from "@/components/admin/ClickableContactName";
 
 interface DateFilter {
   from: string;
@@ -80,6 +83,7 @@ interface BepaidRawDataTabProps {
 }
 
 export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) {
+  const navigate = useNavigate();
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [activeView, setActiveView] = useState<"transactions" | "subscriptions">("transactions");
   const queryClient = useQueryClient();
@@ -263,6 +267,18 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
     }
   };
 
+  const getTypeBadge = (type?: string) => {
+    switch (type) {
+      case "subscription_payment":
+        return <Badge variant="secondary" className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"><Repeat className="h-3 w-3 mr-1" />Подписка</Badge>;
+      case "subscription":
+        return <Badge variant="secondary" className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"><Repeat className="h-3 w-3 mr-1" />Подписка</Badge>;
+      case "transaction":
+      default:
+        return <Badge variant="outline"><ShoppingCart className="h-3 w-3 mr-1" />Разовый</Badge>;
+    }
+  };
+
   const exportTransactions = () => {
     if (transactions.length === 0) return;
     
@@ -425,7 +441,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
             </div>
           ) : (
             <div className="max-h-[600px] overflow-auto">
-              <Table className="min-w-[1200px]">
+              <Table className="min-w-[1400px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">
@@ -435,6 +451,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                       />
                     </TableHead>
                     <TableHead>Дата/время</TableHead>
+                    <TableHead>Тип</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
                     <TableHead>Статус</TableHead>
                     <TableHead>Продукт / Тариф</TableHead>
@@ -461,12 +478,15 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                             <div className="text-xs text-muted-foreground">
                               {format(new Date(tx.paid_at || tx.created_at!), "HH:mm:ss")}
                             </div>
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        <div className="font-semibold">{tx.amount} {tx.currency}</div>
-                      </TableCell>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {getTypeBadge(tx.type)}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      <div className="font-semibold">{tx.amount} {tx.currency}</div>
+                    </TableCell>
                       <TableCell>
                         {getStatusBadge(tx.status)}
                       </TableCell>
@@ -518,22 +538,24 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                             </div>
                           )}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {tx.matched_profile_id ? (
-                          <div className="flex items-center gap-1.5">
-                            <UserCheck className="h-4 w-4 text-green-600" />
-                            <span className="text-sm text-green-700 dark:text-green-400">
-                              {tx.matched_profile_name || "Найден"}
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <Link2 className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-xs text-muted-foreground">Не найден</span>
-                          </div>
-                        )}
-                      </TableCell>
+                    </TableCell>
+                    <TableCell>
+                      {tx.matched_profile_id ? (
+                        <ClickableContactName
+                          profileId={tx.matched_profile_id}
+                          name={tx.matched_profile_name || "Контакт найден"}
+                          email={tx.customer_email}
+                          showEmail={false}
+                          fromPage="bepaid-sync"
+                          className="text-sm"
+                        />
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <Link2 className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-xs text-muted-foreground">Не найден</span>
+                        </div>
+                      )}
+                    </TableCell>
                       <TableCell>
                         {tx.ip_address ? (
                           <div className="flex items-center gap-1 text-xs">
