@@ -331,7 +331,7 @@ Deno.serve(async (req) => {
     // Fetch existing profiles for matching
     const { data: profiles, error: profilesError } = await supabase
       .from('profiles')
-      .select('id, email, full_name, first_name, last_name, phone, was_club_member, status, card_masks, card_holder_names');
+      .select('id, user_id, email, full_name, first_name, last_name, phone, was_club_member, status, card_masks, card_holder_names');
     
     if (profilesError) throw profilesError;
 
@@ -399,6 +399,45 @@ Deno.serve(async (req) => {
 
         if (!dryRun) {
           if (matchedProfile) {
+            // Get user_id - create auth user if needed for archived profile
+            let userId = matchedProfile.user_id;
+            
+            if (!userId && matchedProfile.email) {
+              // Create auth user for archived profile
+              const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+                email: matchedProfile.email,
+                email_confirm: true,
+                user_metadata: { full_name: matchedProfile.full_name },
+              });
+
+              if (authError) {
+                // Try to find existing user
+                const { data: existingUsers } = await supabase.auth.admin.listUsers();
+                const found = existingUsers?.users?.find((u: { email?: string }) => u.email === matchedProfile.email);
+                if (found) {
+                  userId = found.id;
+                }
+              } else {
+                userId = authUser.user.id;
+              }
+
+              // Update profile with user_id
+              if (userId) {
+                await supabase
+                  .from('profiles')
+                  .update({ user_id: userId, status: 'active' })
+                  .eq('id', matchedProfile.id);
+              }
+            }
+
+            if (!userId) {
+              // Skip if we can't get a user_id
+              detail.action = 'skipped_no_user_id';
+              result.skipped++;
+              result.details.push(detail);
+              continue;
+            }
+
             // Create order for matched profile
             const orderNumber = `IMP-${payment.orderId}`;
             
@@ -413,7 +452,7 @@ Deno.serve(async (req) => {
               const { data: newOrder, error: orderError } = await supabase
                 .from('orders_v2')
                 .insert({
-                  user_id: matchedProfile.id,
+                  user_id: userId,
                   product_id: productId,
                   tariff_id: tariffId,
                   order_number: orderNumber,
