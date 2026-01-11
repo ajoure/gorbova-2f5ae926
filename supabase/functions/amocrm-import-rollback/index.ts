@@ -44,15 +44,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check admin role
+    // Check admin role using user_roles_v2 table
     const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
+      .from('user_roles_v2')
+      .select('role:roles_v2(code)')
       .eq('user_id', user.id)
-      .in('role', ['super_admin', 'admin'])
       .single();
 
-    if (!roleData) {
+    const userRole = (roleData?.role as { code: string } | null)?.code;
+    const isAdmin = userRole === 'super_admin' || userRole === 'admin';
+
+    if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
