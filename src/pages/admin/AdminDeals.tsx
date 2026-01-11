@@ -591,11 +591,12 @@ export default function AdminDeals() {
                     <TableCell 
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (deal.user_id && profile) {
-                          navigate(`/admin/contacts?contact=${profile.user_id}&from=deals`);
+                        if (profile) {
+                          // Use profile.id for navigation (works for both archived and active contacts)
+                          navigate(`/admin/contacts?contact=${profile.id}&from=deals`);
                         }
                       }}
-                      className={deal.user_id && profile ? "cursor-pointer hover:text-primary" : ""}
+                      className={profile ? "cursor-pointer hover:text-primary" : ""}
                     >
                       <div className="flex items-center gap-2">
                         <Avatar className="h-8 w-8 shrink-0">
