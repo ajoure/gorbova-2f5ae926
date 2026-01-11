@@ -7,11 +7,14 @@ import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
-  Loader2, X, FileText, ArrowRight, User, Mail, CreditCard 
+  Loader2, X, FileText, ArrowRight, User, Mail, CreditCard, ShoppingCart
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappings";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -44,8 +47,11 @@ interface ParsedTransaction {
   matched_profile_id?: string;
   matched_profile_name?: string;
   matched_by?: 'email' | 'card' | 'name' | 'none';
+  // Auto-create order results
+  auto_created_order?: boolean;
+  order_id?: string;
   // Import status
-  import_status?: 'pending' | 'exists' | 'imported' | 'error';
+  import_status?: 'pending' | 'exists' | 'imported' | 'error' | 'order_created';
   import_error?: string;
 }
 
@@ -164,7 +170,10 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
   const [isParsing, setIsParsing] = useState(false);
   const [skipExisting, setSkipExisting] = useState(true);
   const [autoMatch, setAutoMatch] = useState(true);
+  const [autoCreateOrders, setAutoCreateOrders] = useState(true);
   const queryClient = useQueryClient();
+  const { mappings } = useBepaidMappings();
+  const { createOrderFromQueueAsync } = useBepaidQueueActions();
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -364,7 +373,8 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
 
   const importMutation = useMutation({
     mutationFn: async () => {
-      const results: { uid: string; status: 'imported' | 'updated' | 'exists' | 'error'; error?: string }[] = [];
+      const results: { uid: string; status: 'imported' | 'updated' | 'exists' | 'error' | 'order_created'; error?: string }[] = [];
+      let ordersCreated = 0;
       
       for (const tx of transactions) {
         try {
@@ -431,17 +441,51 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             },
           };
 
-          const { error } = await supabase
+          const { data: insertedRecord, error } = await supabase
             .from('payment_reconcile_queue')
-            .insert(insertData);
+            .insert(insertData)
+            .select('id')
+            .single();
 
           if (error) {
             results.push({ uid: tx.uid, status: 'error', error: error.message });
             tx.import_status = 'error';
             tx.import_error = error.message;
           } else {
-            results.push({ uid: tx.uid, status: 'imported' });
-            tx.import_status = 'imported';
+            // Check if we should auto-create order
+            if (autoCreateOrders && tx.matched_profile_id && insertedRecord) {
+              const mapping = mappings.find(m => 
+                m.bepaid_plan_title === tx.description || 
+                m.bepaid_plan_title === tx.card_holder
+              );
+              
+              if (mapping && mapping.auto_create_order && mapping.product_id) {
+                try {
+                  await createOrderFromQueueAsync({
+                    queueItemId: insertedRecord.id,
+                    profileId: tx.matched_profile_id,
+                    productId: mapping.product_id || undefined,
+                    tariffId: mapping.tariff_id || undefined,
+                    offerId: mapping.offer_id || undefined,
+                  });
+                  results.push({ uid: tx.uid, status: 'order_created' });
+                  tx.import_status = 'order_created';
+                  tx.auto_created_order = true;
+                  ordersCreated++;
+                } catch (orderError: any) {
+                  // Order creation failed, but import succeeded
+                  results.push({ uid: tx.uid, status: 'imported' });
+                  tx.import_status = 'imported';
+                  console.error("Auto-create order failed:", orderError);
+                }
+              } else {
+                results.push({ uid: tx.uid, status: 'imported' });
+                tx.import_status = 'imported';
+              }
+            } else {
+              results.push({ uid: tx.uid, status: 'imported' });
+              tx.import_status = 'imported';
+            }
           }
         } catch (err: any) {
           results.push({ uid: tx.uid, status: 'error', error: err.message });
@@ -450,22 +494,27 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
         }
       }
 
-      return results;
+      return { results, ordersCreated };
     },
-    onSuccess: (results) => {
+    onSuccess: ({ results, ordersCreated }) => {
       const imported = results.filter(r => r.status === 'imported').length;
+      const orderCreated = results.filter(r => r.status === 'order_created').length;
       const updated = results.filter(r => r.status === 'updated').length;
       const exists = results.filter(r => r.status === 'exists').length;
       const errors = results.filter(r => r.status === 'error').length;
 
-      if (imported > 0 || updated > 0) {
-        toast.success(`Импорт завершён: ${imported} новых${updated > 0 ? `, ${updated} обновлено` : ''}`);
-      }
-      if (exists > 0 && imported === 0 && updated === 0) toast.info(`Все ${exists} уже в базе`);
+      let message = '';
+      if (orderCreated > 0) message += `Создано сделок: ${orderCreated}. `;
+      if (imported > 0) message += `Импортировано: ${imported}. `;
+      if (updated > 0) message += `Обновлено: ${updated}. `;
+      
+      if (message) toast.success(message.trim());
+      if (exists > 0 && imported === 0 && updated === 0 && orderCreated === 0) toast.info(`Все ${exists} уже в базе`);
       if (errors > 0) toast.error(`Ошибок: ${errors}`);
 
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["bepaid-payments"] });
       onSuccess?.();
       
       // Update display
@@ -499,6 +548,7 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
   };
 
   const getStatusBadge = (tx: ParsedTransaction) => {
+    if (tx.import_status === 'order_created') return <Badge variant="default" className="bg-green-600"><ShoppingCart className="h-3 w-3 mr-1" />Сделка</Badge>;
     if (tx.import_status === 'imported') return <Badge variant="default" className="bg-green-600">Импортировано</Badge>;
     if (tx.import_status === 'exists') return <Badge variant="secondary">Уже есть</Badge>;
     if (tx.import_status === 'error') return <Badge variant="destructive">Ошибка</Badge>;
@@ -585,7 +635,7 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             </div>
 
             {/* Options */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="skipExisting"
@@ -606,6 +656,17 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
                 <label htmlFor="autoMatch" className="text-sm cursor-pointer text-muted-foreground">
                   Автосопоставление контактов
                 </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="autoCreateOrders"
+                  checked={autoCreateOrders}
+                  onCheckedChange={setAutoCreateOrders}
+                />
+                <Label htmlFor="autoCreateOrders" className="text-sm cursor-pointer flex items-center gap-1">
+                  <ShoppingCart className="h-3 w-3" />
+                  Автосоздание сделок
+                </Label>
               </div>
             </div>
 

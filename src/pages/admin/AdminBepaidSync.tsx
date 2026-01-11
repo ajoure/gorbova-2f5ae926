@@ -24,7 +24,8 @@ import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import BepaidAnalyticsTab from "@/components/admin/bepaid/BepaidAnalyticsTab";
 import BepaidReconciliationTab from "@/components/admin/bepaid/BepaidReconciliationTab";
 import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
-import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
+import { CreateOrderButton, LinkToProfileButton } from "@/components/admin/bepaid/BepaidQueueActions";
+import BulkProcessBar from "@/components/admin/bepaid/BulkProcessBar";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
@@ -517,6 +518,19 @@ export default function AdminBepaidSync() {
                 </div>
               </CardHeader>
               <CardContent>
+                {/* Bulk actions bar */}
+                {selectedQueueItems.size > 0 && (
+                  <BulkProcessBar
+                    selectedItems={queueItems.filter(q => selectedQueueItems.has(q.id))}
+                    onSuccess={() => {
+                      setSelectedQueueItems(new Set());
+                      refetchQueue();
+                      refetchPayments();
+                    }}
+                    onClearSelection={() => setSelectedQueueItems(new Set())}
+                  />
+                )}
+
                 {queueLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
