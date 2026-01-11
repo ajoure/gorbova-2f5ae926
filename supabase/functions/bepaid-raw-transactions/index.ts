@@ -9,47 +9,112 @@ const corsHeaders = {
 /**
  * bepaid-raw-transactions
  * 
- * Fetches RAW transaction data directly from bePaid API for display in admin UI.
- * Uses multiple endpoints to get comprehensive data:
- * 1. Subscriptions with their transactions
- * 2. Direct transaction lookups by tracking_id patterns
+ * Fetches ALL transaction data from bePaid API using the transactions/query endpoint.
+ * Includes: IP address, receipt URL, full description, product/tariff matching.
+ * Auto-matches contacts and products from database.
  */
 
-interface BepaidSubscription {
-  id: string;
-  state: string;
+interface BepaidTransaction {
+  uid: string;
+  status: string;
+  amount: number;
+  currency: string;
+  description?: string;
   tracking_id?: string;
-  created_at: string;
-  updated_at?: string;
-  plan?: {
-    amount: number;
-    currency: string;
-    title?: string;
-    interval?: string;
-    interval_count?: number;
+  message?: string;
+  paid_at?: string;
+  created_at?: string;
+  receipt_url?: string;
+  language?: string;
+  test?: boolean;
+  billing_address?: {
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    phone?: string;
+    country?: string;
+    city?: string;
+    address?: string;
+    zip?: string;
   };
   customer?: {
     email?: string;
+    ip?: string;
     first_name?: string;
     last_name?: string;
     phone?: string;
   };
   credit_card?: {
-    last_4: string;
-    brand: string;
+    last_4?: string;
+    brand?: string;
+    holder?: string;
+    first_1?: string;
     exp_month?: number;
     exp_year?: number;
-    holder?: string;
+    token?: string;
   };
-  transactions?: Array<{
-    uid: string;
-    status: string;
-    amount: number;
-    currency?: string;
-    paid_at?: string;
-    created_at?: string;
+  additional_data?: {
+    contract?: string[];
+    receipt?: string[];
+    bank_code?: string;
+    rrn?: string;
+    ref_id?: string;
     message?: string;
-  }>;
+    auth_code?: string;
+  };
+  avs_cvc_verification?: any;
+  three_d_secure_verification?: any;
+}
+
+// Product/tariff mapping from description patterns
+const PRODUCT_TARIFF_MAPPINGS: Record<string, { productCode?: string; tariffCode?: string; productName: string; tariffName?: string }> = {
+  "Клуб: триал итоги": { productCode: "club", productName: "Gorbova Club", tariffName: "CHAT (триал)" },
+  "Клуб: business": { productCode: "club", productName: "Gorbova Club", tariffName: "BUSINESS" },
+  "Клуб: premium": { productCode: "club", productName: "Gorbova Club", tariffName: "PREMIUM" },
+  "Клуб: lite": { productCode: "club", productName: "Gorbova Club", tariffName: "LITE" },
+  "Клуб: chat": { productCode: "club", productName: "Gorbova Club", tariffName: "CHAT" },
+  "Gorbova Club": { productCode: "club", productName: "Gorbova Club" },
+  "Клуб": { productCode: "club", productName: "Gorbova Club" },
+};
+
+function parseProductFromDescription(description: string): { productName?: string; tariffName?: string } {
+  if (!description) return {};
+  
+  // Look for pattern like "(Клуб: business)"
+  const match = description.match(/\(([^)]+)\)/);
+  if (match) {
+    const hint = match[1].trim();
+    const mapping = PRODUCT_TARIFF_MAPPINGS[hint];
+    if (mapping) {
+      return { productName: mapping.productName, tariffName: mapping.tariffName };
+    }
+    // Try partial match
+    for (const [key, value] of Object.entries(PRODUCT_TARIFF_MAPPINGS)) {
+      if (hint.toLowerCase().includes(key.toLowerCase())) {
+        return { productName: value.productName, tariffName: value.tariffName };
+      }
+    }
+  }
+  
+  // Check for any mention of known products
+  for (const [key, value] of Object.entries(PRODUCT_TARIFF_MAPPINGS)) {
+    if (description.toLowerCase().includes(key.toLowerCase())) {
+      return { productName: value.productName, tariffName: value.tariffName };
+    }
+  }
+  
+  return {};
+}
+
+function normalizePhone(phone: string | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length >= 9) {
+    if (digits.startsWith("375")) return "+" + digits;
+    if (digits.startsWith("7") && digits.length === 11) return "+" + digits;
+    if (digits.length === 9) return "+375" + digits;
+  }
+  return phone;
 }
 
 serve(async (req) => {
@@ -64,11 +129,11 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const fromDate = body.fromDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const fromDate = body.fromDate || "2026-01-01"; // Default to Jan 1, 2026
     const toDate = body.toDate || new Date().toISOString().split("T")[0];
-    const perPage = Math.min(body.perPage || 100, 500);
+    const perPage = Math.min(body.perPage || 100, 1000);
 
-    console.info(`Fetching raw bePaid data from ${fromDate} to ${toDate}`);
+    console.info(`Fetching bePaid transactions from ${fromDate} to ${toDate}`);
 
     // Get bePaid credentials
     const { data: bepaidInstance } = await supabase
@@ -101,13 +166,92 @@ serve(async (req) => {
     const allSubscriptions: any[] = [];
 
     // =====================================================
-    // PART 1: Fetch all subscriptions with embedded transactions
+    // PART 1: Fetch transactions via /v2/transactions/query
     // =====================================================
-    let page = 1;
-    let hasMore = true;
+    try {
+      const queryUrl = "https://gateway.bepaid.by/v2/transactions/query";
+      console.info(`Fetching transactions via POST ${queryUrl}`);
+      
+      const queryBody = {
+        filter: {
+          created_at: {
+            gte: fromDate + "T00:00:00Z",
+            lte: toDate + "T23:59:59Z"
+          }
+        },
+        pagination: {
+          per_page: perPage,
+          page: 1
+        },
+        sort: {
+          created_at: "desc"
+        }
+      };
 
-    while (hasMore && page <= 10) { // Max 10 pages (1000 subscriptions)
-      try {
+      const txResponse = await fetch(queryUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(queryBody),
+      });
+
+      const txResponseText = await txResponse.text();
+      console.info(`Transactions query response status: ${txResponse.status}`);
+      
+      if (txResponse.ok) {
+        const txData = JSON.parse(txResponseText);
+        const transactions: BepaidTransaction[] = txData.transactions || [];
+        console.info(`Fetched ${transactions.length} transactions from bePaid API`);
+
+        for (const tx of transactions) {
+          const { productName, tariffName } = parseProductFromDescription(tx.description || "");
+          
+          allTransactions.push({
+            uid: tx.uid,
+            type: "transaction",
+            status: tx.status,
+            amount: tx.amount / 100,
+            currency: tx.currency,
+            description: tx.description,
+            paid_at: tx.paid_at,
+            created_at: tx.created_at,
+            receipt_url: tx.receipt_url,
+            tracking_id: tx.tracking_id,
+            message: tx.message || tx.additional_data?.message,
+            ip_address: tx.customer?.ip,
+            customer_email: tx.customer?.email || tx.billing_address?.email,
+            customer_name: [tx.customer?.first_name || tx.billing_address?.first_name, tx.customer?.last_name || tx.billing_address?.last_name].filter(Boolean).join(" ") || null,
+            customer_phone: tx.customer?.phone || tx.billing_address?.phone,
+            card_last_4: tx.credit_card?.last_4,
+            card_brand: tx.credit_card?.brand,
+            card_holder: tx.credit_card?.holder,
+            bank_code: tx.additional_data?.bank_code,
+            rrn: tx.additional_data?.rrn,
+            auth_code: tx.additional_data?.auth_code,
+            product_name: productName,
+            tariff_name: tariffName,
+            plan_title: productName ? (tariffName ? `${productName}: ${tariffName}` : productName) : tx.description,
+            _source: "bepaid_api",
+          });
+        }
+      } else {
+        console.warn(`Transactions query failed: ${txResponseText}`);
+      }
+    } catch (txErr) {
+      console.error("Error fetching transactions from bePaid:", txErr);
+    }
+
+    // =====================================================
+    // PART 2: Fetch subscriptions
+    // =====================================================
+    try {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore && page <= 10) {
         const subsUrl = `https://api.bepaid.by/subscriptions?per_page=${perPage}&page=${page}`;
         console.info(`Fetching subscriptions page ${page}: ${subsUrl}`);
         
@@ -120,16 +264,10 @@ serve(async (req) => {
           },
         });
 
-        const responseText = await subsResponse.text();
-        console.info(`Subscriptions page ${page} response status: ${subsResponse.status}`);
-        
-        if (!subsResponse.ok) {
-          console.error(`Subscriptions API error: ${responseText}`);
-          break;
-        }
+        if (!subsResponse.ok) break;
 
-        const subsData = JSON.parse(responseText);
-        const subscriptions: BepaidSubscription[] = subsData.subscriptions || [];
+        const subsData = await subsResponse.json();
+        const subscriptions = subsData.subscriptions || [];
         
         console.info(`Page ${page}: fetched ${subscriptions.length} subscriptions`);
 
@@ -138,13 +276,12 @@ serve(async (req) => {
           break;
         }
 
-        // Filter by date and process each subscription
+        const filterFrom = new Date(fromDate);
+        const filterTo = new Date(toDate + "T23:59:59Z");
+
         for (const sub of subscriptions) {
           const subCreatedAt = new Date(sub.created_at);
-          const filterFrom = new Date(fromDate);
-          const filterTo = new Date(toDate + "T23:59:59Z");
           
-          // Check if subscription is in date range
           if (subCreatedAt >= filterFrom && subCreatedAt <= filterTo) {
             allSubscriptions.push({
               id: sub.id,
@@ -165,42 +302,8 @@ serve(async (req) => {
               card_brand: sub.credit_card?.brand,
               card_holder: sub.credit_card?.holder,
               transactions_count: sub.transactions?.length || 0,
-              transactions: sub.transactions?.map(tx => ({
-                uid: tx.uid,
-                status: tx.status,
-                amount: tx.amount / 100,
-                currency: tx.currency || sub.plan?.currency || "BYN",
-                paid_at: tx.paid_at,
-                created_at: tx.created_at,
-                message: tx.message,
-              })) || [],
+              transactions: sub.transactions || [],
             });
-
-            // Also extract individual transactions
-            for (const tx of (sub.transactions || [])) {
-              const txDate = new Date(tx.paid_at || tx.created_at || sub.created_at);
-              if (txDate >= filterFrom && txDate <= filterTo) {
-                allTransactions.push({
-                  uid: tx.uid,
-                  type: "transaction",
-                  subscription_id: sub.id,
-                  status: tx.status,
-                  amount: tx.amount / 100,
-                  currency: tx.currency || sub.plan?.currency || "BYN",
-                  paid_at: tx.paid_at,
-                  created_at: tx.created_at || sub.created_at,
-                  plan_title: sub.plan?.title,
-                  customer_email: sub.customer?.email,
-                  customer_name: [sub.customer?.first_name, sub.customer?.last_name].filter(Boolean).join(" ") || null,
-                  customer_phone: sub.customer?.phone,
-                  card_last_4: sub.credit_card?.last_4,
-                  card_brand: sub.credit_card?.brand,
-                  card_holder: sub.credit_card?.holder,
-                  tracking_id: sub.tracking_id,
-                  message: tx.message,
-                });
-              }
-            }
           }
         }
 
@@ -209,148 +312,74 @@ serve(async (req) => {
         } else {
           page++;
         }
-      } catch (fetchErr) {
-        console.error(`Error fetching subscriptions page ${page}:`, fetchErr);
-        break;
       }
+    } catch (subErr) {
+      console.warn("Error fetching subscriptions:", subErr);
     }
 
     // =====================================================
-    // PART 2: Try fetching customers for additional context
+    // FALLBACK: Load from local database if API returns nothing
     // =====================================================
-    let customers: any[] = [];
-    try {
-      const customersResponse = await fetch(`https://api.bepaid.by/customers?per_page=100&page=1`, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      });
-
-      if (customersResponse.ok) {
-        const customersData = await customersResponse.json();
-        customers = customersData.customers || [];
-        console.info(`Fetched ${customers.length} customers`);
-      }
-    } catch (custErr) {
-      console.warn("Could not fetch customers:", custErr);
-    }
-
-    // =====================================================
-    // FALLBACK (SIMULATION): if bePaid API returns nothing,
-    // return data already present in our system (webhooks/imports).
-    // =====================================================
-    if (allTransactions.length === 0 && allSubscriptions.length === 0) {
-      console.warn("bePaid API returned 0 items. Falling back to system data (simulation mode).");
+    if (allTransactions.length === 0) {
+      console.warn("bePaid API returned 0 transactions. Loading from local database.");
 
       const fromTs = new Date(fromDate + "T00:00:00Z").toISOString();
       const toTs = new Date(toDate + "T23:59:59Z").toISOString();
 
-      // Queue items (webhooks/imports)
-      const { data: queueRows, error: queueErr } = await supabase
+      // Load from payment_reconcile_queue
+      const { data: queueRows } = await supabase
         .from("payment_reconcile_queue")
-        .select(
-          "id, created_at, updated_at, status, tracking_id, amount, currency, customer_email, raw_payload, source, matched_profile_id, matched_order_id, bepaid_uid, last_error"
-        )
+        .select("*")
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
         .limit(1000);
 
-      if (queueErr) {
-        console.error("Simulation fallback: queue query error", queueErr);
-      }
-
       for (const row of queueRows || []) {
         const payload: any = row.raw_payload || {};
         const lastTx = payload.last_transaction || payload.lastTransaction || null;
-
-        const uid = row.bepaid_uid || lastTx?.uid || payload.uid || payload.id || row.id;
-        const status = (lastTx?.status || payload.status || row.status || "pending").toString();
-        const amount = row.amount ?? (payload.plan?.amount ? payload.plan.amount / 100 : null);
-        const currency = row.currency || payload.plan?.currency || payload.currency || "BYN";
-        const paidAt = lastTx?.created_at || lastTx?.paid_at || payload.paid_at || payload.paidAt || null;
-        const createdAt = payload.created_at || row.created_at;
         
-        // Extended plan_title extraction from various payload structures
-        const planTitle = 
-          (row as any).plan_title ||
-          payload.plan?.title || 
-          payload.plan?.name || 
-          payload.plan?.plan?.title || 
-          payload.additional_data?.description ||
-          payload.additional_data?.product_name ||
-          payload.description ||
-          payload.product_name ||
-          payload.order?.description ||
-          null;
+        const uid = row.bepaid_uid || lastTx?.uid || payload.uid || payload.id || row.id;
+        const description = (row as any).description || payload.description || payload.additional_data?.description || payload.order?.description || "";
+        const { productName, tariffName } = parseProductFromDescription(description);
 
         allTransactions.push({
           uid,
           type: "transaction",
-          subscription_id: payload.id || null,
-          status,
-          amount,
-          currency,
-          paid_at: paidAt,
-          created_at: createdAt,
-          plan_title: planTitle,
-          customer_email: row.customer_email || payload.customer?.email || null,
-          customer_name: payload.customer_name || null,
-          customer_phone: payload.customer?.phone || null,
-          card_last_4: payload.card?.last_4 || payload.credit_card?.last_4 || null,
-          card_brand: payload.card?.brand || payload.credit_card?.brand || null,
-          card_holder: payload.card?.holder || payload.credit_card?.holder || null,
-          tracking_id: row.tracking_id || payload.tracking_id || null,
-          message: lastTx?.message || row.last_error || null,
-          _source: row.source || "system",
+          status: lastTx?.status || payload.status || row.status || "pending",
+          amount: row.amount ?? (payload.plan?.amount ? payload.plan.amount / 100 : null),
+          currency: row.currency || payload.plan?.currency || payload.currency || "BYN",
+          description: description,
+          paid_at: (row as any).paid_at || lastTx?.paid_at || lastTx?.created_at || payload.paid_at,
+          created_at: payload.created_at || row.created_at,
+          receipt_url: (row as any).receipt_url || payload.receipt_url,
+          tracking_id: row.tracking_id || payload.tracking_id,
+          message: lastTx?.message || row.last_error,
+          ip_address: (row as any).ip_address || payload.customer?.ip,
+          customer_email: row.customer_email || payload.customer?.email,
+          customer_name: payload.customer?.first_name ? `${payload.customer.first_name} ${payload.customer.last_name || ""}`.trim() : null,
+          customer_phone: payload.customer?.phone,
+          card_last_4: (row as any).card_last4 || payload.credit_card?.last_4 || payload.card?.last_4,
+          card_brand: payload.credit_card?.brand || payload.card?.brand,
+          card_holder: (row as any).card_holder || payload.credit_card?.holder || payload.card?.holder,
+          bank_code: (row as any).bank_code || payload.additional_data?.bank_code,
+          rrn: (row as any).rrn || payload.additional_data?.rrn,
+          auth_code: (row as any).auth_code || payload.additional_data?.auth_code,
+          product_name: (row as any).product_name || productName,
+          tariff_name: (row as any).tariff_name || tariffName,
+          plan_title: (row as any).plan_title || payload.plan?.title || (productName ? `${productName}${tariffName ? ": " + tariffName : ""}` : description),
+          _source: row.source || "queue",
           _queue_id: row.id,
           matched_profile_id: row.matched_profile_id,
-          matched_order_id: row.matched_order_id,
+          matched_product_id: (row as any).matched_product_id,
+          matched_tariff_id: (row as any).matched_tariff_id,
         });
-
-        // Also add subscription as a separate record if it looks like one
-        if (payload.id && typeof payload.id === "string" && payload.id.startsWith("sbs_")) {
-          allSubscriptions.push({
-            id: payload.id,
-            type: "subscription",
-            state: payload.state || "unknown",
-            tracking_id: payload.tracking_id || row.tracking_id,
-            created_at: payload.created_at || row.created_at,
-            updated_at: payload.updated_at || row.updated_at,
-            amount: payload.plan?.amount ? payload.plan.amount / 100 : row.amount,
-            currency: payload.plan?.currency || row.currency || "BYN",
-            plan_title: payload.plan?.title || payload.plan?.name || null,
-            interval: payload.plan?.plan?.interval_unit || null,
-            interval_count: payload.plan?.plan?.interval || null,
-            customer_email: row.customer_email || null,
-            customer_name: null,
-            customer_phone: null,
-            card_last_4: payload.card?.last_4 || null,
-            card_brand: payload.card?.brand || null,
-            card_holder: payload.card?.holder || null,
-            transactions_count: payload.last_transaction ? 1 : 0,
-            transactions: payload.last_transaction
-              ? [{
-                  uid: payload.last_transaction.uid,
-                  status: payload.last_transaction.status,
-                  amount: payload.plan?.amount ? payload.plan.amount / 100 : null,
-                  currency: payload.plan?.currency || row.currency || "BYN",
-                  paid_at: payload.last_transaction.created_at,
-                  created_at: payload.last_transaction.created_at,
-                  message: payload.last_transaction.message,
-                }]
-              : [],
-          });
-        }
       }
 
-      // Existing processed payments with order data
-      const { data: paymentRows, error: payErr } = await supabase
+      // Load from payments_v2
+      const { data: paymentRows } = await supabase
         .from("payments_v2")
         .select(`
-          id, created_at, paid_at, amount, currency, status, provider, provider_payment_id, card_last4, card_brand, user_id, order_id, meta,
+          *,
           orders_v2:order_id (
             id, product_id, tariff_id, user_id, customer_email, customer_phone,
             products_v2:product_id (name),
@@ -362,11 +391,6 @@ serve(async (req) => {
         .lte("created_at", toTs)
         .limit(1000);
 
-      if (payErr) {
-        console.error("Simulation fallback: payments query error", payErr);
-      }
-
-      // Get profile info for user_ids
       const userIds = [...new Set((paymentRows || []).map(p => p.user_id).filter(Boolean))];
       let profilesMap: Record<string, any> = {};
       if (userIds.length > 0) {
@@ -384,47 +408,136 @@ serve(async (req) => {
         const profile = profilesMap[p.user_id] || {};
         const productName = order?.products_v2?.name;
         const tariffName = order?.tariffs?.name;
-        
+        const meta: any = p.meta || {};
+
         allTransactions.push({
           uid: p.provider_payment_id || p.id,
           type: "transaction",
           status: p.status,
           amount: p.amount,
           currency: p.currency,
+          description: meta.description || "",
           paid_at: p.paid_at,
           created_at: p.created_at,
-          plan_title: productName || tariffName || (p.meta as any)?.product_name || (p.meta as any)?.description || null,
-          customer_email: profile?.email || order?.customer_email || (p.meta as any)?.customer_email || null,
-          customer_name: profile?.full_name || (p.meta as any)?.customer_name || null,
-          customer_phone: profile?.phone || order?.customer_phone || (p.meta as any)?.customer_phone || null,
-          card_last_4: p.card_last4 || null,
-          card_brand: p.card_brand || null,
-          card_holder: (p.meta as any)?.card_holder || null,
-          tracking_id: (p.meta as any)?.tracking_id || null,
+          receipt_url: meta.receipt_url,
+          tracking_id: meta.tracking_id,
           message: null,
+          ip_address: meta.ip_address,
+          customer_email: profile?.email || order?.customer_email || meta.customer_email,
+          customer_name: profile?.full_name || meta.customer_name,
+          customer_phone: profile?.phone || order?.customer_phone || meta.customer_phone,
+          card_last_4: p.card_last4,
+          card_brand: p.card_brand,
+          card_holder: meta.card_holder,
+          bank_code: meta.bank_code,
+          rrn: meta.rrn,
+          auth_code: meta.auth_code,
+          product_name: productName,
+          tariff_name: tariffName,
+          plan_title: productName ? (tariffName ? `${productName}: ${tariffName}` : productName) : meta.description,
           _source: "payments_v2",
           order_id: p.order_id,
           user_id: p.user_id,
+          matched_profile_id: p.user_id,
         });
       }
 
-      // Deduplicate by uid
+      // Deduplicate
       const seen = new Set<string>();
-      const deduped = [] as any[];
-      for (const t of allTransactions) {
+      const deduped = allTransactions.filter(t => {
         const key = String(t.uid);
-        if (seen.has(key)) continue;
+        if (seen.has(key)) return false;
         seen.add(key);
-        deduped.push(t);
-      }
+        return true;
+      });
       allTransactions.length = 0;
       allTransactions.push(...deduped);
 
-      console.info(`Simulation mode: returned ${allTransactions.length} transactions and ${allSubscriptions.length} subscriptions from system data.`);
+      console.info(`Local fallback: returned ${allTransactions.length} transactions.`);
     }
 
     // =====================================================
-    // PART 3: Sort transactions by date descending
+    // PART 3: Auto-match contacts from database
+    // =====================================================
+    const emailsToMatch = [...new Set(allTransactions.filter(t => t.customer_email && !t.matched_profile_id).map(t => t.customer_email.toLowerCase()))];
+    const phonesToMatch = [...new Set(allTransactions.filter(t => t.customer_phone && !t.matched_profile_id).map(t => normalizePhone(t.customer_phone)).filter(Boolean))];
+
+    let profilesByEmail: Record<string, { id: string; full_name: string }> = {};
+    let profilesByPhone: Record<string, { id: string; full_name: string }> = {};
+
+    if (emailsToMatch.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("email", emailsToMatch);
+      for (const p of profiles || []) {
+        if (p.email) profilesByEmail[p.email.toLowerCase()] = { id: p.id, full_name: p.full_name || "" };
+      }
+    }
+
+    if (phonesToMatch.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, phone, full_name")
+        .in("phone", phonesToMatch as string[]);
+      for (const p of profiles || []) {
+        if (p.phone) profilesByPhone[p.phone] = { id: p.id, full_name: p.full_name || "" };
+      }
+    }
+
+    // Apply matching
+    for (const tx of allTransactions) {
+      if (tx.matched_profile_id) continue;
+      
+      // Match by email
+      if (tx.customer_email) {
+        const match = profilesByEmail[tx.customer_email.toLowerCase()];
+        if (match) {
+          tx.matched_profile_id = match.id;
+          tx.matched_profile_name = match.full_name;
+          continue;
+        }
+      }
+      
+      // Match by phone
+      if (tx.customer_phone) {
+        const normalized = normalizePhone(tx.customer_phone);
+        if (normalized) {
+          const match = profilesByPhone[normalized];
+          if (match) {
+            tx.matched_profile_id = match.id;
+            tx.matched_profile_name = match.full_name;
+          }
+        }
+      }
+    }
+
+    // =====================================================
+    // PART 4: Auto-match products/tariffs from database
+    // =====================================================
+    const productNames = [...new Set(allTransactions.filter(t => t.product_name && !t.matched_product_id).map(t => t.product_name))];
+    
+    if (productNames.length > 0) {
+      const { data: products } = await supabase
+        .from("products_v2")
+        .select("id, name, code")
+        .in("name", productNames);
+      
+      const productMap: Record<string, string> = {};
+      for (const p of products || []) {
+        productMap[p.name.toLowerCase()] = p.id;
+      }
+
+      for (const tx of allTransactions) {
+        if (tx.product_name && !tx.matched_product_id) {
+          const productId = productMap[tx.product_name.toLowerCase()];
+          if (productId) tx.matched_product_id = productId;
+        }
+      }
+    }
+
+    // =====================================================
+    // PART 5: Sort and return
     // =====================================================
     allTransactions.sort((a, b) => {
       const dateA = new Date(a.paid_at || a.created_at);
@@ -444,34 +557,25 @@ serve(async (req) => {
       toDate,
       transactions: allTransactions,
       subscriptions: allSubscriptions,
-      customers: customers.map(c => ({
-        id: c.id,
-        email: c.email,
-        name: [c.first_name, c.last_name].filter(Boolean).join(" "),
-        phone: c.phone,
-        created_at: c.created_at,
-      })),
-    summary: {
+      summary: {
         total_transactions: allTransactions.length,
         total_subscriptions: allSubscriptions.length,
-        total_customers: customers.length,
-        successful_transactions: allTransactions.filter(t => 
-          t.status === "successful" || t.status === "succeeded" || t.status === "completed" || t.status === "paid"
-        ).length,
-        failed_transactions: allTransactions.filter(t => 
-          t.status === "failed" || t.status === "error" || t.status === "declined"
-        ).length,
+        successful_transactions: allTransactions.filter(t => ["successful", "succeeded", "completed", "paid"].includes(t.status?.toLowerCase())).length,
+        failed_transactions: allTransactions.filter(t => ["failed", "error", "declined"].includes(t.status?.toLowerCase())).length,
+        matched_contacts: allTransactions.filter(t => t.matched_profile_id).length,
+        unmatched_contacts: allTransactions.filter(t => !t.matched_profile_id).length,
       },
     };
 
-    console.info("Raw fetch completed:", result.summary);
+    console.info(`Returning ${result.summary.total_transactions} transactions, ${result.summary.matched_contacts} matched contacts`);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (error) {
-    console.error("bepaid-raw-transactions error:", error);
-    return new Response(JSON.stringify({ error: String(error) }), {
+  } catch (error: unknown) {
+    console.error("Error in bepaid-raw-transactions:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: errMsg }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
