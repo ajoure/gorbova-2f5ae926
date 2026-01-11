@@ -42,6 +42,7 @@ import {
   Ghost,
   Archive,
   Camera,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -51,6 +52,7 @@ import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
+import AmoCRMImportDialog from "@/components/admin/AmoCRMImportDialog";
 
 interface Contact {
   id: string;
@@ -114,6 +116,7 @@ export default function AdminContacts() {
   const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showAmoCRMImport, setShowAmoCRMImport] = useState(false);
   
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
@@ -484,12 +487,23 @@ export default function AdminContacts() {
               </Badge>
             </Button>
           )}
+          <Button variant="outline" onClick={() => setShowAmoCRMImport(true)}>
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Импорт amoCRM
+          </Button>
           <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Обновить
           </Button>
         </div>
       </div>
+
+      {/* amoCRM Import Dialog */}
+      <AmoCRMImportDialog
+        open={showAmoCRMImport}
+        onOpenChange={setShowAmoCRMImport}
+        onSuccess={() => refetch()}
+      />
 
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">

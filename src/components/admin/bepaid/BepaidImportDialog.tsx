@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import * as XLSX from "xlsx";
+import { transliterateToCyrillic } from "@/utils/transliteration";
 
 interface BepaidImportDialogProps {
   open: boolean;
@@ -96,31 +97,8 @@ interface ImportStats {
   unmatched: number;
 }
 
-// Transliterate Latin card holder name to Cyrillic
-function transliterateToCyrillic(name: string): string {
-  const map: Record<string, string> = {
-    'a': 'а', 'b': 'б', 'c': 'ц', 'd': 'д', 'e': 'е', 'f': 'ф',
-    'g': 'г', 'h': 'х', 'i': 'и', 'j': 'й', 'k': 'к', 'l': 'л',
-    'm': 'м', 'n': 'н', 'o': 'о', 'p': 'п', 'q': 'к', 'r': 'р',
-    's': 'с', 't': 'т', 'u': 'у', 'v': 'в', 'w': 'в', 'x': 'кс',
-    'y': 'ы', 'z': 'з',
-    'sh': 'ш', 'ch': 'ч', 'zh': 'ж', 'ya': 'я', 'yu': 'ю', 'yo': 'ё',
-    'ts': 'ц', 'ks': 'кс', 'kh': 'х',
-  };
-  
-  let result = name.toLowerCase();
-  // Replace digraphs first
-  ['sh', 'ch', 'zh', 'ya', 'yu', 'yo', 'ts', 'ks', 'kh'].forEach(digraph => {
-    result = result.replace(new RegExp(digraph, 'g'), map[digraph]);
-  });
-  // Then single letters
-  result = result.split('').map(c => map[c] || c).join('');
-  
-  // Capitalize first letter of each word
-  return result.split(' ').map(word => 
-    word.charAt(0).toUpperCase() + word.slice(1)
-  ).join(' ');
-}
+// Re-export from shared utility for backwards compatibility
+export { transliterateToCyrillic } from "@/utils/transliteration";
 
 // Parse bePaid CSV row with all fields from export
 function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
