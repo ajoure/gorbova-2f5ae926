@@ -574,7 +574,7 @@ export default function AdminBepaidSync() {
                               {item.created_at && format(new Date(item.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
                             </TableCell>
                             <TableCell className="text-right font-medium">
-                              {item.amount ? `${item.amount / 100} ${item.currency}` : "—"}
+                              {item.amount ? `${item.amount} ${item.currency}` : "—"}
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-col gap-1">
