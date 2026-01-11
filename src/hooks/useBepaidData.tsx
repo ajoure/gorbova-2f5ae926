@@ -81,12 +81,16 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
   const { data: queueItems, isLoading: queueLoading, error: queueError, refetch: refetchQueue } = useQuery({
     queryKey: ["bepaid-queue", dateFilter],
     queryFn: async () => {
-      // Build query - only show pending/processing/processed statuses (successful payments)
+      // Build query - only show processing/processed statuses (successful payments ready for processing)
+      // Exclude "pending" with errors like invalid_signature which are not actual successful payments
       let query = supabase
         .from("payment_reconcile_queue")
         .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
-        .in("status", ["pending", "processing", "processed"])
+        .in("status", ["processing", "processed"])
         .order("created_at", { ascending: false });
+      
+      // Also include pending items that don't have errors (i.e., actual successful payments)
+      // We'll filter client-side to exclude failed webhook signatures
       
       // Apply date filter
       const fromDate = dateFilter?.from || "2026-01-01";
@@ -96,7 +100,20 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
         query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
       }
 
-      const { data: queue, error: queueError } = await query;
+      // Fetch both processed and pending items
+      const [processedResult, pendingResult] = await Promise.all([
+        query,
+        supabase
+          .from("payment_reconcile_queue")
+          .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
+          .eq("status", "pending")
+          .is("last_error", null) // Only pending without errors
+          .gte("created_at", `${fromDate}T00:00:00Z`)
+          .order("created_at", { ascending: false }),
+      ]);
+      
+      const queue = [...(processedResult.data || []), ...(pendingResult.data || [])];
+      const queueError = processedResult.error || pendingResult.error;
       
       if (queueError) throw queueError;
 
