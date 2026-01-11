@@ -298,14 +298,14 @@ export default function BepaidMappingsTab() {
             <div className="space-y-2">
               <Label htmlFor="product_id">Продукт в системе</Label>
               <Select
-                value={newMappingData.product_id || ""}
-                onValueChange={(v) => setNewMappingData({ ...newMappingData, product_id: v || null })}
+                value={newMappingData.product_id || "__none__"}
+                onValueChange={(v) => setNewMappingData({ ...newMappingData, product_id: v === "__none__" ? null : v })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите продукт" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Не выбран</SelectItem>
+                  <SelectItem value="__none__">Не выбран</SelectItem>
                   {products?.map((product) => (
                     <SelectItem key={product.id} value={product.id}>
                       {product.name}
@@ -319,14 +319,14 @@ export default function BepaidMappingsTab() {
               <div className="space-y-2">
                 <Label htmlFor="tariff_id">Тариф</Label>
                 <Select
-                  value={newMappingData.tariff_id || ""}
-                  onValueChange={(v) => setNewMappingData({ ...newMappingData, tariff_id: v || null })}
+                  value={newMappingData.tariff_id || "__none__"}
+                  onValueChange={(v) => setNewMappingData({ ...newMappingData, tariff_id: v === "__none__" ? null : v })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Выберите тариф" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Не выбран</SelectItem>
+                    <SelectItem value="__none__">Не выбран</SelectItem>
                     {allTariffs.filter(t => t.product_id === newMappingData.product_id).map((tariff) => (
                       <SelectItem key={tariff.id} value={tariff.id}>
                         {tariff.name}
