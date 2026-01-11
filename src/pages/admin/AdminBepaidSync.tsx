@@ -78,20 +78,25 @@ export default function AdminBepaidSync() {
   
   const handleOpenContact = async (item: QueueItem) => {
     if (item.matched_profile_id) {
-      // Fetch full profile data from DB to get correct email
+      // Fetch full profile data from DB to get correct email and user_id
       const { data: profile } = await supabase
         .from("profiles")
-        .select("id, full_name, phone, email")
+        .select("id, user_id, full_name, phone, email, created_at, telegram_user_id, telegram_username, avatar_url, status")
         .eq("id", item.matched_profile_id)
         .single();
       
       if (profile) {
         setSelectedContact({
           id: profile.id,
-          user_id: profile.id,
+          user_id: profile.user_id, // Use actual user_id for deals lookup
           full_name: profile.full_name,
           phone: profile.phone,
-          email: profile.email, // Use profile email, not bePaid customer_email
+          email: profile.email,
+          created_at: profile.created_at,
+          telegram_user_id: profile.telegram_user_id,
+          telegram_username: profile.telegram_username,
+          avatar_url: profile.avatar_url,
+          status: profile.status || 'active',
         });
         setContactSheetOpen(true);
       }
