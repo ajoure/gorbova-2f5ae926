@@ -1,24 +1,22 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, ExternalLink, AlertTriangle
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem } from "@/hooks/useBepaidData";
+import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
+import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 
 export default function AdminBepaidSync() {
   const [activeMainTab, setActiveMainTab] = useState("payments");
@@ -216,14 +214,18 @@ export default function AdminBepaidSync() {
 
         {/* Main tabs */}
         <Tabs value={activeMainTab} onValueChange={setActiveMainTab}>
-          <TabsList className="mb-4">
+          <TabsList className="mb-4 flex-wrap h-auto gap-1">
             <TabsTrigger value="payments" className="gap-2">
               <Database className="h-4 w-4" />
-              Платежи в системе ({payments.length})
+              Платежи ({payments.length})
             </TabsTrigger>
             <TabsTrigger value="queue" className="gap-2">
               <Clock className="h-4 w-4" />
               Очередь ({queueItems.length})
+            </TabsTrigger>
+            <TabsTrigger value="mappings" className="gap-2">
+              <Link2 className="h-4 w-4" />
+              Маппинг продуктов
             </TabsTrigger>
           </TabsList>
 
@@ -385,6 +387,7 @@ export default function AdminBepaidSync() {
                           <TableHead>Email bePaid</TableHead>
                           <TableHead>Сопоставление</TableHead>
                           <TableHead>Клиент в системе</TableHead>
+                          <TableHead>Действия</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -474,8 +477,11 @@ export default function AdminBepaidSync() {
                                   )}
                                 </div>
                               ) : (
-                                <span className="text-muted-foreground">Не найден</span>
+                                <LinkToProfileButton item={item} onSuccess={refetchQueue} />
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <CreateOrderButton item={item} onSuccess={refetchQueue} />
                             </TableCell>
                           </TableRow>
                         ))}
@@ -485,6 +491,11 @@ export default function AdminBepaidSync() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Mappings tab */}
+          <TabsContent value="mappings">
+            <BepaidMappingsTab />
           </TabsContent>
         </Tabs>
       </div>
