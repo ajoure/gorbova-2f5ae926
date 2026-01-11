@@ -2525,63 +2525,96 @@ export type Database = {
         Row: {
           amount: number | null
           attempts: number | null
+          auth_code: string | null
+          bank_code: string | null
           bepaid_uid: string | null
           created_at: string | null
           currency: string | null
           customer_email: string | null
+          description: string | null
           id: string
+          ip_address: string | null
           last_error: string | null
           matched_order_id: string | null
+          matched_product_id: string | null
           matched_profile_id: string | null
+          matched_tariff_id: string | null
           max_attempts: number | null
           next_retry_at: string | null
+          paid_at: string | null
           processed_at: string | null
           processed_order_id: string | null
+          product_name: string | null
           raw_payload: Json | null
+          receipt_url: string | null
+          rrn: string | null
           source: string | null
           status: string | null
+          tariff_name: string | null
           tracking_id: string | null
           updated_at: string | null
         }
         Insert: {
           amount?: number | null
           attempts?: number | null
+          auth_code?: string | null
+          bank_code?: string | null
           bepaid_uid?: string | null
           created_at?: string | null
           currency?: string | null
           customer_email?: string | null
+          description?: string | null
           id?: string
+          ip_address?: string | null
           last_error?: string | null
           matched_order_id?: string | null
+          matched_product_id?: string | null
           matched_profile_id?: string | null
+          matched_tariff_id?: string | null
           max_attempts?: number | null
           next_retry_at?: string | null
+          paid_at?: string | null
           processed_at?: string | null
           processed_order_id?: string | null
+          product_name?: string | null
           raw_payload?: Json | null
+          receipt_url?: string | null
+          rrn?: string | null
           source?: string | null
           status?: string | null
+          tariff_name?: string | null
           tracking_id?: string | null
           updated_at?: string | null
         }
         Update: {
           amount?: number | null
           attempts?: number | null
+          auth_code?: string | null
+          bank_code?: string | null
           bepaid_uid?: string | null
           created_at?: string | null
           currency?: string | null
           customer_email?: string | null
+          description?: string | null
           id?: string
+          ip_address?: string | null
           last_error?: string | null
           matched_order_id?: string | null
+          matched_product_id?: string | null
           matched_profile_id?: string | null
+          matched_tariff_id?: string | null
           max_attempts?: number | null
           next_retry_at?: string | null
+          paid_at?: string | null
           processed_at?: string | null
           processed_order_id?: string | null
+          product_name?: string | null
           raw_payload?: Json | null
+          receipt_url?: string | null
+          rrn?: string | null
           source?: string | null
           status?: string | null
+          tariff_name?: string | null
           tracking_id?: string | null
           updated_at?: string | null
         }
@@ -2594,10 +2627,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "payment_reconcile_queue_matched_product_id_fkey"
+            columns: ["matched_product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "payment_reconcile_queue_matched_profile_id_fkey"
             columns: ["matched_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_reconcile_queue_matched_tariff_id_fkey"
+            columns: ["matched_tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
             referencedColumns: ["id"]
           },
           {

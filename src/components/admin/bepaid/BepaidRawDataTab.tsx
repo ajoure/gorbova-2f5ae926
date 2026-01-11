@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { 
   RefreshCw, Download, CreditCard, Mail, Phone, User, 
-  CheckCircle2, AlertCircle, FileText, Clock, ArrowRightLeft, Loader2
+  CheckCircle2, AlertCircle, FileText, ArrowRightLeft, Loader2,
+  ExternalLink, Globe, Receipt, Package, UserCheck, Link2
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -26,17 +27,30 @@ interface RawTransaction {
   status: string;
   amount: number | null;
   currency: string;
+  description?: string;
   paid_at?: string;
   created_at?: string;
+  receipt_url?: string;
+  tracking_id?: string;
+  message?: string;
+  ip_address?: string;
   plan_title?: string;
+  product_name?: string;
+  tariff_name?: string;
   customer_email?: string;
   customer_name?: string;
   customer_phone?: string;
   card_last_4?: string;
   card_brand?: string;
   card_holder?: string;
-  tracking_id?: string;
-  message?: string;
+  bank_code?: string;
+  rrn?: string;
+  auth_code?: string;
+  matched_profile_id?: string;
+  matched_profile_name?: string;
+  matched_product_id?: string;
+  matched_tariff_id?: string;
+  _source?: string;
 }
 
 interface RawSubscription {
@@ -90,13 +104,13 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
         success: boolean;
         transactions: RawTransaction[];
         subscriptions: RawSubscription[];
-        customers: any[];
         summary: {
           total_transactions: number;
           total_subscriptions: number;
-          total_customers: number;
           successful_transactions: number;
           failed_transactions: number;
+          matched_contacts: number;
+          unmatched_contacts: number;
         };
       };
     },
@@ -121,8 +135,8 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
           continue;
         }
 
-        // Insert into queue
-        const { error } = await supabase.from("payment_reconcile_queue").insert({
+        // Insert into queue with all new fields
+        const insertData: any = {
           bepaid_uid: item.uid,
           tracking_id: item.tracking_id,
           amount: item.amount,
@@ -131,11 +145,25 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
           card_last4: item.card_last_4,
           card_holder: item.card_holder,
           plan_title: item.plan_title,
+          description: item.description,
+          ip_address: item.ip_address,
+          receipt_url: item.receipt_url,
+          product_name: item.product_name,
+          tariff_name: item.tariff_name,
+          matched_profile_id: item.matched_profile_id,
+          matched_product_id: item.matched_product_id,
+          matched_tariff_id: item.matched_tariff_id,
+          paid_at: item.paid_at,
+          bank_code: item.bank_code,
+          rrn: item.rrn,
+          auth_code: item.auth_code,
           raw_payload: item as unknown as Record<string, unknown>,
           source: "manual_raw_sync",
-          status: item.status === "successful" ? "pending" : "error",
-          last_error: item.status !== "successful" ? `bePaid status: ${item.status}` : null,
-        } as any);
+          status: ["successful", "succeeded", "completed", "paid"].includes(item.status?.toLowerCase()) ? "pending" : "error",
+          last_error: !["successful", "succeeded", "completed", "paid"].includes(item.status?.toLowerCase()) ? `bePaid status: ${item.status}` : null,
+        };
+
+        const { error } = await supabase.from("payment_reconcile_queue").insert(insertData);
 
         if (error) {
           results.push({ uid: item.uid, status: "error", error: error.message });
@@ -213,7 +241,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
       case "succeeded":
       case "completed":
       case "paid":
-        return <Badge variant="default" className="bg-green-600">succeeded</Badge>;
+        return <Badge variant="default" className="bg-green-600">Оплачено</Badge>;
       case "failed":
       case "error":
       case "declined":
@@ -239,18 +267,22 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
     if (transactions.length === 0) return;
     
     const csv = [
-      ["UID", "Дата", "Сумма", "Валюта", "Статус", "Продукт", "Email", "Имя", "Телефон", "Карта", "Tracking ID"].join(";"),
+      ["UID", "Дата/время", "Сумма", "Валюта", "Статус", "Продукт", "Тариф", "Email", "Имя", "Телефон", "IP", "Карта", "Чек", "Контакт найден", "Tracking ID"].join(";"),
       ...transactions.map(t => [
         t.uid,
-        t.paid_at || t.created_at ? format(new Date(t.paid_at || t.created_at!), "dd.MM.yyyy HH:mm") : "",
+        t.paid_at || t.created_at ? format(new Date(t.paid_at || t.created_at!), "dd.MM.yyyy HH:mm:ss") : "",
         t.amount || "",
         t.currency,
         t.status,
-        t.plan_title || "",
+        t.product_name || "",
+        t.tariff_name || "",
         t.customer_email || "",
         t.customer_name || "",
         t.customer_phone || "",
+        t.ip_address || "",
         t.card_last_4 ? `*${t.card_last_4}` : "",
+        t.receipt_url || "",
+        t.matched_profile_id ? "Да" : "Нет",
         t.tracking_id || "",
       ].join(";"))
     ].join("\n");
@@ -272,10 +304,10 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
           <div>
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
-              Сырые данные bePaid
+              Транзакции bePaid
             </CardTitle>
             <CardDescription>
-              Прямые данные из API bePaid для выбора и синхронизации
+              Данные из bePaid API с автоматическим определением клиентов и продуктов
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -286,7 +318,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
               disabled={isFetching}
             >
               <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
-              Обновить из bePaid
+              Обновить
             </Button>
             <Button 
               variant="outline" 
@@ -303,7 +335,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
       <CardContent className="space-y-4">
         {/* Summary */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <div className="bg-muted/50 rounded-lg p-3 text-center">
               <div className="text-2xl font-bold">{summary.total_transactions}</div>
               <div className="text-xs text-muted-foreground">Транзакций</div>
@@ -321,8 +353,12 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
               <div className="text-xs text-muted-foreground">Подписок</div>
             </div>
             <div className="bg-muted/50 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold">{summary.total_customers}</div>
-              <div className="text-xs text-muted-foreground">Клиентов</div>
+              <div className="text-2xl font-bold text-green-600">{summary.matched_contacts}</div>
+              <div className="text-xs text-muted-foreground">Найдено контактов</div>
+            </div>
+            <div className="bg-muted/50 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-amber-600">{summary.unmatched_contacts}</div>
+              <div className="text-xs text-muted-foreground">Без контакта</div>
             </div>
           </div>
         )}
@@ -385,11 +421,11 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
             <div className="text-center py-12 text-muted-foreground">
               <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p>Нет транзакций за выбранный период</p>
-              <p className="text-sm mt-1">Проверьте даты фильтра или нажмите "Обновить из bePaid"</p>
+              <p className="text-sm mt-1">Проверьте даты фильтра или нажмите "Обновить"</p>
             </div>
           ) : (
             <div className="max-h-[600px] overflow-auto">
-              <Table className="min-w-[1000px]">
+              <Table className="min-w-[1200px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">
@@ -398,18 +434,20 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
-                    <TableHead>Дата</TableHead>
+                    <TableHead>Дата/время</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
                     <TableHead>Статус</TableHead>
-                    <TableHead>Продукт</TableHead>
+                    <TableHead>Продукт / Тариф</TableHead>
                     <TableHead>Клиент</TableHead>
+                    <TableHead>Контакт в базе</TableHead>
+                    <TableHead>IP</TableHead>
                     <TableHead>Карта</TableHead>
-                    <TableHead>Tracking ID</TableHead>
+                    <TableHead>Чек</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {transactions.map((tx) => (
-                    <TableRow key={tx.uid}>
+                    <TableRow key={tx.uid} className={tx.matched_profile_id ? "bg-green-50/30 dark:bg-green-950/10" : ""}>
                       <TableCell>
                         <Checkbox
                           checked={selectedItems.has(tx.uid)}
@@ -417,18 +455,46 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                         />
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        {(tx.paid_at || tx.created_at) && 
-                          format(new Date(tx.paid_at || tx.created_at!), "dd.MM.yyyy HH:mm", { locale: ru })}
+                        {(tx.paid_at || tx.created_at) && (
+                          <div>
+                            <div>{format(new Date(tx.paid_at || tx.created_at!), "dd.MM.yyyy", { locale: ru })}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {format(new Date(tx.paid_at || tx.created_at!), "HH:mm:ss")}
+                            </div>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-medium">
-                        {tx.amount} {tx.currency}
+                        <div className="font-semibold">{tx.amount} {tx.currency}</div>
                       </TableCell>
                       <TableCell>
                         {getStatusBadge(tx.status)}
                       </TableCell>
                       <TableCell>
-                        <div className="max-w-[150px] truncate" title={tx.plan_title}>
-                          {tx.plan_title || "—"}
+                        <div className="space-y-0.5">
+                          {tx.product_name ? (
+                            <>
+                              <div className="flex items-center gap-1 font-medium">
+                                <Package className="h-3 w-3 text-primary" />
+                                <span>{tx.product_name}</span>
+                              </div>
+                              {tx.tariff_name && (
+                                <div className="text-xs text-muted-foreground pl-4">
+                                  {tx.tariff_name}
+                                </div>
+                              )}
+                            </>
+                          ) : tx.plan_title ? (
+                            <div className="max-w-[150px] truncate text-sm" title={tx.plan_title}>
+                              {tx.plan_title}
+                            </div>
+                          ) : tx.description ? (
+                            <div className="max-w-[150px] truncate text-xs text-muted-foreground" title={tx.description}>
+                              {tx.description}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -436,7 +502,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                           {tx.customer_email && (
                             <div className="flex items-center gap-1 text-sm">
                               <Mail className="h-3 w-3 text-muted-foreground" />
-                              <span className="truncate max-w-[150px]">{tx.customer_email}</span>
+                              <span className="truncate max-w-[140px]">{tx.customer_email}</span>
                             </div>
                           )}
                           {tx.customer_name && (
@@ -454,25 +520,62 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                         </div>
                       </TableCell>
                       <TableCell>
-                        {tx.card_last_4 && (
-                          <div className="flex items-center gap-1 text-sm">
-                            <CreditCard className="h-3 w-3" />
-                            <span>*{tx.card_last_4}</span>
-                            {tx.card_brand && (
-                              <Badge variant="outline" className="text-xs ml-1">{tx.card_brand}</Badge>
-                            )}
+                        {tx.matched_profile_id ? (
+                          <div className="flex items-center gap-1.5">
+                            <UserCheck className="h-4 w-4 text-green-600" />
+                            <span className="text-sm text-green-700 dark:text-green-400">
+                              {tx.matched_profile_name || "Найден"}
+                            </span>
                           </div>
-                        )}
-                        {tx.card_holder && (
-                          <div className="text-xs text-muted-foreground truncate max-w-[120px]">
-                            {tx.card_holder}
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <Link2 className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">Не найден</span>
                           </div>
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="text-xs font-mono truncate max-w-[100px]" title={tx.tracking_id}>
-                          {tx.tracking_id || "—"}
-                        </div>
+                        {tx.ip_address ? (
+                          <div className="flex items-center gap-1 text-xs">
+                            <Globe className="h-3 w-3 text-muted-foreground" />
+                            <span className="font-mono">{tx.ip_address}</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {tx.card_last_4 && (
+                          <div>
+                            <div className="flex items-center gap-1 text-sm">
+                              <CreditCard className="h-3 w-3" />
+                              <span>*{tx.card_last_4}</span>
+                              {tx.card_brand && (
+                                <Badge variant="outline" className="text-xs ml-1">{tx.card_brand}</Badge>
+                              )}
+                            </div>
+                            {tx.card_holder && (
+                              <div className="text-xs text-muted-foreground truncate max-w-[100px]" title={tx.card_holder}>
+                                {tx.card_holder}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {tx.receipt_url ? (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-7 px-2"
+                            onClick={() => window.open(tx.receipt_url, "_blank")}
+                          >
+                            <Receipt className="h-4 w-4 mr-1" />
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -481,7 +584,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
             </div>
           )
         ) : (
-          /* Subscriptions view */
+          // Subscriptions view
           subscriptions.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
@@ -489,23 +592,25 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
             </div>
           ) : (
             <div className="max-h-[600px] overflow-auto">
-              <Table className="min-w-[900px]">
+              <Table className="min-w-[1000px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>ID</TableHead>
-                    <TableHead>Создана</TableHead>
+                    <TableHead>Дата создания</TableHead>
                     <TableHead>Статус</TableHead>
-                    <TableHead>План</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
+                    <TableHead>План</TableHead>
+                    <TableHead>Интервал</TableHead>
                     <TableHead>Клиент</TableHead>
-                    <TableHead>Транзакций</TableHead>
+                    <TableHead>Карта</TableHead>
+                    <TableHead className="text-right">Транзакций</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {subscriptions.map((sub) => (
                     <TableRow key={sub.id}>
                       <TableCell className="font-mono text-xs">
-                        {sub.id.substring(0, 8)}...
+                        {sub.id.slice(0, 12)}...
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {format(new Date(sub.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
@@ -513,25 +618,27 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                       <TableCell>
                         {getStatusBadge(sub.state)}
                       </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {sub.amount} {sub.currency}
+                      </TableCell>
                       <TableCell>
                         <div className="max-w-[150px] truncate" title={sub.plan_title}>
                           {sub.plan_title || "—"}
                         </div>
-                        {sub.interval && (
-                          <div className="text-xs text-muted-foreground">
-                            {sub.interval_count} {sub.interval}
-                          </div>
-                        )}
                       </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {sub.amount} {sub.currency}
+                      <TableCell>
+                        {sub.interval && sub.interval_count ? (
+                          <span className="text-sm">
+                            {sub.interval_count} {sub.interval}
+                          </span>
+                        ) : "—"}
                       </TableCell>
                       <TableCell>
                         <div className="space-y-0.5">
                           {sub.customer_email && (
                             <div className="flex items-center gap-1 text-sm">
                               <Mail className="h-3 w-3 text-muted-foreground" />
-                              <span className="truncate max-w-[150px]">{sub.customer_email}</span>
+                              <span className="truncate max-w-[140px]">{sub.customer_email}</span>
                             </div>
                           )}
                           {sub.customer_name && (
@@ -540,7 +647,15 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{sub.transactions_count}</Badge>
+                        {sub.card_last_4 && (
+                          <div className="flex items-center gap-1 text-sm">
+                            <CreditCard className="h-3 w-3" />
+                            <span>*{sub.card_last_4}</span>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant="secondary">{sub.transactions_count}</Badge>
                       </TableCell>
                     </TableRow>
                   ))}
