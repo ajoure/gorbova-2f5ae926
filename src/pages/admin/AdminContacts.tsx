@@ -197,8 +197,9 @@ export default function AdminContacts() {
   // Auto-open contact card when contact param is in URL
   useEffect(() => {
     if (contactFromUrl && contacts) {
-      // Find contact by user_id
-      const contact = contacts.find(c => c.user_id === contactFromUrl);
+      // Find contact by id first (profile.id), then fallback to user_id
+      const contact = contacts.find(c => c.id === contactFromUrl) || 
+                      contacts.find(c => c.user_id === contactFromUrl);
       if (contact) {
         setSelectedContactId(contact.id);
         // Clear only the contact param, keep "from" for navigation
