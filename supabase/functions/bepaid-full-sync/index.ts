@@ -580,9 +580,11 @@ async function processPayment(
       current_period_end: subscriptionEnd.toISOString(),
     });
 
-    // Create entitlement
+    // Create entitlement (dual-write: user_id + profile_id + order_id)
     await supabase.from('entitlements').upsert({
       user_id: userId,
+      profile_id: matchedProfile.id,
+      order_id: newOrder.id,
       product_code: 'club',
       status: 'active',
       expires_at: subscriptionEnd.toISOString(),

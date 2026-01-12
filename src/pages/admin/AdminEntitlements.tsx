@@ -152,8 +152,18 @@ export default function AdminEntitlements() {
     }
 
     try {
+      // Dual-write: user_id + profile_id
+      // Resolve profile_id from user_id
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", selectedUserId)
+        .single();
+      const profileId = profileData?.id || null;
+
       const { error } = await supabase.from("entitlements").insert({
         user_id: selectedUserId,
+        profile_id: profileId,
         product_code: selectedProduct,
         status: "active",
         expires_at: expiresAt?.toISOString() || null,

@@ -574,9 +574,20 @@ async function createOrderFromSubscription(
       .single();
 
     if (product?.code) {
+      // Dual-write: user_id + profile_id + order_id
+      // Resolve profile_id from userId
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", userId)
+        .single();
+      const profileId = profileData?.id || null;
+      
       await supabase.from("entitlements").upsert(
         {
           user_id: userId,
+          profile_id: profileId,
+          order_id: order.id,
           product_code: product.code,
           status: "active",
           expires_at: accessEndAt.toISOString(),
@@ -706,9 +717,13 @@ async function processTransaction(
         .single();
 
       if (product?.code) {
+        // Dual-write: user_id + profile_id + order_id
+        const profileId = order.profile_id || null;
         await supabase.from("entitlements").upsert(
           {
             user_id: order.user_id,
+            profile_id: profileId,
+            order_id: order.id,
             product_code: product.code,
             status: "active",
             expires_at: accessEndAt.toISOString(),
