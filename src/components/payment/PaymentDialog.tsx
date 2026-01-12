@@ -490,14 +490,17 @@ export function PaymentDialog({
       });
 
       if (error) {
-        // Check if the error response contains alreadyUsedTrial flag
-        if (data?.alreadyUsedTrial) {
+        const errorPayload = await extractFunctionsErrorData(error);
+
+        // Business error: trial already used (can come either in data or in the error payload for non-2xx)
+        if (data?.alreadyUsedTrial || errorPayload?.alreadyUsedTrial) {
           toast.warning("Пробный период для этого продукта уже использован");
           setStep("ready");
           setIsLoading(false);
           return;
         }
-        throw new Error(error.message);
+
+        throw new Error(errorPayload?.error || error.message);
       }
 
       if (!data.success) {
@@ -553,15 +556,22 @@ export function PaymentDialog({
       });
 
       if (createError || !createData?.success) {
-        // Handle already used trial case gracefully
-        if (createData?.alreadyUsedTrial) {
+        const errorPayload = createError ? await extractFunctionsErrorData(createError) : null;
+
+        // Handle already used trial case gracefully (it may come either as data or inside error response)
+        if (createData?.alreadyUsedTrial || errorPayload?.alreadyUsedTrial) {
           toast.warning("Пробный период для этого продукта уже использован", {
             duration: 8000,
           });
-          setIsTestPaymentLoading(false);
           return;
         }
-        throw new Error(createData?.error || createError?.message || "Ошибка создания заказа");
+
+        throw new Error(
+          createData?.error ||
+            errorPayload?.error ||
+            createError?.message ||
+            "Ошибка создания заказа"
+        );
       }
 
       const orderId = createData.orderId;
@@ -624,6 +634,25 @@ export function PaymentDialog({
       );
     } finally {
       setIsTestPaymentLoading(false);
+    }
+  };
+
+  const extractFunctionsErrorData = async (err: unknown): Promise<any | null> => {
+    const anyErr = err as any;
+    const response: Response | undefined = anyErr?.context?.response;
+
+    if (!response || typeof response.clone !== "function") return null;
+
+    // The response body may already be consumed by the client, so we use clone() defensively.
+    try {
+      return await response.clone().json();
+    } catch {
+      try {
+        const text = await response.clone().text();
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
     }
   };
 
