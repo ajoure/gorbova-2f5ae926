@@ -295,8 +295,11 @@ Deno.serve(async (req) => {
             .maybeSingle();
 
           if (product?.code) {
+            // Dual-write: user_id + profile_id + order_id
             await supabase.from('entitlements').insert({
               user_id: profileId,
+              profile_id: profileId,
+              order_id: newOrder.id,
               product_code: product.code,
               status: 'active',
               meta: { order_id: newOrder.id },

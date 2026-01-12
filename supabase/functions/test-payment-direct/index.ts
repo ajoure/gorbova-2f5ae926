@@ -292,13 +292,23 @@ Deno.serve(async (req) => {
     if (!subError) results.subscription_created = true;
     else results.subscription_error = subError.message;
 
-    // Entitlement
+    // Entitlement - dual-write: user_id + profile_id + order_id
     if (productCode) {
+      // Resolve profile_id
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', orderV2.user_id)
+        .single();
+      const profileId = profileData?.id || orderV2.profile_id || null;
+
       const { error: entError } = await supabase
         .from('entitlements')
         .upsert(
           {
             user_id: orderV2.user_id,
+            profile_id: profileId,
+            order_id: orderV2.id,
             product_code: productCode,
             status: 'active',
             expires_at: accessEndAt.toISOString(),

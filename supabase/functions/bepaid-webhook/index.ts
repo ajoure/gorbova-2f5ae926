@@ -1570,11 +1570,24 @@ ${userName}, к сожалению, не удалось провести опл�
           expiresAt.setDate(expiresAt.getDate() + product.duration_days);
         }
 
-        // Create or update entitlement
+        // Create or update entitlement (dual-write: user_id + profile_id + order_id)
+        // Resolve profile_id from order or profiles table
+        let entitlementProfileId = order.profile_id;
+        if (!entitlementProfileId) {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('user_id', order.user_id)
+            .single();
+          entitlementProfileId = profileData?.id || null;
+        }
+
         const { error: entitlementError } = await supabase
           .from('entitlements')
           .upsert({
             user_id: order.user_id,
+            profile_id: entitlementProfileId,
+            order_id: internalOrderId,
             product_code: productCode,
             status: 'active',
             expires_at: expiresAt?.toISOString() || null,

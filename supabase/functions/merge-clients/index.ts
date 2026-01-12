@@ -1,3 +1,18 @@
+/**
+ * ОТЗ vFinal: Фаза 6 — merge-clients (критическая переработка)
+ * 
+ * УДАЛЕНО:
+ * - allMergedIds = [...mergedProfileIds, ...mergedUserIds]
+ * - masterUserId || masterProfileId
+ * 
+ * ДОБАВЛЕНО:
+ * - Telegram conflict check (BLOCKER)
+ * - Profile-based перенос (orders, payments, entitlements, subscriptions, telegram_club_members)
+ * - Auth-based перенос (telegram_access, telegram_access_grants, telegram_link_tokens)
+ * - Safe-update legacy orders_v2.user_id (Patch v2)
+ * - Расширенный audit log
+ */
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -43,14 +58,14 @@ serve(async (req) => {
 
     const { caseId, masterId, mergedIds: rawMergedIds } = await req.json();
 
-    if (!caseId || !masterId || !rawMergedIds?.length) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
+    if (!masterId || !rawMergedIds?.length) {
+      return new Response(JSON.stringify({ error: "Missing required fields: masterId, mergedIds" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // IMPORTANT: Ensure masterId is NOT in mergedIds
+    // ВАЖНО: Убедиться, что masterId НЕТ в mergedIds
     const mergedIds = rawMergedIds.filter((id: string) => id !== masterId);
     if (mergedIds.length === 0) {
       return new Response(JSON.stringify({ error: "No profiles to merge after excluding master" }), {
@@ -59,91 +74,213 @@ serve(async (req) => {
       });
     }
 
-    console.log(`Merging clients: master=${masterId}, merged=${mergedIds.join(",")}`);
+    console.log(`[merge-clients] Starting merge: master=${masterId}, merged=${mergedIds.join(",")}`);
 
-    // Get master profile
-    const { data: masterProfile } = await supabase
+    // ========================================
+    // 6.1 Расширить SELECT profiles (с Telegram)
+    // ========================================
+    const { data: masterProfile, error: masterError } = await supabase
       .from("profiles")
-      .select("id, user_id")
+      .select("id, user_id, telegram_user_id, telegram_username")
       .eq("id", masterId)
       .single();
 
-    if (!masterProfile) {
-      throw new Error("Master profile not found");
+    if (masterError || !masterProfile) {
+      console.error("[merge-clients] Master profile not found:", masterError);
+      return new Response(JSON.stringify({ error: "Master profile not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const masterProfileId = masterProfile.id;
-    const masterUserId = masterProfile.user_id;
-
-    // Get merged profiles
-    const { data: mergedProfiles } = await supabase
+    const { data: mergedProfiles, error: mergedError } = await supabase
       .from("profiles")
-      .select("id, user_id")
+      .select("id, user_id, telegram_user_id, telegram_username")
       .in("id", mergedIds);
 
-    const mergedProfileIds = mergedProfiles?.map(p => p.id) || [];
-    const mergedUserIds = mergedProfiles?.map(p => p.user_id).filter(Boolean) || [];
+    if (mergedError || !mergedProfiles?.length) {
+      console.error("[merge-clients] Merged profiles not found:", mergedError);
+      return new Response(JSON.stringify({ error: "Merged profiles not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // Collect all IDs that we need to re-assign (profile ids + user_ids)
-    const allMergedIds = [...new Set([...mergedProfileIds, ...mergedUserIds])];
+    // ========================================
+    // 6.2 Telegram Conflict Check (BLOCKER)
+    // ========================================
+    if (masterProfile.telegram_user_id) {
+      const conflicting = mergedProfiles.filter(
+        (p) => p.telegram_user_id && p.telegram_user_id !== masterProfile.telegram_user_id
+      );
+      
+      if (conflicting.length > 0) {
+        console.log(`[merge-clients] Telegram conflict detected: ${conflicting.length} profiles`);
+        return new Response(JSON.stringify({ 
+          error: "Telegram conflict",
+          conflictingProfiles: conflicting.map((p) => ({ 
+            id: p.id, 
+            telegram_user_id: p.telegram_user_id,
+            telegram_username: p.telegram_username,
+          })),
+          message: "Разные Telegram аккаунты. Решите конфликт вручную."
+        }), { 
+          status: 409, 
+          headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+      }
+    }
 
-    console.log(`Master: profileId=${masterProfileId}, userId=${masterUserId}`);
-    console.log(`Merged IDs (profile+user): ${allMergedIds.join(",")}`);
+    // Подготовка ID
+    const masterProfileId = masterProfile.id;
+    const masterAuthUserId = masterProfile.user_id;
+    const mergedProfileIds = mergedProfiles.map((p) => p.id);
+    const mergedAuthUserIds = mergedProfiles.map((p) => p.user_id).filter(Boolean) as string[];
 
+    console.log(`[merge-clients] Master: profileId=${masterProfileId}, authUserId=${masterAuthUserId}`);
+    console.log(`[merge-clients] Merged profileIds: ${mergedProfileIds.join(",")}`);
+    console.log(`[merge-clients] Merged authUserIds: ${mergedAuthUserIds.join(",")}`);
+
+    // Счётчики переносов
     let transferredOrders = 0;
-    let transferredSubscriptions = 0;
+    let transferredPayments = 0;
     let transferredEntitlements = 0;
+    let transferredSubscriptions = 0;
+    let transferredTelegramClubMembers = 0;
+    let transferredTelegramAccess = 0;
+    let transferredTelegramAccessGrants = 0;
+    let transferredTelegramLinkTokens = 0;
+    let telegramTransferred = false;
 
-    // Transfer orders_v2 to master (user_id can be profile.id or auth.user_id)
-    if (allMergedIds.length > 0) {
+    // ========================================
+    // 6.3 Profile-based перенос
+    // ========================================
+    
+    // orders_v2.profile_id
+    if (mergedProfileIds.length > 0) {
       const { data: ordersData } = await supabase
         .from("orders_v2")
-        .update({ user_id: masterUserId || masterProfileId })
-        .in("user_id", allMergedIds)
+        .update({ profile_id: masterProfileId })
+        .in("profile_id", mergedProfileIds)
         .select("id");
       transferredOrders = ordersData?.length || 0;
-      console.log(`Transferred ${transferredOrders} orders to master`);
+      console.log(`[merge-clients] Transferred ${transferredOrders} orders (profile_id)`);
     }
 
-    // Transfer subscriptions_v2 to master
-    if (allMergedIds.length > 0) {
-      const { data: subsData } = await supabase
-        .from("subscriptions_v2")
-        .update({ user_id: masterUserId || masterProfileId })
-        .in("user_id", allMergedIds)
+    // payments_v2.profile_id
+    if (mergedProfileIds.length > 0) {
+      const { data: paymentsData } = await supabase
+        .from("payments_v2")
+        .update({ profile_id: masterProfileId })
+        .in("profile_id", mergedProfileIds)
         .select("id");
-      transferredSubscriptions = subsData?.length || 0;
-      console.log(`Transferred ${transferredSubscriptions} subscriptions to master`);
+      transferredPayments = paymentsData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredPayments} payments (profile_id)`);
     }
 
-    // Transfer entitlements to master
-    if (allMergedIds.length > 0) {
+    // entitlements.profile_id
+    if (mergedProfileIds.length > 0) {
       const { data: entData } = await supabase
         .from("entitlements")
-        .update({ user_id: masterUserId || masterProfileId })
-        .in("user_id", allMergedIds)
+        .update({ profile_id: masterProfileId })
+        .in("profile_id", mergedProfileIds)
         .select("id");
       transferredEntitlements = entData?.length || 0;
-      console.log(`Transferred ${transferredEntitlements} entitlements to master`);
+      console.log(`[merge-clients] Transferred ${transferredEntitlements} entitlements (profile_id)`);
     }
 
-    // Update payment_reconcile_queue to point to master profile
+    // subscriptions_v2.profile_id
     if (mergedProfileIds.length > 0) {
-      await supabase
-        .from("payment_reconcile_queue")
-        .update({ matched_profile_id: masterProfileId })
-        .in("matched_profile_id", mergedProfileIds);
+      const { data: subsData } = await supabase
+        .from("subscriptions_v2")
+        .update({ profile_id: masterProfileId })
+        .in("profile_id", mergedProfileIds)
+        .select("id");
+      transferredSubscriptions = subsData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredSubscriptions} subscriptions (profile_id)`);
     }
 
-    // Transfer consent_logs
-    if (mergedUserIds.length > 0) {
-      await supabase
-        .from("consent_logs")
-        .update({ user_id: masterUserId })
-        .in("user_id", mergedUserIds);
+    // telegram_club_members.profile_id
+    if (mergedProfileIds.length > 0) {
+      const { data: tcmData } = await supabase
+        .from("telegram_club_members")
+        .update({ profile_id: masterProfileId })
+        .in("profile_id", mergedProfileIds)
+        .select("id");
+      transferredTelegramClubMembers = tcmData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredTelegramClubMembers} telegram_club_members (profile_id)`);
     }
 
-    // Archive merged profiles (NOT the master!)
+    // ========================================
+    // 6.4 Auth-based перенос (через profiles.user_id)
+    // ========================================
+    if (mergedAuthUserIds.length > 0 && masterAuthUserId) {
+      // telegram_access.user_id
+      const { data: taData } = await supabase
+        .from("telegram_access")
+        .update({ user_id: masterAuthUserId })
+        .in("user_id", mergedAuthUserIds)
+        .select("id");
+      transferredTelegramAccess = taData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredTelegramAccess} telegram_access (user_id)`);
+
+      // telegram_access_grants.user_id
+      const { data: tagData } = await supabase
+        .from("telegram_access_grants")
+        .update({ user_id: masterAuthUserId })
+        .in("user_id", mergedAuthUserIds)
+        .select("id");
+      transferredTelegramAccessGrants = tagData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredTelegramAccessGrants} telegram_access_grants (user_id)`);
+
+      // telegram_link_tokens.user_id
+      const { data: tltData } = await supabase
+        .from("telegram_link_tokens")
+        .update({ user_id: masterAuthUserId })
+        .in("user_id", mergedAuthUserIds)
+        .select("id");
+      transferredTelegramLinkTokens = tltData?.length || 0;
+      console.log(`[merge-clients] Transferred ${transferredTelegramLinkTokens} telegram_link_tokens (user_id)`);
+    }
+
+    // ========================================
+    // 6.5 Safe-update legacy orders_v2.user_id (Patch v2)
+    // ТОЛЬКО для строк где orders_v2.user_id IN mergedAuthUserIds
+    // Ghost (profiles.id) НЕ трогаем
+    // ========================================
+    let transferredOrdersLegacyUserId = 0;
+    if (mergedAuthUserIds.length > 0 && masterAuthUserId) {
+      const { data: ordersLegacyData } = await supabase
+        .from("orders_v2")
+        .update({ user_id: masterAuthUserId })
+        .in("user_id", mergedAuthUserIds)
+        .select("id");
+      transferredOrdersLegacyUserId = ordersLegacyData?.length || 0;
+      console.log(`[merge-clients] Safe-updated ${transferredOrdersLegacyUserId} orders (legacy user_id, auth-only)`);
+    }
+
+    // ========================================
+    // 6.6 Перенос Telegram в master (если у master пусто)
+    // ========================================
+    let withTelegram: typeof mergedProfiles[0] | undefined;
+    if (!masterProfile.telegram_user_id) {
+      withTelegram = mergedProfiles.find((p) => p.telegram_user_id);
+      if (withTelegram) {
+        await supabase
+          .from("profiles")
+          .update({
+            telegram_user_id: withTelegram.telegram_user_id,
+            telegram_username: withTelegram.telegram_username,
+          })
+          .eq("id", masterProfileId);
+        telegramTransferred = true;
+        console.log(`[merge-clients] Transferred Telegram from ${withTelegram.id} to master`);
+      }
+    }
+
+    // ========================================
+    // Архивирование merged profiles (НЕ master!)
+    // ========================================
     for (const profileId of mergedProfileIds) {
       await supabase
         .from("profiles")
@@ -154,8 +291,9 @@ serve(async (req) => {
         })
         .eq("id", profileId);
     }
+    console.log(`[merge-clients] Archived ${mergedProfileIds.length} merged profiles`);
 
-    // IMPORTANT: Ensure master is ACTIVE (not archived)
+    // Убедиться, что master АКТИВЕН
     await supabase
       .from("profiles")
       .update({
@@ -166,58 +304,83 @@ serve(async (req) => {
       })
       .eq("id", masterProfileId);
 
-    // Update case status
-    await supabase
-      .from("duplicate_cases")
-      .update({
-        status: "merged",
-        master_profile_id: masterProfileId,
-        resolved_at: new Date().toISOString(),
-      })
-      .eq("id", caseId);
+    // ========================================
+    // Обновление duplicate_cases (если есть caseId)
+    // ========================================
+    if (caseId) {
+      await supabase
+        .from("duplicate_cases")
+        .update({
+          status: "merged",
+          master_profile_id: masterProfileId,
+          resolved_at: new Date().toISOString(),
+        })
+        .eq("id", caseId);
 
-    // Update client_duplicates
-    await supabase
-      .from("client_duplicates")
-      .update({ is_master: true })
-      .eq("case_id", caseId)
-      .eq("profile_id", masterProfileId);
+      // Обновить client_duplicates
+      await supabase
+        .from("client_duplicates")
+        .update({ is_master: true })
+        .eq("case_id", caseId)
+        .eq("profile_id", masterProfileId);
 
-    await supabase
-      .from("client_duplicates")
-      .update({ is_master: false })
-      .eq("case_id", caseId)
-      .in("profile_id", mergedProfileIds);
+      await supabase
+        .from("client_duplicates")
+        .update({ is_master: false })
+        .eq("case_id", caseId)
+        .in("profile_id", mergedProfileIds);
+    }
 
-    // Log merge in history
+    // ========================================
+    // 6.7 Audit log (обязателен)
+    // ========================================
     await supabase.from("merge_history").insert({
-      case_id: caseId,
+      case_id: caseId || null,
       master_profile_id: masterProfileId,
-      merged_data: { 
-        merged_profile_ids: mergedProfileIds, 
-        merged_user_ids: mergedUserIds,
+      merged_data: {
+        merged_profile_ids: mergedProfileIds,
+        merged_auth_user_ids: mergedAuthUserIds,
         transferred: {
           orders: transferredOrders,
-          subscriptions: transferredSubscriptions,
+          orders_legacy_user_id: transferredOrdersLegacyUserId,
+          payments: transferredPayments,
           entitlements: transferredEntitlements,
-        }
+          subscriptions: transferredSubscriptions,
+          telegram_club_members: transferredTelegramClubMembers,
+          telegram_access: transferredTelegramAccess,
+          telegram_access_grants: transferredTelegramAccessGrants,
+          telegram_link_tokens: transferredTelegramLinkTokens,
+        },
+        telegram_transferred: telegramTransferred,
+        telegram_source_profile_id: withTelegram?.id || null,
+        conflicts: [],
+        merged_by: claimsData.claims.sub,
+        merged_at: new Date().toISOString(),
       },
     });
 
-    console.log("Merge completed successfully");
+    console.log("[merge-clients] Merge completed successfully");
 
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       success: true,
       transferred: {
         orders: transferredOrders,
-        subscriptions: transferredSubscriptions,
+        orders_legacy_user_id: transferredOrdersLegacyUserId,
+        payments: transferredPayments,
         entitlements: transferredEntitlements,
-      }
+        subscriptions: transferredSubscriptions,
+        telegram_club_members: transferredTelegramClubMembers,
+        telegram_access: transferredTelegramAccess,
+        telegram_access_grants: transferredTelegramAccessGrants,
+        telegram_link_tokens: transferredTelegramLinkTokens,
+      },
+      telegram_transferred: telegramTransferred,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error: unknown) {
-    console.error("Merge error:", error);
+    console.error("[merge-clients] Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     return new Response(JSON.stringify({ error: message }), {
       status: 500,

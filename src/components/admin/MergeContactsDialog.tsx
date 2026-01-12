@@ -94,6 +94,15 @@ export function MergeContactsDialog({
       });
 
       if (error) throw error;
+      
+      // Handle Telegram conflict (409)
+      if (data?.error === "Telegram conflict") {
+        const conflictInfo = data.conflictingProfiles?.map((p: any) => 
+          `${p.telegram_username || p.telegram_user_id}`
+        ).join(", ");
+        throw new Error(`Telegram конфликт: ${conflictInfo}. Решите вручную.`);
+      }
+      
       if (data?.error) throw new Error(data.error);
 
       return data;
@@ -106,7 +115,15 @@ export function MergeContactsDialog({
       onSuccess?.();
     },
     onError: (error) => {
-      toast.error("Ошибка объединения: " + (error as Error).message);
+      const msg = (error as Error).message;
+      if (msg.includes("Telegram конфликт")) {
+        toast.error("Невозможно объединить: разные Telegram аккаунты", {
+          description: msg,
+          duration: 10000,
+        });
+      } else {
+        toast.error("Ошибка объединения: " + msg);
+      }
     },
   });
 

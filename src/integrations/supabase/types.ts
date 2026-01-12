@@ -1173,7 +1173,9 @@ export type Database = {
           expires_at: string | null
           id: string
           meta: Json | null
+          order_id: string | null
           product_code: string
+          profile_id: string | null
           status: string
           updated_at: string
           user_id: string
@@ -1183,7 +1185,9 @@ export type Database = {
           expires_at?: string | null
           id?: string
           meta?: Json | null
+          order_id?: string | null
           product_code: string
+          profile_id?: string | null
           status?: string
           updated_at?: string
           user_id: string
@@ -1193,12 +1197,29 @@ export type Database = {
           expires_at?: string | null
           id?: string
           meta?: Json | null
+          order_id?: string | null
           product_code?: string
+          profile_id?: string | null
           status?: string
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "fk_entitlements_order"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_entitlements_profile"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       executors: {
         Row: {
@@ -2908,6 +2929,7 @@ export type Database = {
           order_id: string
           paid_at: string | null
           payment_token: string | null
+          profile_id: string | null
           provider: string | null
           provider_payment_id: string | null
           provider_response: Json | null
@@ -2929,6 +2951,7 @@ export type Database = {
           order_id: string
           paid_at?: string | null
           payment_token?: string | null
+          profile_id?: string | null
           provider?: string | null
           provider_payment_id?: string | null
           provider_response?: Json | null
@@ -2950,6 +2973,7 @@ export type Database = {
           order_id?: string
           paid_at?: string | null
           payment_token?: string | null
+          profile_id?: string | null
           provider?: string | null
           provider_payment_id?: string | null
           provider_response?: Json | null
@@ -2958,6 +2982,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "fk_payments_v2_profile"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_v2_order_id_fkey"
             columns: ["order_id"]
@@ -3422,6 +3453,7 @@ export type Database = {
           email: string | null
           emails: Json | null
           external_id_amo: string | null
+          external_id_gc: string | null
           first_name: string | null
           full_name: string | null
           id: string
@@ -3465,6 +3497,7 @@ export type Database = {
           email?: string | null
           emails?: Json | null
           external_id_amo?: string | null
+          external_id_gc?: string | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -3508,6 +3541,7 @@ export type Database = {
           email?: string | null
           emails?: Json | null
           external_id_amo?: string | null
+          external_id_gc?: string | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -3737,6 +3771,7 @@ export type Database = {
           payment_method_id: string | null
           payment_token: string | null
           product_id: string
+          profile_id: string | null
           status: Database["public"]["Enums"]["subscription_status"]
           tariff_id: string | null
           trial_canceled_at: string | null
@@ -3764,6 +3799,7 @@ export type Database = {
           payment_method_id?: string | null
           payment_token?: string | null
           product_id: string
+          profile_id?: string | null
           status?: Database["public"]["Enums"]["subscription_status"]
           tariff_id?: string | null
           trial_canceled_at?: string | null
@@ -3791,6 +3827,7 @@ export type Database = {
           payment_method_id?: string | null
           payment_token?: string | null
           product_id?: string
+          profile_id?: string | null
           status?: Database["public"]["Enums"]["subscription_status"]
           tariff_id?: string | null
           trial_canceled_at?: string | null
@@ -3800,6 +3837,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "fk_subscriptions_v2_profile"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subscriptions_v2_flow_id_fkey"
             columns: ["flow_id"]
