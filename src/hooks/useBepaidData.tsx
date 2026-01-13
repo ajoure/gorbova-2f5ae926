@@ -132,12 +132,12 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
 
       // Further filter to only show successful transactions:
       // 1. status_normalized = 'successful' (from file import)
-      // 2. OR status in ['processing', 'processed'] (already marked as ready)
+      // 2. OR status in ['processing', 'processed', 'completed'] (already marked/processed)
       // 3. OR pending without errors and no status_normalized yet (legacy webhook data)
       const queue = (allData || []).filter(q => {
         const statusNorm = q.status_normalized as string | null;
         if (statusNorm === 'successful') return true;
-        if (['processing', 'processed'].includes(q.status)) return true;
+        if (['processing', 'processed', 'completed'].includes(q.status)) return true;
         if (q.status === 'pending' && !q.last_error && !statusNorm) return true;
         return false;
       });

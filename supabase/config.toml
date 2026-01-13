@@ -162,3 +162,6 @@ verify_jwt = false
 
 [functions.bepaid-auto-process]
 verify_jwt = false
+
+[functions.grant-access-for-order]
+verify_jwt = false

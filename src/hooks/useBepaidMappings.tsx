@@ -313,54 +313,46 @@ export function useBepaidQueueActions() {
         if (paymentError) throw paymentError;
       }
 
-      // Create subscription if it's a subscription product
-      if (plan.infinite || plan.billing_cycles) {
-        await supabase.from("subscriptions_v2").insert({
-          user_id: profile.user_id || profile.id,
-          order_id: order.id,
-          product_id: productId || null,
-          tariff_id: tariffId || null,
-          status: "active",
-          billing_amount: amount,
-          billing_currency: queueItem.currency || "BYN",
-          billing_period: "month",
-          current_period_start: queueItem.created_at,
-          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          bepaid_subscription_id: payload.id || null,
-          meta: {
-            imported_from: "bepaid_queue",
-            bepaid_plan_title: plan.title,
-          },
-        });
-      }
-
-      // Create entitlement
-      if (productCode) {
-        await supabase.from("entitlements").insert({
-          user_id: profile.user_id || profile.id,
-          product_code: productCode,
-          status: "active",
-          expires_at: plan.infinite ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          meta: {
-            order_id: order.id,
-            imported_from: "bepaid_queue",
-          },
-        });
-      }
-
-      // Update queue item status
+      // Update queue item status first
       await supabase
         .from("payment_reconcile_queue")
-        .update({ status: "processed", last_error: null })
+        .update({ 
+          status: "completed", 
+          last_error: null,
+          matched_profile_id: profileId,
+        })
         .eq("id", queueItemId);
 
-      return order;
+      // Call backend function to grant access reliably
+      let accessWarning: string | null = null;
+      try {
+        const { data: accessResult, error: accessError } = await supabase.functions.invoke(
+          "grant-access-for-order",
+          { body: { orderId: order.id } }
+        );
+
+        if (accessError) {
+          console.error("Error granting access:", accessError);
+          accessWarning = "Доступы не выданы: " + accessError.message;
+        } else if (accessResult?.warning === "no_user_id") {
+          accessWarning = accessResult.message;
+        }
+      } catch (e) {
+        console.error("Failed to call grant-access-for-order:", e);
+        accessWarning = "Не удалось вызвать функцию выдачи доступов";
+      }
+
+      return { ...order, accessWarning };
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-payments"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
-      toast.success("Сделка создана");
+      if (result?.accessWarning) {
+        toast.warning(`Сделка создана. ${result.accessWarning}`);
+      } else {
+        toast.success("Сделка создана, доступы выданы");
+      }
     },
     onError: (error: Error) => {
       toast.error(`Ошибка создания сделки: ${error.message}`);
