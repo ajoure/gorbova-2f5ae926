@@ -15,16 +15,16 @@ interface QueueItem {
   card_last4: string | null;
   card_holder: string | null;
   card_brand: string | null;
-  plan_title: string | null;
   product_name: string | null;
+  tariff_name: string | null;
   matched_profile_id: string | null;
   matched_product_id: string | null;
   matched_tariff_id: string | null;
+  matched_order_id: string | null;
   status: string;
   source: string;
-  bepaid_paid_at: string | null;
   paid_at: string | null;
-  auto_processed: boolean;
+  attempts: number;
 }
 
 // Transliterate Latin name to Cyrillic for matching
@@ -62,23 +62,35 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { limit = 50, dryRun = false } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { limit = 50, dryRun = false, queueItemId } = body;
 
-    console.log(`[BEPAID-AUTO-PROCESS] Starting with limit=${limit}, dryRun=${dryRun}`);
+    console.log(`[BEPAID-AUTO-PROCESS] Starting with limit=${limit}, dryRun=${dryRun}, queueItemId=${queueItemId || 'none'}`);
 
-    // Fetch pending queue items
-    const { data: queueItems, error: queueError } = await supabase
+    // Fetch pending queue items - support single item or batch
+    let query = supabase
       .from('payment_reconcile_queue')
-      .select('*')
-      .eq('status', 'pending')
-      .eq('auto_processed', false)
-      .limit(limit);
+      .select('*');
+    
+    if (queueItemId) {
+      // Process single item by ID
+      query = query.eq('id', queueItemId);
+    } else {
+      // Process batch of pending items
+      query = query
+        .in('status', ['pending', 'error'])
+        .lt('attempts', 5)
+        .order('created_at', { ascending: true })
+        .limit(limit);
+    }
+
+    const { data: queueItems, error: queueError } = await query;
 
     if (queueError) {
       throw new Error(`Failed to fetch queue: ${queueError.message}`);
     }
 
-    console.log(`[BEPAID-AUTO-PROCESS] Found ${queueItems?.length || 0} pending items`);
+    console.log(`[BEPAID-AUTO-PROCESS] Found ${queueItems?.length || 0} items to process`);
 
     const results = {
       processed: 0,
@@ -93,26 +105,28 @@ Deno.serve(async (req) => {
         console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}`);
 
         // Skip if already has matched order
-        if (item.matched_order_id) {
-          console.log(`[BEPAID-AUTO-PROCESS] Item already has matched order, skipping`);
+        if (item.matched_order_id && item.status === 'completed') {
+          console.log(`[BEPAID-AUTO-PROCESS] Item already completed with order, skipping`);
           results.skipped++;
           continue;
         }
 
         // Step 1: Find or match profile
         let profileId = item.matched_profile_id;
+        let profileUserId: string | null = null;
         let matchedBy = null;
 
         if (!profileId && item.customer_email) {
           // Try email match
           const { data: profileByEmail } = await supabase
             .from('profiles')
-            .select('id')
+            .select('id, user_id')
             .eq('email', item.customer_email)
             .maybeSingle();
           
           if (profileByEmail) {
             profileId = profileByEmail.id;
+            profileUserId = profileByEmail.user_id;
             matchedBy = 'email';
             console.log(`[BEPAID-AUTO-PROCESS] Matched by email: ${profileId}`);
           }
@@ -122,13 +136,14 @@ Deno.serve(async (req) => {
           // Try card link match
           const { data: cardLink } = await supabase
             .from('card_profile_links')
-            .select('profile_id')
+            .select('profile_id, profiles!inner(id, user_id)')
             .eq('card_last4', item.card_last4)
             .eq('card_holder', item.card_holder)
             .maybeSingle();
           
           if (cardLink) {
             profileId = cardLink.profile_id;
+            profileUserId = (cardLink.profiles as any)?.user_id;
             matchedBy = 'card';
             console.log(`[BEPAID-AUTO-PROCESS] Matched by card: ${profileId}`);
           }
@@ -139,15 +154,26 @@ Deno.serve(async (req) => {
           const translitName = transliterateToCyrillic(item.card_holder);
           const { data: profileByName } = await supabase
             .from('profiles')
-            .select('id')
+            .select('id, user_id')
             .ilike('full_name', `%${translitName}%`)
             .maybeSingle();
           
           if (profileByName) {
             profileId = profileByName.id;
+            profileUserId = profileByName.user_id;
             matchedBy = 'name_translit';
             console.log(`[BEPAID-AUTO-PROCESS] Matched by name translit: ${profileId}`);
           }
+        }
+
+        // Get user_id if we have profile but not user_id yet
+        if (profileId && !profileUserId) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('user_id')
+            .eq('id', profileId)
+            .maybeSingle();
+          profileUserId = profile?.user_id;
         }
 
         if (profileId && !item.matched_profile_id) {
@@ -175,8 +201,8 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 2: Find product mapping
-        const planTitle = item.plan_title || item.product_name;
+        // Step 2: Find product mapping by product_name or tariff_name
+        const planTitle = item.product_name || item.tariff_name;
         let mapping = null;
 
         if (planTitle) {
@@ -193,11 +219,24 @@ Deno.serve(async (req) => {
         }
 
         // Step 3: Check if order already exists
-        const { data: existingOrder } = await supabase
-          .from('orders_v2')
-          .select('id, order_number')
-          .or(`tracking_id.eq.${item.tracking_id || 'none'},purchase_snapshot->>bepaid_uid.eq.${item.bepaid_uid || 'none'}`)
-          .maybeSingle();
+        let existingOrder = null;
+        if (item.tracking_id) {
+          const { data } = await supabase
+            .from('orders_v2')
+            .select('id, order_number')
+            .eq('tracking_id', item.tracking_id)
+            .maybeSingle();
+          existingOrder = data;
+        }
+        
+        if (!existingOrder && item.bepaid_uid) {
+          const { data } = await supabase
+            .from('orders_v2')
+            .select('id, order_number')
+            .contains('purchase_snapshot', { bepaid_uid: item.bepaid_uid })
+            .maybeSingle();
+          existingOrder = data;
+        }
 
         if (existingOrder) {
           console.log(`[BEPAID-AUTO-PROCESS] Order already exists: ${existingOrder.order_number}`);
@@ -207,8 +246,8 @@ Deno.serve(async (req) => {
               .from('payment_reconcile_queue')
               .update({ 
                 matched_order_id: existingOrder.id,
-                auto_processed: true,
                 status: 'completed',
+                processed_at: new Date().toISOString(),
               })
               .eq('id', item.id);
           }
@@ -233,6 +272,7 @@ Deno.serve(async (req) => {
             .from('orders_v2')
             .insert({
               profile_id: profileId,
+              user_id: profileUserId,
               product_id: mapping.product_id,
               tariff_id: mapping.tariff_id,
               offer_id: mapping.offer_id,
@@ -242,10 +282,13 @@ Deno.serve(async (req) => {
               final_price: item.amount || 0,
               currency: item.currency || 'BYN',
               payment_method: 'bepaid',
+              customer_email: item.customer_email,
               purchase_snapshot: {
                 bepaid_uid: item.bepaid_uid,
                 source: 'auto_process',
                 imported_at: new Date().toISOString(),
+                card_last4: item.card_last4,
+                card_holder: item.card_holder,
               },
             })
             .select('id, order_number')
@@ -274,16 +317,22 @@ Deno.serve(async (req) => {
             },
           });
 
-          // Create subscription if needed
-          if (mapping.is_subscription) {
+          // Create subscription if needed - use correct column names!
+          if (mapping.is_subscription && profileUserId) {
+            const now = new Date();
+            const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+            
             await supabase.from('subscriptions_v2').insert({
-              user_id: profileId,
+              user_id: profileUserId,
+              profile_id: profileId,
+              order_id: newOrder.id,
               product_id: mapping.product_id,
               tariff_id: mapping.tariff_id,
               status: 'active',
-              current_period_start: new Date().toISOString(),
-              current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-              order_id: newOrder.id,
+              access_start_at: now.toISOString(),
+              access_end_at: endDate.toISOString(),
+              next_charge_at: endDate.toISOString(),
+              auto_renew: true,
             });
           }
 
@@ -294,15 +343,15 @@ Deno.serve(async (req) => {
             .eq('id', mapping.product_id)
             .maybeSingle();
 
-          if (product?.code) {
-            // Dual-write: user_id + profile_id + order_id
+          if (product?.code && profileUserId) {
             await supabase.from('entitlements').insert({
-              user_id: profileId,
+              user_id: profileUserId,
               profile_id: profileId,
               order_id: newOrder.id,
               product_code: product.code,
               status: 'active',
-              meta: { order_id: newOrder.id },
+              expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              meta: { source: 'bepaid_auto_process' },
             });
           }
 
@@ -314,23 +363,28 @@ Deno.serve(async (req) => {
               matched_profile_id: profileId,
               matched_product_id: mapping.product_id,
               matched_tariff_id: mapping.tariff_id,
-              auto_processed: true,
               status: 'completed',
+              processed_at: new Date().toISOString(),
             })
             .eq('id', item.id);
 
           results.orders_created++;
         } else {
-          // Mark as processed but no order created
+          // Cannot auto-create - update with reason
           if (!dryRun) {
-            const updateData: any = { auto_processed: true };
-            if (!profileId) updateData.auto_process_error = 'no_profile_match';
-            else if (!mapping) updateData.auto_process_error = 'no_product_mapping';
-            else if (!mapping.auto_create_order) updateData.auto_process_error = 'auto_create_disabled';
+            let errorReason = 'unknown';
+            if (!profileId) errorReason = 'no_profile_match';
+            else if (!mapping) errorReason = 'no_product_mapping';
+            else if (!mapping.auto_create_order) errorReason = 'auto_create_disabled';
             
             await supabase
               .from('payment_reconcile_queue')
-              .update(updateData)
+              .update({
+                status: 'error',
+                last_error: errorReason,
+                attempts: (item.attempts || 0) + 1,
+                updated_at: new Date().toISOString(),
+              })
               .eq('id', item.id);
           }
           results.skipped++;
@@ -345,9 +399,10 @@ Deno.serve(async (req) => {
           await supabase
             .from('payment_reconcile_queue')
             .update({ 
-              auto_processed: true,
-              auto_process_error: err.message,
               status: 'error',
+              last_error: err.message,
+              attempts: (item.attempts || 0) + 1,
+              updated_at: new Date().toISOString(),
             })
             .eq('id', item.id);
         }

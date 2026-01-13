@@ -25,7 +25,7 @@ serve(async (req) => {
     // Get pending items with retry logic
     const { data: pendingItems, error: fetchError } = await supabase
       .from("payment_reconcile_queue")
-      .select("*")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status")
       .in("status", ["pending", "error"])
       .lt("attempts", maxAttempts)
       .order("created_at", { ascending: true })
@@ -53,58 +53,38 @@ serve(async (req) => {
       errors: [] as string[],
     };
 
-    // Process each item
+    // Process each item by calling bepaid-auto-process with queueItemId
     for (const item of pendingItems) {
       try {
-        // Call bepaid-auto-process for this item
+        console.log(`[bepaid-queue-cron] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}`);
+        
         const { data: processResult, error: processError } = await supabase.functions.invoke(
           "bepaid-auto-process",
           {
             body: { 
               queueItemId: item.id,
-              autoCreateOrder: true,
             },
           }
         );
 
         if (processError) {
           console.error(`[bepaid-queue-cron] Error processing item ${item.id}:`, processError);
-          
-          // Update item with error and increment attempts
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "error",
-              attempts: (item.attempts || 0) + 1,
-              last_error: processError.message || "Unknown error",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", item.id);
-          
           results.failed++;
           results.errors.push(`${item.id}: ${processError.message}`);
-        } else if (processResult?.skipped) {
+        } else if (processResult?.results?.skipped > 0) {
           results.skipped++;
-        } else {
+        } else if (processResult?.results?.orders_created > 0) {
           results.success++;
+        } else {
+          results.skipped++;
         }
         
         results.processed++;
       } catch (err) {
         console.error(`[bepaid-queue-cron] Exception processing item ${item.id}:`, err);
-        
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({
-            status: "error",
-            attempts: (item.attempts || 0) + 1,
-            last_error: err instanceof Error ? err.message : "Unknown exception",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", item.id);
-        
         results.failed++;
         results.processed++;
+        results.errors.push(`${item.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     }
 
@@ -145,8 +125,9 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ 
+        success: true,
         processed: results.processed,
-        success: results.success,
+        orders_created: results.success,
         failed: results.failed,
         skipped: results.skipped,
         errors: results.errors,
