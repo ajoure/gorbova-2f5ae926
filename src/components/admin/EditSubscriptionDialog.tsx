@@ -59,6 +59,7 @@ export function EditSubscriptionDialog({
     status: "",
     product_id: "",
     tariff_id: "",
+    offer_id: "",
     comment: "",
   });
 
@@ -83,12 +84,28 @@ export function EditSubscriptionDialog({
     enabled: !!formData.product_id,
   });
 
+  // Load ALL offers for selected tariff (including inactive)
+  const { data: tariffOffers } = useQuery({
+    queryKey: ["tariff-offers-all-edit", formData.tariff_id],
+    queryFn: async () => {
+      if (!formData.tariff_id) return [];
+      const { data } = await supabase
+        .from("tariff_offers")
+        .select("id, offer_type, button_label, amount, is_active")
+        .eq("tariff_id", formData.tariff_id)
+        .order("sort_order");
+      return data || [];
+    },
+    enabled: !!formData.tariff_id,
+  });
+
   useEffect(() => {
     if (subscription) {
       setFormData({
         status: subscription.status || "",
         product_id: subscription.product_id || "",
         tariff_id: subscription.tariff_id || "",
+        offer_id: (subscription.meta as any)?.offer_id || "",
         comment: "",
       });
       setDateRange({
@@ -112,6 +129,7 @@ export function EditSubscriptionDialog({
           access_end_at: dateRange?.to?.toISOString() || null,
           meta: {
             ...(subscription.meta as object || {}),
+            offer_id: formData.offer_id || undefined,
             last_edit_comment: formData.comment || undefined,
             last_edit_at: new Date().toISOString(),
           },
@@ -180,7 +198,7 @@ export function EditSubscriptionDialog({
             <Label>Тариф</Label>
             <Select 
               value={formData.tariff_id} 
-              onValueChange={(v) => setFormData(prev => ({ ...prev, tariff_id: v }))}
+              onValueChange={(v) => setFormData(prev => ({ ...prev, tariff_id: v, offer_id: "" }))}
               disabled={!formData.product_id}
             >
               <SelectTrigger>
@@ -193,6 +211,34 @@ export function EditSubscriptionDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {/* Offer selection */}
+          {formData.tariff_id && (
+            <div className="space-y-2">
+              <Label>Оффер (кнопка оплаты)</Label>
+              <Select 
+                value={formData.offer_id} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, offer_id: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите оффер (опционально)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Без оффера</SelectItem>
+                  {tariffOffers?.map(offer => (
+                    <SelectItem key={offer.id} value={offer.id}>
+                      {offer.offer_type === "trial" ? "🎁 " : "💳 "}
+                      {offer.button_label} ({offer.amount} BYN)
+                      {!offer.is_active && " (неактивен)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Выбранный оффер сохраняется в meta и используется для GetCourse
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Период доступа</Label>

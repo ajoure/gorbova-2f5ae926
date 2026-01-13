@@ -146,6 +146,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [isProcessing, setIsProcessing] = useState(false);
   const [grantProductId, setGrantProductId] = useState("");
   const [grantTariffId, setGrantTariffId] = useState("");
+  const [grantOfferId, setGrantOfferId] = useState("");
   const [grantDays, setGrantDays] = useState(30);
   const [grantDateRange, setGrantDateRange] = useState<DateRange | undefined>({
     from: new Date(),
@@ -339,6 +340,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       return data;
     },
     enabled: !!grantProductId,
+  });
+
+  // Fetch offers for selected tariff (including inactive for history)
+  const { data: grantOffers } = useQuery({
+    queryKey: ["offers-for-grant", grantTariffId],
+    queryFn: async () => {
+      if (!grantTariffId) return [];
+      const { data, error } = await supabase
+        .from("tariff_offers")
+        .select("id, offer_type, button_label, amount, is_active")
+        .eq("tariff_id", grantTariffId)
+        .order("sort_order");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!grantTariffId,
   });
 
   // Fetch communication history (audit logs for this user) with actor profiles
@@ -673,6 +690,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           comment: grantComment || null,
           access_start: accessStart.toISOString(),
           access_end: accessEnd.toISOString(),
+          offer_id: grantOfferId && grantOfferId !== "__none__" ? grantOfferId : undefined,
         },
       }).select().single();
 
@@ -856,6 +874,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
+      setGrantOfferId("");
       setGrantComment("");
       setGrantDateRange({ from: new Date(), to: addDays(new Date(), 30) });
     } catch (error) {
@@ -1579,7 +1598,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     </div>
                     <div>
                       <Label className="text-xs">Тариф</Label>
-                      <Select value={grantTariffId} onValueChange={setGrantTariffId} disabled={!grantProductId}>
+                      <Select value={grantTariffId} onValueChange={(v) => { setGrantTariffId(v); setGrantOfferId(""); }} disabled={!grantProductId}>
                         <SelectTrigger className="h-10 sm:h-9 text-sm">
                           <SelectValue placeholder="Выбрать..." />
                         </SelectTrigger>
@@ -1591,6 +1610,31 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       </Select>
                     </div>
                   </div>
+                  
+                  {/* Offer selection */}
+                  {grantTariffId && grantOffers && grantOffers.length > 0 && (
+                    <div>
+                      <Label className="text-xs">Оффер (кнопка оплаты)</Label>
+                      <Select value={grantOfferId} onValueChange={setGrantOfferId}>
+                        <SelectTrigger className="h-10 sm:h-9 text-sm">
+                          <SelectValue placeholder="Выбрать оффер (опционально)..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Без оффера</SelectItem>
+                          {grantOffers.map(offer => (
+                            <SelectItem key={offer.id} value={offer.id}>
+                              {offer.offer_type === "trial" ? "🎁 " : "💳 "}
+                              {offer.button_label} ({offer.amount} BYN)
+                              {!offer.is_active && " (неактивен)"}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Определяет getcourse_offer_id для интеграции
+                      </p>
+                    </div>
+                  )}
                   {/* Days input + Date range picker */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
