@@ -186,7 +186,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       // 0. Load order snapshot for notifications + telegram revoke + GetCourse cancel
       const { data: order, error: orderError } = await supabase
         .from("orders_v2")
-        .select("id, user_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
+        .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
         .eq("id", deal.id)
         .single();
 
@@ -221,23 +221,48 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       await supabase.from("subscriptions_v2").delete().eq("order_id", order.id);
 
       // 4. Delete entitlements for affected user & product
-      const productCode = (order.products_v2 as any)?.code;
-      if (order.user_id && productCode) {
+      const orderProductCode = (order.products_v2 as any)?.code;
+      if (order.user_id && orderProductCode) {
         await supabase
           .from("entitlements")
           .delete()
           .eq("user_id", order.user_id)
-          .eq("product_code", productCode);
+          .eq("product_code", orderProductCode);
       }
 
-      // 4.1 Revoke Telegram access if product has telegram_club_id (also sends client notification + email fallback)
+      // 4.1 Check for other active deals before revoking Telegram access
       const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
+      const productCode = (order.products_v2 as any)?.code;
+      
       if (order.user_id && telegramClubId) {
-        await supabase.functions
-          .invoke("telegram-revoke-access", {
-            body: { user_id: order.user_id, club_id: telegramClubId, reason: "deal_deleted" },
-          })
-          .catch(console.error);
+        // Check if user has other active deals with same product
+        const { count: otherActiveDeals } = await supabase
+          .from('orders_v2')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', order.user_id)
+          .eq('product_id', order.product_id)
+          .eq('status', 'paid')
+          .neq('id', order.id);
+
+        // Check for other active subscriptions
+        const { count: activeSubscriptions } = await supabase
+          .from('subscriptions_v2')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', order.user_id)
+          .eq('product_id', order.product_id)
+          .in('status', ['active', 'trial'])
+          .neq('order_id', order.id);
+
+        // Only revoke Telegram if no other active deals/subscriptions
+        if (!otherActiveDeals && !activeSubscriptions) {
+          await supabase.functions
+            .invoke("telegram-revoke-access", {
+              body: { user_id: order.user_id, club_id: telegramClubId, reason: "deal_deleted" },
+            })
+            .catch(console.error);
+        } else {
+          console.log(`[DealDetailSheet] Skipping TG revoke: user has ${otherActiveDeals} other deals, ${activeSubscriptions} active subs`);
+        }
       }
 
       // 4.2 Notify super_admins about deal deletion
