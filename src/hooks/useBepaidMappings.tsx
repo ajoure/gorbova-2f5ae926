@@ -228,7 +228,20 @@ export function useBepaidQueueActions() {
       const plan = payload?.plan || {};
       const additionalData = payload?.additional_data || {};
       const card = payload?.card || {};
-      const amount = queueItem.amount || (plan.amount ? plan.amount / 100 : 0);
+      const customer = payload?.customer || {};
+      
+      // Get amount - fallback to offer price if queue amount is 0
+      let amount = queueItem.amount || (plan.amount ? plan.amount / 100 : 0);
+      
+      // If amount is 0 and we have an offer, get price from offer
+      if (amount === 0 && offerId) {
+        const { data: offer } = await supabase
+          .from("tariff_offers")
+          .select("amount")
+          .eq("id", offerId)
+          .maybeSingle();
+        if (offer?.amount) amount = Number(offer.amount);
+      }
 
       // Get profile
       const { data: profile, error: profileError } = await supabase
@@ -257,8 +270,17 @@ export function useBepaidQueueActions() {
 
       // Generate order number
       const orderNumber = `BP-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      
+      // Determine correct payment date (use paid_at from queue, not created_at)
+      const actualPaymentDate = queueItem.paid_at || queueItem.created_at;
 
-      // Create order
+      // Build customer data from queue item and payload
+      const customerName = queueItem.customer_name || customer.first_name || "";
+      const customerSurname = queueItem.customer_surname || customer.last_name || "";
+      const customerFullName = [customerName, customerSurname].filter(Boolean).join(" ") || 
+                               queueItem.card_holder || card.holder || "";
+
+      // Create order with customer data in meta
       const { data: order, error: orderError } = await supabase
         .from("orders_v2")
         .insert([{
@@ -270,6 +292,7 @@ export function useBepaidQueueActions() {
           final_price: amount,
           base_price: amount,
           currency: queueItem.currency || "BYN",
+          customer_email: queueItem.customer_email || customer.email || profile.email,
           reconcile_source: "bepaid_import",
           purchase_snapshot: {
             product_name: productName,
@@ -278,6 +301,26 @@ export function useBepaidQueueActions() {
             bepaid_plan_title: plan.title || null,
             bepaid_uid: queueItem.bepaid_uid,
             offer_id: offerId,
+          },
+          meta: {
+            // Customer data from bePaid
+            customer_name: customerName || null,
+            customer_surname: customerSurname || null,
+            customer_full_name: customerFullName || null,
+            customer_email: queueItem.customer_email || customer.email || null,
+            customer_phone: queueItem.customer_phone || customer.phone || null,
+            // Card data
+            card_holder: queueItem.card_holder || card.holder || null,
+            card_last4: queueItem.card_last4 || card.last_4 || null,
+            card_brand: queueItem.card_brand || card.brand || null,
+            // Payment data
+            ip_address: queueItem.ip_address || payload?.ip || null,
+            receipt_url: queueItem.receipt_url || null,
+            // Dates
+            purchased_at: actualPaymentDate,
+            imported_at: new Date().toISOString(),
+            // Offer
+            offer_id: offerId || null,
           },
         }])
         .select()
@@ -294,6 +337,7 @@ export function useBepaidQueueActions() {
 
       if (!existingPayment) {
         // Create payment only if it doesn't exist
+        // Use paid_at from queue item (actual payment date), not created_at
         const { error: paymentError } = await supabase
           .from("payments_v2")
           .insert([{
@@ -304,9 +348,10 @@ export function useBepaidQueueActions() {
             status: "succeeded",
             provider: "bepaid",
             provider_payment_id: queueItem.bepaid_uid,
-            card_last4: card.last_4 || null,
-            card_brand: card.brand || null,
-            paid_at: queueItem.created_at,
+            card_last4: queueItem.card_last4 || card.last_4 || null,
+            card_brand: queueItem.card_brand || card.brand || null,
+            paid_at: actualPaymentDate,
+            receipt_url: queueItem.receipt_url || null,
             provider_response: payload,
           }]);
 

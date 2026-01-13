@@ -435,6 +435,48 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     <span>{deal.customer_phone || profile?.phone || "—"}</span>
                   </div>
                 </div>
+                
+                {/* Customer data from bePaid import (from meta) */}
+                {deal.meta && (deal.meta.customer_full_name || deal.meta.customer_email || deal.meta.customer_phone || deal.meta.card_holder) && (
+                  <>
+                    <Separator />
+                    <div className="bg-muted/50 p-3 rounded-lg space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground uppercase mb-2">
+                        Данные из платёжной системы
+                      </div>
+                      {deal.meta.customer_full_name && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">ФИО клиента:</span>
+                          <span>{deal.meta.customer_full_name}</span>
+                        </div>
+                      )}
+                      {deal.meta.customer_email && deal.meta.customer_email !== deal.customer_email && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Email bePaid:</span>
+                          <span>{deal.meta.customer_email}</span>
+                        </div>
+                      )}
+                      {deal.meta.customer_phone && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Телефон bePaid:</span>
+                          <span>{deal.meta.customer_phone}</span>
+                        </div>
+                      )}
+                      {deal.meta.card_holder && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Владелец карты:</span>
+                          <span>{deal.meta.card_holder}</span>
+                        </div>
+                      )}
+                      {deal.meta.purchased_at && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Дата покупки:</span>
+                          <span>{format(new Date(deal.meta.purchased_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 

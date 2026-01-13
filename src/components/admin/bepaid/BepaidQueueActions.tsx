@@ -125,9 +125,41 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* Customer data from bePaid */}
+            <div className="bg-muted/50 p-3 rounded-lg space-y-2 text-sm">
+              <div className="font-medium text-xs uppercase text-muted-foreground mb-2">Данные из bePaid</div>
+              {(item.customer_name || item.customer_surname || item.card_holder) && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">ФИО клиента:</span>
+                  <span className="font-medium">
+                    {[item.customer_name, item.customer_surname].filter(Boolean).join(" ") || item.card_holder || "—"}
+                  </span>
+                </div>
+              )}
+              {item.customer_email && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Email:</span>
+                  <span className="font-medium">{item.customer_email}</span>
+                </div>
+              )}
+              {item.customer_phone && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Телефон:</span>
+                  <span className="font-medium">{item.customer_phone}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Дата платежа:</span>
+                <span className="font-medium">
+                  {item.paid_at ? new Date(item.paid_at).toLocaleString("ru-RU") : new Date(item.created_at).toLocaleString("ru-RU")}
+                </span>
+              </div>
+            </div>
+
+            {/* Deal info */}
             <div className="bg-muted/50 p-3 rounded-lg space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Клиент:</span>
+                <span className="text-muted-foreground">Связанный контакт:</span>
                 <span className="font-medium">{item.matched_profile_name}</span>
               </div>
               <div className="flex justify-between">
