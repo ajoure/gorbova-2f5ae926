@@ -96,7 +96,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Сумма:</span>
-                <span className="font-medium">{item.amount ? item.amount / 100 : 0} {item.currency}</span>
+                <span className="font-medium">{item.amount ? item.amount.toFixed(2) : "0.00"} {item.currency}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Продукт bePaid:</span>
