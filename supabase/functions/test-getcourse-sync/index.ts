@@ -154,6 +154,26 @@ Deno.serve(async (req) => {
         .maybeSingle();
       
       const tariff = order.tariffs as any;
+      const orderMeta = (order.meta as any) || {};
+      
+      // Determine GetCourse offer ID with priority:
+      // 1. offer_id from order meta → tariff_offers.getcourse_offer_id
+      // 2. Fallback: tariffs.getcourse_offer_id
+      let gcOfferId = tariff?.getcourse_offer_id || offerId;
+      
+      if (orderMeta.offer_id) {
+        const { data: offer } = await supabase
+          .from('tariff_offers')
+          .select('getcourse_offer_id')
+          .eq('id', orderMeta.offer_id)
+          .maybeSingle();
+        
+        if (offer?.getcourse_offer_id) {
+          gcOfferId = parseInt(offer.getcourse_offer_id) || offer.getcourse_offer_id;
+          console.log(`Using getcourse_offer_id from tariff_offers: ${gcOfferId} (offer_id: ${orderMeta.offer_id})`);
+        }
+      }
+      
       const gcResult = await sendToGetCourse(
         {
           email: order.customer_email || email,
@@ -161,7 +181,7 @@ Deno.serve(async (req) => {
           firstName: profile?.first_name || null,
           lastName: profile?.last_name || null,
         },
-        tariff?.getcourse_offer_id || offerId,
+        gcOfferId,
         order.order_number,
         order.final_price,
         tariff?.code || tariffCode || 'unknown'

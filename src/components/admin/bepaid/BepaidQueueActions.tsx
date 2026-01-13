@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,6 +10,7 @@ import { ShoppingCart, User, RefreshCw, Search } from "lucide-react";
 import { useBepaidQueueActions } from "@/hooks/useBepaidMappings";
 import { useBepaidMappings } from "@/hooks/useBepaidMappings";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { useTariffOffers } from "@/hooks/useTariffOffers";
 import { QueueItem } from "@/hooks/useBepaidData";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -29,6 +30,23 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
   const { data: allTariffs } = useTariffs();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
+  const [selectedOfferId, setSelectedOfferId] = useState<string>("");
+
+  // Fetch all offers for selected tariff (including inactive ones)
+  const { data: tariffOffers } = useQuery({
+    queryKey: ["tariff-offers-all", selectedTariffId],
+    queryFn: async () => {
+      if (!selectedTariffId) return [];
+      const { data, error } = await supabase
+        .from("tariff_offers")
+        .select("id, offer_type, button_label, amount, is_active")
+        .eq("tariff_id", selectedTariffId)
+        .order("sort_order");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!selectedTariffId,
+  });
 
   // Find matching mapping
   const matchedMapping = mappings.find(m => 
@@ -36,10 +54,28 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
     m.bepaid_description === item.product_name
   );
 
+  // Auto-select offer based on payment amount
+  useEffect(() => {
+    if (tariffOffers && tariffOffers.length > 0 && item.amount) {
+      // If amount <= 10 and there's a trial offer, select trial
+      const trialOffer = tariffOffers.find(o => o.offer_type === "trial");
+      const payNowOffer = tariffOffers.find(o => o.offer_type === "pay_now" && o.is_active);
+      
+      if (item.amount <= 10 && trialOffer) {
+        setSelectedOfferId(trialOffer.id);
+      } else if (payNowOffer) {
+        setSelectedOfferId(payNowOffer.id);
+      } else if (tariffOffers.length > 0) {
+        setSelectedOfferId(tariffOffers[0].id);
+      }
+    }
+  }, [tariffOffers, item.amount]);
+
   const handleOpen = () => {
     if (matchedMapping) {
       setSelectedProductId(matchedMapping.product_id || "");
       setSelectedTariffId(matchedMapping.tariff_id || "");
+      setSelectedOfferId(matchedMapping.offer_id || "");
     }
     setDialogOpen(true);
   };
@@ -55,7 +91,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
       profileId: item.matched_profile_id,
       productId: selectedProductId || matchedMapping?.product_id || undefined,
       tariffId: selectedTariffId || matchedMapping?.tariff_id || undefined,
-      offerId: matchedMapping?.offer_id || undefined,
+      offerId: selectedOfferId || matchedMapping?.offer_id || undefined,
     }, {
       onSuccess: () => {
         setDialogOpen(false);
@@ -114,7 +150,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
               <>
                 <div className="space-y-2">
                   <Label>Продукт в системе</Label>
-                  <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+                  <Select value={selectedProductId} onValueChange={(v) => { setSelectedProductId(v); setSelectedTariffId(""); setSelectedOfferId(""); }}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
@@ -132,7 +168,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
                 {selectedProductId && selectedProductId !== "__none__" && allTariffs && allTariffs.filter(t => t.product_id === selectedProductId).length > 0 && (
                   <div className="space-y-2">
                     <Label>Тариф</Label>
-                    <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                    <Select value={selectedTariffId} onValueChange={(v) => { setSelectedTariffId(v); setSelectedOfferId(""); }}>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
@@ -148,6 +184,30 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
                   </div>
                 )}
               </>
+            )}
+
+            {/* Offer selection - always show if tariff is selected */}
+            {(selectedTariffId || matchedMapping?.tariff_id) && (selectedTariffId !== "__none__") && (
+              <div className="space-y-2">
+                <Label>Оффер (кнопка оплаты)</Label>
+                <Select value={selectedOfferId} onValueChange={setSelectedOfferId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите оффер" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tariffOffers?.map((offer) => (
+                      <SelectItem key={offer.id} value={offer.id}>
+                        {offer.offer_type === "trial" ? "🎁 " : "💳 "}
+                        {offer.button_label} ({offer.amount} BYN)
+                        {!offer.is_active && " (неактивен)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Выбранный оффер определяет getcourse_offer_id для интеграции
+                </p>
+              </div>
             )}
           </div>
           <DialogFooter>
