@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { format, addDays, differenceInDays } from "date-fns";
+import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
@@ -13,9 +13,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -30,7 +31,21 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
-import { Loader2, CalendarIcon } from "lucide-react";
+import { 
+  Loader2, 
+  CalendarIcon, 
+  Package, 
+  Layers, 
+  Gift, 
+  Clock, 
+  MessageSquare,
+  Send,
+  Users,
+  Check,
+  X,
+  RefreshCw,
+  AlertTriangle
+} from "lucide-react";
 
 interface EditSubscriptionDialogProps {
   subscription: any | null;
@@ -40,11 +55,11 @@ interface EditSubscriptionDialogProps {
 }
 
 const STATUS_OPTIONS = [
-  { value: "active", label: "Активна" },
-  { value: "trial", label: "Пробный период" },
-  { value: "expired", label: "Истекла" },
-  { value: "cancelled", label: "Отменена" },
-  { value: "paused", label: "Приостановлена" },
+  { value: "active", label: "Активна", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" },
+  { value: "trial", label: "Пробный период", color: "bg-amber-500/10 text-amber-600 border-amber-500/20" },
+  { value: "expired", label: "Истекла", color: "bg-gray-500/10 text-gray-600 border-gray-500/20" },
+  { value: "cancelled", label: "Отменена", color: "bg-red-500/10 text-red-600 border-red-500/20" },
+  { value: "paused", label: "Приостановлена", color: "bg-blue-500/10 text-blue-600 border-blue-500/20" },
 ];
 
 export function EditSubscriptionDialog({ 
@@ -62,6 +77,7 @@ export function EditSubscriptionDialog({
     offer_id: "",
     comment: "",
   });
+  const [isTelegramLoading, setIsTelegramLoading] = useState(false);
 
   // Load products
   const { data: products } = useQuery({
@@ -97,6 +113,21 @@ export function EditSubscriptionDialog({
       return data || [];
     },
     enabled: !!formData.tariff_id,
+  });
+
+  // Load Telegram access state
+  const { data: telegramAccess, refetch: refetchTelegram } = useQuery({
+    queryKey: ["telegram-access-edit", subscription?.user_id],
+    queryFn: async () => {
+      if (!subscription?.user_id) return null;
+      const { data } = await supabase
+        .from("telegram_access")
+        .select("*, telegram_clubs(name, chat_id, channel_id)")
+        .eq("user_id", subscription.user_id)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!subscription?.user_id && open,
   });
 
   useEffect(() => {
@@ -137,10 +168,37 @@ export function EditSubscriptionDialog({
         .eq("id", subscription.id);
       
       if (error) throw error;
+
+      // Update entitlements if dates changed
+      if (subscription.user_id && subscription.product_id) {
+        const { data: product } = await supabase
+          .from("products_v2")
+          .select("code")
+          .eq("id", formData.product_id || subscription.product_id)
+          .single();
+
+        if (product?.code) {
+          await supabase.from("entitlements").upsert({
+            user_id: subscription.user_id,
+            product_code: product.code,
+            expires_at: dateRange?.to?.toISOString() || null,
+            status: formData.status === "active" || formData.status === "trial" ? "active" : "expired",
+          }, { onConflict: "user_id,product_code" });
+        }
+      }
+
+      // Update telegram_access active_until if dates changed
+      if (telegramAccess && dateRange?.to) {
+        await supabase
+          .from("telegram_access")
+          .update({ active_until: dateRange.to.toISOString() })
+          .eq("id", telegramAccess.id);
+      }
     },
     onSuccess: () => {
       toast.success("Подписка обновлена");
       queryClient.invalidateQueries({ queryKey: ["contact-subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["telegram-access-edit"] });
       onOpenChange(false);
       onSuccess?.();
     },
@@ -149,105 +207,236 @@ export function EditSubscriptionDialog({
     },
   });
 
+  // Manual Telegram grant
+  const grantTelegramAccess = async () => {
+    if (!subscription?.user_id || !telegramAccess?.club_id) return;
+    
+    setIsTelegramLoading(true);
+    try {
+      const { error } = await supabase.functions.invoke("telegram-grant-access", {
+        body: {
+          userId: subscription.user_id,
+          clubId: telegramAccess.club_id,
+          accessUntil: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+      
+      if (error) throw error;
+      
+      // Also update DB state directly
+      await supabase
+        .from("telegram_access")
+        .update({ 
+          state_chat: "granted", 
+          state_channel: "granted",
+          active_until: dateRange?.to?.toISOString() || null,
+        })
+        .eq("id", telegramAccess.id);
+      
+      await refetchTelegram();
+      toast.success("Доступ в Telegram восстановлен");
+    } catch (err) {
+      toast.error("Ошибка выдачи доступа: " + (err as Error).message);
+    } finally {
+      setIsTelegramLoading(false);
+    }
+  };
+
+  // Manual Telegram revoke
+  const revokeTelegramAccess = async () => {
+    if (!subscription?.user_id || !telegramAccess?.club_id) return;
+    
+    setIsTelegramLoading(true);
+    try {
+      const { error } = await supabase.functions.invoke("telegram-revoke-access", {
+        body: {
+          userId: subscription.user_id,
+          clubId: telegramAccess.club_id,
+        },
+      });
+      
+      if (error) throw error;
+      
+      await supabase
+        .from("telegram_access")
+        .update({ state_chat: "revoked", state_channel: "revoked" })
+        .eq("id", telegramAccess.id);
+      
+      await refetchTelegram();
+      toast.success("Доступ в Telegram отозван");
+    } catch (err) {
+      toast.error("Ошибка отзыва: " + (err as Error).message);
+    } finally {
+      setIsTelegramLoading(false);
+    }
+  };
+
+  // Sync Telegram access (re-check and update)
+  const syncTelegramAccess = async () => {
+    if (!subscription?.user_id || !telegramAccess?.club_id) return;
+    
+    setIsTelegramLoading(true);
+    try {
+      // Just refresh from DB
+      await refetchTelegram();
+      toast.success("Статус Telegram обновлён");
+    } catch (err) {
+      toast.error("Ошибка синхронизации");
+    } finally {
+      setIsTelegramLoading(false);
+    }
+  };
+
   if (!subscription) return null;
 
   const days = dateRange?.from && dateRange?.to 
     ? differenceInDays(dateRange.to, dateRange.from) + 1 
     : 0;
 
+  const currentStatus = STATUS_OPTIONS.find(s => s.value === formData.status);
+  const hasTelegramClub = !!telegramAccess?.club_id;
+  const isTelegramGranted = telegramAccess?.state_chat === "granted" || telegramAccess?.state_channel === "granted";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Редактирование подписки</DialogTitle>
-        </DialogHeader>
+      <DialogContent className="max-w-lg p-0 overflow-hidden border-0 shadow-2xl shadow-primary/10">
+        {/* Glass Header */}
+        <div className="relative bg-gradient-to-br from-primary/10 via-primary/5 to-transparent backdrop-blur-xl border-b border-border/50 px-6 py-5">
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent" />
+          <DialogHeader className="relative">
+            <div className="flex items-center justify-between">
+              <DialogTitle className="text-xl font-semibold flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                  <Layers className="w-5 h-5" />
+                </div>
+                Редактирование подписки
+              </DialogTitle>
+              {currentStatus && (
+                <Badge className={cn("font-medium", currentStatus.color)}>
+                  {currentStatus.label}
+                </Badge>
+              )}
+            </div>
+          </DialogHeader>
+        </div>
 
-        <div className="space-y-4 py-4">
+        <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+          {/* Status */}
           <div className="space-y-2">
-            <Label>Статус</Label>
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              Статус
+            </Label>
             <Select value={formData.status} onValueChange={(v) => setFormData(prev => ({ ...prev, status: v }))}>
-              <SelectTrigger>
+              <SelectTrigger className="h-11 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
                 <SelectValue placeholder="Выберите статус" />
               </SelectTrigger>
               <SelectContent>
                 {STATUS_OPTIONS.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <div className="flex items-center gap-2">
+                      <div className={cn("w-2 h-2 rounded-full", opt.value === "active" ? "bg-emerald-500" : opt.value === "trial" ? "bg-amber-500" : opt.value === "cancelled" ? "bg-red-500" : "bg-gray-400")} />
+                      {opt.label}
+                    </div>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label>Продукт</Label>
-            <Select 
-              value={formData.product_id} 
-              onValueChange={(v) => setFormData(prev => ({ ...prev, product_id: v, tariff_id: "" }))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите продукт" />
-              </SelectTrigger>
-              <SelectContent>
-                {products?.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Product & Tariff */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <Package className="w-4 h-4 text-muted-foreground" />
+                Продукт
+              </Label>
+              <Select 
+                value={formData.product_id} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, product_id: v, tariff_id: "" }))}
+              >
+                <SelectTrigger className="h-11 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
+                  <SelectValue placeholder="Выберите" />
+                </SelectTrigger>
+                <SelectContent>
+                  {products?.map(p => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="space-y-2">
-            <Label>Тариф</Label>
-            <Select 
-              value={formData.tariff_id} 
-              onValueChange={(v) => setFormData(prev => ({ ...prev, tariff_id: v, offer_id: "" }))}
-              disabled={!formData.product_id}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите тариф" />
-              </SelectTrigger>
-              <SelectContent>
-                {tariffs?.map(t => (
-                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                Тариф
+              </Label>
+              <Select 
+                value={formData.tariff_id} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, tariff_id: v, offer_id: "" }))}
+                disabled={!formData.product_id}
+              >
+                <SelectTrigger className="h-11 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
+                  <SelectValue placeholder="Выберите" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tariffs?.map(t => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Offer selection */}
           {formData.tariff_id && (
             <div className="space-y-2">
-              <Label>Оффер (кнопка оплаты)</Label>
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <Gift className="w-4 h-4 text-muted-foreground" />
+                Оффер (кнопка оплаты)
+              </Label>
               <Select 
                 value={formData.offer_id} 
-                onValueChange={(v) => setFormData(prev => ({ ...prev, offer_id: v }))}
+                onValueChange={(v) => setFormData(prev => ({ ...prev, offer_id: v === "__none__" ? "" : v }))}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-11 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
                   <SelectValue placeholder="Выберите оффер (опционально)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">Без оффера</SelectItem>
                   {tariffOffers?.map(offer => (
                     <SelectItem key={offer.id} value={offer.id}>
-                      {offer.offer_type === "trial" ? "🎁 " : "💳 "}
-                      {offer.button_label} ({offer.amount} BYN)
-                      {!offer.is_active && " (неактивен)"}
+                      <div className="flex items-center gap-2">
+                        {offer.offer_type === "trial" ? (
+                          <Gift className="w-4 h-4 text-amber-500" />
+                        ) : (
+                          <span className="text-emerald-500">💳</span>
+                        )}
+                        {offer.button_label} ({offer.amount} BYN)
+                        {!offer.is_active && <span className="text-muted-foreground text-xs">(неактивен)</span>}
+                      </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Выбранный оффер сохраняется в meta и используется для GetCourse
+                Оффер сохраняется в meta для синхронизации с GetCourse
               </p>
             </div>
           )}
 
+          {/* Date Range */}
           <div className="space-y-2">
-            <Label>Период доступа</Label>
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <CalendarIcon className="w-4 h-4 text-muted-foreground" />
+              Период доступа
+            </Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   className={cn(
-                    "w-full justify-start text-left font-normal",
+                    "w-full h-11 justify-start text-left font-normal bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors",
                     !dateRange && "text-muted-foreground"
                   )}
                 >
@@ -256,9 +445,9 @@ export function EditSubscriptionDialog({
                     dateRange.to ? (
                       <>
                         {format(dateRange.from, "dd.MM.yy")} — {format(dateRange.to, "dd.MM.yy")}
-                        <span className="ml-auto text-muted-foreground text-xs">
-                          ({days} дн.)
-                        </span>
+                        <Badge variant="secondary" className="ml-auto text-xs">
+                          {days} дн.
+                        </Badge>
                       </>
                     ) : (
                       format(dateRange.from, "dd.MM.yy")
@@ -283,22 +472,120 @@ export function EditSubscriptionDialog({
             </Popover>
           </div>
 
+          <Separator className="my-4" />
+
+          {/* Telegram Access Control */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <Send className="w-4 h-4 text-muted-foreground" />
+              Telegram доступ
+            </Label>
+            
+            {hasTelegramClub ? (
+              <div className="rounded-xl border border-border/60 bg-background/30 backdrop-blur-sm p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">
+                      {(telegramAccess as any)?.telegram_clubs?.name || "Клуб"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isTelegramGranted ? (
+                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                        <Check className="w-3 h-3 mr-1" />
+                        Доступ выдан
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
+                        <X className="w-3 h-3 mr-1" />
+                        Отозван
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {telegramAccess?.active_until && (
+                  <div className="text-xs text-muted-foreground">
+                    Доступ до: {format(new Date(telegramAccess.active_until), "dd.MM.yyyy HH:mm", { locale: ru })}
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={grantTelegramAccess}
+                    disabled={isTelegramLoading}
+                    className="flex-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/20"
+                  >
+                    {isTelegramLoading ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4 mr-1" />
+                    )}
+                    Выдать
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={revokeTelegramAccess}
+                    disabled={isTelegramLoading}
+                    className="flex-1 bg-red-500/10 border-red-500/30 text-red-600 hover:bg-red-500/20"
+                  >
+                    {isTelegramLoading ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <X className="w-4 h-4 mr-1" />
+                    )}
+                    Отозвать
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={syncTelegramAccess}
+                    disabled={isTelegramLoading}
+                    className="px-3"
+                  >
+                    <RefreshCw className={cn("w-4 h-4", isTelegramLoading && "animate-spin")} />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border/60 bg-muted/30 p-4 flex items-center gap-3 text-muted-foreground">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                <span className="text-sm">Telegram клуб не привязан к подписке</span>
+              </div>
+            )}
+          </div>
+
+          <Separator className="my-4" />
+
+          {/* Comment */}
           <div className="space-y-2">
-            <Label>Комментарий к изменениям</Label>
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-muted-foreground" />
+              Комментарий к изменениям
+            </Label>
             <Textarea
               value={formData.comment}
               onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))}
               placeholder="Причина изменения..."
-              className="min-h-[60px] resize-none"
+              className="min-h-[60px] resize-none bg-background/50 backdrop-blur-sm border-border/60"
             />
           </div>
         </div>
 
-        <DialogFooter>
+        {/* Footer */}
+        <DialogFooter className="px-6 py-4 bg-muted/30 border-t border-border/50">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Отмена
           </Button>
-          <Button onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
+          <Button 
+            onClick={() => updateMutation.mutate()} 
+            disabled={updateMutation.isPending}
+            className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg shadow-primary/20"
+          >
             {updateMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             Сохранить
           </Button>
