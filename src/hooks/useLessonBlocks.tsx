@@ -152,6 +152,7 @@ export interface QuizMatchingPair {
   id: string;
   left: string;
   right: string;
+  rightId: string; // unique id for right element (Sprint A+B fix)
 }
 
 export interface QuizMatchingContentData {

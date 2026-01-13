@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -36,15 +36,25 @@ export interface QuizSequenceContent {
   points?: number;
 }
 
+// Sprint A+B: Extended answer interface
+interface SequenceAnswer {
+  order: string[];
+  is_submitted?: boolean;
+  submitted_at?: string;
+  is_correct?: boolean;
+  score?: number;
+  max_score?: number;
+}
+
 interface QuizSequenceBlockProps {
   content: QuizSequenceContent;
   onChange: (content: QuizSequenceContent) => void;
   isEditing?: boolean;
   blockId?: string;
-  savedAnswer?: { order: string[] };
+  savedAnswer?: SequenceAnswer;
   isSubmitted?: boolean;
   attempts?: number;
-  onSubmit?: (answer: { order: string[] }, isCorrect: boolean, score: number, maxScore: number) => void;
+  onSubmit?: (answer: SequenceAnswer, isCorrect: boolean, score: number, maxScore: number) => void;
   onReset?: () => void;
 }
 
@@ -123,6 +133,9 @@ export function QuizSequenceBlock({
 }: QuizSequenceBlockProps) {
   const items = content.items || [];
   const [currentOrder, setCurrentOrder] = useState<string[]>([]);
+  
+  // Sprint A+B: Guard to prevent re-initialization after first load
+  const initializedRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -131,11 +144,16 @@ export function QuizSequenceBlock({
     })
   );
 
-  // Initialize with shuffled order on mount (student mode)
+  // Sprint A+B: Single unified initialization effect
   useEffect(() => {
-    if (!isEditing && items.length > 0 && currentOrder.length === 0) {
+    if (isEditing || items.length === 0 || initializedRef.current) return;
+    
+    // Priority: savedAnswer > shuffle
+    if (savedAnswer?.order && savedAnswer.order.length > 0) {
+      setCurrentOrder(savedAnswer.order);
+    } else {
+      // Shuffle only if no saved answer
       const ids = items.map(item => item.id);
-      // Shuffle
       const shuffled = [...ids];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -143,14 +161,9 @@ export function QuizSequenceBlock({
       }
       setCurrentOrder(shuffled);
     }
-  }, [isEditing, items.length]);
-
-  // Restore saved answer
-  useEffect(() => {
-    if (savedAnswer?.order && savedAnswer.order.length > 0) {
-      setCurrentOrder(savedAnswer.order);
-    }
-  }, [savedAnswer]);
+    
+    initializedRef.current = true;
+  }, [isEditing, items.length, savedAnswer]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -177,14 +190,26 @@ export function QuizSequenceBlock({
     };
   };
 
+  // Sprint A+B: Updated submit with unified response format
   const handleSubmit = () => {
     if (!onSubmit) return;
     
     const { isCorrect, correctCount } = checkCorrectness();
     const maxScore = content.points || items.length;
-    const score = Math.round((correctCount / items.length) * maxScore);
+    const score = (maxScore === items.length) 
+      ? correctCount 
+      : Math.floor((correctCount / items.length) * maxScore);
     
-    onSubmit({ order: currentOrder }, isCorrect, score, maxScore);
+    const answer: SequenceAnswer = {
+      order: currentOrder,
+      is_submitted: true,
+      submitted_at: new Date().toISOString(),
+      is_correct: isCorrect,
+      score,
+      max_score: maxScore
+    };
+    
+    onSubmit(answer, isCorrect, score, maxScore);
   };
 
   const handleReset = () => {
@@ -196,6 +221,7 @@ export function QuizSequenceBlock({
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     setCurrentOrder(shuffled);
+    initializedRef.current = true; // Keep guard active
     onReset?.();
   };
 
