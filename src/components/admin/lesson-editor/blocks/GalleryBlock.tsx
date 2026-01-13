@@ -173,17 +173,19 @@ export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlo
     setLightboxOpen(true);
   };
 
+  // Sprint A+B Fix: Calculate validItems once for lightbox navigation
+  const validItems = items.filter(item => item.url);
+
   const navigateLightbox = (direction: 'prev' | 'next') => {
     if (direction === 'prev') {
-      setLightboxIndex((i) => (i > 0 ? i - 1 : items.length - 1));
+      setLightboxIndex((i) => (i > 0 ? i - 1 : validItems.length - 1));
     } else {
-      setLightboxIndex((i) => (i < items.length - 1 ? i + 1 : 0));
+      setLightboxIndex((i) => (i < validItems.length - 1 ? i + 1 : 0));
     }
   };
 
-  // Student view
+  // Student view - validItems already defined above for lightbox navigation
   if (!isEditing) {
-    const validItems = items.filter(item => item.url);
     
     if (validItems.length === 0) {
       return (

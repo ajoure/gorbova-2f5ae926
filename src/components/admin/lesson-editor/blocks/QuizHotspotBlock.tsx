@@ -25,15 +25,25 @@ export interface QuizHotspotContent {
   points?: number;
 }
 
+// Sprint A+B: Extended answer interface
+interface HotspotAnswer {
+  clicks: Array<{ x: number; y: number }>;
+  is_submitted?: boolean;
+  submitted_at?: string;
+  is_correct?: boolean;
+  score?: number;
+  max_score?: number;
+}
+
 interface QuizHotspotBlockProps {
   content: QuizHotspotContent;
   onChange: (content: QuizHotspotContent) => void;
   isEditing?: boolean;
   blockId?: string;
-  savedAnswer?: { clicks: Array<{ x: number; y: number }> };
+  savedAnswer?: HotspotAnswer;
   isSubmitted?: boolean;
   attempts?: number;
-  onSubmit?: (answer: { clicks: Array<{ x: number; y: number }> }, isCorrect: boolean, score: number, maxScore: number) => void;
+  onSubmit?: (answer: HotspotAnswer, isCorrect: boolean, score: number, maxScore: number) => void;
   onReset?: () => void;
 }
 
@@ -102,6 +112,7 @@ export function QuizHotspotBlock({
     }
   };
 
+  // Sprint A+B: Fixed correctness check with proper allowMultiple semantics
   const checkCorrectness = (): { isCorrect: boolean; correctCount: number; matchedAreas: Set<string> } => {
     const matchedAreas = new Set<string>();
     
@@ -114,19 +125,39 @@ export function QuizHotspotBlock({
     });
 
     const correctCount = matchedAreas.size;
-    const isCorrect = correctCount === areas.length && clicks.length === areas.length;
+    
+    let isCorrect: boolean;
+    if (allowMultiple) {
+      // allowMultiple=true: all areas must be found (extra clicks don't break correctness)
+      isCorrect = matchedAreas.size === areas.length;
+    } else {
+      // allowMultiple=false: exactly one click, must hit at least one area
+      isCorrect = clicks.length === 1 && matchedAreas.size >= 1;
+    }
     
     return { isCorrect, correctCount, matchedAreas };
   };
 
+  // Sprint A+B: Updated submit with unified response format
   const handleSubmit = () => {
     if (!onSubmit || clicks.length === 0) return;
     
     const { isCorrect, correctCount } = checkCorrectness();
     const maxScore = content.points || areas.length;
-    const score = Math.round((correctCount / areas.length) * maxScore);
+    const score = (maxScore === areas.length)
+      ? correctCount
+      : Math.floor((correctCount / areas.length) * maxScore);
     
-    onSubmit({ clicks }, isCorrect, score, maxScore);
+    const answer: HotspotAnswer = {
+      clicks,
+      is_submitted: true,
+      submitted_at: new Date().toISOString(),
+      is_correct: isCorrect,
+      score,
+      max_score: maxScore
+    };
+    
+    onSubmit(answer, isCorrect, score, maxScore);
   };
 
   const handleReset = () => {
@@ -153,8 +184,9 @@ export function QuizHotspotBlock({
 
   // Student view
   if (!isEditing) {
-    const { correctCount, matchedAreas } = isSubmitted ? checkCorrectness() : { correctCount: 0, matchedAreas: new Set<string>() };
-    const allCorrect = isSubmitted && correctCount === areas.length && clicks.length === areas.length;
+    const { correctCount, matchedAreas, isCorrect: allCorrect } = isSubmitted 
+      ? checkCorrectness() 
+      : { correctCount: 0, matchedAreas: new Set<string>(), isCorrect: false };
 
     return (
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">

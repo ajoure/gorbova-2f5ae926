@@ -54,8 +54,17 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
   const renderBlock = (block: LessonBlock) => {
     const noop = () => {};
     const blockProgress = progress?.blockProgress[block.id];
-    const savedAnswer = blockProgress?.response as any;
-    const isSubmitted = !!blockProgress?.completed_at;
+    const savedResponse = blockProgress?.response as any;
+    
+    // Sprint A+B: Correct isSubmitted logic
+    // hasResponse = response exists and has data (could be draft)
+    // isSubmitted = response.is_submitted === true OR response.submitted_at exists OR completed_at exists
+    const hasResponse = savedResponse != null && Object.keys(savedResponse).length > 0;
+    const isSubmitted = 
+      savedResponse?.is_submitted === true || 
+      savedResponse?.submitted_at != null || 
+      !!blockProgress?.completed_at;
+    
     const attempts = blockProgress?.attempts || 0;
     
     switch (block.block_type) {
@@ -101,11 +110,11 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             content={block.content as any} 
             onChange={noop} 
             isEditing={false}
-            userAnswer={savedAnswer?.answer}
+            userAnswer={savedResponse?.answer}
             isSubmitted={isSubmitted}
             onSubmit={(answerId) => handleQuizSubmit(
               block.id, 
-              { answer: answerId }, 
+              { answer: answerId, is_submitted: true, submitted_at: new Date().toISOString() }, 
               answerId === (block.content as any).options?.find((o: any) => o.isCorrect)?.id,
               answerId === (block.content as any).options?.find((o: any) => o.isCorrect)?.id ? ((block.content as any).points || 1) : 0,
               (block.content as any).points || 1
@@ -119,13 +128,19 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             content={block.content as any} 
             onChange={noop} 
             isEditing={false}
-            userAnswer={savedAnswer?.answer}
+            userAnswer={savedResponse?.answer}
             isSubmitted={isSubmitted}
             onSubmit={(answers) => {
               const content = block.content as any;
               const correctIds = content.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id) || [];
               const isCorrect = JSON.stringify([...answers].sort()) === JSON.stringify([...correctIds].sort());
-              handleQuizSubmit(block.id, { answer: answers }, isCorrect, isCorrect ? (content.points || 1) : 0, content.points || 1);
+              handleQuizSubmit(
+                block.id, 
+                { answer: answers, is_submitted: true, submitted_at: new Date().toISOString() }, 
+                isCorrect, 
+                isCorrect ? (content.points || 1) : 0, 
+                content.points || 1
+              );
             }}
             onReset={() => handleQuizReset(block.id)}
           />
@@ -136,38 +151,37 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             content={block.content as any} 
             onChange={noop} 
             isEditing={false}
-            userAnswer={savedAnswer?.answer}
+            userAnswer={savedResponse?.answer}
             isSubmitted={isSubmitted}
             onSubmit={(answer) => {
               const content = block.content as any;
               const isCorrect = answer === content.correctAnswer;
-              handleQuizSubmit(block.id, { answer }, isCorrect, isCorrect ? (content.points || 1) : 0, content.points || 1);
+              handleQuizSubmit(
+                block.id, 
+                { answer, is_submitted: true, submitted_at: new Date().toISOString() }, 
+                isCorrect, 
+                isCorrect ? (content.points || 1) : 0, 
+                content.points || 1
+              );
             }}
             onReset={() => handleQuizReset(block.id)}
           />
         );
+      
+      // Sprint A+B: Updated quiz_fill_blank with unified props
       case 'quiz_fill_blank':
         return (
           <QuizFillBlankBlock 
             content={block.content as any} 
             onChange={noop} 
             isEditing={false}
-            userAnswers={savedAnswer?.answers}
+            blockId={block.id}
+            savedAnswer={savedResponse}
             isSubmitted={isSubmitted}
-            onSubmit={(answers) => {
-              const content = block.content as any;
-              // Check correctness for fill blank
-              let correctCount = 0;
-              content.blanks?.forEach((blank: any, i: number) => {
-                const userAns = answers[i]?.toLowerCase?.() || '';
-                const correct = blank.correctAnswer?.toLowerCase?.() || '';
-                if (userAns === correct || blank.acceptedVariants?.some((v: string) => v.toLowerCase() === userAns)) {
-                  correctCount++;
-                }
-              });
-              const isCorrect = correctCount === (content.blanks?.length || 0);
-              handleQuizSubmit(block.id, { answers }, isCorrect, correctCount, content.blanks?.length || 1);
-            }}
+            attempts={attempts}
+            onSubmit={(answer, isCorrect, score, maxScore) => 
+              handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)
+            }
             onReset={() => handleQuizReset(block.id)}
           />
         );
@@ -178,10 +192,10 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             onChange={noop} 
             isEditing={false}
             blockId={block.id}
-            savedAnswer={savedAnswer}
+            savedAnswer={savedResponse}
             isSubmitted={isSubmitted}
             attempts={attempts}
-            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
           />
         );
@@ -192,10 +206,10 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             onChange={noop} 
             isEditing={false}
             blockId={block.id}
-            savedAnswer={savedAnswer}
+            savedAnswer={savedResponse}
             isSubmitted={isSubmitted}
             attempts={attempts}
-            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
           />
         );
@@ -206,10 +220,10 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             onChange={noop} 
             isEditing={false}
             blockId={block.id}
-            savedAnswer={savedAnswer}
+            savedAnswer={savedResponse}
             isSubmitted={isSubmitted}
             attempts={attempts}
-            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
           />
         );

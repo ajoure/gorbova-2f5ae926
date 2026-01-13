@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,7 @@ export interface MatchingPair {
   id: string;
   left: string;
   right: string;
+  rightId: string; // Sprint A+B: unique id for right element
 }
 
 export interface QuizMatchingContent {
@@ -37,15 +38,26 @@ export interface QuizMatchingContent {
   points?: number;
 }
 
+// Sprint A+B: Extended answer interface with rightOrder
+interface MatchingAnswer {
+  matches: Record<string, string>; // pairId -> rightId
+  rightOrder: string[]; // order of rightIds
+  is_submitted?: boolean;
+  submitted_at?: string;
+  is_correct?: boolean;
+  score?: number;
+  max_score?: number;
+}
+
 interface QuizMatchingBlockProps {
   content: QuizMatchingContent;
   onChange: (content: QuizMatchingContent) => void;
   isEditing?: boolean;
   blockId?: string;
-  savedAnswer?: { matches: Record<string, string> };
+  savedAnswer?: MatchingAnswer;
   isSubmitted?: boolean;
   attempts?: number;
-  onSubmit?: (answer: { matches: Record<string, string> }, isCorrect: boolean, score: number, maxScore: number) => void;
+  onSubmit?: (answer: MatchingAnswer, isCorrect: boolean, score: number, maxScore: number) => void;
   onReset?: () => void;
 }
 
@@ -106,10 +118,20 @@ export function QuizMatchingBlock({
   onSubmit,
   onReset,
 }: QuizMatchingBlockProps) {
-  const pairs = content.pairs || [];
+  const rawPairs = content.pairs || [];
+  
+  // Sprint A+B: Migrate pairs to ensure rightId exists (for editor)
+  const pairs: MatchingPair[] = rawPairs.map(p => ({
+    ...p,
+    rightId: p.rightId || `legacy-${p.id}` // fallback for old data
+  }));
+
   const [matches, setMatches] = useState<Record<string, string>>({});
-  const [shuffledRight, setShuffledRight] = useState<string[]>([]);
+  const [shuffledRightIds, setShuffledRightIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  
+  // Sprint A+B: Guard to prevent re-initialization
+  const initializedRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -118,26 +140,29 @@ export function QuizMatchingBlock({
     })
   );
 
-  // Initialize shuffled items on mount
+  // Sprint A+B: Single initialization effect with priority for savedAnswer
   useEffect(() => {
-    if (!isEditing && pairs.length > 0) {
-      const rightIds = pairs.map(p => p.id);
-      // Shuffle using Fisher-Yates
+    if (isEditing || pairs.length === 0 || initializedRef.current) return;
+
+    // Priority: restore from savedAnswer if available
+    if (savedAnswer?.rightOrder && savedAnswer.rightOrder.length > 0) {
+      setShuffledRightIds(savedAnswer.rightOrder);
+      if (savedAnswer.matches) {
+        setMatches(savedAnswer.matches);
+      }
+    } else {
+      // Shuffle only if no saved answer
+      const rightIds = pairs.map(p => p.rightId);
       const shuffled = [...rightIds];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      setShuffledRight(shuffled);
+      setShuffledRightIds(shuffled);
     }
-  }, [isEditing, pairs.length]);
-
-  // Restore saved answer
-  useEffect(() => {
-    if (savedAnswer?.matches) {
-      setMatches(savedAnswer.matches);
-    }
-  }, [savedAnswer]);
+    
+    initializedRef.current = true;
+  }, [isEditing, pairs.length, savedAnswer]);
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string);
@@ -148,14 +173,14 @@ export function QuizMatchingBlock({
     setActiveId(null);
 
     if (over && active.id !== over.id) {
-      const oldIndex = shuffledRight.indexOf(active.id as string);
-      const newIndex = shuffledRight.indexOf(over.id as string);
+      const oldIndex = shuffledRightIds.indexOf(active.id as string);
+      const newIndex = shuffledRightIds.indexOf(over.id as string);
       
       if (oldIndex !== -1 && newIndex !== -1) {
-        const newOrder = [...shuffledRight];
+        const newOrder = [...shuffledRightIds];
         newOrder.splice(oldIndex, 1);
         newOrder.splice(newIndex, 0, active.id as string);
-        setShuffledRight(newOrder);
+        setShuffledRightIds(newOrder);
         
         // Update matches based on new positions
         const newMatches: Record<string, string> = {};
@@ -169,10 +194,12 @@ export function QuizMatchingBlock({
     }
   };
 
+  // Sprint A+B: Fixed correctness check using rightId
   const checkCorrectness = (): { isCorrect: boolean; correctCount: number } => {
     let correctCount = 0;
     pairs.forEach((pair, index) => {
-      if (shuffledRight[index] === pair.id) {
+      // Correct if the rightId at this position matches the pair's rightId
+      if (shuffledRightIds[index] === pair.rightId) {
         correctCount++;
       }
     });
@@ -182,31 +209,45 @@ export function QuizMatchingBlock({
     };
   };
 
+  // Sprint A+B: Updated submit with unified response format
   const handleSubmit = () => {
     if (!onSubmit) return;
     
     const currentMatches: Record<string, string> = {};
     pairs.forEach((pair, index) => {
-      currentMatches[pair.id] = shuffledRight[index];
+      currentMatches[pair.id] = shuffledRightIds[index];
     });
     
     const { isCorrect, correctCount } = checkCorrectness();
     const maxScore = content.points || pairs.length;
-    const score = Math.round((correctCount / pairs.length) * maxScore);
+    const score = (maxScore === pairs.length) 
+      ? correctCount 
+      : Math.floor((correctCount / pairs.length) * maxScore);
     
-    onSubmit({ matches: currentMatches }, isCorrect, score, maxScore);
+    const answer: MatchingAnswer = {
+      matches: currentMatches,
+      rightOrder: shuffledRightIds,
+      is_submitted: true,
+      submitted_at: new Date().toISOString(),
+      is_correct: isCorrect,
+      score,
+      max_score: maxScore
+    };
+    
+    onSubmit(answer, isCorrect, score, maxScore);
   };
 
   const handleReset = () => {
     // Reshuffle
-    const rightIds = pairs.map(p => p.id);
+    const rightIds = pairs.map(p => p.rightId);
     const shuffled = [...rightIds];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    setShuffledRight(shuffled);
+    setShuffledRightIds(shuffled);
     setMatches({});
+    initializedRef.current = true; // Keep guard active
     onReset?.();
   };
 
@@ -214,6 +255,7 @@ export function QuizMatchingBlock({
   const addPair = () => {
     const newPair: MatchingPair = {
       id: crypto.randomUUID(),
+      rightId: crypto.randomUUID(), // Sprint A+B: Generate rightId on creation
       left: "",
       right: "",
     };
@@ -229,6 +271,15 @@ export function QuizMatchingBlock({
 
   const removePair = (id: string) => {
     onChange({ ...content, pairs: pairs.filter((p) => p.id !== id) });
+  };
+
+  // Sprint A+B: Migrate rightId when saving in editor
+  const handleEditorSave = () => {
+    const migratedPairs = pairs.map(p => ({
+      ...p,
+      rightId: p.rightId || crypto.randomUUID()
+    }));
+    onChange({ ...content, pairs: migratedPairs });
   };
 
   // Student view
@@ -249,18 +300,21 @@ export function QuizMatchingBlock({
           <div className="grid grid-cols-[1fr,auto,1fr] gap-4 items-start">
             {/* Left column - static */}
             <div className="space-y-2">
-              {pairs.map((pair, index) => (
-                <div
-                  key={`left-${pair.id}`}
-                  className={cn(
-                    "p-3 rounded-lg border bg-muted/50",
-                    isSubmitted && shuffledRight[index] === pair.id && "border-green-500",
-                    isSubmitted && shuffledRight[index] !== pair.id && "border-red-500"
-                  )}
-                >
-                  {pair.left}
-                </div>
-              ))}
+              {pairs.map((pair, index) => {
+                const isCorrectMatch = isSubmitted && shuffledRightIds[index] === pair.rightId;
+                return (
+                  <div
+                    key={`left-${pair.id}`}
+                    className={cn(
+                      "p-3 rounded-lg border bg-muted/50",
+                      isSubmitted && isCorrectMatch && "border-green-500",
+                      isSubmitted && !isCorrectMatch && "border-red-500"
+                    )}
+                  >
+                    {pair.left}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Arrows */}
@@ -273,12 +327,12 @@ export function QuizMatchingBlock({
             </div>
 
             {/* Right column - draggable */}
-            <SortableContext items={shuffledRight} strategy={verticalListSortingStrategy}>
+            <SortableContext items={shuffledRightIds} strategy={verticalListSortingStrategy}>
               <div className="space-y-2">
-                {shuffledRight.map((rightId, index) => {
-                  const pair = pairs.find(p => p.id === rightId);
+                {shuffledRightIds.map((rightId, index) => {
+                  const pair = pairs.find(p => p.rightId === rightId);
                   const originalPair = pairs[index];
-                  const isCorrectMatch = isSubmitted && rightId === originalPair?.id;
+                  const isCorrectMatch = isSubmitted && rightId === originalPair?.rightId;
                   
                   return pair ? (
                     <DraggableRightItem

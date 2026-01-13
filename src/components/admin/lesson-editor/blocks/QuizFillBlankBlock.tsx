@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -24,13 +24,25 @@ export interface QuizFillBlankContent {
   caseSensitive?: boolean;
 }
 
+// Sprint A+B: Extended answer interface with unified format
+interface FillBlankAnswer {
+  answers: Record<string, string>; // key = blank.id, value = user answer
+  is_submitted?: boolean;
+  submitted_at?: string;
+  is_correct?: boolean;
+  score?: number;
+  max_score?: number;
+}
+
 interface QuizFillBlankBlockProps {
   content: QuizFillBlankContent;
   onChange: (content: QuizFillBlankContent) => void;
   isEditing?: boolean;
-  userAnswers?: Record<string, string>;
+  blockId?: string;
+  savedAnswer?: FillBlankAnswer;
   isSubmitted?: boolean;
-  onSubmit?: (answers: Record<string, string>) => void;
+  attempts?: number;
+  onSubmit?: (answer: FillBlankAnswer, isCorrect: boolean, score: number, maxScore: number) => void;
   onReset?: () => void;
 }
 
@@ -38,13 +50,22 @@ export function QuizFillBlankBlock({
   content, 
   onChange, 
   isEditing = true,
-  userAnswers,
+  blockId,
+  savedAnswer,
   isSubmitted,
+  attempts,
   onSubmit,
   onReset,
 }: QuizFillBlankBlockProps) {
   const blanks = content.blanks || [];
-  const [answers, setAnswers] = useState<Record<string, string>>(userAnswers || {});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  // Sprint A+B: Restore saved answers using blank.id as key
+  useEffect(() => {
+    if (savedAnswer?.answers) {
+      setAnswers(savedAnswer.answers);
+    }
+  }, [savedAnswer]);
 
   const addBlank = () => {
     const newBlank: BlankItem = {
@@ -70,14 +91,9 @@ export function QuizFillBlankBlock({
     onChange({ ...content, blanks: blanks.filter((b) => b.id !== id) });
   };
 
+  // Sprint A+B: Use blank.id as key instead of index
   const updateAnswer = (blankId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [blankId]: value }));
-  };
-
-  const handleSubmit = () => {
-    if (Object.keys(answers).length > 0 && onSubmit) {
-      onSubmit(answers);
-    }
   };
 
   const isAnswerCorrect = (blank: BlankItem, answer: string) => {
@@ -89,6 +105,42 @@ export function QuizFillBlankBlock({
     if (correctNorm === answerNorm) return true;
     
     return (blank.acceptedVariants || []).some(v => normalize(v) === answerNorm);
+  };
+
+  // Sprint A+B: Updated submit with unified response format and blank.id validation
+  const handleSubmit = () => {
+    if (!onSubmit) return;
+    
+    let correctCount = 0;
+    blanks.forEach(blank => {
+      const userAns = answers[blank.id] || "";
+      if (isAnswerCorrect(blank, userAns)) {
+        correctCount++;
+      }
+    });
+    
+    const maxScore = content.points || blanks.length;
+    // Sprint A+B: Fixed score calculation without strange jumps
+    const score = (maxScore === blanks.length)
+      ? correctCount
+      : Math.floor((correctCount / blanks.length) * maxScore);
+    const isCorrect = correctCount === blanks.length;
+    
+    const answer: FillBlankAnswer = {
+      answers,
+      is_submitted: true,
+      submitted_at: new Date().toISOString(),
+      is_correct: isCorrect,
+      score,
+      max_score: maxScore
+    };
+    
+    onSubmit(answer, isCorrect, score, maxScore);
+  };
+
+  const handleReset = () => {
+    setAnswers({});
+    onReset?.();
   };
 
   // Student view
@@ -192,7 +244,7 @@ export function QuizFillBlankBlock({
             )}
 
             {onReset && (
-              <Button variant="outline" onClick={onReset} className="w-full">
+              <Button variant="outline" onClick={handleReset} className="w-full">
                 <RotateCcw className="h-4 w-4 mr-2" />
                 Попробовать снова
               </Button>
