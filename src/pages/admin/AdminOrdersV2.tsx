@@ -263,12 +263,20 @@ export default function AdminOrdersV2() {
       }
     }
     
-    // Receipt filter
+    // Receipt filter - only for bePaid succeeded payments
     if (receiptFilter !== "all") {
-      const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => p.provider === 'bepaid');
-      if (receiptFilter === "has_receipt" && !bepaidPayment?.receipt_url) return false;
-      if (receiptFilter === "no_receipt" && bepaidPayment?.receipt_url) return false;
-      if (receiptFilter === "no_receipt" && !bepaidPayment?.provider_payment_id) return false;
+      const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => 
+        p.provider === 'bepaid' && p.status === 'succeeded' && p.provider_payment_id
+      );
+      
+      if (receiptFilter === "has_receipt") {
+        if (!bepaidPayment?.receipt_url) return false;
+      }
+      if (receiptFilter === "no_receipt") {
+        // Must have a bePaid succeeded payment without receipt
+        if (!bepaidPayment) return false;
+        if (bepaidPayment.receipt_url) return false;
+      }
     }
     
     return true;
@@ -417,6 +425,8 @@ export default function AdminOrdersV2() {
                     <TableHead>Продукт / Тариф</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead>Чек</TableHead>
+                    <TableHead>Возврат</TableHead>
                     <TableHead>GC</TableHead>
                     <TableHead>Дата</TableHead>
                     <TableHead className="text-right">Действия</TableHead>
@@ -426,6 +436,13 @@ export default function AdminOrdersV2() {
                   {filteredOrders.map((order) => {
                     const statusConfig = ORDER_STATUS_LABELS[order.status] || { label: order.status, variant: "secondary" as const };
                     const profile = (order as any).profile;
+                    const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => 
+                      p.provider === 'bepaid' && p.status === 'succeeded'
+                    );
+                    const refundedAmount = bepaidPayment ? Number(bepaidPayment.refunded_amount) || 0 : 0;
+                    const paymentAmount = bepaidPayment ? Number(bepaidPayment.amount) || 0 : 0;
+                    const refundStatus = refundedAmount >= paymentAmount && refundedAmount > 0 ? 'full' : refundedAmount > 0 ? 'partial' : 'none';
+                    
                     return (
                       <TableRow key={order.id}>
                         <TableCell>
@@ -481,6 +498,77 @@ export default function AdminOrdersV2() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
+                        </TableCell>
+                        {/* Receipt column */}
+                        <TableCell>
+                          {bepaidPayment?.receipt_url ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <a 
+                                    href={bepaidPayment.receipt_url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
+                                  >
+                                    <Receipt className="h-4 w-4 text-green-600" />
+                                  </a>
+                                </TooltipTrigger>
+                                <TooltipContent>Открыть чек</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : bepaidPayment?.provider_payment_id ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    disabled={fetchingDocsOrderId === order.id}
+                                    onClick={() => fetchBepaidDocsMutation.mutate(order.id)}
+                                  >
+                                    {fetchingDocsOrderId === order.id ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Download className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Получить чек</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        {/* Refund indicator */}
+                        <TableCell>
+                          {refundStatus === 'full' ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Badge variant="destructive">Полный</Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  Возвращено: {new Intl.NumberFormat("ru-BY", { style: "currency", currency: "BYN" }).format(refundedAmount)}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : refundStatus === 'partial' ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Badge variant="outline" className="text-orange-600 border-orange-600">Частичный</Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  Возвращено: {new Intl.NumberFormat("ru-BY", { style: "currency", currency: "BYN" }).format(refundedAmount)} из {new Intl.NumberFormat("ru-BY", { style: "currency", currency: "BYN" }).format(paymentAmount)}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <TooltipProvider>
