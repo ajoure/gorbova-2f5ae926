@@ -105,20 +105,46 @@ export const DEFAULT_MENU: MenuSettings = [
   },
 ];
 
+// Remove duplicate items across all groups (keeps first occurrence)
+export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
+  const seenIds = new Set<string>();
+  
+  return settings.map(group => ({
+    ...group,
+    items: group.items.filter(item => {
+      if (seenIds.has(item.id)) {
+        return false; // Remove duplicate
+      }
+      seenIds.add(item.id);
+      return true;
+    })
+  }));
+}
+
 // Merge new DEFAULT_MENU items into saved settings
 function mergeMenuSettings(saved: MenuSettings): MenuSettings {
+  // 1. Collect ALL item IDs from ALL saved groups to prevent duplicates
+  const allSavedItemIds = new Set<string>();
+  for (const group of saved) {
+    for (const item of group.items) {
+      allSavedItemIds.add(item.id);
+    }
+  }
+  
   const merged: MenuSettings = [];
   
   for (const defaultGroup of DEFAULT_MENU) {
     const savedGroup = saved.find(g => g.id === defaultGroup.id);
     
     if (!savedGroup) {
-      // New group - add it
-      merged.push(defaultGroup);
+      // New group - add only items that don't exist in other groups
+      const newItems = defaultGroup.items.filter(i => !allSavedItemIds.has(i.id));
+      if (newItems.length > 0) {
+        merged.push({ ...defaultGroup, items: newItems });
+      }
     } else {
-      // Existing group - merge items
-      const savedItemIds = new Set(savedGroup.items.map(i => i.id));
-      const newItems = defaultGroup.items.filter(i => !savedItemIds.has(i.id));
+      // Existing group - add only items that don't exist anywhere
+      const newItems = defaultGroup.items.filter(i => !allSavedItemIds.has(i.id));
       
       merged.push({
         ...savedGroup,
@@ -140,7 +166,8 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
     }
   }
   
-  return merged.sort((a, b) => a.order - b.order);
+  // Remove any duplicates that slipped through and sort
+  return removeDuplicateItems(merged).sort((a, b) => a.order - b.order);
 }
 
 export function useAdminMenuSettings() {

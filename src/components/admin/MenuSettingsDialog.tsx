@@ -46,7 +46,9 @@ import {
   MenuItem,
   MENU_ICONS,
   DEFAULT_MENU,
+  removeDuplicateItems,
 } from "@/hooks/useAdminMenuSettings";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -649,7 +651,35 @@ export function MenuSettingsDialog({
     );
   };
 
+  // Check for duplicates in settings
+  const getDuplicateCount = (settings: MenuSettings): number => {
+    const seenIds = new Set<string>();
+    let duplicates = 0;
+    for (const group of settings) {
+      for (const item of group.items) {
+        if (seenIds.has(item.id)) {
+          duplicates++;
+        } else {
+          seenIds.add(item.id);
+        }
+      }
+    }
+    return duplicates;
+  };
+
+  const duplicateCount = getDuplicateCount(localSettings);
+
+  const handleRemoveDuplicates = () => {
+    const cleaned = removeDuplicateItems(localSettings);
+    setLocalSettings(cleaned);
+    toast.success("Дубликаты удалены");
+  };
+
   const handleSave = () => {
+    if (duplicateCount > 0) {
+      toast.error("В меню есть дубликаты. Удалите их перед сохранением.");
+      return;
+    }
     onSave(localSettings);
     onOpenChange(false);
   };
@@ -713,10 +743,22 @@ export function MenuSettingsDialog({
           <Separator />
 
           <div className="flex items-center justify-between">
-            <Button variant="ghost" onClick={handleReset} disabled={isSaving}>
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Сбросить
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={handleReset} disabled={isSaving}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Сбросить
+              </Button>
+              {duplicateCount > 0 && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleRemoveDuplicates}
+                  className="text-destructive border-destructive/50"
+                >
+                  Удалить дубликаты ({duplicateCount})
+                </Button>
+              )}
+            </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Отмена
