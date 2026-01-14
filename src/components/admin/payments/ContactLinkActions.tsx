@@ -10,6 +10,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -20,7 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { UserPlus, Search, Ghost } from "lucide-react";
+import { UserPlus, Search, Ghost, AlertTriangle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ContactLinkActionsProps {
@@ -37,6 +47,14 @@ interface ProfileSearchResult {
   email: string | null;
   phone: string | null;
   user_id: string | null;
+}
+
+interface ConflictData {
+  existing_profile_id: string;
+  message: string;
+  targetProfileId: string;
+  isGhost: boolean;
+  ghostData?: { full_name: string; email?: string; phone?: string };
 }
 
 export default function ContactLinkActions({
@@ -56,6 +74,9 @@ export default function ContactLinkActions({
   const [ghostName, setGhostName] = useState("");
   const [ghostEmail, setGhostEmail] = useState("");
   const [ghostPhone, setGhostPhone] = useState("");
+  
+  // Conflict handling
+  const [conflictData, setConflictData] = useState<ConflictData | null>(null);
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
@@ -81,41 +102,50 @@ export default function ContactLinkActions({
     }
   };
 
-  const linkExistingContact = async (profileId: string) => {
+  // B4: All operations through edge function
+  const linkExistingContact = async (profileId: string, force = false) => {
     setLoading(true);
     try {
-      // B1: Update both payment and order if exists
-      if (isQueueItem) {
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({ matched_profile_id: profileId })
-          .eq("id", paymentId);
-      } else {
-        await supabase
-          .from("payments_v2")
-          .update({ profile_id: profileId })
-          .eq("id", paymentId);
+      const { data, error } = await supabase.functions.invoke('admin-link-contact', {
+        body: {
+          action: 'link_existing',
+          payment_id: paymentId,
+          order_id: orderId,
+          is_queue_item: isQueueItem,
+          profile_id: profileId,
+          force,
+        }
+      });
+
+      if (error) throw error;
+
+      // B3: Handle conflict
+      if (data.status === 'conflict') {
+        setConflictData({
+          existing_profile_id: data.existing_profile_id,
+          message: data.message,
+          targetProfileId: profileId,
+          isGhost: false,
+        });
+        return;
       }
 
-      // B1: Also update order.profile_id for consistency
-      if (orderId) {
-        await supabase
-          .from("orders_v2")
-          .update({ profile_id: profileId })
-          .eq("id", orderId);
+      if (!data.success) {
+        throw new Error(data.message);
       }
 
       toast.success("Контакт привязан");
       setOpen(false);
       onLinked();
     } catch (err: any) {
-      toast.error("Ошибка: " + err.message);
+      toast.error("Ошибка: " + (err.message || "Неизвестная ошибка"));
     } finally {
       setLoading(false);
     }
   };
 
-  const createGhostContact = async () => {
+  // B4: Create ghost through edge function (bypasses RLS)
+  const createGhostContact = async (force = false) => {
     if (!ghostName.trim()) {
       toast.error("Укажите имя контакта");
       return;
@@ -123,49 +153,68 @@ export default function ContactLinkActions({
 
     setLoading(true);
     try {
-      // B2: Create ghost profile (no user_id)
-      const { data: newProfile, error: profileError } = await supabase
-        .from("profiles")
-        .insert({
-          full_name: ghostName.trim(),
-          email: ghostEmail.trim() || null,
-          phone: ghostPhone.trim() || null,
-          user_id: null, // Ghost contact - no auth user
-        })
-        .select()
-        .single();
+      const ghostData = {
+        full_name: ghostName.trim(),
+        email: ghostEmail.trim() || undefined,
+        phone: ghostPhone.trim() || undefined,
+      };
 
-      if (profileError) throw profileError;
+      const { data, error } = await supabase.functions.invoke('admin-link-contact', {
+        body: {
+          action: 'create_ghost',
+          payment_id: paymentId,
+          order_id: orderId,
+          is_queue_item: isQueueItem,
+          ghost_data: ghostData,
+          force,
+        }
+      });
 
-      // Link to payment
-      if (isQueueItem) {
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({ matched_profile_id: newProfile.id })
-          .eq("id", paymentId);
-      } else {
-        await supabase
-          .from("payments_v2")
-          .update({ profile_id: newProfile.id })
-          .eq("id", paymentId);
+      if (error) throw error;
+
+      // B3: Handle conflict
+      if (data.status === 'conflict') {
+        setConflictData({
+          existing_profile_id: data.existing_profile_id,
+          message: data.message,
+          targetProfileId: '',
+          isGhost: true,
+          ghostData,
+        });
+        return;
       }
 
-      // B1: Also update order for consistency
-      if (orderId) {
-        await supabase
-          .from("orders_v2")
-          .update({ profile_id: newProfile.id })
-          .eq("id", orderId);
+      if (!data.success) {
+        throw new Error(data.message);
       }
 
       toast.success("Ghost-контакт создан и привязан");
       setOpen(false);
+      resetGhostForm();
       onLinked();
     } catch (err: any) {
-      toast.error("Ошибка: " + err.message);
+      toast.error("Ошибка: " + (err.message || "Неизвестная ошибка"));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForceOverride = async () => {
+    if (!conflictData) return;
+    
+    if (conflictData.isGhost) {
+      setConflictData(null);
+      await createGhostContact(true);
+    } else {
+      setConflictData(null);
+      await linkExistingContact(conflictData.targetProfileId, true);
+    }
+  };
+
+  const resetGhostForm = () => {
+    setGhostName("");
+    setGhostEmail("");
+    setGhostPhone("");
   };
 
   return (
@@ -280,7 +329,7 @@ export default function ContactLinkActions({
                   Отмена
                 </Button>
                 <Button
-                  onClick={createGhostContact}
+                  onClick={() => createGhostContact(false)}
                   disabled={loading || !ghostName.trim()}
                   className="gap-1.5"
                 >
@@ -292,6 +341,27 @@ export default function ContactLinkActions({
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* B3: Conflict confirmation dialog */}
+      <AlertDialog open={!!conflictData} onOpenChange={(open) => !open && setConflictData(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Конфликт привязки
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {conflictData?.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleForceOverride} className="bg-amber-600 hover:bg-amber-700">
+              Перезаписать
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

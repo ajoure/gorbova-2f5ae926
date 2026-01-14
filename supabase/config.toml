@@ -174,3 +174,9 @@ verify_jwt = false
 
 [functions.refunds-recompute-order-status]
 verify_jwt = false
+
+[functions.admin-link-contact]
+verify_jwt = false
+
+[functions.bepaid-recover-payment]
+verify_jwt = false
