@@ -390,8 +390,11 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         
       case 'contact':
         if (payment.profile_id) {
-          // Display name: Фамилия Имя (surname first) with fallback
-          const displayName = payment.profile_name || "Связан";
+          // D1: Показывать имя+фамилию (без email), если full_name есть
+          // Email показывать только если full_name отсутствует
+          const hasName = payment.profile_name && payment.profile_name.trim() !== '';
+          const displayName = hasName ? payment.profile_name : (payment.profile_email || "Связан");
+          
           return (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -405,14 +408,13 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                     <span className="font-medium truncate">{displayName}</span>
                     {payment.is_ghost && <Badge variant="outline" className="text-[10px]">Ghost</Badge>}
                   </div>
-                  {payment.profile_email && (
-                    <span className="text-muted-foreground truncate w-full">{payment.profile_email}</span>
-                  )}
+                  {/* D1: Email показываем ТОЛЬКО если нет имени */}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">
                 <div className="text-xs">
-                  <div className="font-medium">{displayName}</div>
+                  {/* В tooltip показываем все данные */}
+                  {payment.profile_name && <div className="font-medium">{payment.profile_name}</div>}
                   {payment.profile_email && <div>{payment.profile_email}</div>}
                   {payment.profile_phone && <div>{payment.profile_phone}</div>}
                 </div>
@@ -592,14 +594,15 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           />
         </div>
         
-        <div className="overflow-auto max-h-[600px]">
+        {/* E1: Sticky header table container */}
+        <div className="overflow-auto max-h-[600px] relative">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragEnd={handleDragEnd}
           >
             <Table style={{ tableLayout: 'fixed' }}>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b">
                 <SortableContext
                   items={sortedColumns.map(c => c.key)}
                   strategy={horizontalListSortingStrategy}

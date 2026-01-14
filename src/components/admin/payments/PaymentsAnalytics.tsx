@@ -76,14 +76,23 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
       const currency = p.currency || 'BYN';
       currencyCount[currency] = (currencyCount[currency] || 0) + 1;
 
+      // F1: Extended failed statuses
+      const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error'];
+      
       if (['successful', 'succeeded'].includes(p.status_normalized)) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
-      } else if (p.status_normalized === 'failed') {
+      } else if (failedStatuses.includes(p.status_normalized)) {
         result.failed[currency] = (result.failed[currency] || 0) + p.amount;
       }
 
+      // F2: Refunds from payments_v2.refunded_amount
       if (p.total_refunded > 0) {
         result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
+      }
+      
+      // F2: Refunds as separate transactions from queue (transaction_type)
+      if (p.transaction_type === 'Возврат средств' || p.transaction_type === 'refund') {
+        result.refunded[currency] = (result.refunded[currency] || 0) + p.amount;
       }
     });
 
