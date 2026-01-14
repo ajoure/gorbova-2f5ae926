@@ -91,41 +91,50 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch bePaid payment for this order
-    const { data: payment } = await supabase
+    // Fetch ALL bePaid payments for this order (could be multiple)
+    const { data: payments } = await supabase
       .from('payments_v2')
       .select('id, amount, refunds, refunded_amount, status')
       .eq('order_id', order_id)
       .eq('provider', 'bepaid')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .eq('status', 'succeeded')
+      .order('created_at', { ascending: false });
 
-    if (!payment) {
+    if (!payments || payments.length === 0) {
       return new Response(
         JSON.stringify({ 
           status: 'skipped',
-          message: 'No bePaid payment found for this order',
+          message: 'No succeeded bePaid payment found for this order',
           order_id,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Calculate refunded amount from refunds array
-    const refunds = (payment.refunds || []) as any[];
-    const calculatedRefunded = refunds
-      .filter(r => r.status === 'succeeded')
-      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    // Calculate total paid from succeeded payments
+    const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    
+    // Calculate total refunded across all payments
+    let totalRefunded = 0;
+    for (const payment of payments) {
+      // Sum from refunds array
+      const refunds = (payment.refunds || []) as any[];
+      const calcRefunded = refunds
+        .filter(r => r.status === 'succeeded')
+        .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+      // Use max of calculated vs stored
+      totalRefunded += Math.max(calcRefunded, Number(payment.refunded_amount) || 0);
+    }
 
-    const paymentAmount = Number(payment.amount) || 0;
-    const refundedAmount = Math.max(calculatedRefunded, Number(payment.refunded_amount) || 0);
+    // Base amount: final_price if > 0, else total paid
+    const orderFinalPrice = Number(order.final_price) || 0;
+    const baseAmount = orderFinalPrice > 0 ? orderFinalPrice : totalPaid;
 
-    // Determine refund status
+    // Determine refund status based on base amount
     let refundStatus: 'none' | 'partial' | 'full' = 'none';
-    if (refundedAmount > 0 && refundedAmount >= paymentAmount) {
+    if (totalRefunded > 0 && totalRefunded >= baseAmount) {
       refundStatus = 'full';
-    } else if (refundedAmount > 0) {
+    } else if (totalRefunded > 0) {
       refundStatus = 'partial';
     }
 
@@ -133,16 +142,16 @@ Deno.serve(async (req) => {
     let newOrderStatus: string | null = null;
     const currentOrderStatus = order.status;
     
-    // Only change order status to 'refunded' if it's a full refund and order is currently 'paid'
-    if (refundStatus === 'full' && currentOrderStatus === 'paid') {
+    // Only change order status to 'refunded' if it's a full refund and order is currently 'paid' or 'partial'
+    if (refundStatus === 'full' && (currentOrderStatus === 'paid' || currentOrderStatus === 'partial')) {
       newOrderStatus = 'refunded';
     }
 
     const result: RecomputeResult = {
       order_id,
-      payment_id: payment.id,
-      payment_amount: paymentAmount,
-      refunded_amount: refundedAmount,
+      payment_id: payments[0]?.id || null,
+      payment_amount: baseAmount, // Now using base_amount logic
+      refunded_amount: totalRefunded,
       refund_status: refundStatus,
       previous_order_status: currentOrderStatus,
       new_order_status: newOrderStatus,
@@ -158,14 +167,6 @@ Deno.serve(async (req) => {
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
-    }
-
-    // Update payment refunded_amount if different
-    if (calculatedRefunded !== Number(payment.refunded_amount)) {
-      await supabase
-        .from('payments_v2')
-        .update({ refunded_amount: calculatedRefunded })
-        .eq('id', payment.id);
     }
 
     // Update order meta with refund status

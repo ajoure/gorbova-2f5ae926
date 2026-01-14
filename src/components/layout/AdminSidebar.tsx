@@ -96,6 +96,7 @@ export function AdminSidebar() {
     if (path === "/admin/inbox") return location.pathname === path;
     if (path === "/admin/contacts") return location.pathname === path || location.pathname.startsWith("/admin/contacts/");
     if (path === "/admin/deals") return location.pathname === path || location.pathname.startsWith("/admin/deals/");
+    if (path === "/admin/refunds-v2") return location.pathname === path;
     if (path.startsWith("/admin/integrations")) return location.pathname.startsWith("/admin/integrations");
     if (path.startsWith("/admin/training")) return location.pathname.startsWith("/admin/training");
     if (path.includes("/members")) return location.pathname.includes("/admin/integrations/telegram/clubs/") && location.pathname.includes("/members");

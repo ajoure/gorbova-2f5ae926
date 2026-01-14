@@ -32,8 +32,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 import {
   Undo2,
   Search,
@@ -42,10 +53,7 @@ import {
   Filter,
   Receipt,
   Calculator,
-  ExternalLink,
-  CheckCircle,
   Clock,
-  AlertTriangle,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,10 +68,20 @@ const REFUND_STATUS_CONFIG = {
   full: { label: "Полный", variant: "destructive" as const, color: "text-red-600" },
 };
 
+const REFUND_ITEM_STATUS_LABELS: Record<string, string> = {
+  succeeded: "Выполнен",
+  pending: "В обработке",
+  failed: "Ошибка",
+};
+
+const BATCH_SYNC_LIMIT = 50;
+
 export default function AdminRefundsV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const [refundFilter, setRefundFilter] = useState<string>("has_refunds");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; errors: string[] } | null>(null);
   const queryClient = useQueryClient();
 
   // Fetch payments with refunds
@@ -192,31 +210,68 @@ export default function AdminRefundsV2() {
     },
   });
 
-  // Batch sync mutation
-  const batchSyncMutation = useMutation({
-    mutationFn: async (orderIds: string[]) => {
-      const results = [];
-      for (const orderId of orderIds) {
-        try {
-          const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
-            body: { order_id: orderId, force_refresh: true },
-          });
-          results.push({ orderId, success: !error, data });
-          // Rate limit delay
-          await new Promise(r => setTimeout(r, 150));
-        } catch (e) {
-          results.push({ orderId, success: false, error: e });
+  // Batch sync mutation with limits and STOP condition
+  const executeBatchSync = async (orderIds: string[]) => {
+    const limitedIds = orderIds.slice(0, BATCH_SYNC_LIMIT);
+    const results: { orderId: string; success: boolean; error?: string }[] = [];
+    const errors: string[] = [];
+    
+    setBatchProgress({ current: 0, total: limitedIds.length, errors: [] });
+    
+    for (let i = 0; i < limitedIds.length; i++) {
+      const orderId = limitedIds[i];
+      try {
+        const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
+          body: { order_id: orderId, force_refresh: true },
+        });
+        
+        if (error) {
+          results.push({ orderId, success: false, error: error.message });
+          errors.push(`${orderId.slice(0, 8)}: ${error.message}`);
+        } else {
+          results.push({ orderId, success: true });
         }
+        
+        // Rate limit delay
+        await new Promise(r => setTimeout(r, 250));
+        
+        // Update progress
+        setBatchProgress({ current: i + 1, total: limitedIds.length, errors });
+        
+        // STOP condition: if errors > 20%, stop
+        const errorRate = errors.length / (i + 1);
+        if (errorRate > 0.2 && i >= 4) { // At least 5 requests before checking
+          toast.error(`Остановлено: слишком много ошибок (${Math.round(errorRate * 100)}%)`);
+          break;
+        }
+      } catch (e: any) {
+        results.push({ orderId, success: false, error: e.message });
+        errors.push(`${orderId.slice(0, 8)}: ${e.message}`);
       }
-      return results;
-    },
-    onSuccess: (results) => {
-      const successCount = results.filter(r => r.success).length;
+    }
+    
+    const successCount = results.filter(r => r.success).length;
+    const failedCount = results.filter(r => !r.success).length;
+    
+    if (failedCount > 0) {
+      toast.warning(`Синхронизировано ${successCount} из ${results.length}`, {
+        description: `Ошибок: ${failedCount}. Топ-5: ${errors.slice(0, 5).join(', ')}`,
+      });
+    } else {
       toast.success(`Синхронизировано ${successCount} из ${results.length}`);
-      setSelectedIds([]);
-      queryClient.invalidateQueries({ queryKey: ['refunds-v2'] });
-    },
-  });
+    }
+    
+    setSelectedIds([]);
+    setBatchProgress(null);
+    queryClient.invalidateQueries({ queryKey: ['refunds-v2'] });
+  };
+
+  const handleBatchSyncClick = () => {
+    if (selectedIds.length > BATCH_SYNC_LIMIT) {
+      toast.warning(`Выбрано ${selectedIds.length} заказов, но лимит — ${BATCH_SYNC_LIMIT}. Будут обработаны первые ${BATCH_SYNC_LIMIT}.`);
+    }
+    setBatchConfirmOpen(true);
+  };
 
   // Filter by search
   const filteredPayments = payments?.filter((payment) => {
@@ -258,6 +313,54 @@ export default function AdminRefundsV2() {
   return (
     <AdminLayout>
       <div className="space-y-6">
+        {/* Batch Sync Confirmation Dialog */}
+        <AlertDialog open={batchConfirmOpen} onOpenChange={setBatchConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Подтверждение массовой синхронизации</AlertDialogTitle>
+              <AlertDialogDescription>
+                Будет сделано {Math.min(selectedIds.length, BATCH_SYNC_LIMIT)} запросов к bePaid.
+                {selectedIds.length > BATCH_SYNC_LIMIT && (
+                  <span className="block mt-2 text-amber-600">
+                    Выбрано {selectedIds.length}, но лимит — {BATCH_SYNC_LIMIT}. Остальные будут пропущены.
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction onClick={() => executeBatchSync(selectedIds)}>
+                Продолжить
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Batch Progress */}
+        {batchProgress && (
+          <Card className="border-primary">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-4">
+                <RefreshCw className="h-5 w-5 animate-spin text-primary" />
+                <div className="flex-1">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm font-medium">Синхронизация...</span>
+                    <span className="text-sm text-muted-foreground">
+                      {batchProgress.current} / {batchProgress.total}
+                    </span>
+                  </div>
+                  <Progress value={(batchProgress.current / batchProgress.total) * 100} />
+                  {batchProgress.errors.length > 0 && (
+                    <p className="text-xs text-destructive mt-1">
+                      Ошибок: {batchProgress.errors.length}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -271,11 +374,11 @@ export default function AdminRefundsV2() {
             {selectedIds.length > 0 && (
               <Button 
                 variant="outline" 
-                onClick={() => batchSyncMutation.mutate(selectedIds)}
-                disabled={batchSyncMutation.isPending}
+                onClick={handleBatchSyncClick}
+                disabled={!!batchProgress}
               >
-                <RefreshCw className={cn("h-4 w-4 mr-2", batchSyncMutation.isPending && "animate-spin")} />
-                Sync выбранных ({selectedIds.length})
+                <RefreshCw className={cn("h-4 w-4 mr-2", batchProgress && "animate-spin")} />
+                Sync выбранных ({selectedIds.length}{selectedIds.length > BATCH_SYNC_LIMIT ? ` / max ${BATCH_SYNC_LIMIT}` : ''})
               </Button>
             )}
             <Button variant="outline" onClick={() => refetch()}>
@@ -461,11 +564,11 @@ export default function AdminRefundsV2() {
                               {refunds.length > 0 && (
                                 <TooltipContent className="max-w-xs">
                                   <div className="space-y-1">
-                                    {refunds.slice(0, 5).map((r: any, i: number) => (
+                                     {refunds.slice(0, 5).map((r: any, i: number) => (
                                       <div key={i} className="flex justify-between gap-4 text-xs">
                                         <span>{r.amount?.toFixed(2)} {r.currency || 'BYN'}</span>
-                                        <span className={r.status === 'succeeded' ? 'text-green-500' : 'text-muted-foreground'}>
-                                          {r.status}
+                                        <span className={r.status === 'succeeded' ? 'text-green-500' : r.status === 'pending' ? 'text-amber-500' : 'text-destructive'}>
+                                          {REFUND_ITEM_STATUS_LABELS[r.status] || r.status}
                                         </span>
                                       </div>
                                     ))}
