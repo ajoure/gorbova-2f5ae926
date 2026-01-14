@@ -6,6 +6,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 export type AnalyticsFilter = 'successful' | 'refunded' | 'failed' | 'fees' | 'net' | null;
 
+// Constants for status classification
+export const FAILED_STATUSES = ['failed', 'canceled', 'expired', 'declined', 'error'];
+export const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
+
 interface PaymentsAnalyticsProps {
   payments: UnifiedPayment[];
   isLoading: boolean;
@@ -50,24 +54,24 @@ function AnalyticCard({
   const content = (
     <div 
       className={cn(
-        "relative overflow-hidden rounded-xl p-4",
+        "relative overflow-hidden rounded-xl p-4 min-h-[88px]",
         "backdrop-blur-xl border border-border/50",
         bgColorClass,
-        isClickable && "cursor-pointer transition-all hover:scale-[1.02] hover:border-primary/50",
+        isClickable && "cursor-pointer transition-all hover:scale-[1.02] hover:border-primary/50 hover:shadow-md",
         isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background"
       )}
       onClick={isClickable ? onClick : undefined}
     >
       <div className="flex items-center gap-3">
         <div className={cn(
-          "flex items-center justify-center w-10 h-10 rounded-lg",
+          "flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0",
           "bg-background/80",
           colorClass
         )}>
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs text-muted-foreground mb-0.5">{title}</p>
+          <p className="text-xs text-muted-foreground mb-0.5 truncate">{title}</p>
           <div className="flex items-baseline gap-1.5">
             <span className={cn("text-xl font-bold tabular-nums", colorClass)}>
               {formatAmount(amount)}
@@ -112,6 +116,7 @@ export default function PaymentsAnalytics({
         failed: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         feesUnknown: 0,
+        feesKnown: 0,
         primaryCurrency: 'BYN',
       };
     }
@@ -122,41 +127,84 @@ export default function PaymentsAnalytics({
       failed: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
       fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
       feesUnknown: 0,
+      feesKnown: 0,
     };
 
     const currencyCount: Record<string, number> = {};
+    
+    // Track UIDs from payments_v2 that have refunded_amount to avoid double-counting
+    const processedRefundUids = new Set<string>();
 
     payments.forEach(p => {
       const currency = p.currency || 'BYN';
       currencyCount[currency] = (currencyCount[currency] || 0) + 1;
 
-      // F1: Extended failed statuses
-      const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error'];
+      const statusNormalized = (p.status_normalized || '').toLowerCase();
       
-      if (['successful', 'succeeded'].includes(p.status_normalized)) {
+      // Successful payments (Gross)
+      if (SUCCESSFUL_STATUSES.includes(statusNormalized)) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
-      } else if (failedStatuses.includes(p.status_normalized)) {
+        
+        // Fees extraction - multiple fallback paths
+        let feeAmount: number | null = null;
+        const providerResponse = p.provider_response;
+        
+        if (providerResponse) {
+          // Try multiple paths for fee
+          const fee = providerResponse.transaction?.fee 
+            ?? providerResponse.transaction?.processing?.fee
+            ?? providerResponse.transaction?.payment?.fee
+            ?? providerResponse.fee
+            ?? null;
+          
+          if (fee !== null && fee !== undefined) {
+            // bePaid returns fee in cents
+            feeAmount = Number(fee) / 100;
+          }
+        }
+        
+        // Also check unified payment fee fields (if added)
+        if (feeAmount === null && (p as any).provider_fee_amount != null) {
+          feeAmount = (p as any).provider_fee_amount;
+        }
+        
+        if (feeAmount !== null && !isNaN(feeAmount) && feeAmount > 0) {
+          result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
+          result.feesKnown++;
+        } else {
+          result.feesUnknown++;
+        }
+      }
+      
+      // Failed payments
+      if (FAILED_STATUSES.includes(statusNormalized)) {
         result.failed[currency] = (result.failed[currency] || 0) + p.amount;
       }
 
-      // F2: Refunds from payments_v2.refunded_amount
-      if (p.total_refunded > 0) {
+      // Refunds - with dedup logic
+      // Priority 1: payments_v2.total_refunded (refunded_amount)
+      if (p.rawSource === 'payments_v2' && p.total_refunded > 0) {
         result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
+        // Mark this UID as having refund accounted for
+        if (p.uid) {
+          processedRefundUids.add(p.uid);
+        }
       }
       
-      // F2: Refunds as separate transactions from queue (transaction_type)
-      if (p.transaction_type === 'Возврат средств' || p.transaction_type === 'refund') {
-        result.refunded[currency] = (result.refunded[currency] || 0) + p.amount;
-      }
-
-      // Fees - extract from provider_response if available
-      const providerResponse = p.provider_response;
-      if (providerResponse?.transaction?.fee) {
-        const feeAmount = Number(providerResponse.transaction.fee) / 100; // bePaid returns cents
-        result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
-      } else if (['successful', 'succeeded'].includes(p.status_normalized)) {
-        // Count unknown fees for successful payments
-        result.feesUnknown++;
+      // Priority 2: Separate refund transactions from queue
+      // Only count if NOT already accounted for in payments_v2
+      if (p.rawSource === 'queue') {
+        const isRefundTx = p.transaction_type === 'Возврат средств' 
+          || p.transaction_type === 'refund'
+          || statusNormalized === 'refunded';
+        
+        if (isRefundTx) {
+          // Check if this refund's base payment already has total_refunded
+          // We use the UID to check - if a payment with this UID exists in payments_v2 and has refunds, skip
+          if (!p.uid || !processedRefundUids.has(p.uid)) {
+            result.refunded[currency] = (result.refunded[currency] || 0) + p.amount;
+          }
+        }
       }
     });
 
@@ -169,6 +217,7 @@ export default function PaymentsAnalytics({
 
   const handleFilterClick = (filter: AnalyticsFilter) => {
     if (onFilterChange) {
+      // Toggle off if already active
       onFilterChange(activeFilter === filter ? null : filter);
     }
   };
@@ -177,7 +226,7 @@ export default function PaymentsAnalytics({
     return (
       <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-20 rounded-xl bg-muted/30 animate-pulse" />
+          <div key={i} className="h-[88px] rounded-xl bg-muted/30 animate-pulse" />
         ))}
       </div>
     );
@@ -186,6 +235,7 @@ export default function PaymentsAnalytics({
   const { primaryCurrency } = analytics;
   const successfulAmount = analytics.successful[primaryCurrency] || 0;
   const refundedAmount = analytics.refunded[primaryCurrency] || 0;
+  const failedAmount = analytics.failed[primaryCurrency] || 0;
   const feesAmount = analytics.fees[primaryCurrency] || 0;
   const netRevenue = successfulAmount - refundedAmount - feesAmount;
 
@@ -195,7 +245,7 @@ export default function PaymentsAnalytics({
         <DollarSign className="h-4 w-4" />
         Финансовая сводка за период
         {activeFilter && (
-          <span className="text-xs text-primary">• Активен фильтр</span>
+          <span className="text-xs text-primary">• Активен фильтр (клик для сброса)</span>
         )}
       </h3>
       
@@ -228,7 +278,7 @@ export default function PaymentsAnalytics({
         
         <AnalyticCard
           title="Ошибочные"
-          amount={analytics.failed[primaryCurrency] || 0}
+          amount={failedAmount}
           currency={primaryCurrency}
           icon={<Ban className="h-5 w-5" />}
           colorClass="text-red-600 dark:text-red-400"
@@ -250,7 +300,7 @@ export default function PaymentsAnalytics({
           isActive={activeFilter === 'fees'}
           onClick={() => handleFilterClick('fees')}
           tooltip={analytics.feesUnknown > 0 
-            ? `Комиссия неизвестна для ${analytics.feesUnknown} платежей` 
+            ? `Комиссия известна для ${analytics.feesKnown} платежей` 
             : "Клик для фильтрации по платежам с известной комиссией"}
           subtitle={analytics.feesUnknown > 0 ? `Неизвестно: ${analytics.feesUnknown}` : undefined}
         />
@@ -265,7 +315,7 @@ export default function PaymentsAnalytics({
           isClickable={!!onFilterChange}
           isActive={activeFilter === 'net'}
           onClick={() => handleFilterClick('net')}
-          tooltip="Успешные минус возвраты и комиссии"
+          tooltip="Gross − Возвраты − Комиссии"
         />
       </div>
       

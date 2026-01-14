@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Trash2, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Trash2, AlertTriangle, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface PurgeImportsDialogProps {
   onComplete?: () => void;
@@ -46,13 +47,12 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [report, setReport] = useState<PurgeReport | null>(null);
-  const [dryRun, setDryRun] = useState(true);
+  const [mode, setMode] = useState<'idle' | 'preview' | 'executed'>('idle');
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   const handlePurge = async (executeDryRun: boolean) => {
     setIsLoading(true);
-    setDryRun(executeDryRun);
     try {
       const { data, error } = await supabase.functions.invoke('admin-purge-imported-transactions', {
         body: {
@@ -68,6 +68,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
 
       if (data?.success && data.report) {
         setReport(data.report);
+        setMode(executeDryRun ? 'preview' : 'executed');
         
         if (!executeDryRun && data.report.deleted > 0) {
           toast.success(`Удалено ${data.report.deleted} записей`);
@@ -83,6 +84,12 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
     }
   };
 
+  const handleClose = () => {
+    setOpen(false);
+    setReport(null);
+    setMode('idle');
+  };
+
   const formatAmount = (amount: number) => {
     return new Intl.NumberFormat('ru-RU', {
       minimumFractionDigits: 2,
@@ -91,7 +98,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(o); }}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive">
           <Trash2 className="h-4 w-4" />
@@ -106,7 +113,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
             Удаление импортированных транзакций
           </DialogTitle>
           <DialogDescription>
-            Удаляет транзакции, загруженные через CSV-импорт. Используйте dry-run для предпросмотра.
+            Удаляет транзакции, загруженные через CSV-импорт. Сначала выполните Dry-run для предпросмотра.
           </DialogDescription>
         </DialogHeader>
 
@@ -121,6 +128,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
                 className="h-8"
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-1.5">
@@ -131,6 +139,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
                 className="h-8"
+                disabled={isLoading}
               />
             </div>
           </div>
@@ -138,6 +147,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
           {/* Report */}
           {report && (
             <div className="space-y-3">
+              {/* Summary stats */}
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-lg border p-2">
                   <div className="text-lg font-semibold">{report.total_found}</div>
@@ -151,8 +161,10 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
                   <div className="text-lg font-semibold text-amber-600">{report.with_conflicts}</div>
                   <div className="text-xs text-muted-foreground">Конфликты</div>
                 </div>
-                <div className="rounded-lg border p-2">
-                  <div className="text-lg font-semibold">{report.deleted}</div>
+                <div className={`rounded-lg border p-2 ${mode === 'executed' && report.deleted > 0 ? 'bg-red-50 dark:bg-red-950/20' : ''}`}>
+                  <div className={`text-lg font-semibold ${mode === 'executed' && report.deleted > 0 ? 'text-red-600' : ''}`}>
+                    {report.deleted}
+                  </div>
                   <div className="text-xs text-muted-foreground">Удалено</div>
                 </div>
               </div>
@@ -161,20 +173,37 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
                 Сумма к удалению: <span className="font-semibold">{formatAmount(report.total_amount)} BYN</span>
               </div>
 
+              {/* Success message after execution */}
+              {mode === 'executed' && report.deleted > 0 && (
+                <Alert className="border-green-200 bg-green-50 dark:bg-green-950/20">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-700 dark:text-green-400">
+                    Успешно удалено {report.deleted} записей на сумму {formatAmount(report.total_amount)} BYN
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* Examples */}
-              {report.examples.length > 0 && (
+              {report.examples.length > 0 && mode === 'preview' && (
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">Примеры (к удалению):</div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">
+                    Примеры записей к удалению:
+                  </div>
                   <ScrollArea className="h-[100px] rounded-md border">
                     <div className="p-2 space-y-1">
                       {report.examples.map((r) => (
                         <div key={r.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0">
                           <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                          <span className="font-mono truncate max-w-[80px]">
+                          <span className="font-mono truncate max-w-[100px]">
                             {r.bepaid_uid?.substring(0, 8) || r.id.substring(0, 8)}...
                           </span>
                           <span className="tabular-nums">{formatAmount(r.amount)}</span>
                           <span className="text-muted-foreground">{r.currency}</span>
+                          {r.paid_at && (
+                            <span className="text-muted-foreground text-[10px]">
+                              {new Date(r.paid_at).toLocaleDateString('ru-RU')}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -185,17 +214,19 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
               {/* Conflicts */}
               {report.conflicts.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-amber-600 mb-1">Конфликты (не будут удалены):</div>
+                  <div className="text-xs font-medium text-amber-600 mb-1">
+                    Конфликты (не будут удалены — есть в API):
+                  </div>
                   <ScrollArea className="h-[80px] rounded-md border border-amber-200 dark:border-amber-800">
                     <div className="p-2 space-y-1">
                       {report.conflicts.map((r) => (
                         <div key={r.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0">
                           <XCircle className="h-3 w-3 text-amber-500 flex-shrink-0" />
-                          <span className="font-mono truncate max-w-[80px]">
+                          <span className="font-mono truncate max-w-[100px]">
                             {r.bepaid_uid?.substring(0, 8) || r.id.substring(0, 8)}...
                           </span>
                           <Badge variant="outline" className="text-[9px]">
-                            {r.conflict_reason || 'CONFLICT'}
+                            {r.conflict_reason || 'EXISTS_IN_API'}
                           </Badge>
                         </div>
                       ))}
@@ -207,24 +238,36 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
           )}
         </div>
 
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => setOpen(false)}>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={handleClose}>
             Закрыть
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() => handlePurge(true)}
-            disabled={isLoading}
-          >
-            {isLoading && dryRun ? "Проверяю..." : "Dry-run"}
-          </Button>
-          {report && report.eligible_for_deletion > 0 && (
+          
+          {mode !== 'executed' && (
+            <Button
+              variant="secondary"
+              onClick={() => handlePurge(true)}
+              disabled={isLoading}
+            >
+              {isLoading && mode !== 'preview' ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : null}
+              Dry-run (предпросмотр)
+            </Button>
+          )}
+          
+          {mode === 'preview' && report && report.eligible_for_deletion > 0 && (
             <Button
               variant="destructive"
               onClick={() => handlePurge(false)}
               disabled={isLoading}
             >
-              {isLoading && !dryRun ? "Удаляю..." : `Удалить (${report.eligible_for_deletion})`}
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Удалить ({report.eligible_for_deletion})
             </Button>
           )}
         </DialogFooter>

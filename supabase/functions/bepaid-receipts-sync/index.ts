@@ -17,6 +17,8 @@ interface ReceiptSyncResult {
   source: 'queue' | 'payments_v2';
   status: 'updated' | 'unavailable' | 'error' | 'skipped';
   receipt_url?: string;
+  fee_amount?: number;
+  fee_currency?: string;
   error_code?: string;
   message?: string;
 }
@@ -27,6 +29,7 @@ interface SyncReport {
   unavailable: number;
   errors: number;
   skipped: number;
+  fees_updated: number;
   results: ReceiptSyncResult[];
 }
 
@@ -82,7 +85,10 @@ Deno.serve(async (req) => {
       dry_run = false 
     } = body;
 
-    console.log(`[bepaid-receipts-sync] Starting sync: source=${source}, batch_size=${batch_size}, dry_run=${dry_run}, specific_ids=${payment_ids?.length || 0}`);
+    // Hard limit for safety
+    const effectiveBatchSize = Math.min(batch_size, 200);
+
+    console.log(`[bepaid-receipts-sync] Starting sync: source=${source}, batch_size=${effectiveBatchSize}, dry_run=${dry_run}, specific_ids=${payment_ids?.length || 0}`);
 
     // Get bePaid credentials
     const { data: bepaidInstance } = await supabaseAdmin
@@ -109,13 +115,41 @@ Deno.serve(async (req) => {
       unavailable: 0,
       errors: 0,
       skipped: 0,
+      fees_updated: 0,
       results: [],
     };
 
     const successStatuses = ['successful', 'succeeded'];
 
-    // Helper to fetch receipt from bePaid
-    const fetchReceipt = async (providerUid: string): Promise<{ receipt_url: string | null; error_code?: string }> => {
+    // Helper to extract fee from bePaid response with multiple fallback paths
+    const extractFee = (transaction: any): { amount: number | null; currency: string | null } => {
+      if (!transaction) return { amount: null, currency: null };
+      
+      // Try multiple paths for fee
+      const fee = transaction.fee 
+        ?? transaction.processing?.fee
+        ?? transaction.payment?.fee
+        ?? transaction.authorization?.fee
+        ?? null;
+      
+      if (fee !== null && fee !== undefined) {
+        // bePaid returns fee in cents
+        return { 
+          amount: Number(fee) / 100, 
+          currency: transaction.currency || 'BYN' 
+        };
+      }
+      
+      return { amount: null, currency: null };
+    };
+
+    // Helper to fetch receipt and fee from bePaid
+    const fetchTransactionDetails = async (providerUid: string): Promise<{ 
+      receipt_url: string | null; 
+      fee_amount: number | null;
+      fee_currency: string | null;
+      error_code?: string 
+    }> => {
       try {
         const response = await fetch(`https://gateway.bepaid.by/transactions/${providerUid}`, {
           method: "GET",
@@ -126,30 +160,34 @@ Deno.serve(async (req) => {
         });
 
         if (!response.ok) {
-          return { receipt_url: null, error_code: 'API_ERROR' };
+          return { receipt_url: null, fee_amount: null, fee_currency: null, error_code: 'API_ERROR' };
         }
 
         const data = await response.json();
         const transaction = data.transaction;
 
         if (!transaction) {
-          return { receipt_url: null, error_code: 'API_ERROR' };
+          return { receipt_url: null, fee_amount: null, fee_currency: null, error_code: 'API_ERROR' };
         }
 
+        // Extract receipt URL with multiple fallback paths
         const receiptUrl = transaction.receipt_url 
           || transaction.receipt?.url 
           || transaction.bill?.receipt_url
           || transaction.authorization?.receipt_url
           || null;
 
-        if (!receiptUrl) {
-          return { receipt_url: null, error_code: 'PROVIDER_NO_RECEIPT' };
+        // Extract fee
+        const { amount: feeAmount, currency: feeCurrency } = extractFee(transaction);
+
+        if (!receiptUrl && feeAmount === null) {
+          return { receipt_url: null, fee_amount: null, fee_currency: null, error_code: 'PROVIDER_NO_RECEIPT' };
         }
 
-        return { receipt_url: receiptUrl };
+        return { receipt_url: receiptUrl, fee_amount: feeAmount, fee_currency: feeCurrency };
       } catch (e) {
-        console.error(`[bepaid-receipts-sync] Error fetching receipt for ${providerUid}:`, e);
-        return { receipt_url: null, error_code: 'API_ERROR' };
+        console.error(`[bepaid-receipts-sync] Error fetching details for ${providerUid}:`, e);
+        return { receipt_url: null, fee_amount: null, fee_currency: null, error_code: 'API_ERROR' };
       }
     };
 
@@ -160,7 +198,7 @@ Deno.serve(async (req) => {
         .select('id, bepaid_uid, status_normalized, receipt_url')
         .is('receipt_url', null)
         .not('bepaid_uid', 'is', null)
-        .limit(batch_size);
+        .limit(effectiveBatchSize);
 
       // Filter by specific IDs if provided
       if (payment_ids && payment_ids.length > 0) {
@@ -199,13 +237,17 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const { receipt_url, error_code } = await fetchReceipt(item.bepaid_uid);
+          const { receipt_url, fee_amount, fee_currency, error_code } = await fetchTransactionDetails(item.bepaid_uid);
 
-          if (receipt_url) {
+          if (receipt_url || fee_amount !== null) {
             if (!dry_run) {
+              const updateData: any = {};
+              if (receipt_url) updateData.receipt_url = receipt_url;
+              // Queue table may not have fee columns - skip fee update for queue
+              
               const { error: updateError } = await supabaseAdmin
                 .from('payment_reconcile_queue')
-                .update({ receipt_url })
+                .update(updateData)
                 .eq('id', item.id);
 
               if (updateError) {
@@ -224,7 +266,9 @@ Deno.serve(async (req) => {
               payment_id: item.id,
               source: 'queue',
               status: 'updated',
-              receipt_url,
+              receipt_url: receipt_url || undefined,
+              fee_amount: fee_amount || undefined,
+              fee_currency: fee_currency || undefined,
             });
           } else {
             report.unavailable++;
@@ -243,10 +287,10 @@ Deno.serve(async (req) => {
     if (source === 'all' || source === 'payments_v2') {
       let paymentsQuery = supabaseAdmin
         .from('payments_v2')
-        .select('id, provider_payment_id, status, receipt_url')
+        .select('id, provider_payment_id, status, receipt_url, provider_response')
         .is('receipt_url', null)
         .not('provider_payment_id', 'is', null)
-        .limit(batch_size);
+        .limit(effectiveBatchSize);
 
       // Filter by specific IDs if provided
       if (payment_ids && payment_ids.length > 0) {
@@ -285,13 +329,29 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const { receipt_url, error_code } = await fetchReceipt(item.provider_payment_id);
+          const { receipt_url, fee_amount, fee_currency, error_code } = await fetchTransactionDetails(item.provider_payment_id);
 
-          if (receipt_url) {
+          if (receipt_url || fee_amount !== null) {
             if (!dry_run) {
+              const updateData: any = {};
+              if (receipt_url) updateData.receipt_url = receipt_url;
+              
+              // Update provider_response with fee info if we got it
+              if (fee_amount !== null) {
+                const existingResponse = (item.provider_response as any) || {};
+                updateData.provider_response = {
+                  ...existingResponse,
+                  transaction: {
+                    ...(existingResponse.transaction || {}),
+                    fee: Math.round(fee_amount * 100), // Store in cents for consistency
+                  }
+                };
+                report.fees_updated++;
+              }
+              
               const { error: updateError } = await supabaseAdmin
                 .from('payments_v2')
-                .update({ receipt_url })
+                .update(updateData)
                 .eq('id', item.id);
 
               if (updateError) {
@@ -310,7 +370,9 @@ Deno.serve(async (req) => {
               payment_id: item.id,
               source: 'payments_v2',
               status: 'updated',
-              receipt_url,
+              receipt_url: receipt_url || undefined,
+              fee_amount: fee_amount || undefined,
+              fee_currency: fee_currency || undefined,
             });
           } else {
             report.unavailable++;
@@ -332,17 +394,18 @@ Deno.serve(async (req) => {
       meta: {
         dry_run,
         source,
-        batch_size,
+        batch_size: effectiveBatchSize,
         specific_ids_count: payment_ids?.length || 0,
         total_checked: report.total_checked,
         updated: report.updated,
         unavailable: report.unavailable,
         errors: report.errors,
         skipped: report.skipped,
+        fees_updated: report.fees_updated,
       },
     });
 
-    console.log(`[bepaid-receipts-sync] Complete: checked=${report.total_checked}, updated=${report.updated}, unavailable=${report.unavailable}, errors=${report.errors}, skipped=${report.skipped}`);
+    console.log(`[bepaid-receipts-sync] Complete: checked=${report.total_checked}, updated=${report.updated}, unavailable=${report.unavailable}, errors=${report.errors}, skipped=${report.skipped}, fees_updated=${report.fees_updated}`);
 
     return new Response(
       JSON.stringify({ 
