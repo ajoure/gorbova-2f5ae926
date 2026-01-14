@@ -18,57 +18,77 @@ interface DashboardCardProps {
   subtitle?: string;
   icon: React.ReactNode;
   colorClass: string;
+  glowColor: string;
   isActive: boolean;
   onClick: () => void;
 }
 
-function DashboardCard({ title, value, subtitle, icon, colorClass, isActive, onClick }: DashboardCardProps) {
+function DashboardCard({ title, value, subtitle, icon, colorClass, glowColor, isActive, onClick }: DashboardCardProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "relative overflow-hidden rounded-2xl p-4 text-left transition-all duration-300 ease-out",
-        "backdrop-blur-xl bg-card/60 dark:bg-card/40",
-        "border border-border/50 hover:border-border",
+        "relative overflow-hidden rounded-2xl p-5 text-left transition-all duration-300 ease-out",
+        "backdrop-blur-2xl bg-gradient-to-br from-card/80 via-card/60 to-card/40",
+        "border border-border/30 hover:border-border/60",
         "shadow-lg hover:shadow-xl",
         "group cursor-pointer",
-        "min-h-[100px] flex flex-col", // Fixed height for consistency
-        isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.02]"
+        "min-h-[130px] flex flex-col",
+        "hover:scale-[1.02] active:scale-[0.98]",
+        isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.01]"
       )}
     >
-      {/* Glassmorphism background effect */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+      {/* Glassmorphism layers */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent pointer-events-none" />
       
-      {/* Icon background glow */}
+      {/* Colored glow effect */}
       <div className={cn(
-        "absolute -top-4 -right-4 w-16 h-16 rounded-full opacity-20 blur-xl transition-opacity group-hover:opacity-30",
-        colorClass
+        "absolute -top-6 -right-6 w-24 h-24 rounded-full blur-2xl transition-all duration-300",
+        "opacity-20 group-hover:opacity-40",
+        glowColor
       )} />
       
-      <div className="relative flex-1 flex flex-col justify-center">
-        {/* Icon + Title */}
-        <div className="flex items-center gap-2 mb-2">
-          <div className={cn("flex-shrink-0", colorClass)}>
+      {/* Content - fully centered */}
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-2">
+        {/* Icon with glow */}
+        <div className={cn(
+          "flex items-center justify-center w-10 h-10 rounded-xl",
+          "bg-gradient-to-br from-white/20 to-white/5",
+          "shadow-inner border border-white/10",
+          "transition-transform duration-300 group-hover:scale-110"
+        )}>
+          <div className={cn("transition-all duration-300", colorClass)}>
             {icon}
           </div>
-          <span className="text-sm font-medium text-muted-foreground truncate">{title}</span>
         </div>
         
-        {/* Value - centered */}
-        <div className={cn("text-2xl font-bold tabular-nums text-center", colorClass)}>
+        {/* Title */}
+        <span className="text-xs font-medium text-muted-foreground tracking-wide">
+          {title}
+        </span>
+        
+        {/* Value - large centered number */}
+        <div className={cn(
+          "text-3xl font-bold tabular-nums tracking-tight",
+          "bg-gradient-to-b from-foreground to-foreground/80 bg-clip-text",
+          colorClass
+        )}>
           {value}
         </div>
         
-        {/* Subtitle - centered */}
+        {/* Subtitle */}
         {subtitle && (
-          <p className="text-xs text-muted-foreground mt-1 text-center truncate">{subtitle}</p>
+          <p className="text-[11px] text-muted-foreground/80 text-center leading-tight">
+            {subtitle}
+          </p>
         )}
       </div>
       
       {/* Active indicator */}
       {isActive && (
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary rounded-b-xl" />
+        <div className={cn("absolute bottom-0 left-0 right-0 h-1 rounded-b-xl", glowColor)} />
       )}
     </button>
   );
@@ -83,9 +103,11 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
     return (
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="rounded-2xl p-4 backdrop-blur-xl bg-card/60 border border-border/50 min-h-[100px]">
-            <Skeleton className="h-4 w-20 mb-2" />
-            <Skeleton className="h-8 w-16 mx-auto" />
+          <div key={i} className="rounded-2xl p-5 backdrop-blur-2xl bg-card/60 border border-border/30 min-h-[130px] flex flex-col items-center justify-center gap-2">
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-8 w-12" />
+            <Skeleton className="h-3 w-20" />
           </div>
         ))}
       </div>
@@ -97,9 +119,10 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
       <DashboardCard
         title="Всего"
         value={stats.total}
-        subtitle={`Обраб: ${stats.processed} | Очередь: ${stats.inQueue}`}
-        icon={<Database className="h-4 w-4" />}
+        subtitle={`Обраб: ${stats.processed} · Очередь: ${stats.inQueue}`}
+        icon={<Database className="h-5 w-5" />}
         colorClass="text-primary"
+        glowColor="bg-primary"
         isActive={activeFilter === 'all'}
         onClick={() => handleClick('all')}
       />
@@ -107,9 +130,10 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
       <DashboardCard
         title="Успешные"
         value={stats.successful || 0}
-        subtitle={`Контакт: ${stats.withContact}`}
-        icon={<CheckCircle className="h-4 w-4" />}
+        subtitle={`С контактом: ${stats.withContact}`}
+        icon={<CheckCircle className="h-5 w-5" />}
         colorClass="text-green-500"
+        glowColor="bg-green-500"
         isActive={activeFilter === 'successful'}
         onClick={() => handleClick('successful')}
       />
@@ -118,8 +142,9 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
         title="Ожидают"
         value={stats.pending || 0}
         subtitle="В обработке"
-        icon={<Clock className="h-4 w-4" />}
+        icon={<Clock className="h-5 w-5" />}
         colorClass="text-amber-500"
+        glowColor="bg-amber-500"
         isActive={activeFilter === 'pending'}
         onClick={() => handleClick('pending')}
       />
@@ -128,8 +153,9 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
         title="Ошибки"
         value={stats.failed || 0}
         subtitle="Требуют проверки"
-        icon={<XCircle className="h-4 w-4" />}
+        icon={<XCircle className="h-5 w-5" />}
         colorClass="text-red-500"
+        glowColor="bg-red-500"
         isActive={activeFilter === 'failed'}
         onClick={() => handleClick('failed')}
       />
@@ -137,9 +163,10 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
       <DashboardCard
         title="Со сделкой"
         value={stats.withDeal}
-        subtitle={`Без: ${stats.withoutDeal}`}
-        icon={<Handshake className="h-4 w-4" />}
+        subtitle={`Без сделки: ${stats.withoutDeal}`}
+        icon={<Handshake className="h-5 w-5" />}
         colorClass="text-blue-500"
+        glowColor="bg-blue-500"
         isActive={activeFilter === 'withDeal'}
         onClick={() => handleClick('withDeal')}
       />
