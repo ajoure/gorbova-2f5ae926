@@ -50,7 +50,7 @@ export function LinkDealDialog({
       let query = supabase
         .from("orders_v2")
         .select(`
-          id, order_number, status, total_amount, currency, created_at,
+          id, order_number, status, total_amount:final_price, currency, created_at,
           tariff:tariffs(name),
           product:products_v2(name)
         `)
@@ -63,7 +63,7 @@ export function LinkDealDialog({
       
       // Optionally filter by similar amount
       if (amount && !search.trim()) {
-        query = query.gte("total_amount", amount * 0.9).lte("total_amount", amount * 1.1);
+        query = query.gte("final_price", amount * 0.9).lte("final_price", amount * 1.1);
       }
       
       const { data, error } = await query;
@@ -74,7 +74,7 @@ export function LinkDealDialog({
         id: o.id,
         order_number: o.order_number,
         status: o.status,
-        total_amount: o.total_amount,
+        total_amount: Number(o.total_amount),
         currency: o.currency,
         created_at: o.created_at,
         product_name: o.product?.name || o.tariff?.name || null,
