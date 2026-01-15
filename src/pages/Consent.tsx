@@ -2,7 +2,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { LandingHeader } from "@/components/landing/LandingHeader";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { 
-  Shield, Building2, Mail, FileText, 
+  Shield, Building2, FileText, 
   UserPlus, Megaphone, Camera, ExternalLink, Clock, Send
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
@@ -15,8 +15,43 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 export default function Consent() {
+  const accountCreationData = [
+    "Фамилия, имя, отчество",
+    "Пол",
+    "Возраст",
+    "Дата и год рождения",
+    "Телефон",
+    "Адрес электронной почты (e-mail)",
+    "Адрес проживания",
+    "Ссылка на аккаунты в социальных сетях",
+    "Банковские реквизиты, заполняемые при оплате услуг",
+    "Изображение Пользователя",
+    "Видеозапись с изображением Пользователя"
+  ];
+
+  const advertisingData = [
+    "Фамилия, имя, отчество",
+    "Пол",
+    "Возраст",
+    "Дата и год рождения",
+    "Телефон",
+    "Адрес электронной почты (e-mail)",
+    "Адрес проживания",
+    "Ссылка на аккаунты в социальных сетях",
+    "Банковские реквизиты, заполняемые при оплате услуг",
+    "Данные документа, удостоверяющего личность"
+  ];
+
+  const websites = [
+    { name: "gorbova.by", url: "https://gorbova.by" },
+    { name: "gorbova.club", url: "https://gorbova.club" },
+    { name: "gorbova.pro", url: "https://gorbova.pro" },
+    { name: "gorbova.getcourse.ru", url: "https://gorbova.getcourse.ru" }
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       <LandingHeader />
@@ -33,6 +68,81 @@ export default function Consent() {
             на сайте в сети Интернет
           </p>
         </div>
+
+        {/* Основной текст согласия */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Shield className="h-6 w-6 text-primary" />
+            </div>
+            <div className="w-full">
+              <h2 className="text-xl font-semibold mb-4">Согласие на обработку персональных данных</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p className="text-foreground">
+                  Настоящим принимаю решение о предоставлении моих персональных данных и даю 
+                  Оператору — <strong>ЗАО «АЖУР инкам»</strong>, в лице Директора управляющей организации 
+                  <strong> Коврижкина Алексея Игоревича</strong>, действующего на основании Устава, 
+                  в соответствии со статьей 5 Закона Республики Беларусь от 07.05.2021 № 99-З 
+                  «О защите персональных данных», согласие на обработку следующих персональных данных:
+                </p>
+
+                <Separator className="my-6" />
+
+                {/* 1. При создании учётной записи */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <UserPlus className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-lg text-foreground">1. При создании учётной записи:</h3>
+                  </div>
+                  <div className="grid gap-2 ml-11">
+                    {accountCreationData.map((item, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <Separator className="my-6" />
+
+                {/* 2. При осуществлении рекламной деятельности */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Megaphone className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-lg text-foreground">2. При осуществлении рекламной деятельности:</h3>
+                  </div>
+                  <div className="grid gap-2 ml-11">
+                    {advertisingData.map((item, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <Separator className="my-6" />
+
+                <div className="p-4 rounded-xl bg-primary/5 border border-primary/10">
+                  <p className="text-foreground font-medium text-center">
+                    Согласие на обработку персональных данных является{" "}
+                    <Badge variant="secondary" className="mx-1">конкретным</Badge>
+                    <Badge variant="secondary" className="mx-1">предметным</Badge>
+                    <Badge variant="secondary" className="mx-1">информированным</Badge>
+                    <Badge variant="secondary" className="mx-1">сознательным</Badge>
+                    и
+                    <Badge variant="secondary" className="mx-1">однозначным</Badge>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
 
         {/* Реквизиты оператора */}
         <GlassCard className="p-6 mb-6">
@@ -51,74 +161,21 @@ export default function Consent() {
                     Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63
                   </p>
                   <p>Адреса в сети Интернет:</p>
-                  <ul className="list-disc list-inside ml-2 space-y-1">
-                    <li><a href="https://gorbova.by" className="text-primary hover:underline">gorbova.by</a></li>
-                    <li><a href="https://gorbova.club" className="text-primary hover:underline">gorbova.club</a></li>
-                    <li><a href="https://gorbova.pro" className="text-primary hover:underline">gorbova.pro</a></li>
-                    <li><a href="https://gorbova.getcourse.ru" className="text-primary hover:underline">gorbova.getcourse.ru</a></li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Согласие на обработку персональных данных */}
-        <GlassCard className="p-6 mb-6">
-          <div className="flex items-start gap-4">
-            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-              <Shield className="h-6 w-6 text-primary" />
-            </div>
-            <div className="w-full">
-              <h2 className="text-xl font-semibold mb-4">Согласие на обработку персональных данных</h2>
-              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
-                <p>
-                  Настоящим принимаю решение о предоставлении моих персональных данных и даю 
-                  Оператору — ЗАО «АЖУР инкам» в соответствии со статьей 5 Закона Республики Беларусь 
-                  от 07.05.2021 № 99-З «О защите персональных данных» согласие на обработку 
-                  следующих персональных данных:
-                </p>
-
-                <Separator className="my-4" />
-
-                {/* 1. Для исполнения договора */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium text-foreground">1. Для заключения и исполнения договора:</h3>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {websites.map((site, index) => (
+                      <a 
+                        key={index}
+                        href={site.url} 
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-sm"
+                      >
+                        {site.name}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ))}
                   </div>
-                  <ul className="list-disc list-inside space-y-1 ml-7">
-                    <li>Фамилия, имя, отчество</li>
-                    <li>Паспортные данные (серия, номер, дата выдачи, орган выдачи)</li>
-                    <li>Адрес регистрации и проживания</li>
-                    <li>Номер телефона</li>
-                    <li>Адрес электронной почты (e-mail)</li>
-                    <li>Ссылка на аккаунт в Instagram</li>
-                    <li>Ссылка на аккаунт в Telegram</li>
-                  </ul>
                 </div>
-
-                <Separator className="my-4" />
-
-                {/* 2. Для маркетинга и рассылок */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Megaphone className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium text-foreground">2. Для маркетинга и рассылок:</h3>
-                  </div>
-                  <ul className="list-disc list-inside space-y-1 ml-7">
-                    <li>Фамилия, имя, отчество</li>
-                    <li>Номер телефона</li>
-                    <li>Адрес электронной почты (e-mail)</li>
-                  </ul>
-                </div>
-
-                <Separator className="my-4" />
-
-                <p>
-                  Настоящее согласие является <strong className="text-foreground">конкретным, предметным, 
-                  информированным, сознательным и однозначным</strong>.
-                </p>
               </div>
             </div>
           </div>
@@ -138,12 +195,19 @@ export default function Consent() {
                   внесенных в поля формы, в момент проставления символа в чек-боксе (в поле для ввода) 
                   в сети Интернет по адресам:
                 </p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li><a href="https://gorbova.by" className="text-primary hover:underline">gorbova.by</a></li>
-                  <li><a href="https://gorbova.club" className="text-primary hover:underline">gorbova.club</a></li>
-                  <li><a href="https://gorbova.pro" className="text-primary hover:underline">gorbova.pro</a></li>
-                  <li><a href="https://gorbova.getcourse.ru" className="text-primary hover:underline">gorbova.getcourse.ru</a></li>
-                </ul>
+                <div className="flex flex-wrap gap-2">
+                  {websites.map((site, index) => (
+                    <a 
+                      key={index}
+                      href={site.url} 
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted text-foreground hover:bg-muted/80 transition-colors text-sm"
+                    >
+                      {site.name}
+                    </a>
+                  ))}
+                </div>
                 <p>
                   <strong className="text-foreground">включая все домены, субдомены и страницы</strong>, их содержимое, 
                   а также интернет-сервисы и программное обеспечение, предлагаемые Оператором к использованию на этих Сайтах.
@@ -187,14 +251,18 @@ export default function Consent() {
                         <TableCell className="font-medium">1</TableCell>
                         <TableCell>Общие</TableCell>
                         <TableCell>Изображение (в том числе фотографии) Пользователя</TableCell>
-                        <TableCell className="text-center text-primary font-medium">Да</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="default" className="bg-green-500/20 text-green-700 dark:text-green-400">Да</Badge>
+                        </TableCell>
                         <TableCell className="text-muted-foreground">Отсутствуют</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-medium">2</TableCell>
                         <TableCell>Общие</TableCell>
                         <TableCell>Видеозапись с изображением Пользователя</TableCell>
-                        <TableCell className="text-center text-primary font-medium">Да</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="default" className="bg-green-500/20 text-green-700 dark:text-green-400">Да</Badge>
+                        </TableCell>
                         <TableCell className="text-muted-foreground">Отсутствуют</TableCell>
                       </TableRow>
                     </TableBody>
@@ -221,14 +289,23 @@ export default function Consent() {
                 <p>
                   Требование должно включать:
                 </p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>Фамилия, имя, отчество (при наличии)</li>
-                  <li>Контактную информацию (номер телефона, адрес электронной почты или почтовый адрес)</li>
-                  <li>Перечень персональных данных, обработка которых подлежит прекращению</li>
+                <ul className="space-y-2 ml-2">
+                  <li className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-2" />
+                    <span>Фамилия, имя, отчество (при наличии)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-2" />
+                    <span>Контактную информацию (номер телефона, адрес электронной почты или почтовый адрес)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-2" />
+                    <span>Перечень персональных данных, обработка которых подлежит прекращению</span>
+                  </li>
                 </ul>
                 <p>
-                  Отзыв согласия направляется по адресу: 220052, Республика Беларусь, г. Минск, а/я 63, 
-                  или по электронной почте: <a href="mailto:info@ajoure.by" className="text-primary hover:underline">info@ajoure.by</a>.
+                  Отзыв согласия направляется по адресу: <strong className="text-foreground">220052, Республика Беларусь, г. Минск, а/я 63</strong>, 
+                  или по электронной почте: <a href="mailto:info@ajoure.by" className="text-primary hover:underline font-medium">info@ajoure.by</a>.
                 </p>
                 <p>
                   Действие согласия прекращается с момента поступления Оператору такого требования.
