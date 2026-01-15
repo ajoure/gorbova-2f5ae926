@@ -33,11 +33,16 @@ import {
   ExternalLink,
   Sparkles,
   Tag,
-  RefreshCw
+  RefreshCw,
+  Ghost,
+  UserPlus,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface EditDealDialogProps {
   deal: any | null;
@@ -69,7 +74,12 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     access_end_at: null as Date | null,
     next_charge_at: null as Date | null,
     auto_renew: false,
+    profile_id: "" as string | null,
   });
+  const [showContactSearch, setShowContactSearch] = useState(false);
+  const [contactSearch, setContactSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Load products
   const { data: products } = useQuery({
@@ -150,9 +160,13 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
         auto_renew: subscription?.auto_renew ?? false,
+        profile_id: deal.profile_id || profile?.id || null,
       });
+      setShowContactSearch(false);
+      setContactSearch("");
+      setSearchResults([]);
     }
-  }, [deal, subscription]);
+  }, [deal, subscription, profile]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -171,6 +185,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
           product_id: formData.product_id || null,
           tariff_id: formData.tariff_id || null,
           offer_id: formData.offer_id || null,
+          profile_id: formData.profile_id || null,
         })
         .eq("id", deal.id);
       
@@ -296,17 +311,44 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
   });
 
   const handleOpenContact = () => {
-    const contactId = profile?.user_id || deal?.user_id;
+    const contactId = formData.profile_id || profile?.user_id || deal?.user_id;
     if (contactId) {
       onOpenChange(false);
       navigate(`/admin/contacts?contact=${contactId}&from=deals`);
     }
   };
 
+  // Search contacts for linking
+  const handleContactSearch = async (query: string) => {
+    if (query.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    
+    setSearchLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-search-profiles', {
+        body: { query, limit: 20, include_ghosts: true }
+      });
+      
+      if (error) throw error;
+      setSearchResults(data?.results || []);
+    } catch (e) {
+      console.error('Contact search error:', e);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // Get selected profile info
+  const selectedProfile = searchResults.find(p => p.id === formData.profile_id) || profile;
+
   if (!deal) return null;
 
   const selectedOffer = offers?.find(o => o.id === formData.offer_id);
-  const displayName = profile?.full_name || deal.customer_email || "Контакт";
+  const currentProfile = selectedProfile || profile;
+  const isGhost = currentProfile && !currentProfile.user_id;
+  const displayName = currentProfile?.full_name || deal.customer_email || "Не привязан";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -590,41 +632,143 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
 
           {/* Client Section */}
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <User className="w-4 h-4" />
-              Клиент
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <User className="w-4 h-4" />
+                Клиент
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowContactSearch(!showContactSearch)}
+                className="h-7 text-xs"
+              >
+                <UserPlus className="w-3 h-3 mr-1" />
+                {showContactSearch ? "Скрыть" : "Изменить"}
+              </Button>
             </div>
             
-            <button
-              type="button"
-              onClick={handleOpenContact}
-              disabled={!profile?.user_id && !deal?.user_id}
-              className={cn(
-                "w-full p-4 rounded-2xl border transition-all",
-                "bg-gradient-to-r from-muted/50 to-muted/30 border-border/50",
-                (profile?.user_id || deal?.user_id) && "hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 cursor-pointer"
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-10 w-10 ring-2 ring-background">
-                    <AvatarImage src={profile?.avatar_url} alt={displayName} />
-                    <AvatarFallback className="bg-primary/10 text-primary">
-                      <User className="w-5 h-5" />
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="text-left">
-                    <div className="font-medium">{displayName}</div>
-                    {profile?.email && profile.email !== displayName && (
-                      <div className="text-sm text-muted-foreground">{profile.email}</div>
-                    )}
+            {/* Current linked contact */}
+            {!showContactSearch && (
+              <button
+                type="button"
+                onClick={handleOpenContact}
+                disabled={!currentProfile}
+                className={cn(
+                  "w-full p-4 rounded-2xl border transition-all",
+                  "bg-gradient-to-r from-muted/50 to-muted/30 border-border/50",
+                  currentProfile && "hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 cursor-pointer"
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10 ring-2 ring-background">
+                      <AvatarImage src={currentProfile?.avatar_url} alt={displayName} />
+                      <AvatarFallback className={cn(
+                        "text-primary",
+                        isGhost ? "bg-muted" : "bg-primary/10"
+                      )}>
+                        {isGhost ? <Ghost className="w-5 h-5 text-muted-foreground" /> : <User className="w-5 h-5" />}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="text-left">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{displayName}</span>
+                        {isGhost && (
+                          <Badge variant="outline" className="text-[10px]">Ghost</Badge>
+                        )}
+                      </div>
+                      {currentProfile?.email && currentProfile.email !== displayName && (
+                        <div className="text-sm text-muted-foreground">{currentProfile.email}</div>
+                      )}
+                    </div>
                   </div>
+                  {currentProfile && (
+                    <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                  )}
                 </div>
-                {(profile?.user_id || deal?.user_id) && (
-                  <ExternalLink className="w-4 h-4 text-muted-foreground" />
+              </button>
+            )}
+
+            {/* Contact search */}
+            {showContactSearch && (
+              <div className="space-y-3 p-4 rounded-2xl bg-muted/30 border border-border/50">
+                <div className="relative">
+                  <Input
+                    placeholder="Поиск по имени, email или телефону..."
+                    value={contactSearch}
+                    onChange={(e) => {
+                      setContactSearch(e.target.value);
+                      handleContactSearch(e.target.value);
+                    }}
+                    className="bg-background/80"
+                  />
+                  {searchLoading && (
+                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                
+                {searchResults.length > 0 && (
+                  <ScrollArea className="max-h-[200px]">
+                    <div className="space-y-1">
+                      {searchResults.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, profile_id: p.id }));
+                            setShowContactSearch(false);
+                          }}
+                          className={cn(
+                            "w-full p-2 rounded-lg text-left transition-colors flex items-center gap-2",
+                            formData.profile_id === p.id 
+                              ? "bg-primary/10 border border-primary" 
+                              : "hover:bg-muted"
+                          )}
+                        >
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className={!p.user_id ? "bg-muted" : "bg-primary/10"}>
+                              {!p.user_id ? <Ghost className="w-4 h-4 text-muted-foreground" /> : <User className="w-4 h-4 text-primary" />}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium truncate">{p.full_name || "Без имени"}</span>
+                              {!p.user_id && (
+                                <Badge variant="outline" className="text-[10px] shrink-0">Ghost</Badge>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {p.email || p.phone || "—"}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+                
+                {contactSearch.length >= 2 && searchResults.length === 0 && !searchLoading && (
+                  <p className="text-xs text-muted-foreground text-center py-2">
+                    Контакты не найдены
+                  </p>
+                )}
+
+                {formData.profile_id && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFormData(prev => ({ ...prev, profile_id: null }))}
+                    className="w-full gap-1"
+                  >
+                    <X className="w-3 h-3" />
+                    Отвязать контакт
+                  </Button>
                 )}
               </div>
-            </button>
+            )}
           </div>
         </div>
 
