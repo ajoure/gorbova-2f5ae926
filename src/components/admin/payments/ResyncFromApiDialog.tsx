@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { RefreshCw, Download, Check, AlertCircle, AlertTriangle, Clock, Database, Zap } from "lucide-react";
+import { RefreshCw, Check, AlertCircle, AlertTriangle, Database, Zap } from "lucide-react";
 import { format, subDays } from "date-fns";
 
 interface ResyncFromApiDialogProps {
@@ -25,6 +25,7 @@ interface UidResyncResult {
   stats: {
     total_candidates: number;
     sources: {
+      orders: number;
       queue_webhook: number;
       queue_api_recover: number;
       payments_incomplete: number;
@@ -63,7 +64,7 @@ export default function ResyncFromApiDialog({ onComplete, trigger, renderTrigger
           dryRun,
           fromDate: dateFrom,
           toDate: dateTo,
-          limit: 500,
+          limit: 200,
         }
       });
       
@@ -130,12 +131,12 @@ export default function ResyncFromApiDialog({ onComplete, trigger, renderTrigger
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Warning about bulk API */}
-          <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
-            <AlertDescription className="text-xs text-amber-700 dark:text-amber-400">
-              <strong>bePaid bulk API недоступен (404).</strong> Resync работает только по известным UID 
-              из webhook-очереди и незаполненных payments. Для исторических данных используйте CSV-импорт.
+          {/* Info about sources */}
+          <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+            <Database className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-xs text-blue-700 dark:text-blue-400">
+              Resync по известным UID из <strong>заказов (orders_v2)</strong>, очереди webhook и незаполненных payments.
+              Не создаёт записей в очереди — напрямую обновляет payments_v2.
             </AlertDescription>
           </Alert>
 
@@ -186,6 +187,10 @@ export default function ResyncFromApiDialog({ onComplete, trigger, renderTrigger
                     Источники UID:
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Badge variant="default" className="text-xs bg-green-600">
+                      <Check className="h-3 w-3 mr-1" />
+                      Заказы: {stats.sources?.orders || 0}
+                    </Badge>
                     <Badge variant="secondary" className="text-xs">
                       <Zap className="h-3 w-3 mr-1" />
                       Webhook: {stats.sources?.queue_webhook || 0}
