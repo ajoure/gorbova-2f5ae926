@@ -721,6 +721,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         currency: "BYN",
         status: "paid",
         is_trial: false,
+        created_at: accessStart.toISOString(), // Use access start date as deal date
         meta: { 
           source: createDealOnly ? "admin_deal_only" : "admin_grant", 
           granted_by: currentUser?.id,
@@ -744,7 +745,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         currency: "BYN",
         status: "succeeded",
         provider: "admin",
-        paid_at: now.toISOString(),
+        paid_at: accessStart.toISOString(), // Use access start date as payment date
+        created_at: accessStart.toISOString(), // Use access start date as deal date
         meta: { source: createDealOnly ? "admin_deal_only" : "admin_grant", granted_by: currentUser?.id },
       });
 
