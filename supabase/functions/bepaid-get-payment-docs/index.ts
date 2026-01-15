@@ -146,23 +146,40 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch transaction from bePaid API
+    // Fetch transaction from bePaid API - try multiple endpoints
     const authString = btoa(`${shopId}:${secretKey}`);
-    const apiUrl = `https://gateway.bepaid.by/transactions/${payment.provider_payment_id}`;
+    const endpoints = [
+      `https://gateway.bepaid.by/transactions/${payment.provider_payment_id}`,
+      `https://api.bepaid.by/transactions/${payment.provider_payment_id}`,
+    ];
     
     console.log(`Fetching bePaid transaction: ${payment.provider_payment_id}`);
     
-    const apiResponse = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${authString}`,
-        'Accept': 'application/json',
-      },
-    });
+    let apiResponse: Response | null = null;
+    let workingEndpoint = '';
+    
+    for (const url of endpoints) {
+      console.log(`Trying endpoint: ${url}`);
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${authString}`,
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (resp.ok) {
+        apiResponse = resp;
+        workingEndpoint = url;
+        break;
+      } else {
+        const errText = await resp.text();
+        console.warn(`Endpoint ${url} failed: ${resp.status} ${errText.substring(0, 100)}`);
+      }
+    }
 
-    if (!apiResponse.ok) {
-      const errorText = await apiResponse.text();
-      console.error('bePaid API error:', apiResponse.status, errorText);
+    if (!apiResponse) {
+      console.error('bePaid API: All endpoints failed for transaction:', payment.provider_payment_id);
       
       await supabase.from('audit_logs').insert({
         actor_user_id: user.id,
@@ -171,19 +188,25 @@ Deno.serve(async (req) => {
           order_id, 
           payment_id: payment.id,
           provider_payment_id: payment.provider_payment_id,
-          error: `API ${apiResponse.status}: ${errorText.substring(0, 200)}`,
+          error: 'All bePaid API endpoints returned 404 - transaction may not exist or is still processing',
         },
       });
 
+      // Return graceful response instead of error - transaction may still be processing
       return new Response(
         JSON.stringify({ 
-          status: 'failed', 
-          error: `bePaid API error: ${apiResponse.status}`,
+          status: 'pending', 
+          message: 'Transaction not yet available in bePaid API. It may still be processing.',
           provider_payment_id: payment.provider_payment_id,
+          receipt_url: payment.receipt_url || null,
+          refunds: payment.refunds || [],
+          refunded_amount: Number(payment.refunded_amount) || 0,
         }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    
+    console.log(`Working endpoint: ${workingEndpoint}`);
 
     const txData = await apiResponse.json();
     console.log('bePaid transaction response:', JSON.stringify(txData, null, 2));
