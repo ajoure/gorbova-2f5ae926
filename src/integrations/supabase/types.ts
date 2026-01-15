@@ -3541,6 +3541,8 @@ export type Database = {
           last_seen_at: string | null
           marketing_consent: boolean | null
           merged_to_profile_id: string | null
+          onboarding_completed_at: string | null
+          onboarding_dismissed_at: string | null
           phone: string | null
           phones: Json | null
           position: string | null
@@ -3585,6 +3587,8 @@ export type Database = {
           last_seen_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
+          onboarding_completed_at?: string | null
+          onboarding_dismissed_at?: string | null
           phone?: string | null
           phones?: Json | null
           position?: string | null
@@ -3629,6 +3633,8 @@ export type Database = {
           last_seen_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
+          onboarding_completed_at?: string | null
+          onboarding_dismissed_at?: string | null
           phone?: string | null
           phones?: Json | null
           position?: string | null

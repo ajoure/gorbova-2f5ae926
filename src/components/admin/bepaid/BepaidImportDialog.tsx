@@ -630,7 +630,7 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
 
       return { results, ordersCreated };
     },
-    onSuccess: ({ results, ordersCreated }) => {
+    onSuccess: async ({ results, ordersCreated }) => {
       const imported = results.filter(r => r.status === 'imported').length;
       const orderCreated = results.filter(r => r.status === 'order_created').length;
       const updated = results.filter(r => r.status === 'updated').length;
@@ -649,7 +649,28 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
       onSuccess?.();
+      
+      // PATCH 14: Auto-fetch receipts after import
+      const importedCount = imported + orderCreated + updated;
+      if (importedCount > 0) {
+        try {
+          toast.info("Загружаем чеки...");
+          const { data, error } = await supabase.functions.invoke('bepaid-receipts-sync', {
+            body: { source: 'queue', batch_size: Math.min(importedCount, 50) }
+          });
+          if (error) {
+            console.warn("Auto-fetch receipts failed:", error);
+          } else if (data?.report?.receipts_updated > 0) {
+            toast.success(`Загружено чеков: ${data.report.receipts_updated}`);
+          }
+          queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
+          queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
+        } catch (receiptError) {
+          console.warn("Auto-fetch receipts error:", receiptError);
+        }
+      }
       
       // Update display
       setTransactions([...transactions]);
