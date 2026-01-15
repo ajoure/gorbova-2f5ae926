@@ -32,10 +32,12 @@ import {
   User, 
   ExternalLink,
   Sparkles,
-  Tag
+  Tag,
+  RefreshCw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
 
 interface EditDealDialogProps {
   deal: any | null;
@@ -66,6 +68,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     access_start_at: null as Date | null,
     access_end_at: null as Date | null,
     next_charge_at: null as Date | null,
+    auto_renew: false,
   });
 
   // Load products
@@ -146,6 +149,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         access_start_at: subscription?.access_start_at ? new Date(subscription.access_start_at) : null,
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
+        auto_renew: subscription?.auto_renew ?? false,
       });
     }
   }, [deal, subscription]);
@@ -174,7 +178,9 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
 
       // 2. Update subscription dates if they changed
       if (subscription) {
-        const subscriptionUpdate: any = {};
+        const subscriptionUpdate: any = {
+          auto_renew: formData.auto_renew,
+        };
         
         if (formData.access_start_at) {
           subscriptionUpdate.access_start_at = formData.access_start_at.toISOString();
@@ -184,6 +190,9 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         }
         if (formData.next_charge_at) {
           subscriptionUpdate.next_charge_at = formData.next_charge_at.toISOString();
+        } else if (!formData.auto_renew) {
+          // If auto-renew is disabled and no next_charge_at, clear it
+          subscriptionUpdate.next_charge_at = null;
         }
         if (formData.tariff_id) {
           subscriptionUpdate.tariff_id = formData.tariff_id;
@@ -191,13 +200,18 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         if (formData.offer_id) {
           subscriptionUpdate.offer_id = formData.offer_id;
         }
-        
-        if (Object.keys(subscriptionUpdate).length > 0) {
-          await supabase
-            .from("subscriptions_v2")
-            .update(subscriptionUpdate)
-            .eq("order_id", deal.id);
+
+        // If enabling auto-renew, make sure status is active
+        if (formData.auto_renew && subscription.status === 'canceled') {
+          subscriptionUpdate.status = 'active';
+          subscriptionUpdate.canceled_at = null;
+          subscriptionUpdate.cancel_reason = null;
         }
+        
+        await supabase
+          .from("subscriptions_v2")
+          .update(subscriptionUpdate)
+          .eq("order_id", deal.id);
       }
 
       // 3. Update entitlements based on status and dates
@@ -510,12 +524,43 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                 </div>
               </div>
 
+              {/* Auto-renew toggle */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-background/60 border border-border/30">
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center",
+                    formData.auto_renew ? "bg-green-500/20" : "bg-muted"
+                  )}>
+                    <RefreshCw className={cn(
+                      "w-4 h-4",
+                      formData.auto_renew ? "text-green-600" : "text-muted-foreground"
+                    )} />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Автопродление</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {formData.auto_renew ? "Включено - карта будет списываться автоматически" : "Отключено"}
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={formData.auto_renew}
+                  onCheckedChange={(checked) => setFormData(prev => ({ 
+                    ...prev, 
+                    auto_renew: checked,
+                    // If enabling and no next_charge_at, set to access_end_at
+                    next_charge_at: checked && !prev.next_charge_at ? prev.access_end_at : prev.next_charge_at
+                  }))}
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground">Следующее списание</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
+                      disabled={!formData.auto_renew}
                       className={cn(
                         "w-full justify-start text-left font-normal bg-background/80 border-border/50",
                         !formData.next_charge_at && "text-muted-foreground"
@@ -534,6 +579,11 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     />
                   </PopoverContent>
                 </Popover>
+                {formData.auto_renew && !subscription?.payment_token && (
+                  <p className="text-xs text-amber-600">
+                    ⚠️ У клиента нет привязанной карты. Автосписание не будет работать.
+                  </p>
+                )}
               </div>
             </div>
           </div>
