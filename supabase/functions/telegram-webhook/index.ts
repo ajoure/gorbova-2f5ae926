@@ -690,15 +690,45 @@ Deno.serve(async (req) => {
                   });
                 
                 if (uploadData && !uploadError) {
-                  console.log(`Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
+                  console.log(`[WEBHOOK] Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
                 } else {
-                  console.error(`Upload error for ${storagePath}:`, uploadError);
+                  console.error(`[WEBHOOK] Storage upload FAILED for ${storagePath}:`, {
+                    error: uploadError,
+                    bucket: storageBucket,
+                    size: arrayBuffer.byteLength,
+                    file_type: fileType,
+                    file_name: fileName
+                  });
+                  // Log to telegram_logs for diagnostics
+                  try {
+                    await supabase.from('telegram_logs').insert({
+                      user_id: profile.user_id,
+                      action: 'MEDIA_UPLOAD_FAILED',
+                      status: 'error',
+                      error_message: JSON.stringify(uploadError),
+                      meta: { bucket: storageBucket, path: storagePath, file_type: fileType, size: arrayBuffer.byteLength }
+                    });
+                  } catch (logErr) {
+                    console.error('[WEBHOOK] Failed to log upload error:', logErr);
+                  }
                   storageBucket = null;
                   storagePath = null;
                 }
               }
             } catch (uploadErr) {
-              console.error("Failed to upload incoming file to storage:", uploadErr);
+              console.error("[WEBHOOK] Failed to upload incoming file to storage:", uploadErr);
+              // Log to telegram_logs for diagnostics
+              try {
+                await supabase.from('telegram_logs').insert({
+                  user_id: profile.user_id,
+                  action: 'MEDIA_UPLOAD_EXCEPTION',
+                  status: 'error',
+                  error_message: uploadErr instanceof Error ? uploadErr.message : String(uploadErr),
+                  meta: { file_type: fileType, file_id: fileId }
+                });
+              } catch (logErr) {
+                console.error('[WEBHOOK] Failed to log upload exception:', logErr);
+              }
               storageBucket = null;
               storagePath = null;
             }

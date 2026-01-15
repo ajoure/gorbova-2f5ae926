@@ -77,7 +77,7 @@ export const DEFAULT_MENU: MenuSettings = [
     label: "CRM",
     order: 0,
     items: [
-      { id: "inbox", label: "Входящие", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
+      { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
       { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 3, permission: "entitlements.view" },
