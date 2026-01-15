@@ -30,13 +30,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Ghost } from "lucide-react";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 import { PhoneInput } from "@/components/ui/phone-input";
+import { Badge } from "@/components/ui/badge";
 
 interface Contact {
   id: string;
-  user_id: string;
+  user_id: string | null;
   email: string | null;
   full_name: string | null;
   phone: string | null;
@@ -60,9 +61,9 @@ interface DuplicateProfile {
 }
 
 const STATUS_OPTIONS = [
-  { value: "active", label: "Активен" },
-  { value: "blocked", label: "Заблокирован" },
-  { value: "deleted", label: "Удалён" },
+  { value: "active", label: "Активен", requiresAuth: true },
+  { value: "blocked", label: "Заблокирован", requiresAuth: false },
+  { value: "deleted", label: "Удалён", requiresAuth: false },
 ];
 
 export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: EditContactDialogProps) {
@@ -82,19 +83,25 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
   } | null>(null);
   const [isChecking, setIsChecking] = useState(false);
 
+  // Check if this is a ghost profile (no auth user)
+  const isGhost = !contact?.user_id;
+
   useEffect(() => {
     if (contact) {
+      // For ghost profiles, set status to blocked if it was active
+      const effectiveStatus = isGhost && contact.status === 'active' ? 'blocked' : (contact.status || 'active');
+      
       setFormData({
         full_name: contact.full_name || "",
         email: contact.email || "",
         phone: contact.phone || "",
         telegram_username: contact.telegram_username || "",
-        status: contact.status || "active",
+        status: effectiveStatus,
       });
       setEmails(Array.isArray(contact.emails) ? contact.emails as ContactItem[] : []);
       setPhones(Array.isArray(contact.phones) ? contact.phones as ContactItem[] : []);
     }
-  }, [contact]);
+  }, [contact, isGhost]);
 
   const saveContact = async (forceDuplicate = false) => {
     if (!contact?.id) throw new Error("No contact ID");
@@ -196,7 +203,15 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Редактирование контакта</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Редактирование контакта
+              {isGhost && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <Ghost className="h-3 w-3" />
+                  Ghost
+                </Badge>
+              )}
+            </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
@@ -244,11 +259,16 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                   <SelectValue placeholder="Выберите статус" />
                 </SelectTrigger>
                 <SelectContent>
-                  {STATUS_OPTIONS.map(opt => (
+                  {STATUS_OPTIONS.filter(opt => !opt.requiresAuth || !isGhost).map(opt => (
                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {isGhost && (
+                <p className="text-xs text-muted-foreground">
+                  Ghost-контакты не могут иметь статус "Активен" — только зарегистрированные пользователи
+                </p>
+              )}
             </div>
 
             {/* Multiple phones */}
