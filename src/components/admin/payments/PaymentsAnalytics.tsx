@@ -65,7 +65,7 @@ function AnalyticCard({
         "backdrop-blur-2xl bg-gradient-to-br from-card/80 via-card/60 to-card/40",
         "border border-border/30 hover:border-border/60",
         "shadow-lg hover:shadow-xl",
-        "min-h-[140px] p-5",
+        "h-[160px] p-5", // Fixed height for equal card sizes
         "group",
         isClickable && "cursor-pointer hover:scale-[1.02] active:scale-[0.98]",
         !isClickable && "opacity-90",
@@ -304,7 +304,7 @@ export default function PaymentsAnalytics({
         <div className="h-5 w-48 bg-muted/30 animate-pulse rounded" />
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="rounded-2xl p-5 backdrop-blur-2xl bg-card/60 border border-border/30 min-h-[140px] flex flex-col items-center justify-center gap-2">
+            <div key={i} className="rounded-2xl p-5 backdrop-blur-2xl bg-card/60 border border-border/30 h-[160px] flex flex-col items-center justify-center gap-2">
               <div className="h-11 w-11 rounded-xl bg-muted/30 animate-pulse" />
               <div className="h-3 w-16 bg-muted/30 animate-pulse rounded" />
               <div className="h-7 w-20 bg-muted/30 animate-pulse rounded" />

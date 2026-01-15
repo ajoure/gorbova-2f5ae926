@@ -152,25 +152,26 @@ export default function DatePeriodSelector({ value, onChange }: DatePeriodSelect
       </PopoverTrigger>
       <PopoverContent 
         align="start" 
+        sideOffset={8}
         className={cn(
-          "w-72 p-0",
+          "w-72 p-0 z-50",
           "bg-background/95 backdrop-blur-xl",
-          "border-border/50 shadow-xl",
-          "rounded-xl overflow-hidden"
+          "border-border/50 shadow-2xl",
+          "rounded-2xl overflow-hidden"
         )}
       >
         {/* Presets */}
-        <div className="p-2 space-y-1">
+        <div className="p-2 space-y-0.5">
           {presets.map((preset) => (
             <button
               key={preset.key}
               onClick={() => handlePresetClick(preset)}
               className={cn(
-                "w-full text-left px-3 py-2 rounded-lg text-sm",
-                "transition-all duration-150",
+                "w-full text-left px-3 py-2.5 rounded-xl text-sm",
+                "transition-all duration-200",
                 activePreset === preset.key
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "hover:bg-muted/50 text-foreground"
+                  ? "bg-primary text-primary-foreground font-medium shadow-sm"
+                  : "hover:bg-muted/60 text-foreground"
               )}
             >
               {preset.label}
@@ -179,7 +180,7 @@ export default function DatePeriodSelector({ value, onChange }: DatePeriodSelect
         </div>
         
         {/* Divider */}
-        <div className="h-px bg-border/50 mx-2" />
+        <div className="h-px bg-border/40 mx-3" />
         
         {/* Custom range */}
         <div className="p-3 space-y-3">
@@ -187,31 +188,31 @@ export default function DatePeriodSelector({ value, onChange }: DatePeriodSelect
             Свой период
           </Label>
           <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="custom-from" className="text-xs text-muted-foreground">С</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="custom-from" className="text-[11px] text-muted-foreground/80">С</Label>
               <Input
                 id="custom-from"
                 type="date"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
-                className="h-8 text-xs bg-muted/30 border-border/30"
+                className="h-9 text-xs bg-muted/40 border-border/40 rounded-lg focus:ring-2 focus:ring-primary/20"
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="custom-to" className="text-xs text-muted-foreground">По</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="custom-to" className="text-[11px] text-muted-foreground/80">По</Label>
               <Input
                 id="custom-to"
                 type="date"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
-                className="h-8 text-xs bg-muted/30 border-border/30"
+                className="h-9 text-xs bg-muted/40 border-border/40 rounded-lg focus:ring-2 focus:ring-primary/20"
               />
             </div>
           </div>
           <Button 
             size="sm" 
             onClick={handleCustomApply}
-            className="w-full h-8 text-xs"
+            className="w-full h-9 text-xs rounded-xl"
           >
             Применить
           </Button>
