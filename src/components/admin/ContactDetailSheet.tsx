@@ -259,7 +259,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  // Fetch deals for this contact - check both profile.id and user_id
+  // Fetch deals for this contact - check both profile_id and user_id (for ghost contacts)
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.id, contact?.user_id],
     queryFn: async () => {
@@ -271,6 +271,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         userIds.push(contact.user_id);
       }
       
+      // Query deals by profile_id OR user_id to catch ghost contact deals
       const { data, error } = await supabase
         .from("orders_v2")
         .select(`
@@ -279,7 +280,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           tariffs(id, name, code),
           payments_v2(id, status, provider_response)
         `)
-        .in("user_id", userIds)
+        .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;

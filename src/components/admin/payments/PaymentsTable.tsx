@@ -691,6 +691,9 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
               paymentId={selectedPayment.id}
               rawSource={selectedPayment.rawSource}
               amount={selectedPayment.amount}
+              currency={selectedPayment.currency}
+              paidAt={selectedPayment.paid_at || undefined}
+              profileId={selectedPayment.profile_id}
               onSuccess={onRefetch}
             />
           </>
