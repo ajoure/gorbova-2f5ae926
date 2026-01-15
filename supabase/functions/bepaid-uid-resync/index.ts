@@ -9,15 +9,16 @@ const corsHeaders = {
  * UID-based Recovery for bePaid transactions
  * 
  * This function recovers/enriches payment data by fetching individual transactions
- * using known UIDs from the queue and incomplete payments. It does NOT use bulk API
- * (which returns 404 for this merchant).
+ * using known UIDs from multiple sources:
+ * 
+ * 1. orders_v2 (PRIMARY SOURCE) - bepaid_uid from meta for paid/refunded orders
+ * 2. payment_reconcile_queue - webhook/api_recover sources
+ * 3. payments_v2 - incomplete records (paid_at IS NULL or provider_response is empty)
  * 
  * Algorithm:
- * 1. Collect candidate UIDs from:
- *    - payment_reconcile_queue (webhook, api_recover sources, not cancelled/completed)
- *    - payments_v2 (where paid_at IS NULL or provider_response is empty)
+ * 1. Collect candidate UIDs from all sources
  * 2. Deduplicate UIDs
- * 3. Fetch each UID individually from bePaid API
+ * 3. Fetch each UID individually from bePaid API (batched with concurrency)
  * 4. Upsert into payments_v2 (preserving existing order_id/profile_id/user_id)
  * 5. Log results to audit_logs
  */
@@ -37,6 +38,7 @@ interface ResyncResult {
   stats: {
     total_candidates: number;
     sources: {
+      orders: number;
       queue_webhook: number;
       queue_api_recover: number;
       payments_incomplete: number;
@@ -71,7 +73,7 @@ async function fetchTransaction(uid: string, shopId: string, secretKey: string):
         headers: {
           'Authorization': `Basic ${auth}`,
           'Accept': 'application/json',
-          'Content-Type': 'application/json',
+          // NO Content-Type for GET requests!
         },
       });
       
@@ -93,6 +95,18 @@ async function fetchTransaction(uid: string, shopId: string, secretKey: string):
   }
   
   return { success: false, error: 'All endpoints failed or returned 404' };
+}
+
+// Process a batch of UIDs with concurrency limit
+async function processBatch<T>(
+  items: T[],
+  concurrency: number,
+  processor: (item: T) => Promise<void>
+): Promise<void> {
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    await Promise.all(batch.map(processor));
+  }
 }
 
 Deno.serve(async (req) => {
@@ -148,7 +162,7 @@ Deno.serve(async (req) => {
       fromDate,
       toDate,
       dryRun = true,
-      limit = 500,
+      limit = 200,  // Reduced default limit
       unsafeAllowLarge = false,
     } = body;
 
@@ -157,10 +171,11 @@ Deno.serve(async (req) => {
     const result: ResyncResult = {
       success: true,
       dryRun,
-      warning: "bePaid bulk API недоступен (404). Resync работает только по известным UID из системы.",
+      warning: "Resync по известным UID из orders, очереди и незаполненных платежей.",
       stats: {
         total_candidates: 0,
         sources: {
+          orders: 0,
           queue_webhook: 0,
           queue_api_recover: 0,
           payments_incomplete: 0,
@@ -178,7 +193,28 @@ Deno.serve(async (req) => {
       },
     };
 
-    // Step 1: Collect candidate UIDs from queue (webhook, api_recover sources)
+    // Step 1: PRIMARY SOURCE - orders_v2 with bepaid_uid in meta
+    const { data: ordersWithUid, error: ordersError } = await supabaseAdmin
+      .from('orders_v2')
+      .select('id, meta')
+      .in('status', ['paid', 'refunded'])
+      .gte('created_at', `${fromDate}T00:00:00Z`)
+      .lte('created_at', `${toDate}T23:59:59Z`)
+      .limit(limit);
+
+    if (ordersError) {
+      console.error('[bepaid-uid-resync] Orders query error:', ordersError);
+      throw new Error(`Orders query failed: ${ordersError.message}`);
+    }
+
+    // Filter orders with bepaid_uid in meta
+    const ordersWithBepaidUid = (ordersWithUid || []).filter(o => {
+      const meta = o.meta as Record<string, unknown> | null;
+      return meta && typeof meta.bepaid_uid === 'string' && meta.bepaid_uid.length > 0;
+    });
+    result.stats.sources.orders = ordersWithBepaidUid.length;
+
+    // Step 2: Collect candidate UIDs from queue (webhook, api_recover sources)
     const { data: queueItems, error: queueError } = await supabaseAdmin
       .from('payment_reconcile_queue')
       .select('bepaid_uid, source, status')
@@ -194,7 +230,7 @@ Deno.serve(async (req) => {
       throw new Error(`Queue query failed: ${queueError.message}`);
     }
 
-    // Step 2: Collect candidate UIDs from payments_v2 (incomplete data)
+    // Step 3: Collect candidate UIDs from payments_v2 (incomplete data)
     const { data: incompletePayments, error: paymentsError } = await supabaseAdmin
       .from('payments_v2')
       .select('provider_payment_id, paid_at, provider_response')
@@ -218,13 +254,22 @@ Deno.serve(async (req) => {
     result.stats.sources.queue_api_recover = apiRecoverItems.length;
     result.stats.sources.payments_incomplete = (incompletePayments || []).length;
 
-    // Step 3: Deduplicate UIDs
+    // Step 4: Deduplicate UIDs from all sources
     const uidSet = new Set<string>();
     
+    // Primary: orders
+    for (const order of ordersWithBepaidUid) {
+      const meta = order.meta as Record<string, unknown>;
+      const uid = meta.bepaid_uid as string;
+      if (uid) uidSet.add(uid);
+    }
+    
+    // Queue
     for (const item of queueItems || []) {
       if (item.bepaid_uid) uidSet.add(item.bepaid_uid);
     }
     
+    // Incomplete payments
     for (const payment of incompletePayments || []) {
       if (payment.provider_payment_id) uidSet.add(payment.provider_payment_id);
     }
@@ -232,12 +277,12 @@ Deno.serve(async (req) => {
     const candidateUids = Array.from(uidSet);
     result.stats.total_candidates = candidateUids.length;
 
-    console.log(`[bepaid-uid-resync] Found ${candidateUids.length} unique UIDs (queue: ${queueItems?.length || 0}, payments: ${incompletePayments?.length || 0})`);
+    console.log(`[bepaid-uid-resync] Found ${candidateUids.length} unique UIDs (orders: ${ordersWithBepaidUid.length}, queue: ${queueItems?.length || 0}, payments: ${incompletePayments?.length || 0})`);
 
-    // STOP safeguard
-    if (candidateUids.length > 1000 && !unsafeAllowLarge && !dryRun) {
+    // STOP safeguard - reduced to 500
+    if (candidateUids.length > 500 && !unsafeAllowLarge && !dryRun) {
       result.success = false;
-      result.stop_reason = `STOP_SAFEGUARD: ${candidateUids.length} UIDs to process (>1000). Set unsafeAllowLarge=true to proceed.`;
+      result.stop_reason = `STOP_SAFEGUARD: ${candidateUids.length} UIDs to process (>500). Сузьте даты или установите unsafeAllowLarge=true.`;
       
       await supabaseAdmin.from('audit_logs').insert({
         action: 'bepaid_uid_resync_blocked',
@@ -247,6 +292,7 @@ Deno.serve(async (req) => {
         meta: {
           reason: 'STOP_SAFEGUARD',
           total_candidates: candidateUids.length,
+          sources: result.stats.sources,
           from: fromDate,
           to: toDate,
           initiated_by: user.id,
@@ -284,12 +330,15 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Step 4: Fetch each UID and upsert
+    // Step 5: Fetch each UID and upsert with batching
     const processLimit = Math.min(candidateUids.length, limit);
+    const uidsToProcess = candidateUids.slice(0, processLimit);
     
-    for (let i = 0; i < processLimit; i++) {
-      const uid = candidateUids[i];
-      
+    const BATCH_SIZE = 20;
+    const CONCURRENCY = 5;
+    
+    // Process single UID
+    const processUid = async (uid: string) => {
       // Check if already complete in payments_v2
       const { data: existingPayment } = await supabaseAdmin
         .from('payments_v2')
@@ -302,7 +351,7 @@ Deno.serve(async (req) => {
       
       if (hasCompleteData) {
         result.stats.already_complete++;
-        continue;
+        return;
       }
 
       // Fetch from bePaid API
@@ -315,7 +364,7 @@ Deno.serve(async (req) => {
           result.samples.errors.push({ uid, error: fetchResult.error || 'Unknown error' });
         }
         console.log(`[bepaid-uid-resync] Fetch failed for ${uid}: ${fetchResult.error}`);
-        continue;
+        return;
       }
 
       const transaction = fetchResult.data.transaction;
@@ -324,7 +373,7 @@ Deno.serve(async (req) => {
         if (result.samples.errors.length < 10) {
           result.samples.errors.push({ uid, error: 'No transaction in response' });
         }
-        continue;
+        return;
       }
 
       // Extract paid_at: priority transaction.paid_at -> transaction.created_at
@@ -412,7 +461,12 @@ Deno.serve(async (req) => {
           });
         }
       }
-    }
+    };
+    
+    // Process in batches with concurrency
+    await processBatch(uidsToProcess, CONCURRENCY, processUid);
+    
+    console.log(`[bepaid-uid-resync] Batch processing complete: ${uidsToProcess.length} UIDs processed`);
 
     // Step 5: Write audit log
     await supabaseAdmin.from('audit_logs').insert({
