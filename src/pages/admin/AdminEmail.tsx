@@ -53,6 +53,8 @@ import {
   Settings2,
   Download,
   Inbox,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import {
   Collapsible,
@@ -60,6 +62,11 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { HelpIcon } from "@/components/help/HelpComponents";
+import { 
+  ALLOWED_TEMPLATE_VARIABLES, 
+  validateTemplateVariables, 
+  renderTemplatePreview 
+} from "@/lib/email-template-validation";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 
 interface EmailAccount {
@@ -190,8 +197,10 @@ export default function AdminEmail() {
   }>({ open: false, html: "", subject: "" });
   
   const [testingSend, setTestingSend] = useState<string | null>(null);
+  const [testingImap, setTestingImap] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showImapSettings, setShowImapSettings] = useState(false);
+  const [templateValidationError, setTemplateValidationError] = useState<string | null>(null);
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
 
   // Fetch email accounts
@@ -375,6 +384,35 @@ export default function AdminEmail() {
     testSendMutation.mutate(accountId);
   };
 
+  // Test IMAP connection mutation
+  const testImapMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const { data, error } = await supabase.functions.invoke("email-test-connection", {
+        body: { account_id: accountId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success(data.message || "IMAP подключение успешно!");
+      } else {
+        toast.error(data.error || "Ошибка подключения IMAP");
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+    onSettled: () => {
+      setTestingImap(null);
+    },
+  });
+
+  const handleTestImap = (accountId: string) => {
+    setTestingImap(accountId);
+    testImapMutation.mutate(accountId);
+  };
+
   const getStatusBadge = (isActive: boolean) => {
     if (isActive) {
       return (
@@ -508,12 +546,29 @@ export default function AdminEmail() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      {/* Test IMAP Connection */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleTestImap(account.id)}
+                        disabled={testingImap === account.id}
+                        title="Проверить IMAP подключение"
+                        className={!account.imap_enabled || !account.is_active ? "opacity-50" : ""}
+                      >
+                        {testingImap === account.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : account.imap_enabled && account.is_active ? (
+                          <Wifi className="w-4 h-4" />
+                        ) : (
+                          <WifiOff className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </Button>
                       {account.imap_enabled && (
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleFetchInbox(account.id)}
-                          disabled={fetchingEmail === account.id}
+                          disabled={fetchingEmail === account.id || !account.is_active}
                           title="Загрузить входящие"
                         >
                           {fetchingEmail === account.id ? (
@@ -971,6 +1026,16 @@ export default function AdminEmail() {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (templateDialog.template) {
+                  // Validate template variables
+                  const fullText = templateDialog.template.subject + templateDialog.template.body_html;
+                  const validation = validateTemplateVariables(fullText);
+                  
+                  if (!validation.valid) {
+                    setTemplateValidationError(`Недопустимые переменные: ${validation.invalidVariables.join(', ')}`);
+                    toast.error(`Недопустимые переменные: ${validation.invalidVariables.join(', ')}`);
+                    return;
+                  }
+                  setTemplateValidationError(null);
                   saveTemplateMutation.mutate(templateDialog.template);
                 }
               }}
@@ -980,26 +1045,26 @@ export default function AdminEmail() {
                 <Label>Тема письма</Label>
                 <Input
                   value={templateDialog.template.subject}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
                       ...prev,
                       template: prev.template
                         ? { ...prev.template, subject: e.target.value }
                         : null,
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Доступные переменные</Label>
-                <div className="flex flex-wrap gap-1">
-                  {templateDialog.template.variables.map((v) => (
+                <Label>Доступные переменные (нажмите чтобы скопировать)</Label>
+                <div className="flex flex-wrap gap-1 p-2 border rounded bg-muted/30">
+                  {ALLOWED_TEMPLATE_VARIABLES.slice(0, 15).map((v) => (
                     <code
                       key={v}
-                      className="px-2 py-0.5 bg-muted rounded text-xs cursor-pointer hover:bg-muted/80"
+                      className="px-2 py-0.5 bg-background rounded text-xs cursor-pointer hover:bg-primary/20 transition-colors"
                       onClick={() => {
-                        // Copy to clipboard
                         navigator.clipboard.writeText(`{{${v}}}`);
                         toast.success(`Скопировано: {{${v}}}`);
                       }}
@@ -1016,15 +1081,22 @@ export default function AdminEmail() {
                   rows={12}
                   className="font-mono text-sm"
                   value={templateDialog.template.body_html}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
                       ...prev,
                       template: prev.template
                         ? { ...prev.template, body_html: e.target.value }
                         : null,
-                    }))
-                  }
+                    }));
+                  }}
                 />
+                {templateValidationError && (
+                  <p className="text-sm text-destructive flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    {templateValidationError}
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
