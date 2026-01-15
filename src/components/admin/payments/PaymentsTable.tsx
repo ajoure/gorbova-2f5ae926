@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
+import { UnlinkContactDialog } from "./UnlinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
 import ContactLinkActions from "./ContactLinkActions";
 import PaymentMethodBadge from "./PaymentMethodBadge";
@@ -143,6 +144,7 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
 export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch }: PaymentsTableProps) {
   // Dialog states
   const [linkContactOpen, setLinkContactOpen] = useState(false);
+  const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
   const [linkDealOpen, setLinkDealOpen] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<UnifiedPayment | null>(null);
   
@@ -218,6 +220,11 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
     setLinkContactOpen(true);
   };
   
+  const openUnlinkContact = (payment: UnifiedPayment) => {
+    setSelectedPayment(payment);
+    setUnlinkContactOpen(true);
+  };
+  
   const openLinkDeal = (payment: UnifiedPayment) => {
     setSelectedPayment(payment);
     setLinkDealOpen(true);
@@ -255,7 +262,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   };
   
   const openInBepaid = (uid: string) => {
-    window.open(`https://dashboard.bepaid.by/transactions/${uid}`, '_blank');
+    window.open(`https://app.bepaid.by/transactions/${uid}`, '_blank');
   };
 
   // Open deal sheet (modal, not navigation)
@@ -547,9 +554,15 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                   Связать контакт
                 </DropdownMenuItem>
               )}
+              {payment.profile_id && (
+                <DropdownMenuItem onClick={() => openUnlinkContact(payment)}>
+                  <UserMinus className="h-3 w-3 mr-2" />
+                  Отвязать контакт
+                </DropdownMenuItem>
+              )}
               {!payment.order_id && (
                 <DropdownMenuItem onClick={() => openLinkDeal(payment)}>
-                  <Handshake className="h-3 w-3" />
+                  <Handshake className="h-3 w-3 mr-2" />
                   Связать сделку
                 </DropdownMenuItem>
               )}
@@ -657,6 +670,19 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
               rawSource={selectedPayment.rawSource}
               initialEmail={selectedPayment.customer_email}
               initialPhone={selectedPayment.customer_phone}
+              cardLast4={selectedPayment.card_last4}
+              cardBrand={selectedPayment.card_brand}
+              cardHolder={selectedPayment.card_holder}
+              onSuccess={onRefetch}
+            />
+            <UnlinkContactDialog
+              open={unlinkContactOpen}
+              onOpenChange={setUnlinkContactOpen}
+              paymentId={selectedPayment.id}
+              rawSource={selectedPayment.rawSource}
+              cardLast4={selectedPayment.card_last4}
+              profileId={selectedPayment.profile_id || ''}
+              profileName={selectedPayment.profile_name}
               onSuccess={onRefetch}
             />
             <LinkDealDialog
