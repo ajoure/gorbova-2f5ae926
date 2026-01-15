@@ -320,42 +320,17 @@ async function findParentPayment(
     }
   }
 
-  // Method 3: Fuzzy match by email + amount + time
-  if (item.customer_email && item.amount) {
-    const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    
-    const { data: candidates } = await supabase
-      .from("payments_v2")
-      .select("id, order_id, amount, created_at, meta")
-      .gt("amount", 0) // Only positive payments
-      .gte("created_at", threeMonthsAgo)
-      .order("created_at", { ascending: false })
-      .limit(100);
+  // FUZZY MATCH DISABLED - Too risky for financial data
+  // If parent_uid not found, mark as needs_manual_link
+  // This prevents incorrect refund linking to wrong payments
+  // 
+  // Previous fuzzy logic removed per PATCH requirements:
+  // - No matching by email + amount + time proximity
+  // - Only exact parent_uid matching is allowed
 
-    if (candidates) {
-      // Find payment with similar amount (±10%) from profile with same email
-      for (const candidate of candidates) {
-        const amountDiff = Math.abs(candidate.amount - item.amount) / item.amount;
-        
-        if (amountDiff <= 0.1) {
-          // Check if this payment's profile has matching email
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("email")
-            .eq("id", candidate.meta?.profile_id || '')
-            .maybeSingle();
-
-          if (profile?.email?.toLowerCase() === item.customer_email?.toLowerCase()) {
-            result.linked = true;
-            result.linkedBy = "fuzzy_match_email_amount";
-            result.parentPaymentId = candidate.id;
-            result.parentOrderId = candidate.order_id;
-            return result;
-          }
-        }
-      }
-    }
-  }
-
+  console.log(`[process-refunds] No parent_uid found for ${item.bepaid_uid}, marking for manual link`);
+  result.linked = false;
+  result.linkedBy = null;
+  
   return result;
 }

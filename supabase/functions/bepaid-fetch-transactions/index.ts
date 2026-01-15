@@ -326,30 +326,47 @@ serve(async (req) => {
     if (syncMode === 'RECOVER') {
       console.log(`[bepaid-fetch] RECOVER mode: Looking for paid orders without payments...`);
       
-      // Find paid orders without payment records that have bepaid_uid
-      const { data: lostOrders } = await supabase
-        .from("orders_v2")
-        .select("id, order_number, final_price, profile_id, user_id, meta, created_at")
-        .eq("status", "paid")
-        .limit(maxRecoverItems);
+      // Use raw SQL to find orders without payments efficiently
+      // This is more efficient than filtering in memory
+      const { data: ordersWithoutPayments, error: recoverError } = await supabase
+        .rpc('get_paid_orders_without_payments', { limit_count: maxRecoverItems });
+      
+      // Fallback: if RPC doesn't exist, use manual approach
+      let lostOrders = ordersWithoutPayments;
+      if (recoverError) {
+        console.log(`[bepaid-fetch] RPC not available, using manual approach: ${recoverError.message}`);
+        
+        // Get all paid orders with bepaid_uid
+        const { data: allPaidOrders } = await supabase
+          .from("orders_v2")
+          .select("id, order_number, final_price, profile_id, user_id, meta, created_at")
+          .eq("status", "paid")
+          .not("meta->bepaid_uid", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(200); // Get more to find ones without payments
+        
+        if (allPaidOrders && allPaidOrders.length > 0) {
+          // Check which have payments
+          const orderIds = allPaidOrders.map(o => o.id);
+          const { data: existingPayments } = await supabase
+            .from("payments_v2")
+            .select("order_id")
+            .in("order_id", orderIds);
+          
+          const paidOrderIds = new Set((existingPayments || []).map(p => p.order_id));
+          lostOrders = allPaidOrders.filter(o => !paidOrderIds.has(o.id)).slice(0, maxRecoverItems);
+        } else {
+          lostOrders = [];
+        }
+      }
 
       if (!lostOrders || lostOrders.length === 0) {
-        console.log(`[bepaid-fetch] RECOVER: No paid orders found`);
+        console.log(`[bepaid-fetch] RECOVER: No orders without payments found`);
         results.stopped_reason = "no_orders_to_recover";
       } else {
-        // Filter to only orders without payments
-        const orderIds = lostOrders.map(o => o.id);
-        const { data: existingPayments } = await supabase
-          .from("payments_v2")
-          .select("order_id")
-          .in("order_id", orderIds);
+        console.log(`[bepaid-fetch] RECOVER: Found ${lostOrders.length} orders without payments`);
 
-        const paidOrderIds = new Set((existingPayments || []).map(p => p.order_id));
-        const ordersWithoutPayments = lostOrders.filter(o => !paidOrderIds.has(o.id));
-
-        console.log(`[bepaid-fetch] RECOVER: Found ${ordersWithoutPayments.length} orders without payments`);
-
-        for (const order of ordersWithoutPayments) {
+        for (const order of lostOrders) {
           if (Date.now() - startTime > config.sync_max_runtime_ms) {
             results.stopped_reason = "max_runtime_reached";
             break;
@@ -409,9 +426,11 @@ serve(async (req) => {
 
             if (mode === 'execute' && normalizedStatus === 'successful') {
               // Create payment record
+              // IMPORTANT: user_id should be auth user id, NOT profile_id
+              // profile_id is separate field
               const paymentData = {
                 order_id: order.id,
-                user_id: order.user_id || order.profile_id,
+                user_id: order.user_id, // Auth user ID, can be null
                 profile_id: order.profile_id,
                 amount: isRefund ? -(tx.amount / 100) : (tx.amount / 100),
                 currency: tx.currency || "BYN",
@@ -429,12 +448,22 @@ serve(async (req) => {
                 },
               };
 
+              // Check if payment already exists before inserting
+              const { data: existingPayment } = await supabase
+                .from("payments_v2")
+                .select("id")
+                .eq("provider_payment_id", tx.uid)
+                .maybeSingle();
+
+              if (existingPayment) {
+                console.log(`[bepaid-fetch] RECOVER: Payment already exists for ${tx.uid}`);
+                results.already_exists++;
+                continue;
+              }
+
               const { error: insertError } = await supabase
                 .from("payments_v2")
-                .upsert(paymentData, {
-                  onConflict: "provider_payment_id",
-                  ignoreDuplicates: false,
-                });
+                .insert(paymentData);
 
               if (insertError) {
                 console.error(`[bepaid-fetch] RECOVER: Insert error:`, insertError);
