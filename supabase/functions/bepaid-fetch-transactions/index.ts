@@ -406,8 +406,15 @@ serve(async (req) => {
     let hasMorePages = true;
 
     while (hasMorePages && currentPage <= config.sync_max_pages) {
-      // Use gateway.bepaid.by/transactions with query params (same as subscriptions endpoint pattern)
+      // Build query params
       const params = new URLSearchParams({
+        created_at_gteq: fromDate.toISOString(),
+        created_at_lteq: toDate.toISOString(),
+        per_page: String(config.sync_page_size),
+        page: String(currentPage),
+      });
+      
+      const paramsWithShop = new URLSearchParams({
         shop_id: String(shopId),
         created_at_gteq: fromDate.toISOString(),
         created_at_lteq: toDate.toISOString(),
@@ -415,30 +422,50 @@ serve(async (req) => {
         page: String(currentPage),
       });
 
+      // Try multiple endpoints - same pattern as bepaid-raw-transactions
+      const candidates = [
+        { name: "gateway:/transactions", url: `https://gateway.bepaid.by/transactions?${params.toString()}` },
+        { name: "gateway:/transactions?shop_id", url: `https://gateway.bepaid.by/transactions?${paramsWithShop.toString()}` },
+        { name: "api:/transactions?shop_id", url: `https://api.bepaid.by/transactions?${paramsWithShop.toString()}` },
+      ];
+
+      const headers = {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+        "X-Api-Version": "3", // Required for some deployments
+      };
+
       console.log(`Fetching transactions page ${currentPage}...`);
-      console.info(`Query params: ${params.toString()}`);
 
-      // bePaid transactions endpoint - same pattern as subscriptions
-      const txResponse = await fetch(
-        `https://api.bepaid.by/transactions?${params.toString()}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            Accept: "application/json",
-          },
+      let txResponse: Response | null = null;
+      let workingEndpoint = "";
+      
+      for (const candidate of candidates) {
+        console.info(`Trying ${candidate.name}: ${candidate.url.substring(0, 100)}...`);
+        const resp = await fetch(candidate.url, { method: "GET", headers });
+        
+        if (resp.ok) {
+          txResponse = resp;
+          workingEndpoint = candidate.name;
+          console.info(`✓ Working endpoint: ${candidate.name}`);
+          break;
+        } else {
+          const errText = await resp.text();
+          console.warn(`✗ ${candidate.name}: ${resp.status} ${errText.substring(0, 100)}`);
         }
-      );
+      }
 
-      if (!txResponse.ok) {
-        const errorText = await txResponse.text();
-        console.error(`Failed to fetch transactions page ${currentPage}: ${txResponse.status} ${errorText}`);
+      if (!txResponse) {
+        console.error(`Failed to fetch transactions page ${currentPage}: all endpoints failed`);
         break;
       }
 
       const txData = await txResponse.json();
-      // Reports API returns transactions in 'transactions' array
-      const transactions: BepaidTransaction[] = txData.transactions || txData.report?.transactions || [];
+      // Handle different response formats
+      const rawList = txData.transactions ?? txData.data?.transactions ?? [];
+      const transactions: BepaidTransaction[] = rawList
+        .map((t: any) => (t?.transaction ? t.transaction : t))
+        .filter(Boolean);
       
       results.pages_fetched++;
       results.transactions_fetched += transactions.length;
