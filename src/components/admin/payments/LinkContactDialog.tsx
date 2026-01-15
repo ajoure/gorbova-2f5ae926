@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { User, Mail, Phone, Check, Search, Loader2, AlertCircle } from "lucide-react";
+import { User, Mail, Phone, Check, Search, Loader2, AlertCircle, CreditCard } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Profile {
@@ -23,6 +24,9 @@ interface LinkContactDialogProps {
   rawSource: 'queue' | 'payments_v2';
   initialEmail?: string | null;
   initialPhone?: string | null;
+  cardLast4?: string | null;
+  cardBrand?: string | null;
+  cardHolder?: string | null;
   onSuccess: () => void;
 }
 
@@ -71,6 +75,9 @@ export function LinkContactDialog({
   rawSource,
   initialEmail,
   initialPhone,
+  cardLast4,
+  cardBrand,
+  cardHolder,
   onSuccess 
 }: LinkContactDialogProps) {
   const [search, setSearch] = useState(initialEmail || initialPhone || "");
@@ -80,6 +87,8 @@ export function LinkContactDialog({
   const [selected, setSelected] = useState<Profile | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [linkToAllCards, setLinkToAllCards] = useState(true);
+  const [saveCardLink, setSaveCardLink] = useState(true);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -89,6 +98,8 @@ export function LinkContactDialog({
       setSelected(null);
       setHasSearched(false);
       setSearchError(null);
+      setLinkToAllCards(true);
+      setSaveCardLink(true);
     }
   }, [open, initialEmail, initialPhone]);
 
@@ -145,8 +156,47 @@ export function LinkContactDialog({
     
     setSaving(true);
     try {
+      // 1. Save card-profile link if checkbox is checked and we have card data
+      if (saveCardLink && cardLast4) {
+        // Check if link already exists
+        const { data: existingLink } = await supabase
+          .from("card_profile_links")
+          .select("id")
+          .eq("card_last4", cardLast4)
+          .eq("profile_id", selected.id)
+          .maybeSingle();
+
+        if (!existingLink) {
+          await supabase
+            .from("card_profile_links")
+            .insert({
+              card_last4: cardLast4,
+              card_brand: cardBrand || null,
+              card_holder: cardHolder || null,
+              profile_id: selected.id,
+            });
+        }
+      }
+
+      // 2. Link to all payments with this card if checkbox is checked
+      if (linkToAllCards && cardLast4) {
+        // Update all queue items with this card
+        await supabase
+          .from("payment_reconcile_queue")
+          .update({ matched_profile_id: selected.id })
+          .eq("card_last4", cardLast4)
+          .is("matched_profile_id", null);
+
+        // Update all payments_v2 with this card
+        await supabase
+          .from("payments_v2")
+          .update({ profile_id: selected.id })
+          .eq("card_last4", cardLast4)
+          .is("profile_id", null);
+      }
+
+      // 3. Link current payment
       if (rawSource === 'queue') {
-        // Queue source: update matched_profile_id
         const { error } = await supabase
           .from("payment_reconcile_queue")
           .update({ matched_profile_id: selected.id })
@@ -163,8 +213,7 @@ export function LinkContactDialog({
           console.warn('Auto-process after link failed:', procErr);
         }
       } else {
-        // PATCH 15: For payments_v2, directly update profile_id
-        // First update payments_v2.profile_id
+        // For payments_v2, directly update profile_id
         const { data: payment, error: fetchError } = await supabase
           .from("payments_v2")
           .select("id, order_id")
@@ -203,7 +252,8 @@ export function LinkContactDialog({
         }
       }
       
-      toast.success("Контакт связан");
+      const linkedCount = linkToAllCards && cardLast4 ? "ко всем платежам с этой картой" : "";
+      toast.success(`Контакт связан ${linkedCount}`);
       onSuccess();
       onOpenChange(false);
     } catch (e: any) {
@@ -256,7 +306,7 @@ export function LinkContactDialog({
           )}
           
           {/* Results */}
-          <ScrollArea className="h-[250px] border rounded-md">
+          <ScrollArea className="h-[200px] border rounded-md">
             {loading && results.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground text-sm">
                 <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
@@ -313,6 +363,48 @@ export function LinkContactDialog({
             <p className="text-xs text-muted-foreground text-right">
               Найдено: {results.length} {results.length === 20 ? "(показаны первые 20)" : ""}
             </p>
+          )}
+
+          {/* Card linking options */}
+          {cardLast4 && selected && (
+            <div className="space-y-3 pt-2 border-t">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CreditCard className="h-4 w-4" />
+                <span>Карта: ****{cardLast4}</span>
+              </div>
+              
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                <Checkbox
+                  id="link-to-all"
+                  checked={linkToAllCards}
+                  onCheckedChange={(checked) => setLinkToAllCards(checked === true)}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="link-to-all" className="font-medium cursor-pointer">
+                    Привязать ко всем платежам с этой картой
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Все существующие платежи с картой ****{cardLast4} будут связаны с контактом
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                <Checkbox
+                  id="save-card-link"
+                  checked={saveCardLink}
+                  onCheckedChange={(checked) => setSaveCardLink(checked === true)}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="save-card-link" className="font-medium cursor-pointer">
+                    Запомнить связь карты с контактом
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Новые платежи с этой картой будут автоматически привязаны к контакту
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
         </div>
         
