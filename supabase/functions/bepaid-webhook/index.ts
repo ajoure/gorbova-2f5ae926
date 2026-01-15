@@ -310,6 +310,30 @@ async function createAmoCRMDeal(
   return null;
 }
 
+// Normalize bePaid transaction status for consistent storage/filtering
+function normalizeWebhookStatus(status: string): string {
+  switch (status?.toLowerCase()) {
+    case 'successful':
+    case 'success':
+      return 'successful';
+    case 'failed':
+    case 'declined':
+    case 'expired':
+    case 'error':
+      return 'failed';
+    case 'incomplete':
+    case 'processing':
+    case 'pending':
+      return 'pending';
+    case 'refunded':
+    case 'voided':
+    case 'refund':
+      return 'refunded';
+    default:
+      return 'unknown';
+  }
+}
+
 // bePaid public key for webhook signature verification (RSA-SHA256)
 // This is the official bePaid public key for production webhooks
 const BEPAID_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -562,6 +586,55 @@ Deno.serve(async (req) => {
 
     // body already parsed above
     console.log('[WEBHOOK-BODY] bePaid webhook received:', JSON.stringify(body, null, 2));
+
+    // =========================================================================
+    // CRITICAL: Save ALL incoming transactions to queue IMMEDIATELY for audit
+    // This ensures NO transaction is ever lost, regardless of processing result
+    // =========================================================================
+    const webhookTransaction = body.transaction || body.last_transaction || {};
+    const webhookTxStatus = webhookTransaction.status || body.status || 'unknown';
+    const webhookTxType = webhookTransaction.type || body.type || null;
+    const webhookReferenceUid = webhookTransaction.parent_uid || body.parent_uid || null;
+    const webhookAdditionalData = body.additional_data || {};
+    
+    // Determine if this is a refund
+    const isWebhookRefund = webhookTxType === 'refund' || 
+                           body.refund || 
+                           webhookTransaction.refund_reason !== undefined;
+    
+    // Normalize status for consistent filtering
+    const webhookNormalizedStatus = normalizeWebhookStatus(webhookTxStatus);
+    
+    // Save to queue (upsert by bepaid_uid to avoid duplicates)
+    if (webhookTransaction.uid) {
+      try {
+        await supabase.from('payment_reconcile_queue').upsert({
+          bepaid_uid: webhookTransaction.uid,
+          tracking_id: rawTrackingIdEarly || null,
+          amount: webhookTransaction.amount ? webhookTransaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
+          currency: webhookTransaction.currency || body.plan?.currency || 'BYN',
+          customer_email: webhookTransaction.customer?.email || body.customer?.email || webhookAdditionalData.customer_email || null,
+          customer_phone: webhookTransaction.customer?.phone || body.customer?.phone || null,
+          card_holder: webhookTransaction.credit_card?.holder || null,
+          card_last4: webhookTransaction.credit_card?.last_4 || null,
+          card_brand: webhookTransaction.credit_card?.brand || null,
+          receipt_url: webhookTransaction.receipt_url || null,
+          raw_payload: body,
+          source: 'webhook',
+          status: webhookTxStatus === 'successful' ? 'pending' : 'error',
+          status_normalized: webhookNormalizedStatus,
+          transaction_type: isWebhookRefund ? 'Возврат средств' : 'Оплата',
+          paid_at: webhookTransaction.paid_at || webhookTransaction.created_at || new Date().toISOString(),
+          reference_transaction_uid: webhookReferenceUid,
+          last_error: webhookTxStatus !== 'successful' ? (webhookTransaction.message || `Status: ${webhookTxStatus}`) : null,
+        }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
+        
+        console.log(`[WEBHOOK-QUEUE] Saved transaction ${webhookTransaction.uid} with status ${webhookNormalizedStatus}`);
+      } catch (queueErr) {
+        console.error('[WEBHOOK-QUEUE] Failed to save to queue:', queueErr);
+        // Continue processing even if queue save fails
+      }
+    }
 
     // bePaid sends subscription webhooks with data directly in body (not nested in .subscription)
     // Check if this is a subscription webhook (has 'state' and 'plan' fields directly in body)

@@ -19,11 +19,12 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
         <Select value={filters.status} onValueChange={(v) => updateFilter("status", v)}>
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="all">Все статусы</SelectItem>
             <SelectItem value="successful_and_refunds">Успешные + возвраты</SelectItem>
             <SelectItem value="successful">Только успешные</SelectItem>
-            <SelectItem value="pending">Ожидает</SelectItem>
-            <SelectItem value="failed">Ошибка</SelectItem>
+            <SelectItem value="failed">Неуспешные (ошибки)</SelectItem>
+            <SelectItem value="pending">Ожидает обработки</SelectItem>
+            <SelectItem value="unknown">Неизвестный статус</SelectItem>
           </SelectContent>
         </Select>
       </div>
