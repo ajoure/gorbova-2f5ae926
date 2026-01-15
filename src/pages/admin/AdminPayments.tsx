@@ -388,9 +388,9 @@ export default function AdminPayments() {
           onFilterChange={setDashboardFilter}
         />
         
-        {/* Financial Analytics */}
+        {/* Financial Analytics - PATCH 8: Use FULL payments list for correct totals */}
         <PaymentsAnalytics 
-          payments={filteredPayments} 
+          payments={payments} 
           isLoading={isLoading} 
           activeFilter={analyticsFilter}
           onFilterChange={setAnalyticsFilter}

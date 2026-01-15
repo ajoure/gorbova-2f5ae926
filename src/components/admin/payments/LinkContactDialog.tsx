@@ -146,6 +146,7 @@ export function LinkContactDialog({
     setSaving(true);
     try {
       if (rawSource === 'queue') {
+        // Queue source: update matched_profile_id
         const { error } = await supabase
           .from("payment_reconcile_queue")
           .update({ matched_profile_id: selected.id })
@@ -162,8 +163,44 @@ export function LinkContactDialog({
           console.warn('Auto-process after link failed:', procErr);
         }
       } else {
-        // For payments_v2, update the linked order's profile
-        toast.info("Для связи с payments_v2 используйте редактирование сделки");
+        // PATCH 15: For payments_v2, directly update profile_id
+        // First update payments_v2.profile_id
+        const { data: payment, error: fetchError } = await supabase
+          .from("payments_v2")
+          .select("id, order_id")
+          .eq("id", paymentId)
+          .single();
+        
+        if (fetchError) throw fetchError;
+        
+        // Update payments_v2.profile_id
+        const { error: updateError } = await supabase
+          .from("payments_v2")
+          .update({ profile_id: selected.id })
+          .eq("id", paymentId);
+        
+        if (updateError) throw updateError;
+        
+        // If payment has order_id, also update orders_v2.profile_id
+        if (payment?.order_id) {
+          const { error: orderError } = await supabase
+            .from("orders_v2")
+            .update({ profile_id: selected.id })
+            .eq("id", payment.order_id);
+          
+          if (orderError) {
+            console.warn('Failed to update order profile_id:', orderError);
+          }
+        }
+        
+        // Trigger auto-process for payments_v2
+        try {
+          await supabase.functions.invoke('bepaid-auto-process', {
+            body: { paymentId: paymentId, dryRun: false }
+          });
+        } catch (procErr) {
+          console.warn('Auto-process after link failed:', procErr);
+        }
       }
       
       toast.success("Контакт связан");

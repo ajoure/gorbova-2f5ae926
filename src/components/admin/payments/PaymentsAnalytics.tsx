@@ -16,7 +16,7 @@ export const FAILED_STATUSES = ['failed', 'canceled', 'expired', 'declined', 'er
 export const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
 
 interface PaymentsAnalyticsProps {
-  payments: UnifiedPayment[];
+  payments: UnifiedPayment[];  // Full unfiltered payments for correct totals
   isLoading: boolean;
   activeFilter?: AnalyticsFilter;
   onFilterChange?: (filter: AnalyticsFilter) => void;

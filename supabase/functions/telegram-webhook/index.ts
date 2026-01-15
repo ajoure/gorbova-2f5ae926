@@ -679,21 +679,36 @@ Deno.serve(async (req) => {
                 else if (fileType === 'voice') contentType = 'audio/ogg';
                 else if (fileType === 'audio') contentType = 'audio/mpeg';
                 
-                // Upload to Supabase Storage
+                // Upload to Supabase Storage with retry (PATCH 1)
                 storageBucket = 'documents';
                 storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
-                const { data: uploadData, error: uploadError } = await supabase.storage
-                  .from(storageBucket)
-                  .upload(storagePath, arrayBuffer, { 
-                    contentType,
-                    upsert: false 
-                  });
                 
-                if (uploadData && !uploadError) {
-                  console.log(`[WEBHOOK] Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
-                } else {
-                  console.error(`[WEBHOOK] Storage upload FAILED for ${storagePath}:`, {
-                    error: uploadError,
+                let uploadSuccess = false;
+                let lastUploadError: any = null;
+                
+                for (let attempt = 1; attempt <= 2 && !uploadSuccess; attempt++) {
+                  const { data: uploadData, error: uploadError } = await supabase.storage
+                    .from(storageBucket)
+                    .upload(storagePath, arrayBuffer, { 
+                      contentType,
+                      upsert: false 
+                    });
+                  
+                  if (uploadData && !uploadError) {
+                    console.log(`[WEBHOOK] Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}, attempt: ${attempt}`);
+                    uploadSuccess = true;
+                  } else {
+                    lastUploadError = uploadError;
+                    console.warn(`[WEBHOOK] Storage upload attempt ${attempt} failed:`, uploadError);
+                    if (attempt < 2) {
+                      await new Promise(r => setTimeout(r, 500)); // Wait before retry
+                    }
+                  }
+                }
+                
+                if (!uploadSuccess) {
+                  console.error(`[WEBHOOK] Storage upload FAILED after retries for ${storagePath}:`, {
+                    error: lastUploadError,
                     bucket: storageBucket,
                     size: arrayBuffer.byteLength,
                     file_type: fileType,
@@ -705,8 +720,8 @@ Deno.serve(async (req) => {
                       user_id: profile.user_id,
                       action: 'MEDIA_UPLOAD_FAILED',
                       status: 'error',
-                      error_message: JSON.stringify(uploadError),
-                      meta: { bucket: storageBucket, path: storagePath, file_type: fileType, size: arrayBuffer.byteLength }
+                      error_message: JSON.stringify(lastUploadError),
+                      meta: { bucket: storageBucket, path: storagePath, file_type: fileType, size: arrayBuffer.byteLength, attempts: 2 }
                     });
                   } catch (logErr) {
                     console.error('[WEBHOOK] Failed to log upload error:', logErr);

@@ -641,7 +641,7 @@ export function ContactTelegramChat({
               </span>
             </div>
             
-            {/* Media preview */}
+            {/* Media preview - PATCH 1: Add fallback for missing files */}
             {fileType && (
               <div className="mb-2 rounded overflow-hidden">
                 {fileType === "photo" && msg.meta?.file_url ? (
@@ -651,6 +651,11 @@ export function ContactTelegramChat({
                     className="max-w-full max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity" 
                     onClick={() => window.open(msg.meta?.file_url as string, '_blank')}
                   />
+                ) : fileType === "photo" && !msg.meta?.file_url ? (
+                  <div className="flex flex-col items-center justify-center p-4 bg-muted/30 border border-border/30 rounded-lg w-48 h-32">
+                    <ImageIcon className="w-8 h-8 opacity-40 mb-1" />
+                    <span className="text-xs text-muted-foreground">Файл не загружен</span>
+                  </div>
                 ) : (fileType === "video" || fileType === "video_note") ? (
                   msg.meta?.file_url ? (
                     <video 
@@ -663,13 +668,13 @@ export function ContactTelegramChat({
                     />
                   ) : (
                     <div className={cn(
-                      "flex items-center justify-center bg-muted/30 border border-border/30",
+                      "flex flex-col items-center justify-center bg-muted/30 border border-border/30",
                       fileType === "video_note" ? "w-32 h-32 rounded-full" : "w-48 h-32 rounded-lg"
                     )}>
-                      <div className="text-center">
-                        <Play className="w-8 h-8 mx-auto opacity-50 mb-1" />
-                        <span className="text-xs opacity-60 block">Видео-сообщение</span>
-                      </div>
+                      <Play className="w-8 h-8 opacity-40 mb-1" />
+                      <span className="text-xs text-muted-foreground block">
+                        {fileType === "video_note" ? "Кружок" : "Видео"} не загружено
+                      </span>
                     </div>
                   )
                 ) : (fileType === "voice" || fileType === "audio") ? (
@@ -681,11 +686,11 @@ export function ContactTelegramChat({
                     />
                   ) : (
                     <div className="flex items-center gap-2 p-3 bg-muted/30 border border-border/30 rounded-full w-fit">
-                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                        <Music className="w-4 h-4 text-primary" />
+                      <div className="w-8 h-8 rounded-full bg-muted/50 flex items-center justify-center">
+                        <Music className="w-4 h-4 opacity-40" />
                       </div>
-                      <span className="text-xs opacity-70">
-                        {fileType === "voice" ? "Голосовое сообщение" : "Аудио"}
+                      <span className="text-xs text-muted-foreground">
+                        {fileType === "voice" ? "Голосовое" : "Аудио"} не загружено
                       </span>
                     </div>
                   )
@@ -693,6 +698,9 @@ export function ContactTelegramChat({
                   <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
                     {getFileIcon(fileType)}
                     <span className="text-xs truncate">{fileName || "Файл"}</span>
+                    {!msg.meta?.file_url && (
+                      <span className="text-xs text-muted-foreground ml-1">(не загружен)</span>
+                    )}
                   </div>
                 )}
               </div>

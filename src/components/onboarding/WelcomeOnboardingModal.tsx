@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -12,42 +14,134 @@ import { Button } from "@/components/ui/button";
 import { MessageCircle, CreditCard, CheckCircle2, ExternalLink, HelpCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
-const ONBOARDING_SHOWN_KEY = "welcome_onboarding_shown";
+// PATCH 13: Use database instead of localStorage for persistence
+const REMIND_LATER_DAYS = 7;
 
 export function WelcomeOnboardingModal() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const { data: telegramStatus, isLoading: telegramLoading } = useTelegramLinkStatus();
   const { mutate: startLink, isPending: isLinking, data: linkSession } = useStartTelegramLink();
 
   const isTelegramLinked = telegramStatus?.status === "active" || !!telegramStatus?.telegram_username;
 
+  // PATCH 13: Fetch onboarding state from DB
+  const { data: onboardingState, isLoading: stateLoading } = useQuery({
+    queryKey: ["onboarding-state", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("onboarding_dismissed_at, onboarding_completed_at")
+        .eq("id", user.id)
+        .single();
+      
+      if (error) {
+        console.warn("Failed to fetch onboarding state:", error);
+        return null;
+      }
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // PATCH 13: Check for active subscription or payment method
+  const { data: hasActiveSetup } = useQuery({
+    queryKey: ["has-active-setup", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return false;
+      
+      // Check for active subscription
+      const { data: subscriptions } = await supabase
+        .from("subscriptions_v2")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .limit(1);
+      
+      if (subscriptions && subscriptions.length > 0) return true;
+      
+      // Check for payment method
+      const { data: paymentMethods } = await supabase
+        .from("payment_methods")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .limit(1);
+      
+      return paymentMethods && paymentMethods.length > 0;
+    },
+    enabled: !!user?.id,
+  });
+
+  // PATCH 13: Mutation to update onboarding state
+  const updateOnboardingState = useMutation({
+    mutationFn: async (action: 'dismiss' | 'complete') => {
+      if (!user?.id) throw new Error("No user");
+      
+      const updates = action === 'complete' 
+        ? { onboarding_completed_at: new Date().toISOString() }
+        : { onboarding_dismissed_at: new Date().toISOString() };
+      
+      const { error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", user.id);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["onboarding-state", user?.id] });
+    },
+  });
+
   useEffect(() => {
-    if (!user) return;
+    if (!user || stateLoading || telegramLoading) return;
     
-    const wasShown = localStorage.getItem(ONBOARDING_SHOWN_KEY);
-    if (!wasShown) {
-      // Small delay to let dashboard render first
-      const timer = setTimeout(() => setIsOpen(true), 500);
-      return () => clearTimeout(timer);
+    // PATCH 13: Never show if completed
+    if (onboardingState?.onboarding_completed_at) {
+      setIsOpen(false);
+      return;
     }
-  }, [user]);
+    
+    // PATCH 13: Never show if has active subscription or card
+    if (hasActiveSetup) {
+      setIsOpen(false);
+      return;
+    }
+    
+    // PATCH 13: Check dismissed_at - don't show for REMIND_LATER_DAYS
+    if (onboardingState?.onboarding_dismissed_at) {
+      const dismissedAt = new Date(onboardingState.onboarding_dismissed_at);
+      const daysSinceDismissed = (Date.now() - dismissedAt.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceDismissed < REMIND_LATER_DAYS) {
+        setIsOpen(false);
+        return;
+      }
+    }
+    
+    // Show modal after small delay
+    const timer = setTimeout(() => setIsOpen(true), 500);
+    return () => clearTimeout(timer);
+  }, [user, stateLoading, telegramLoading, onboardingState, hasActiveSetup]);
 
   const handleComplete = () => {
-    localStorage.setItem(ONBOARDING_SHOWN_KEY, "true");
+    updateOnboardingState.mutate('complete');
     setIsOpen(false);
   };
 
   const handleRemindLater = () => {
+    updateOnboardingState.mutate('dismiss');
     setIsOpen(false);
-    // Don't set localStorage - will show again next time
   };
 
   const handleStartTelegramLink = () => {
     startLink();
   };
 
-  if (!user || telegramLoading) return null;
+  if (!user || telegramLoading || stateLoading) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleRemindLater()}>
