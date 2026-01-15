@@ -659,6 +659,7 @@ Deno.serve(async (req) => {
           const orderCustomerEmail = item.customer_email || profileEmail;
 
           // Create order with ALL customer data in meta
+          // NOTE: tracking_id and payment_method columns don't exist in orders_v2, store in meta/purchase_snapshot
           const { data: newOrder, error: orderError } = await supabase
             .from('orders_v2')
             .insert({
@@ -668,14 +669,16 @@ Deno.serve(async (req) => {
               tariff_id: mapping.tariff_id,
               offer_id: mapping.offer_id,
               order_number: orderNumber,
-              tracking_id: item.tracking_id,
               status: 'paid',
+              base_price: finalAmount,
               final_price: finalAmount,
               currency: item.currency || 'BYN',
-              payment_method: 'bepaid',
               customer_email: orderCustomerEmail,
+              reconcile_source: 'bepaid_auto',
               purchase_snapshot: {
                 bepaid_uid: item.bepaid_uid,
+                tracking_id: item.tracking_id,
+                payment_method: 'bepaid',
                 source: 'auto_process',
                 imported_at: new Date().toISOString(),
                 card_last4: item.card_last4,
