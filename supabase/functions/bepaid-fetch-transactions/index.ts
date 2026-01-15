@@ -102,6 +102,42 @@ function parseTrackingId(trackingId?: string): ParsedTrackingId {
   return { orderId: null, offerId: null, isValid: false };
 }
 
+// Normalize bePaid transaction status
+function normalizeTransactionStatus(status: string): string {
+  switch (status?.toLowerCase()) {
+    case 'successful':
+    case 'success':
+      return 'successful';
+    case 'failed':
+    case 'declined':
+    case 'expired':
+    case 'error':
+      return 'failed';
+    case 'incomplete':
+    case 'processing':
+    case 'pending':
+      return 'pending';
+    case 'refunded':
+    case 'voided':
+    case 'refund':
+      return 'refunded';
+    default:
+      return 'unknown';
+  }
+}
+
+// Determine transaction type (payment, refund, etc.)
+function determineTransactionType(tx: BepaidTransaction): string {
+  const rawPayload = tx as any;
+  if (rawPayload.type === 'refund' || rawPayload.refund_reason) {
+    return 'Возврат средств';
+  }
+  if (rawPayload.type === 'authorization') {
+    return 'Авторизация';
+  }
+  return 'Оплата';
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -288,12 +324,13 @@ serve(async (req) => {
 
     // =================================================================
     // PART 2: Fetch Transactions (for direct payments not via subscriptions)
+    // Fetches ALL statuses, not just successful ones
     // =================================================================
     const params = new URLSearchParams({
       created_at_from: fromDate.toISOString(),
       created_at_to: toDate.toISOString(),
-      status: "successful",
       per_page: "100",
+      // Removed status: "successful" - now fetching ALL transactions
     });
 
     const txResponse = await fetch(
@@ -371,7 +408,11 @@ serve(async (req) => {
           order = orderByEmail;
         }
 
-        if (order) {
+        // Normalize transaction status for storage
+        const normalizedStatus = normalizeTransactionStatus(tx.status);
+        const transactionType = determineTransactionType(tx);
+        
+        if (order && tx.status === 'successful') {
           await processTransaction(supabase, order, tx);
           results.payments_matched++;
           results.details.push({
@@ -380,8 +421,8 @@ serve(async (req) => {
             order_number: order.order_number,
           });
         } else {
-          // Queue for review
-          await supabase.from("payment_reconcile_queue").insert({
+          // Queue for review - ALL transactions (including failed, declined, refunds)
+          await supabase.from("payment_reconcile_queue").upsert({
             bepaid_uid: tx.uid,
             tracking_id: tx.tracking_id,
             amount: tx.amount / 100,
@@ -389,8 +430,12 @@ serve(async (req) => {
             customer_email: tx.customer?.email,
             raw_payload: tx,
             source: "transaction_fetch",
-            status: "pending",
-          });
+            status: tx.status === 'successful' ? "pending" : "error",
+            status_normalized: normalizedStatus,
+            transaction_type: transactionType,
+            paid_at: tx.paid_at || tx.created_at,
+            last_error: tx.status !== 'successful' ? `Transaction status: ${tx.status}` : null,
+          }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
           results.queued_for_review++;
         }
       }

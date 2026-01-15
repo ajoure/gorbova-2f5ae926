@@ -160,6 +160,10 @@ export default function AdminPayments() {
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
           const isRefundType = ['Возврат средств', 'refund'].includes(p.transaction_type || '');
           if (!isSuccessful && !isRefundType) return false;
+        } else if (filters.status === "failed") {
+          // Show all failed statuses (failed, declined, expired, error, canceled)
+          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'canceled'];
+          if (!failedStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status !== p.status_normalized) {
           return false;
         }

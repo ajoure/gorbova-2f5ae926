@@ -315,16 +315,17 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string }> = {
-      successful: { variant: "default", label: "Успешно" },
-      succeeded: { variant: "default", label: "Успешно" },
-      pending: { variant: "outline", label: "Ожидает" },
-      processing: { variant: "outline", label: "Обработка" },
-      failed: { variant: "destructive", label: "Ошибка" },
-      refunded: { variant: "secondary", label: "Возврат" },
+    const variants: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string; className?: string }> = {
+      successful: { variant: "default", label: "Успешно", className: "bg-green-500 hover:bg-green-600" },
+      succeeded: { variant: "default", label: "Успешно", className: "bg-green-500 hover:bg-green-600" },
+      pending: { variant: "outline", label: "Ожидает", className: "border-yellow-500 text-yellow-600" },
+      processing: { variant: "outline", label: "Обработка", className: "border-yellow-500 text-yellow-600" },
+      failed: { variant: "destructive", label: "Ошибка", className: "bg-red-500 hover:bg-red-600" },
+      refunded: { variant: "secondary", label: "Возврат", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
+      unknown: { variant: "outline", label: "Неизвестно", className: "border-gray-400 text-gray-500" },
     };
-    const config = variants[status] || { variant: "outline" as const, label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    const config = variants[status] || { variant: "outline" as const, label: status, className: "" };
+    return <Badge variant={config.variant} className={config.className}>{config.label}</Badge>;
   };
   
   const getSourceBadge = (source: PaymentSource) => {
