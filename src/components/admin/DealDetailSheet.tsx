@@ -55,6 +55,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
+import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -112,6 +113,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
+  const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
   
   // Fetch bePaid docs mutation
   const fetchBepaidDocsMutation = useMutation({
@@ -810,8 +812,18 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     })()}
                   </div>
                 ) : (
-                  <div className="text-center py-4 text-muted-foreground text-sm">
-                    Подписка не создана
+                  <div className="text-center py-4 space-y-3">
+                    <p className="text-muted-foreground text-sm">Подписка не создана</p>
+                    {deal.status === "paid" && deal.user_id && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGrantAccessDialogOpen(true)}
+                      >
+                        <Shield className="w-4 h-4 mr-2" />
+                        Выдать доступ
+                      </Button>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -926,6 +938,27 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           queryClient.invalidateQueries({ queryKey: ["deal-payments", deal.id] });
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
           setLinkPaymentDialogOpen(false);
+        }}
+      />
+      
+      {/* Grant Access Dialog */}
+      <GrantAccessFromDealDialog
+        open={grantAccessDialogOpen}
+        onOpenChange={setGrantAccessDialogOpen}
+        deal={{
+          id: deal.id,
+          order_number: deal.order_number,
+          user_id: deal.user_id,
+          profile_id: deal.profile_id,
+          product_id: deal.product_id,
+          tariff_id: deal.tariff_id,
+          status: deal.status,
+        }}
+        tariff={tariff ? { access_days: tariff.access_days, name: tariff.name } : null}
+        existingSubscription={subscription}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["deal-subscription", deal.id] });
+          queryClient.invalidateQueries({ queryKey: ["deal-audit", deal.id] });
         }}
       />
     </Sheet>
