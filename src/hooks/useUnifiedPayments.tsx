@@ -132,7 +132,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         .from("payments_v2")
         .select(`
           id, provider_payment_id, order_id, user_id, profile_id,
-          amount, currency, status, provider,
+          amount, currency, status, transaction_type, provider,
           card_last4, card_brand, paid_at, created_at,
           receipt_url, refunds, refunded_amount, provider_response, meta,
           orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
@@ -218,7 +218,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           uid: pUid || p.id,
           source: 'processed' as PaymentSource,
           rawSource: 'payments_v2' as const,
-          transaction_type: 'payment',
+          transaction_type: (p as any).transaction_type || 'payment',
           status_normalized: p.status || 'pending',
           amount: p.amount,
           currency: p.currency,

@@ -3093,6 +3093,7 @@ export type Database = {
           refunded_at: string | null
           refunds: Json | null
           status: Database["public"]["Enums"]["payment_status"]
+          transaction_type: string | null
           updated_at: string
           user_id: string | null
         }
@@ -3120,6 +3121,7 @@ export type Database = {
           refunded_at?: string | null
           refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
+          transaction_type?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -3147,6 +3149,7 @@ export type Database = {
           refunded_at?: string | null
           refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
+          transaction_type?: string | null
           updated_at?: string
           user_id?: string | null
         }
