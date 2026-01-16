@@ -72,7 +72,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   LifeBuoy,
 };
 
-// Default menu configuration
+// Default menu configuration - Reorganized structure
 export const DEFAULT_MENU: MenuSettings = [
   {
     id: "crm",
@@ -80,32 +80,37 @@ export const DEFAULT_MENU: MenuSettings = [
     order: 0,
     items: [
       { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
-      { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 1, permission: "users.view" },
-      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 2, permission: "entitlements.view" },
-      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 3, permission: "users.view", badge: "duplicates" },
-      { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 4, permission: "entitlements.view" },
-      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 5, permission: "entitlements.view" },
-      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 6, permission: "users.view" },
-      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 7, permission: "users.view" },
-      { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 8, permission: "entitlements.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 9, permission: "entitlements.view" },
-      { id: "refunds", label: "Возвраты", path: "/admin/refunds-v2", icon: "Undo2", order: 10, permission: "entitlements.view" },
+      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
+      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
+      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 3, permission: "entitlements.view" },
+      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 4, permission: "users.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 5, permission: "entitlements.view" },
+    ],
+  },
+  {
+    id: "communication",
+    label: "Общение",
+    order: 1,
+    items: [
+      { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 0, permission: "users.view" },
+      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 1, permission: "users.view" },
     ],
   },
   {
     id: "service",
     label: "Служебные",
-    order: 1,
+    order: 2,
     items: [
-      { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 0, permission: "roles.view" },
-      { id: "content", label: "Контент", path: "/admin/content", icon: "FileText", order: 1, permission: "content.view" },
-      { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 2, permission: "content.view" },
-      { id: "audit", label: "Аудит-лог", path: "/admin/audit", icon: "ScrollText", order: 3, permission: "audit.view" },
-      { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 4, permission: "users.view" },
-      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 5, permission: "roles.view" },
-      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 6, permission: "roles.view" },
-      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 7 },
-      { id: "system-audit", label: "Аудит системы", path: "/admin/system/audit", icon: "Wrench", order: 8 },
+      { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 0, permission: "entitlements.view" },
+      { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 1, permission: "entitlements.view" },
+      { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 2, permission: "roles.view" },
+      { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 3, permission: "content.view" },
+      { id: "audit", label: "Аудит-лог", path: "/admin/audit", icon: "ScrollText", order: 4, permission: "audit.view" },
+      { id: "system-audit", label: "Аудит системы", path: "/admin/system/audit", icon: "Wrench", order: 5 },
+      { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
+      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 7, permission: "roles.view" },
+      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 8, permission: "roles.view" },
+      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 9 },
     ],
   },
 ];
