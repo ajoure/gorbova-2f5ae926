@@ -426,6 +426,13 @@ serve(async (req) => {
       working_endpoint: null as string | null,
       details: [] as any[],
       dry_run_items: [] as any[],
+      // NEW: Manual invoice tracking
+      manual_invoices_added: 0,
+      manual_invoices_linked: 0,
+      refunds_linked: 0,
+      refunds_orphan: 0,
+      missing_parent: 0,
+      upsert_errors: [] as any[],
     };
 
     // ==================================================================
@@ -1073,8 +1080,12 @@ serve(async (req) => {
           }
 
           // EXECUTE MODE
-          // Process ALL transactions with orderId (not just successful)
+          // Process ALL transactions - with orderId AND manual invoices (without orderId)
           // This ensures failed, refunded, and other statuses are also recorded
+          
+          let paymentData: any = null;
+          let linkedOrder: any = null;
+          
           if (parsed.orderId) {
             // Check if order exists
             const { data: order } = await supabase
@@ -1084,8 +1095,9 @@ serve(async (req) => {
               .maybeSingle();
 
             if (order) {
+              linkedOrder = order;
               // Create payment record with ACTUAL status (not hardcoded "successful")
-              const paymentData: any = {
+              paymentData = {
                 order_id: order.id,
                 user_id: order.user_id || order.profile_id,
                 profile_id: order.profile_id,
@@ -1099,6 +1111,7 @@ serve(async (req) => {
                 paid_at: tx.paid_at || tx.created_at,
                 card_last4: tx.credit_card?.last_4,
                 card_brand: tx.credit_card?.brand,
+                receipt_url: tx.receipt_url,
                 meta: {
                   transaction_type: txType,
                   tracking_id: tx.tracking_id,
@@ -1107,75 +1120,145 @@ serve(async (req) => {
                   original_status: tx.status,  // Store original bePaid status for reference
                 },
               };
-
-              // If refund, link to parent payment AND inherit profile_id
-              if (isRefund) {
-                let parentUid = tx.parent_uid || tx.parent_transaction_uid;
-                
-                // If parent_uid missing, try to fetch from bePaid API
-                if (!parentUid && uid) {
-                  try {
-                    const txDetailsResp = await fetch(
-                      `https://gateway.bepaid.by/transactions/${uid}`,
-                      { 
-                        headers: { 
-                          Authorization: `Basic ${auth}`, 
-                          Accept: "application/json" 
-                        } 
-                      }
-                    );
-                    if (txDetailsResp.ok) {
-                      const txDetails = await txDetailsResp.json();
-                      parentUid = txDetails.transaction?.parent_uid || txDetails.parent_uid;
-                      console.log(`[bepaid-fetch] Got parent_uid from API for refund ${uid}: ${parentUid}`);
-                    }
-                  } catch (e) {
-                    console.error(`[bepaid-fetch] Failed to get parent_uid for ${uid}:`, e);
-                  }
-                }
-                
-                if (parentUid) {
-                  const { data: parentPayment } = await supabase
-                    .from("payments_v2")
-                    .select("id, profile_id, user_id, order_id")
-                    .eq("provider_payment_id", parentUid)
-                    .maybeSingle();
-
-                  if (parentPayment) {
-                    paymentData.reference_payment_id = parentPayment.id;
-                    // INHERIT profile_id, user_id, order_id from parent
-                    paymentData.profile_id = parentPayment.profile_id;
-                    paymentData.user_id = parentPayment.user_id;
-                    if (!paymentData.order_id) {
-                      paymentData.order_id = parentPayment.order_id;
-                    }
-                    console.log(`[bepaid-fetch] Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}`);
-                    results.refunds_linked = (results.refunds_linked || 0) + 1;
-                  } else {
-                    results.missing_parent = (results.missing_parent || 0) + 1;
-                  }
-                }
+            }
+          }
+          
+          // NEW: Save transactions WITHOUT order_id as manual invoices
+          // This fixes the "Found 7, Added 0" bug for manual invoice payments
+          if (!paymentData && !parsed.orderId) {
+            console.log(`[bepaid-fetch] Processing manual invoice: UID=${uid}, tracking=${tx.tracking_id}, email=${tx.customer?.email}`);
+            
+            paymentData = {
+              order_id: null,  // No linked order
+              user_id: null,
+              profile_id: null,
+              amount: isRefund ? -(tx.amount / 100) : (tx.amount / 100),
+              currency: tx.currency || "BYN",
+              status: normalizedStatus,
+              transaction_type: txType,
+              provider: "bepaid",
+              provider_payment_id: uid,
+              provider_response: tx,
+              paid_at: tx.paid_at || tx.created_at,
+              card_last4: tx.credit_card?.last_4,
+              card_brand: tx.credit_card?.brand,
+              receipt_url: tx.receipt_url,
+              meta: {
+                transaction_type: txType,
+                tracking_id: tx.tracking_id,
+                parent_uid: tx.parent_uid,
+                source: "manual_invoice",
+                original_status: tx.status,
+                customer_email: tx.customer?.email,
+                customer_name: tx.customer?.first_name || tx.customer?.last_name 
+                  ? `${tx.customer?.first_name || ''} ${tx.customer?.last_name || ''}`.trim()
+                  : tx.credit_card?.holder,
+              },
+            };
+            
+            // Try to find profile by customer email
+            if (tx.customer?.email) {
+              const { data: profile } = await supabase
+                .from("profiles")
+                .select("id, user_id")
+                .eq("email", tx.customer.email)
+                .maybeSingle();
+              
+              if (profile) {
+                paymentData.profile_id = profile.id;
+                paymentData.user_id = profile.user_id;
+                console.log(`[bepaid-fetch] Manual invoice linked to profile by email: ${profile.id}`);
+                results.manual_invoices_linked = (results.manual_invoices_linked || 0) + 1;
               }
+            }
+            
+            results.manual_invoices_added = (results.manual_invoices_added || 0) + 1;
+          }
 
-              // Upsert payment
-              const { error: upsertError } = await supabase
+          // Process refunds - link to parent payment AND inherit profile_id
+          if (paymentData && isRefund) {
+            let parentUid = tx.parent_uid || tx.parent_transaction_uid;
+            
+            // If parent_uid missing, try to fetch from bePaid API
+            if (!parentUid && uid) {
+              try {
+                const txDetailsResp = await fetch(
+                  `https://gateway.bepaid.by/transactions/${uid}`,
+                  { 
+                    headers: { 
+                      Authorization: `Basic ${auth}`, 
+                      Accept: "application/json" 
+                    } 
+                  }
+                );
+                if (txDetailsResp.ok) {
+                  const txDetails = await txDetailsResp.json();
+                  parentUid = txDetails.transaction?.parent_uid || txDetails.parent_uid;
+                  console.log(`[bepaid-fetch] Got parent_uid from API for refund ${uid}: ${parentUid}`);
+                }
+              } catch (e) {
+                console.error(`[bepaid-fetch] Failed to get parent_uid for ${uid}:`, e);
+              }
+            }
+            
+            if (parentUid) {
+              const { data: parentPayment } = await supabase
                 .from("payments_v2")
-                .upsert(paymentData, { 
-                  onConflict: "provider_payment_id",
-                  ignoreDuplicates: false,
-                });
+                .select("id, profile_id, user_id, order_id")
+                .eq("provider_payment_id", parentUid)
+                .maybeSingle();
 
-              if (upsertError) {
-                console.error(`[bepaid-fetch] Payment upsert error:`, upsertError);
-                results.errors++;
+              if (parentPayment) {
+                paymentData.reference_payment_id = parentPayment.id;
+                // INHERIT profile_id, user_id, order_id from parent
+                paymentData.profile_id = parentPayment.profile_id;
+                paymentData.user_id = parentPayment.user_id;
+                if (!paymentData.order_id) {
+                  paymentData.order_id = parentPayment.order_id;
+                }
+                console.log(`[bepaid-fetch] Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}, order: ${parentPayment.order_id}`);
+                results.refunds_linked = (results.refunds_linked || 0) + 1;
               } else {
-                results.upserted++;
+                console.log(`[bepaid-fetch] Refund ${uid} parent not found in payments_v2: ${parentUid}`);
+                results.missing_parent = (results.missing_parent || 0) + 1;
               }
-              continue;
+            } else {
+              console.log(`[bepaid-fetch] Refund ${uid} has no parent_uid`);
+              results.refunds_orphan = (results.refunds_orphan || 0) + 1;
             }
           }
 
-          // Queue for manual review if not already there
+          // Upsert payment if we have data
+          if (paymentData) {
+            const { error: upsertError } = await supabase
+              .from("payments_v2")
+              .upsert(paymentData, { 
+                onConflict: "provider_payment_id",
+                ignoreDuplicates: false,
+              });
+
+            if (upsertError) {
+              console.error(`[bepaid-fetch] Payment upsert error for UID ${uid}:`, JSON.stringify({
+                error: upsertError,
+                paymentData: {
+                  uid,
+                  amount: paymentData.amount,
+                  status: paymentData.status,
+                  tracking_id: tx.tracking_id,
+                  order_id: paymentData.order_id,
+                  profile_id: paymentData.profile_id,
+                }
+              }));
+              results.errors++;
+              results.upsert_errors = results.upsert_errors || [];
+              results.upsert_errors.push({ uid, error: upsertError.message });
+            } else {
+              results.upserted++;
+            }
+            continue;
+          }
+
+          // Queue for manual review if not already there (fallback for transactions we couldn't process)
           if (!existingQueueUids.has(uid)) {
             const queueData: any = {
               provider: "bepaid",
@@ -1292,7 +1375,11 @@ serve(async (req) => {
       reports_api_endpoint: results.reports_api_endpoint || null,
       fallback_used: results.fallback_mode || false,
       refunds_linked: results.refunds_linked || 0,
+      refunds_orphan: results.refunds_orphan || 0,
       missing_parent_count: results.missing_parent || 0,
+      manual_invoices_added: results.manual_invoices_added || 0,
+      manual_invoices_linked: results.manual_invoices_linked || 0,
+      upsert_errors_count: (results.upsert_errors || []).length,
     };
 
     console.log(`[bepaid-fetch] Completed in ${Date.now() - startTime}ms`);
