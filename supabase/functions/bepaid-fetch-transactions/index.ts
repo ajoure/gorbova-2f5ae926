@@ -141,12 +141,17 @@ async function probeEndpoints(
   };
 
   // Endpoints ordered by likelihood of working (based on bepaid-raw-transactions)
+  // Extended with Reports API endpoints as fallback
   const candidates = [
     { name: "gateway:/transactions", url: buildUrl("https://gateway.bepaid.by/transactions", false) },
     { name: "gateway:/transactions?shop_id", url: buildUrl("https://gateway.bepaid.by/transactions", true) },
     { name: "gateway:/api/v1/transactions", url: buildUrl("https://gateway.bepaid.by/api/v1/transactions", false) },
     { name: "api:/transactions", url: buildUrl("https://api.bepaid.by/transactions", false) },
     { name: "api:/transactions?shop_id", url: buildUrl("https://api.bepaid.by/transactions", true) },
+    // Reports API endpoints (alternative for some accounts)
+    { name: "api:/reports/transactions", url: buildUrl("https://api.bepaid.by/reports/transactions", false) },
+    { name: "gateway:/reports/transactions", url: buildUrl("https://gateway.bepaid.by/reports/transactions", false) },
+    { name: "checkout:/transactions", url: buildUrl("https://checkout.bepaid.by/transactions", false) },
   ];
 
   const probeResults: ProbeResult[] = [];
@@ -292,9 +297,15 @@ serve(async (req) => {
     // Check for explicit dates (Discovery mode)
     if (fromDateExplicit && toDateExplicit) {
       // Explicit dates from request — Discovery mode
+      // Extend range by ±6 hours to handle timezone differences (+03:00 etc)
       fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
+      fromDate.setHours(fromDate.getHours() - 6);
+      
       toDate = new Date(`${toDateExplicit}T23:59:59Z`);
+      toDate.setHours(toDate.getHours() + 6);
+      
       console.log(`[bepaid-fetch] DISCOVERY mode: explicit dates ${fromDateExplicit} to ${toDateExplicit}`);
+      console.log(`[bepaid-fetch] Extended range (±6h TZ buffer): ${fromDate.toISOString()} to ${toDate.toISOString()}`);
     } else if (fromDateExplicit) {
       // Only fromDate provided
       fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
@@ -567,34 +578,134 @@ serve(async (req) => {
     });
 
     if (!workingEndpoint) {
-      console.error(`[bepaid-fetch] No working endpoint found!`);
-      results.stopped_reason = "no_working_endpoint";
+      console.log(`[bepaid-fetch] No bulk endpoint found, trying UID-based fallback...`);
       
-      await updateSyncLog(supabase, syncLogId, {
-        status: "failed",
-        error_message: "No working bePaid endpoint found. All probed endpoints failed.",
-        completed_at: new Date().toISOString(),
-        meta: { probe_results: probeResults },
-      });
+      // FALLBACK: Try to recover transactions from payment_reconcile_queue by UID
+      const { data: queueItems } = await supabase
+        .from("payment_reconcile_queue")
+        .select("bepaid_uid")
+        .gte("created_at_bepaid", fromDate.toISOString())
+        .lte("created_at_bepaid", toDate.toISOString())
+        .eq("status", "pending")
+        .limit(100);
+      
+      if (queueItems && queueItems.length > 0) {
+        console.log(`[bepaid-fetch] Fallback: Found ${queueItems.length} UIDs in queue to recover`);
+        results.fallback_mode = true;
+        results.fallback_source = "payment_reconcile_queue";
+        
+        for (const item of queueItems) {
+          if (Date.now() - startTime > config.sync_max_runtime_ms) {
+            results.stopped_reason = "max_runtime_reached";
+            break;
+          }
+          
+          try {
+            const uidResponse = await fetch(
+              `https://gateway.bepaid.by/transactions/${item.bepaid_uid}`,
+              {
+                headers: {
+                  Authorization: `Basic ${auth}`,
+                  Accept: "application/json",
+                },
+              }
+            );
+            
+            if (uidResponse.ok) {
+              const txData = await uidResponse.json();
+              const tx = txData.transaction || txData;
+              
+              if (tx && tx.uid) {
+                results.transactions_fetched++;
+                const { type: txType, isRefund } = determineTransactionType(tx);
+                const normalizedStatus = normalizeTransactionStatus(tx.status);
+                const parsed = parseTrackingId(tx.tracking_id);
+                
+                if (parsed.orderId) {
+                  const { data: order } = await supabase
+                    .from("orders_v2")
+                    .select("id, profile_id, user_id")
+                    .eq("id", parsed.orderId)
+                    .maybeSingle();
+                  
+                  if (order) {
+                    const paymentData = {
+                      order_id: order.id,
+                      user_id: order.user_id || order.profile_id,
+                      profile_id: order.profile_id,
+                      amount: isRefund ? -(tx.amount / 100) : (tx.amount / 100),
+                      currency: tx.currency || "BYN",
+                      status: normalizedStatus,
+                      transaction_type: txType,
+                      provider: "bepaid",
+                      provider_payment_id: tx.uid,
+                      provider_response: tx,
+                      paid_at: tx.paid_at || tx.created_at,
+                      card_last4: tx.credit_card?.last_4,
+                      card_brand: tx.credit_card?.brand,
+                      meta: {
+                        transaction_type: txType,
+                        source: "uid_fallback",
+                        tracking_id: tx.tracking_id,
+                      },
+                    };
+                    
+                    const { error: upsertError } = await supabase
+                      .from("payments_v2")
+                      .upsert(paymentData, { onConflict: "provider_payment_id" });
+                    
+                    if (!upsertError) {
+                      results.recovered = (results.recovered || 0) + 1;
+                      
+                      // Update queue item status
+                      await supabase
+                        .from("payment_reconcile_queue")
+                        .update({ status: "processed" })
+                        .eq("bepaid_uid", item.bepaid_uid);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (uidErr) {
+            console.error(`[bepaid-fetch] Fallback UID fetch error:`, uidErr);
+          }
+        }
+        
+        console.log(`[bepaid-fetch] Fallback recovered ${results.recovered || 0} transactions`);
+      }
+      
+      if (!results.recovered) {
+        console.error(`[bepaid-fetch] No working endpoint found and no fallback data!`);
+        results.stopped_reason = "no_working_endpoint";
+        
+        await updateSyncLog(supabase, syncLogId, {
+          status: "failed",
+          error_message: "No working bePaid endpoint found. All probed endpoints failed.",
+          completed_at: new Date().toISOString(),
+          meta: { probe_results: probeResults, fallback_attempted: true },
+        });
 
-      // Audit log with failure reason
-      await supabase.from("audit_logs").insert({
-        actor_user_id: null,
-        actor_type: "system",
-        actor_label: "bepaid-fetch-transactions",
-        action: "bepaid_fetch_transactions_cron",
-        meta: {
-          mode,
-          syncMode: 'BULK',
-          stopped_reason: "no_working_endpoint",
-          probe_results: probeResults,
-          duration_ms: Date.now() - startTime,
-        },
-      });
+        // Audit log with failure reason
+        await supabase.from("audit_logs").insert({
+          actor_user_id: null,
+          actor_type: "system",
+          actor_label: "bepaid-fetch-transactions",
+          action: "bepaid_fetch_transactions_cron",
+          meta: {
+            mode,
+            syncMode: 'BULK',
+            stopped_reason: "no_working_endpoint",
+            probe_results: probeResults,
+            fallback_attempted: true,
+            duration_ms: Date.now() - startTime,
+          },
+        });
 
-      return new Response(JSON.stringify(results), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+        return new Response(JSON.stringify(results), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     // Step 2: Fetch transactions from working endpoint
@@ -733,7 +844,9 @@ serve(async (req) => {
           }
 
           // EXECUTE MODE
-          if (normalizedStatus === 'successful' && parsed.orderId) {
+          // Process ALL transactions with orderId (not just successful)
+          // This ensures failed, refunded, and other statuses are also recorded
+          if (parsed.orderId) {
             // Check if order exists
             const { data: order } = await supabase
               .from("orders_v2")
@@ -742,14 +855,15 @@ serve(async (req) => {
               .maybeSingle();
 
             if (order) {
-              // Create payment record
+              // Create payment record with ACTUAL status (not hardcoded "successful")
               const paymentData: any = {
                 order_id: order.id,
                 user_id: order.user_id || order.profile_id,
                 profile_id: order.profile_id,
                 amount: isRefund ? -(tx.amount / 100) : (tx.amount / 100),
                 currency: tx.currency || "BYN",
-                status: "successful",
+                status: normalizedStatus,  // FIXED: Use actual status (successful, failed, refunded, etc)
+                transaction_type: txType,   // payment, refund, void, etc
                 provider: "bepaid",
                 provider_payment_id: uid,
                 provider_response: tx,
@@ -761,6 +875,7 @@ serve(async (req) => {
                   tracking_id: tx.tracking_id,
                   parent_uid: tx.parent_uid,
                   source: "bulk_sync",
+                  original_status: tx.status,  // Store original bePaid status for reference
                 },
               };
 
