@@ -338,6 +338,9 @@ export function useBepaidQueueActions() {
       if (!existingPayment) {
         // Create payment only if it doesn't exist
         // Use paid_at from queue item (actual payment date), not created_at
+        // Extract product name from description
+        const description = additionalData.description || plan.title || "";
+        
         const { error: paymentError } = await supabase
           .from("payments_v2")
           .insert([{
@@ -352,6 +355,7 @@ export function useBepaidQueueActions() {
             card_brand: queueItem.card_brand || card.brand || null,
             paid_at: actualPaymentDate,
             receipt_url: queueItem.receipt_url || null,
+            product_name_raw: description,
             provider_response: payload,
           }]);
 

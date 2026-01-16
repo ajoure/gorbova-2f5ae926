@@ -57,7 +57,8 @@ export default function AdminPaymentsV2() {
         .from("payments_v2")
         .select(`
           *,
-          orders_v2(id, order_number, products_v2(name))
+          orders_v2(id, order_number, products_v2(name)),
+          product_name_raw
         `)
         .order("created_at", { ascending: false })
         .limit(100);
@@ -99,7 +100,8 @@ export default function AdminPaymentsV2() {
     return (
       order?.order_number?.toLowerCase().includes(query) ||
       payment.provider_payment_id?.toLowerCase().includes(query) ||
-      payment.card_last4?.includes(query)
+      payment.card_last4?.includes(query) ||
+      (payment as any).product_name_raw?.toLowerCase().includes(query)
     );
   });
 
@@ -172,7 +174,7 @@ export default function AdminPaymentsV2() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Поиск по номеру заказа, ID платежа..."
+              placeholder="Поиск по заказу, продукту, ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"
