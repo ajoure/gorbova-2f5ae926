@@ -445,12 +445,27 @@ Deno.serve(async (req) => {
           || transaction.response?.message 
           || null;
         
+        // Map bePaid transaction type to our transaction_type
+        const mapBepaidType = (txType: string | undefined, hasRefund: boolean): string => {
+          const t = (txType || '').toLowerCase();
+          if (t === 'refund' || hasRefund) return 'refund';
+          if (t === 'chargeback') return 'chargeback';
+          if (t === 'void' || t === 'voided') return 'void';
+          if (t === 'authorization' || t === 'auth') return 'authorization';
+          return 'payment';
+        };
+        
+        const hasRefundData = !!transaction.refund || 
+                              !!transaction.refund_reason || 
+                              transaction.type === 'refund';
+        
         const upsertData: Record<string, any> = {
           provider: 'bepaid',
           provider_payment_id: uid,
           amount: transaction.amount ? Number(transaction.amount) / 100 : null,
           currency: transaction.currency || 'BYN',
           status: mapBepaidStatus(transaction.status),
+          transaction_type: mapBepaidType(transaction.type, hasRefundData),
           paid_at: newPaidAt,
           provider_response: fetchResult.data,
           card_last4: transaction.credit_card?.last_4,
@@ -459,6 +474,7 @@ Deno.serve(async (req) => {
           meta: {
             gateway_message: gatewayMessage,
             original_bepaid_status: transaction.status,
+            original_bepaid_type: transaction.type,
             source: 'uid_resync',
           },
         };
@@ -470,6 +486,7 @@ Deno.serve(async (req) => {
             .from('payments_v2')
             .update({
               status: upsertData.status,
+              transaction_type: upsertData.transaction_type,
               paid_at: upsertData.paid_at || existingPayment.paid_at,
               provider_response: upsertData.provider_response,
               card_last4: upsertData.card_last4 || undefined,
