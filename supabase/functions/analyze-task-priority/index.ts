@@ -4,25 +4,17 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // Security: This function requires JWT verification at the platform level (verify_jwt = true in config.toml)
 // The manual auth validation below provides defense-in-depth and detailed error handling
 
-// Список доступных сфер (должен соответствовать src/constants/spheres.ts)
+// Список сфер из Колеса Баланса (синхронизирован с src/constants/spheres.ts)
 const AVAILABLE_SPHERES = [
   { id: "none", name: "Без категории" },
-  { id: "work", name: "Работа" },
-  { id: "business", name: "Бизнес" },
-  { id: "finance", name: "Финансы" },
-  { id: "learning", name: "Обучение" },
-  { id: "self-development", name: "Саморазвитие" },
   { id: "health", name: "Здоровье и спорт" },
-  { id: "family", name: "Семья и дети" },
-  { id: "relationships", name: "Отношения" },
-  { id: "personal", name: "Личное" },
-  { id: "rest", name: "Отдых и восстановление" },
-  { id: "hobbies", name: "Хобби и развлечения" },
+  { id: "money", name: "Деньги" },
+  { id: "career", name: "Работа, карьера и бизнес" },
+  { id: "family", name: "Любовь, семья и дети" },
   { id: "friends", name: "Окружение и друзья" },
-  { id: "goals", name: "Цели" },
-  { id: "planning", name: "Планирование" },
-  { id: "strategy", name: "Стратегия" },
-  { id: "projects", name: "Проекты" },
+  { id: "growth", name: "Личностный рост" },
+  { id: "hobbies", name: "Хобби и развлечения" },
+  { id: "spirituality", name: "Духовность" },
 ];
 
 // Use permissive CORS for Lovable preview environments

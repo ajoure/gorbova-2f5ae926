@@ -1,5 +1,6 @@
 // Централизованный справочник сфер (категорий)
 // Используется во всех частях системы: задачи, колесо баланса, фильтры
+// Синхронизированы с секторами Колеса Баланса
 
 export interface Sphere {
   id: string;
@@ -8,35 +9,20 @@ export interface Sphere {
   group: string;
 }
 
+// Сферы из Колеса Баланса
 export const SPHERES: Sphere[] = [
   // Служебная
   { id: "none", name: "Без категории", color: "#6b7280", group: "Служебная" },
   
-  // Работа и деньги
-  { id: "work", name: "Работа", color: "#3b82f6", group: "Работа и деньги" },
-  { id: "business", name: "Бизнес", color: "#2563eb", group: "Работа и деньги" },
-  { id: "finance", name: "Финансы", color: "#10b981", group: "Работа и деньги" },
-  
-  // Развитие
-  { id: "learning", name: "Обучение", color: "#8b5cf6", group: "Развитие" },
-  { id: "self-development", name: "Саморазвитие", color: "#a855f7", group: "Развитие" },
-  
-  // Личная жизнь
-  { id: "health", name: "Здоровье и спорт", color: "#ef4444", group: "Личная жизнь" },
-  { id: "family", name: "Семья и дети", color: "#f97316", group: "Личная жизнь" },
-  { id: "relationships", name: "Отношения", color: "#ec4899", group: "Личная жизнь" },
-  { id: "personal", name: "Личное", color: "#f59e0b", group: "Личная жизнь" },
-  { id: "rest", name: "Отдых и восстановление", color: "#14b8a6", group: "Личная жизнь" },
-  { id: "hobbies", name: "Хобби и развлечения", color: "#06b6d4", group: "Личная жизнь" },
-  
-  // Социальное
-  { id: "friends", name: "Окружение и друзья", color: "#f472b6", group: "Социальное" },
-  
-  // Стратегия и цели
-  { id: "goals", name: "Цели", color: "#eab308", group: "Стратегия и цели" },
-  { id: "planning", name: "Планирование", color: "#84cc16", group: "Стратегия и цели" },
-  { id: "strategy", name: "Стратегия", color: "#22c55e", group: "Стратегия и цели" },
-  { id: "projects", name: "Проекты", color: "#0ea5e9", group: "Стратегия и цели" },
+  // Колесо баланса - сферы
+  { id: "health", name: "Здоровье и спорт", color: "#3b82f6", group: "Колесо баланса" },
+  { id: "money", name: "Деньги", color: "#8b5cf6", group: "Колесо баланса" },
+  { id: "career", name: "Работа, карьера и бизнес", color: "#ec4899", group: "Колесо баланса" },
+  { id: "family", name: "Любовь, семья и дети", color: "#ef4444", group: "Колесо баланса" },
+  { id: "friends", name: "Окружение и друзья", color: "#f97316", group: "Колесо баланса" },
+  { id: "growth", name: "Личностный рост", color: "#eab308", group: "Колесо баланса" },
+  { id: "hobbies", name: "Хобби и развлечения", color: "#22c55e", group: "Колесо баланса" },
+  { id: "spirituality", name: "Духовность", color: "#14b8a6", group: "Колесо баланса" },
 ];
 
 // Получить сферу по ID
@@ -67,14 +53,26 @@ export function getGroupedSpheres(): { group: string; spheres: Sphere[] }[] {
   return groups;
 }
 
-// Маппинг сфер к секторам колеса баланса
-export const WHEEL_SPHERE_MAPPING: Record<string, string[]> = {
-  health: ["health"],
-  money: ["finance", "business"],
-  career: ["work", "business", "projects"],
-  family: ["family", "relationships"],
-  friends: ["friends"],
-  growth: ["self-development", "learning"],
-  hobbies: ["hobbies", "rest"],
-  spirituality: ["personal", "goals", "strategy"],
+// Маппинг ключей колеса баланса к ID сфер
+export const WHEEL_KEY_TO_SPHERE: Record<string, string> = {
+  audit: "health",        // Здоровье и спорт
+  awareness: "money",     // Деньги
+  intention: "career",    // Работа, карьера и бизнес
+  goal: "family",         // Любовь, семья и дети
+  task: "friends",        // Окружение и друзья
+  priority: "growth",     // Личностный рост
+  reflection: "hobbies",  // Хобби и развлечения
+  integration: "spirituality", // Духовность
+};
+
+// Обратный маппинг: ID сферы -> ключ колеса
+export const SPHERE_TO_WHEEL_KEY: Record<string, string> = {
+  health: "audit",
+  money: "awareness",
+  career: "intention",
+  family: "goal",
+  friends: "task",
+  growth: "priority",
+  hobbies: "reflection",
+  spirituality: "integration",
 };
