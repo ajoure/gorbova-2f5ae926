@@ -7,7 +7,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,10 +42,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Shield, UserPlus, Plus, Trash2, Search } from "lucide-react";
+import { Loader2, UserPlus, Plus, Search, LayoutGrid, List } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { AddEmployeeDialog } from "@/components/admin/AddEmployeeDialog";
+import { RoleCard } from "@/components/admin/RoleCard";
+import { RolePermissionEditor } from "@/components/admin/RolePermissionEditor";
+import { RoleTemplateSelector } from "@/components/admin/RoleTemplateSelector";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
 
@@ -58,6 +60,7 @@ const getRoleDisplayName = (code: string) => {
   const displayNames: Record<string, string> = {
     super_admin: "Владелец",
     admin: "Администратор",
+    admin_gost: "Администратор-гость",
     editor: "Редактор",
     support: "Поддержка",
     staff: "Сотрудник",
@@ -72,14 +75,20 @@ export default function AdminRoles() {
   const { hasPermission, isSuperAdmin } = usePermissions();
   const { user: currentUser } = useAuth();
 
+  // View mode for roles tab
+  const [rolesViewMode, setRolesViewMode] = useState<"cards" | "table">("cards");
+
   // Staff search
   const [staffSearch, setStaffSearch] = useState("");
 
-  // Permission search in dialog
-  const [permissionSearch, setPermissionSearch] = useState("");
+  // New permission editor
+  const [editingRoleForEditor, setEditingRoleForEditor] = useState<{
+    id: string;
+    name: string;
+    code: string;
+    permissions: string[];
+  } | null>(null);
 
-  const [editingRole, setEditingRole] = useState<string | null>(null);
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
   const [assignDialog, setAssignDialog] = useState<{ open: boolean; userId: string; email: string }>({ open: false, userId: "", email: "" });
   const [selectedRole, setSelectedRole] = useState("");
 
@@ -91,10 +100,13 @@ export default function AdminRoles() {
     roleName: string;
   }>({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
 
+  // Create role with template
   const [createRoleDialog, setCreateRoleDialog] = useState(false);
+  const [templateSelectorOpen, setTemplateSelectorOpen] = useState(false);
   const [newRoleCode, setNewRoleCode] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
+  const [newRolePermissions, setNewRolePermissions] = useState<string[]>([]);
 
   // Delete role dialog
   const [deleteRoleDialog, setDeleteRoleDialog] = useState<{
@@ -109,13 +121,25 @@ export default function AdminRoles() {
 
   // Get effective role for a user (single role model)
   const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
-    const priority = ["super_admin", "admin", "editor", "support", "staff"];
+    const priority = ["super_admin", "admin", "admin_gost", "editor", "support", "staff"];
     for (const code of priority) {
       const role = userRoles.find(r => r.code === code);
       if (role) return role;
     }
     return null;
   };
+
+  // Count users per role
+  const userCountByRole = useMemo(() => {
+    const counts: Record<string, number> = {};
+    users.forEach((u) => {
+      const effectiveRole = getEffectiveRole(u.roles);
+      if (effectiveRole) {
+        counts[effectiveRole.code] = (counts[effectiveRole.code] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [users]);
 
   // Staff = users with non-user roles
   const staffUsers = useMemo(() => {
@@ -134,44 +158,22 @@ export default function AdminRoles() {
     });
   }, [users, staffSearch]);
 
-  // Grouped permissions with search filter
-  const groupedPermissions = useMemo(() => {
-    const grouped = allPermissions.reduce((acc, perm) => {
-      const category = perm.category || "other";
-      if (!acc[category]) acc[category] = [];
-      acc[category].push(perm);
-      return acc;
-    }, {} as Record<string, typeof allPermissions>);
-    return grouped;
-  }, [allPermissions]);
-
-  const filteredGroupedPermissions = useMemo(() => {
-    if (!permissionSearch.trim()) return groupedPermissions;
-
-    const search = permissionSearch.toLowerCase();
-    return Object.entries(groupedPermissions).reduce((acc, [category, perms]) => {
-      const filtered = perms.filter(p =>
-        p.name.toLowerCase().includes(search) ||
-        p.code.toLowerCase().includes(search)
-      );
-      if (filtered.length > 0) acc[category] = filtered;
-      return acc;
-    }, {} as typeof groupedPermissions);
-  }, [groupedPermissions, permissionSearch]);
-
   const handleEditPermissions = (roleId: string) => {
     const role = roles.find((r) => r.id === roleId);
     if (role) {
-      setSelectedPermissions(role.permissions.map((p) => p.code));
-      setPermissionSearch("");
-      setEditingRole(roleId);
+      setEditingRoleForEditor({
+        id: role.id,
+        name: role.name,
+        code: role.code,
+        permissions: role.permissions.map((p) => p.code),
+      });
     }
   };
 
-  const handleSavePermissions = async () => {
-    if (editingRole) {
-      await setRolePermissions(editingRole, selectedPermissions);
-      setEditingRole(null);
+  const handleSavePermissions = async (permissionCodes: string[]) => {
+    if (editingRoleForEditor) {
+      await setRolePermissions(editingRoleForEditor.id, permissionCodes);
+      setEditingRoleForEditor(null);
     }
   };
 
@@ -227,12 +229,26 @@ export default function AdminRoles() {
 
   const handleCreateRole = async () => {
     if (newRoleCode && newRoleName) {
-      await createRole(newRoleCode, newRoleName, newRoleDescription);
+      const success = await createRole(newRoleCode, newRoleName, newRoleDescription);
+      if (success && newRolePermissions.length > 0) {
+        // Find the newly created role and set permissions
+        await refetch();
+        const newRole = roles.find(r => r.code === newRoleCode);
+        if (newRole) {
+          await setRolePermissions(newRole.id, newRolePermissions);
+        }
+      }
       setCreateRoleDialog(false);
       setNewRoleCode("");
       setNewRoleName("");
       setNewRoleDescription("");
+      setNewRolePermissions([]);
     }
+  };
+
+  const handleTemplateSelect = (permissionCodes: string[]) => {
+    setNewRolePermissions(permissionCodes);
+    setCreateRoleDialog(true);
   };
 
   const handleDeleteRole = async () => {
@@ -351,7 +367,7 @@ export default function AdminRoles() {
                             onValueChange={(newRole) => handleInlineRoleChange(user.user_id, effectiveRole.code, newRole)}
                             disabled={isCurrentUser}
                           >
-                            <SelectTrigger className="w-[180px]">
+                            <SelectTrigger className="w-[200px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -406,88 +422,128 @@ export default function AdminRoles() {
         </TabsContent>
 
         <TabsContent value="roles" className="mt-4">
-          <div className="flex justify-end mb-4">
+          {/* Header with view toggle and create button */}
+          <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-2">
+              <Button
+                variant={rolesViewMode === "cards" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setRolesViewMode("cards")}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </Button>
+              <Button
+                variant={rolesViewMode === "table" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setRolesViewMode("table")}
+              >
+                <List className="w-4 h-4" />
+              </Button>
+            </div>
             {hasPermission("roles.manage") && (
-              <Button onClick={() => setCreateRoleDialog(true)}>
+              <Button onClick={() => setTemplateSelectorOpen(true)}>
                 <Plus className="w-4 h-4 mr-2" />
                 Создать роль
               </Button>
             )}
           </div>
-          <GlassCard>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Роль</TableHead>
-                  <TableHead>Описание</TableHead>
-                  <TableHead>Права</TableHead>
-                  <TableHead className="w-[150px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {roles.map((role) => {
-                  const isSystemRole = SYSTEM_ROLES.includes(role.code);
-                  const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
-                  const canDelete = hasPermission("roles.manage") && !isSystemRole;
 
-                  return (
-                    <TableRow key={role.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Shield className="w-4 h-4 text-primary" />
-                          <span className="font-medium">{getRoleDisplayName(role.code)}</span>
+          {/* Cards view */}
+          {rolesViewMode === "cards" && (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {roles.map((role) => {
+                const isSystemRole = SYSTEM_ROLES.includes(role.code);
+                const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                const canDelete = hasPermission("roles.manage") && !isSystemRole;
+
+                return (
+                  <RoleCard
+                    key={role.id}
+                    role={role}
+                    userCount={userCountByRole[role.code] || 0}
+                    isSystemRole={isSystemRole}
+                    canEdit={canEdit}
+                    canDelete={canDelete}
+                    onEdit={() => handleEditPermissions(role.id)}
+                    onDelete={() => setDeleteRoleDialog({
+                      open: true,
+                      roleId: role.id,
+                      roleName: role.name,
+                      roleCode: role.code
+                    })}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Table view */}
+          {rolesViewMode === "table" && (
+            <GlassCard>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Роль</TableHead>
+                    <TableHead>Описание</TableHead>
+                    <TableHead>Права</TableHead>
+                    <TableHead>Пользователи</TableHead>
+                    <TableHead className="w-[150px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {roles.map((role) => {
+                    const isSystemRole = SYSTEM_ROLES.includes(role.code);
+                    const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                    const canDelete = hasPermission("roles.manage") && !isSystemRole;
+
+                    return (
+                      <TableRow key={role.id}>
+                        <TableCell>
+                          <div className="font-medium">{getRoleDisplayName(role.code)}</div>
                           {isSystemRole && (
-                            <Badge variant="outline" className="text-xs">Системная</Badge>
+                            <Badge variant="outline" className="text-xs mt-1">Системная</Badge>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {role.description || "—"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1 max-w-md">
-                          {role.permissions.slice(0, 5).map((p) => (
-                            <Badge key={p.code} variant="outline" className="text-xs">
-                              {p.name}
-                            </Badge>
-                          ))}
-                          {role.permissions.length > 5 && (
-                            <Badge variant="outline" className="text-xs">
-                              +{role.permissions.length - 5}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {canEdit && (
-                            <Button size="sm" variant="ghost" onClick={() => handleEditPermissions(role.id)}>
-                              Изменить
-                            </Button>
-                          )}
-                          {canDelete && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => setDeleteRoleDialog({
-                                open: true,
-                                roleId: role.id,
-                                roleName: role.name,
-                                roleCode: role.code
-                              })}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </GlassCard>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                          {role.description || "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{role.permissions.length} прав</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{userCountByRole[role.code] || 0}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            {canEdit && (
+                              <Button size="sm" variant="ghost" onClick={() => handleEditPermissions(role.id)}>
+                                Изменить
+                              </Button>
+                            )}
+                            {canDelete && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setDeleteRoleDialog({
+                                  open: true,
+                                  roleId: role.id,
+                                  roleName: role.name,
+                                  roleCode: role.code
+                                })}
+                              >
+                                Удалить
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </GlassCard>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -501,55 +557,26 @@ export default function AdminRoles() {
         isSuperAdmin={isSuperAdmin()}
       />
 
-      {/* Edit Permissions Dialog */}
-      <Dialog open={!!editingRole} onOpenChange={() => setEditingRole(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Редактирование прав роли</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Permission search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Поиск прав..."
-                value={permissionSearch}
-                onChange={(e) => setPermissionSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            {Object.entries(filteredGroupedPermissions).map(([category, perms]) => (
-              <div key={category}>
-                <h4 className="font-medium capitalize mb-2">{category}</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  {perms.map((perm) => (
-                    <label key={perm.code} className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={selectedPermissions.includes(perm.code)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedPermissions([...selectedPermissions, perm.code]);
-                          } else {
-                            setSelectedPermissions(selectedPermissions.filter((p) => p !== perm.code));
-                          }
-                        }}
-                      />
-                      {perm.name}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {Object.keys(filteredGroupedPermissions).length === 0 && (
-              <p className="text-center text-muted-foreground py-4">Права не найдены</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingRole(null)}>Отмена</Button>
-            <Button onClick={handleSavePermissions}>Сохранить</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* New Role Permission Editor */}
+      {editingRoleForEditor && (
+        <RolePermissionEditor
+          open={true}
+          onOpenChange={() => setEditingRoleForEditor(null)}
+          roleName={editingRoleForEditor.name}
+          roleCode={editingRoleForEditor.code}
+          allPermissions={allPermissions}
+          selectedPermissions={editingRoleForEditor.permissions}
+          onSave={handleSavePermissions}
+        />
+      )}
+
+      {/* Template Selector */}
+      <RoleTemplateSelector
+        open={templateSelectorOpen}
+        onOpenChange={setTemplateSelectorOpen}
+        allPermissions={allPermissions}
+        onSelectTemplate={handleTemplateSelect}
+      />
 
       {/* Assign Role Dialog */}
       <Dialog open={assignDialog.open} onOpenChange={(open) => setAssignDialog({ ...assignDialog, open })}>
@@ -646,9 +673,20 @@ export default function AdminRoles() {
                 onChange={(e) => setNewRoleDescription(e.target.value)}
               />
             </div>
+            {newRolePermissions.length > 0 && (
+              <div className="p-3 rounded-lg bg-muted">
+                <p className="text-sm font-medium mb-1">Выбранные права из шаблона:</p>
+                <p className="text-sm text-muted-foreground">
+                  {newRolePermissions.length} прав будет добавлено после создания роли
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateRoleDialog(false)}>Отмена</Button>
+            <Button variant="outline" onClick={() => {
+              setCreateRoleDialog(false);
+              setNewRolePermissions([]);
+            }}>Отмена</Button>
             <Button onClick={handleCreateRole} disabled={!newRoleCode || !newRoleName}>Создать</Button>
           </DialogFooter>
         </DialogContent>
