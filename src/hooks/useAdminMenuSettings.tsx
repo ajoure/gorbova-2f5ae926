@@ -73,18 +73,22 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
 };
 
 // Default menu configuration - Reorganized structure
+// Sidebar Groups:
+// - CRM: Сделки, Контакты, Рассрочки, Предзаписи, Платежи
+// - Общение: Общение (inbox), Техподдержка, Рассылки
+// - Служебные: Интеграции, Продукты, Сотрудники, Тренинги, Аудит-лог, Аудит системы, и т.д.
+// Removed: "Возвраты" and "Контент" from main sidebar
 export const DEFAULT_MENU: MenuSettings = [
   {
     id: "crm",
     label: "CRM",
     order: 0,
     items: [
-      { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
-      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
-      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
-      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 3, permission: "entitlements.view" },
-      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 4, permission: "users.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 5, permission: "entitlements.view" },
+      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 0, permission: "entitlements.view" },
+      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 1, permission: "users.view", badge: "duplicates" },
+      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 2, permission: "entitlements.view" },
+      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 3, permission: "users.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 4, permission: "entitlements.view" },
     ],
   },
   {
@@ -92,8 +96,9 @@ export const DEFAULT_MENU: MenuSettings = [
     label: "Общение",
     order: 1,
     items: [
-      { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 0, permission: "users.view" },
-      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 1, permission: "users.view" },
+      { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
+      { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 1, permission: "users.view" },
+      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 2, permission: "users.view" },
     ],
   },
   {
