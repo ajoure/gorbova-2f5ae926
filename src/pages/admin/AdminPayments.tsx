@@ -13,7 +13,7 @@ import { format, startOfMonth, endOfMonth } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
+import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
@@ -484,7 +484,7 @@ export default function AdminPayments() {
         </Card>
         
         {/* Import dialog */}
-        <BepaidImportDialog
+        <SmartImportDialog
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
           onSuccess={() => {
