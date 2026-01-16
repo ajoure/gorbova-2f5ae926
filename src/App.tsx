@@ -73,6 +73,7 @@ import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
 import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
 // AdminBepaidSync and AdminRefundsV2 removed - all functionality in /admin/payments
+import AdminBepaidArchiveImport from "./pages/admin/AdminBepaidArchiveImport";
 import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
@@ -187,6 +188,7 @@ const App = () => (
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
+              <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />
               

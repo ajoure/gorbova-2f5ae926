@@ -207,3 +207,6 @@ verify_jwt = false
 
 [functions.bepaid-receipts-cron]
 verify_jwt = false
+
+[functions.bepaid-archive-import]
+verify_jwt = false

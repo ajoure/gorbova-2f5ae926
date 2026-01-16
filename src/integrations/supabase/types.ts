@@ -3125,6 +3125,7 @@ export type Database = {
           order_id: string | null
           paid_at: string | null
           payment_token: string | null
+          product_name_raw: string | null
           profile_id: string | null
           provider: string | null
           provider_payment_id: string | null
@@ -3153,6 +3154,7 @@ export type Database = {
           order_id?: string | null
           paid_at?: string | null
           payment_token?: string | null
+          product_name_raw?: string | null
           profile_id?: string | null
           provider?: string | null
           provider_payment_id?: string | null
@@ -3181,6 +3183,7 @@ export type Database = {
           order_id?: string | null
           paid_at?: string | null
           payment_token?: string | null
+          product_name_raw?: string | null
           profile_id?: string | null
           provider?: string | null
           provider_payment_id?: string | null
