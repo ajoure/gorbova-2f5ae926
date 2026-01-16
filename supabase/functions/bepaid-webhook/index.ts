@@ -1448,88 +1448,118 @@ Deno.serve(async (req) => {
             });
 
             // --- Notify super admins about new payment via central function ---
-            try {
-              // Get customer info for notification
-              const { data: customerProfile } = await supabase
-                .from('profiles')
-                .select('full_name, email, phone, telegram_username')
-                .eq('user_id', orderV2.user_id)
-                .single();
-
-              const amountFormatted = Number(paymentV2.amount).toFixed(2);
-              const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
-
-              const notifyMessage = `${paymentType}\n\n` +
-                `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-                `📧 Email: ${customerProfile?.email || orderV2.customer_email || 'Не указан'}\n` +
-                `📱 Телефон: ${customerProfile?.phone || orderV2.customer_phone || 'Не указан'}\n` +
-                (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-                `\n📦 <b>Продукт:</b> ${productV2.name}\n` +
-                `📋 Тариф: ${tariff.name}\n` +
-                `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
-                `🆔 Заказ: ${orderV2.order_number}`;
-
-              const notifyResult = await supabase.functions.invoke('telegram-notify-admins', {
-                body: { message: notifyMessage },
-              });
-              
-              console.log('Admin notification result:', notifyResult.data);
-            } catch (notifyError) {
-              console.error('Error notifying super admins:', notifyError);
-              // Don't fail the webhook if notification fails
-            }
+            // MOVED OUTSIDE: notification is now sent unconditionally after this block
           }
         }
 
-        // --- Auto-generate documents from templates ---
+        // === NOTIFY ADMINS UNCONDITIONALLY FOR SUCCESSFUL PAYMENTS ===
+        // This block is OUTSIDE the "status !== 'paid'" check to ensure notifications
+        // are sent even for duplicate webhooks or already-processed orders
         try {
-          // Check if product has document templates linked
-          const { data: templateLinks } = await supabase
-            .from('product_document_templates')
+          // Re-fetch order data to get latest state
+          const { data: notifyOrderData } = await supabase
+            .from('orders_v2')
             .select(`
-              id,
-              auto_generate,
-              auto_send_email,
-              document_templates(id, name, is_active)
+              id, order_number, is_trial, customer_email, customer_phone, user_id,
+              product_id, tariff_id,
+              products_v2:product_id(name),
+              tariffs:tariff_id(name)
             `)
-            .eq('product_id', orderV2.product_id)
-            .eq('auto_generate', true);
+            .eq('id', paymentV2.order_id)
+            .single();
 
-          if (templateLinks && templateLinks.length > 0) {
-            console.log(`Found ${templateLinks.length} document templates for auto-generation`);
+          if (notifyOrderData) {
+            // Get customer profile for notification
+            const { data: customerProfile } = await supabase
+              .from('profiles')
+              .select('full_name, email, phone, telegram_username')
+              .eq('user_id', notifyOrderData.user_id)
+              .single();
+
+            const amountFormatted = Number(paymentV2.amount).toFixed(2);
+            const paymentType = notifyOrderData.is_trial ? '🔔 Пробный период' : '💰 Оплата';
+            const productName = (notifyOrderData.products_v2 as any)?.name || 'N/A';
+            const tariffName = (notifyOrderData.tariffs as any)?.name || 'N/A';
+
+            const notifyMessage = `${paymentType}\n\n` +
+              `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+              `📧 Email: ${customerProfile?.email || notifyOrderData.customer_email || 'Не указан'}\n` +
+              `📱 Телефон: ${customerProfile?.phone || notifyOrderData.customer_phone || 'Не указан'}\n` +
+              (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+              `\n📦 <b>Продукт:</b> ${productName}\n` +
+              `📋 Тариф: ${tariffName}\n` +
+              `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
+              `🆔 Заказ: ${notifyOrderData.order_number}`;
+
+            const notifyResult = await supabase.functions.invoke('telegram-notify-admins', {
+              body: { message: notifyMessage },
+            });
             
-            for (const link of templateLinks) {
-              const template = (link as any).document_templates;
-              if (!template?.is_active) continue;
+            console.log('Admin notification sent for payment:', paymentV2.id, notifyResult.data);
+          }
+        } catch (notifyError) {
+          console.error('Error notifying super admins:', notifyError);
+          // Don't fail the webhook if notification fails
+        }
 
-              try {
-                // Call generate-from-template edge function
-                const generateResponse = await fetch(
-                  `${Deno.env.get('SUPABASE_URL')}/functions/v1/generate-from-template`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-                    },
-                    body: JSON.stringify({
-                      order_id: orderV2.id,
-                      template_id: template.id,
-                      send_email: link.auto_send_email || false,
-                    }),
-                  }
-                );
+        // --- Auto-generate documents from templates ---
+        // Get fresh order data for document generation (orderV2 may be out of scope)
+        const { data: docOrderData } = await supabase
+          .from('orders_v2')
+          .select('id, product_id')
+          .eq('id', paymentV2.order_id)
+          .single();
 
-                const genResult = await generateResponse.json();
-                console.log(`Document generation result for template ${template.name}:`, genResult);
-              } catch (genError) {
-                console.error(`Error generating document from template ${template.id}:`, genError);
+        if (docOrderData) {
+          try {
+            // Check if product has document templates linked
+            const { data: templateLinks } = await supabase
+              .from('product_document_templates')
+              .select(`
+                id,
+                auto_generate,
+                auto_send_email,
+                document_templates(id, name, is_active)
+              `)
+              .eq('product_id', docOrderData.product_id)
+              .eq('auto_generate', true);
+
+            if (templateLinks && templateLinks.length > 0) {
+              console.log(`Found ${templateLinks.length} document templates for auto-generation`);
+              
+              for (const link of templateLinks) {
+                const template = (link as any).document_templates;
+                if (!template?.is_active) continue;
+
+                try {
+                  // Call generate-from-template edge function
+                  const generateResponse = await fetch(
+                    `${Deno.env.get('SUPABASE_URL')}/functions/v1/generate-from-template`,
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                      },
+                      body: JSON.stringify({
+                        order_id: docOrderData.id,
+                        template_id: template.id,
+                        send_email: link.auto_send_email || false,
+                      }),
+                    }
+                  );
+
+                  const genResult = await generateResponse.json();
+                  console.log(`Document generation result for template ${template.name}:`, genResult);
+                } catch (genError) {
+                  console.error(`Error generating document from template ${template.id}:`, genError);
+                }
               }
             }
+          } catch (docError) {
+            console.error('Error in auto-document generation:', docError);
+            // Don't fail the webhook if document generation fails
           }
-        } catch (docError) {
-          console.error('Error in auto-document generation:', docError);
-          // Don't fail the webhook if document generation fails
         }
 
         return new Response(JSON.stringify({ ok: true, mode: 'v2', status: 'successful' }), {

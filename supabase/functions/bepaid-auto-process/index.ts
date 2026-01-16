@@ -858,6 +858,50 @@ Deno.serve(async (req) => {
             }
           }
 
+          // === NOTIFY ADMINS ABOUT NEW ORDER ===
+          try {
+            // Get customer profile for notification
+            const { data: customerProfile } = await supabase
+              .from('profiles')
+              .select('full_name, email, phone, telegram_username')
+              .eq('id', profileId)
+              .single();
+
+            // Get product name
+            const { data: productInfo } = await supabase
+              .from('products_v2')
+              .select('name')
+              .eq('id', mapping.product_id)
+              .single();
+
+            // Get tariff name
+            const { data: tariffInfo } = await supabase
+              .from('tariffs')
+              .select('name')
+              .eq('id', mapping.tariff_id)
+              .single();
+
+            const notifyMessage = `💰 Новая оплата (авто)\n\n` +
+              `👤 <b>Клиент:</b> ${customerProfile?.full_name || item.card_holder || 'Не указано'}\n` +
+              `📧 Email: ${customerProfile?.email || item.customer_email || 'Не указан'}\n` +
+              `📱 Телефон: ${customerProfile?.phone || item.customer_phone || 'Не указан'}\n` +
+              (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+              `\n📦 <b>Продукт:</b> ${productInfo?.name || 'N/A'}\n` +
+              `📋 Тариф: ${tariffInfo?.name || 'N/A'}\n` +
+              `💵 Сумма: ${finalAmount} ${item.currency || 'BYN'}\n` +
+              `🆔 Заказ: ${newOrder.order_number}\n` +
+              `📎 Источник: auto-process`;
+
+            await supabase.functions.invoke('telegram-notify-admins', {
+              body: { message: notifyMessage },
+            });
+
+            console.log(`[BEPAID-AUTO-PROCESS] Admin notification sent for order ${newOrder.order_number}`);
+          } catch (notifyError) {
+            console.error(`[BEPAID-AUTO-PROCESS] Admin notification failed:`, notifyError);
+            // Don't fail the process if notification fails
+          }
+
           // GetCourse sync - call the unified function (best-effort, non-blocking)
           if (orderCustomerEmail && mapping.offer_id) {
             try {
