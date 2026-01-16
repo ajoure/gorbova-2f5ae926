@@ -373,35 +373,66 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         );
         
       case 'type': {
-        const normalizeType = (raw: string | null | undefined) => {
-          const v = (raw || '').toLowerCase().trim();
-          if (!v) return 'payment';
-          if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(v)) return 'refund';
-          if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
-          if (['subscription', 'подписка'].includes(v)) return 'subscription';
-          if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
-          if (['void', 'canceled', 'cancelled', 'отмена'].includes(v)) return 'void';
-          if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
-          return v;
-        };
+        // SMART TYPE DETECTION: учитываем amount, status_normalized И transaction_type
+        const txType = (payment.transaction_type || '').toLowerCase().trim();
+        const statusNorm = (payment.status_normalized || '').toLowerCase();
+        
+        // 1. Определение возврата по ЛЮБОМУ признаку
+        const isRefund = 
+          payment.amount < 0 || 
+          statusNorm === 'refunded' || 
+          statusNorm === 'refund' ||
+          txType.includes('refund') ||
+          txType.includes('возврат');
+        
+        // 2. Определение ошибки
+        const isFailed = ['failed', 'error', 'declined'].includes(statusNorm);
+        
+        // 3. Определение отмены
+        const isVoided = ['canceled', 'cancelled', 'voided', 'expired'].includes(statusNorm) ||
+          ['void', 'canceled', 'cancelled', 'отмена'].includes(txType);
+        
+        // 4. Определение подписки
+        const isSubscription = txType.includes('subscription') || txType.includes('подписка');
+        
+        // 5. Определение авторизации
+        const isAuthorization = txType.includes('authorization') || txType.includes('auth') || txType.includes('авторизация');
+        
+        // 6. Определение чарджбека
+        const isChargeback = txType.includes('chargeback') || txType.includes('чарджбек');
 
-        const typeKey = normalizeType(payment.transaction_type);
-        const labels: Record<string, string> = {
-          payment: 'Оплата',
-          refund: 'Возврат',
-          subscription: 'Подписка',
-          authorization: 'Авторизация',
-          void: 'Отмена',
-          chargeback: 'Чарджбек',
-        };
+        // Приоритет: Возврат > Ошибка > Чарджбек > Отмена > Подписка > Авторизация > Оплата
+        let label = 'Оплата';
+        let badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline' = 'outline';
+        let badgeClassName = '';
 
-        const isRefund = typeKey === 'refund';
-        const label = labels[typeKey] || (payment.transaction_type || 'Оплата');
+        if (isRefund) {
+          label = 'Возврат';
+          badgeVariant = 'secondary';
+          badgeClassName = 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400';
+        } else if (isFailed) {
+          label = 'Ошибка';
+          badgeVariant = 'destructive';
+        } else if (isChargeback) {
+          label = 'Чарджбек';
+          badgeVariant = 'destructive';
+          badgeClassName = 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+        } else if (isVoided) {
+          label = 'Отмена';
+          badgeVariant = 'secondary';
+          badgeClassName = 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400';
+        } else if (isSubscription) {
+          label = 'Подписка';
+          badgeClassName = 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400';
+        } else if (isAuthorization) {
+          label = 'Авторизация';
+          badgeClassName = 'border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-400';
+        }
 
         return (
           <Badge 
-            variant={isRefund ? "secondary" : "outline"} 
-            className={`text-xs ${isRefund ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" : ""}`}
+            variant={badgeVariant} 
+            className={`text-xs ${badgeClassName}`}
           >
             {label}
           </Badge>
