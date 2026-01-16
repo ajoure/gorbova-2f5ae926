@@ -1,0 +1,396 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+
+export interface SupportTicket {
+  id: string;
+  ticket_number: string;
+  profile_id: string;
+  user_id: string | null;
+  assigned_to: string | null;
+  subject: string;
+  description: string;
+  category: string;
+  status: "open" | "in_progress" | "waiting_user" | "resolved" | "closed";
+  priority: "low" | "normal" | "high" | "urgent";
+  has_unread_user: boolean;
+  has_unread_admin: boolean;
+  is_starred: boolean;
+  created_at: string;
+  updated_at: string;
+  first_response_at: string | null;
+  resolved_at: string | null;
+  closed_at: string | null;
+  profiles?: {
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    avatar_url: string | null;
+  };
+  assigned_profile?: {
+    full_name: string | null;
+  };
+}
+
+export interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  author_id: string | null;
+  author_type: "user" | "support" | "system";
+  author_name: string | null;
+  message: string;
+  attachments: string[];
+  is_internal: boolean;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface CreateTicketData {
+  subject: string;
+  description: string;
+  category?: string;
+}
+
+export interface CreateMessageData {
+  ticket_id: string;
+  message: string;
+  attachments?: string[];
+  is_internal?: boolean;
+  author_type?: "user" | "support" | "system";
+}
+
+// Hook for user's tickets
+export function useUserTickets(status?: string) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ["user-tickets", user?.id, status],
+    queryFn: async () => {
+      let query = supabase
+        .from("support_tickets")
+        .select("*")
+        .eq("user_id", user!.id)
+        .order("updated_at", { ascending: false });
+
+      if (status === "open") {
+        query = query.in("status", ["open", "in_progress", "waiting_user"]);
+      } else if (status === "closed") {
+        query = query.in("status", ["resolved", "closed"]);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data as SupportTicket[];
+    },
+    enabled: !!user?.id,
+  });
+}
+
+// Hook for admin tickets
+export function useAdminTickets(filters?: {
+  status?: string;
+  assignedToMe?: boolean;
+  starred?: boolean;
+}) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ["admin-tickets", filters],
+    queryFn: async () => {
+      let query = supabase
+        .from("support_tickets")
+        .select(`
+          *,
+          profiles:profile_id (
+            full_name,
+            email,
+            phone,
+            avatar_url
+          )
+        `)
+        .order("updated_at", { ascending: false });
+
+      if (filters?.status === "open") {
+        query = query.in("status", ["open", "in_progress", "waiting_user"]);
+      } else if (filters?.status === "closed") {
+        query = query.in("status", ["resolved", "closed"]);
+      }
+
+      if (filters?.assignedToMe && user?.id) {
+        query = query.eq("assigned_to", user.id);
+      }
+
+      if (filters?.starred) {
+        query = query.eq("is_starred", true);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data as SupportTicket[];
+    },
+    enabled: !!user?.id,
+  });
+}
+
+// Hook for single ticket
+export function useTicket(ticketId: string | undefined) {
+  return useQuery({
+    queryKey: ["ticket", ticketId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .select(`
+          *,
+          profiles:profile_id (
+            full_name,
+            email,
+            phone,
+            avatar_url
+          )
+        `)
+        .eq("id", ticketId!)
+        .single();
+
+      if (error) throw error;
+      return data as SupportTicket;
+    },
+    enabled: !!ticketId,
+  });
+}
+
+// Hook for ticket messages
+export function useTicketMessages(ticketId: string | undefined) {
+  return useQuery({
+    queryKey: ["ticket-messages", ticketId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ticket_messages")
+        .select("*")
+        .eq("ticket_id", ticketId!)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      return data as TicketMessage[];
+    },
+    enabled: !!ticketId,
+  });
+}
+
+// Hook for unread tickets count
+export function useUnreadTicketsCount() {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: ["unread-tickets-count", user?.id],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("support_tickets")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user!.id)
+        .eq("has_unread_user", true);
+
+      if (error) throw error;
+      return count || 0;
+    },
+    enabled: !!user?.id,
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+}
+
+// Hook to create ticket
+export function useCreateTicket() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: CreateTicketData) => {
+      // Get profile_id first
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", user!.id)
+        .single();
+
+      if (profileError) throw profileError;
+
+      const { data: ticket, error } = await supabase
+        .from("support_tickets")
+        .insert({
+          profile_id: profile.id,
+          user_id: user!.id,
+          subject: data.subject,
+          description: data.description,
+          category: data.category || "general",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Create initial message with description
+      await supabase.from("ticket_messages").insert({
+        ticket_id: ticket.id,
+        author_id: user!.id,
+        author_type: "user",
+        message: data.description,
+      });
+
+      return ticket;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
+      toast({
+        title: "Обращение создано",
+        description: "Мы ответим вам в ближайшее время",
+      });
+    },
+    onError: (error) => {
+      console.error("Error creating ticket:", error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось создать обращение",
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+// Hook to send message
+export function useSendMessage() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: CreateMessageData) => {
+      // Get user's full name for author_name
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("user_id", user!.id)
+        .single();
+
+      const { data: message, error } = await supabase
+        .from("ticket_messages")
+        .insert({
+          ticket_id: data.ticket_id,
+          author_id: user!.id,
+          author_type: data.author_type || "user",
+          author_name: profile?.full_name,
+          message: data.message,
+          attachments: data.attachments || [],
+          is_internal: data.is_internal || false,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update ticket flags
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (data.author_type === "support") {
+        updateData.has_unread_user = true;
+        updateData.has_unread_admin = false;
+      } else {
+        updateData.has_unread_admin = true;
+        updateData.has_unread_user = false;
+      }
+
+      await supabase
+        .from("support_tickets")
+        .update(updateData)
+        .eq("id", data.ticket_id);
+
+      return message;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["ticket-messages", variables.ticket_id] });
+      queryClient.invalidateQueries({ queryKey: ["ticket", variables.ticket_id] });
+      queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+    },
+    onError: (error) => {
+      console.error("Error sending message:", error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось отправить сообщение",
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+// Hook to update ticket
+export function useUpdateTicket() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      updates,
+    }: {
+      ticketId: string;
+      updates: Partial<SupportTicket>;
+    }) => {
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .update(updates)
+        .eq("id", ticketId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["ticket", data.id] });
+      queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+    },
+    onError: (error) => {
+      console.error("Error updating ticket:", error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось обновить обращение",
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+// Hook to mark ticket as read
+export function useMarkTicketRead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      ticketId,
+      isAdmin,
+    }: {
+      ticketId: string;
+      isAdmin: boolean;
+    }) => {
+      const updateData = isAdmin
+        ? { has_unread_admin: false }
+        : { has_unread_user: false };
+
+      const { error } = await supabase
+        .from("support_tickets")
+        .update(updateData)
+        .eq("id", ticketId);
+
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["ticket", variables.ticketId] });
+      queryClient.invalidateQueries({ queryKey: ["unread-tickets-count"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+    },
+  });
+}
