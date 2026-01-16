@@ -164,8 +164,15 @@ export default function PaymentMethodsSettings() {
       });
     },
     onSuccess: () => {
+      // Инвалидируем карты и подписки (триггер обновил их в БД)
       queryClient.invalidateQueries({ queryKey: ["user-payment-methods"] });
-      toast.success("Карта отвязана");
+      queryClient.invalidateQueries({ queryKey: ["user-subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["user-active-subscriptions"] });
+      
+      toast.success("Карта отвязана", {
+        description: "Автоматическое продление подписок отключено. Привяжите новую карту для возобновления.",
+        duration: 6000,
+      });
       setDeletingId(null);
     },
     onError: (error) => {
