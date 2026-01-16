@@ -276,7 +276,7 @@ export default function AdminPaymentsV2() {
                         </TableCell>
                         <TableCell>
                           <div className="text-sm text-muted-foreground">
-                            {format(new Date(payment.created_at), "dd.MM.yy HH:mm", { locale: ru })}
+                            {format(new Date(payment.paid_at || payment.created_at), "dd.MM.yy HH:mm", { locale: ru })}
                           </div>
                           {payment.paid_at && (
                             <div className="text-xs text-green-600">
