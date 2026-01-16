@@ -94,10 +94,21 @@ function normalizeTransactionStatus(status: string): string {
 
 function determineTransactionType(tx: any): { type: string; isRefund: boolean } {
   const txType = (tx.type || tx.transaction_type || '').toLowerCase();
+  const amount = tx.amount ? Number(tx.amount) : 0;
   
-  // Check message/status for refund indicators
+  // RULE #1: If amount is NEGATIVE, it's a REFUND regardless of type label
+  // This fixes imports/reports where refunds come as 'payment' with negative amount
+  if (amount < 0) {
+    console.log(`[bepaid-fetch] Detected refund by negative amount: ${amount / 100}`);
+    return { type: 'refund', isRefund: true };
+  }
+  
+  // Check type/status for refund indicators
   if (txType === 'refund' || tx.refund_reason || tx.status === 'refunded') {
     return { type: 'refund', isRefund: true };
+  }
+  if (txType === 'chargeback') {
+    return { type: 'chargeback', isRefund: true };
   }
   if (txType === 'void' || tx.status === 'voided') {
     return { type: 'void', isRefund: false };
@@ -1201,29 +1212,55 @@ serve(async (req) => {
               }
             }
             
+            let parentPayment = null;
+            
             if (parentUid) {
-              const { data: parentPayment } = await supabase
+              const { data: foundParent } = await supabase
                 .from("payments_v2")
                 .select("id, profile_id, user_id, order_id")
                 .eq("provider_payment_id", parentUid)
                 .maybeSingle();
-
-              if (parentPayment) {
-                paymentData.reference_payment_id = parentPayment.id;
-                // INHERIT profile_id, user_id, order_id from parent
-                paymentData.profile_id = parentPayment.profile_id;
-                paymentData.user_id = parentPayment.user_id;
-                if (!paymentData.order_id) {
-                  paymentData.order_id = parentPayment.order_id;
+              parentPayment = foundParent;
+            }
+            
+            // FALLBACK: If parent not found by parent_uid, try by tracking_id
+            // This links refunds to original payments with same tracking_id
+            if (!parentPayment && tx.tracking_id) {
+              console.log(`[bepaid-fetch] Trying to find parent by tracking_id: ${tx.tracking_id}`);
+              const { data: foundByTracking } = await supabase
+                .from("payments_v2")
+                .select("id, profile_id, user_id, order_id, meta")
+                .gt("amount", 0)  // Original payment is positive
+                .order("paid_at", { ascending: false })
+                .limit(10);
+              
+              // Find matching tracking_id in meta
+              if (foundByTracking) {
+                for (const p of foundByTracking) {
+                  if (p.meta?.tracking_id === tx.tracking_id) {
+                    parentPayment = p;
+                    console.log(`[bepaid-fetch] Found parent by tracking_id: ${p.id}`);
+                    break;
+                  }
                 }
-                console.log(`[bepaid-fetch] Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}, order: ${parentPayment.order_id}`);
-                results.refunds_linked = (results.refunds_linked || 0) + 1;
-              } else {
-                console.log(`[bepaid-fetch] Refund ${uid} parent not found in payments_v2: ${parentUid}`);
-                results.missing_parent = (results.missing_parent || 0) + 1;
               }
+            }
+
+            if (parentPayment) {
+              paymentData.reference_payment_id = parentPayment.id;
+              // INHERIT profile_id, user_id, order_id from parent
+              paymentData.profile_id = parentPayment.profile_id;
+              paymentData.user_id = parentPayment.user_id;
+              if (!paymentData.order_id) {
+                paymentData.order_id = parentPayment.order_id;
+              }
+              console.log(`[bepaid-fetch] Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}, order: ${parentPayment.order_id}`);
+              results.refunds_linked = (results.refunds_linked || 0) + 1;
+            } else if (parentUid) {
+              console.log(`[bepaid-fetch] Refund ${uid} parent not found in payments_v2: ${parentUid}`);
+              results.missing_parent = (results.missing_parent || 0) + 1;
             } else {
-              console.log(`[bepaid-fetch] Refund ${uid} has no parent_uid`);
+              console.log(`[bepaid-fetch] Refund ${uid} has no parent_uid and no tracking_id match`);
               results.refunds_orphan = (results.refunds_orphan || 0) + 1;
             }
           }
