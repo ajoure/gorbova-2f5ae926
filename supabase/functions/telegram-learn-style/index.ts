@@ -59,32 +59,52 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get sent news to analyze style
-    const { data: sentNews, error: newsError } = await supabase
-      .from('news_content')
-      .select('title, ai_summary, summary, telegram_sent_at')
-      .eq('telegram_status', 'sent')
-      .order('telegram_sent_at', { ascending: false })
-      .limit(50);
+    // PRIORITY 1: Get messages from @katerinagorbova (from_tg_user_id = 99340019)
+    console.log('[learn-style] Fetching messages from @katerinagorbova (user_id: 99340019)...');
+    const { data: katerinaMessages, error: katerinaError } = await supabase
+      .from('tg_chat_messages')
+      .select('text, message_ts')
+      .eq('from_tg_user_id', 99340019) // @katerinagorbova
+      .not('text', 'is', null)
+      .order('message_ts', { ascending: false })
+      .limit(150);
 
-    if (newsError) {
-      throw new Error(`Failed to fetch sent news: ${newsError.message}`);
+    if (katerinaError) {
+      console.error('[learn-style] Error fetching Katerina messages:', katerinaError);
     }
 
-    // If not enough sent news, try to use archived channel posts
-    let postsForAnalysis: Array<{ title?: string; text: string }> = [];
-    let dataSource = 'news_content';
+    // Filter messages with sufficient content (> 50 chars)
+    const meaningfulKaterinaMessages = (katerinaMessages || [])
+      .filter(msg => msg.text && msg.text.trim().length > 50);
 
-    if (sentNews && sentNews.length >= 5) {
-      postsForAnalysis = sentNews.map(news => ({
-        title: news.title,
-        text: news.ai_summary || news.summary || '',
+    console.log(`[learn-style] Found ${meaningfulKaterinaMessages.length} meaningful messages from @katerinagorbova`);
+
+    // Prepare posts for analysis
+    let postsForAnalysis: Array<{ text: string; source?: string }> = [];
+    let dataSource = '';
+
+    if (meaningfulKaterinaMessages.length >= 5) {
+      // Use Katerina's messages as primary source
+      postsForAnalysis = meaningfulKaterinaMessages.map(msg => ({
+        text: msg.text,
+        source: 'tg_chat_messages',
       }));
+      dataSource = 'katerina_gorbova_chat';
+      console.log(`[learn-style] Using ${postsForAnalysis.length} messages from @katerinagorbova`);
     } else {
-      console.log(`[learn-style] Only ${sentNews?.length || 0} sent news, checking channel_posts_archive...`);
-      
-      // Try to get posts from channel_posts_archive
-      const { data: archivedPosts, error: archiveError } = await supabase
+      // Fallback: combine with other sources
+      console.log('[learn-style] Not enough Katerina messages, checking other sources...');
+
+      // Get sent news
+      const { data: sentNews } = await supabase
+        .from('news_content')
+        .select('title, ai_summary, summary, telegram_sent_at')
+        .eq('telegram_status', 'sent')
+        .order('telegram_sent_at', { ascending: false })
+        .limit(50);
+
+      // Get archived posts
+      const { data: archivedPosts } = await supabase
         .from('channel_posts_archive')
         .select('text, date, views')
         .eq('channel_id', channel.channel_id)
@@ -92,50 +112,46 @@ Deno.serve(async (req) => {
         .order('date', { ascending: false })
         .limit(50);
 
-      if (archiveError) {
-        console.error('[learn-style] Archive query error:', archiveError);
-      }
-
-      if (archivedPosts && archivedPosts.length >= 5) {
-        console.log(`[learn-style] Found ${archivedPosts.length} posts in archive`);
-        postsForAnalysis = archivedPosts
+      // Combine all sources
+      const combinedPosts = [
+        ...meaningfulKaterinaMessages.map(msg => ({
+          text: msg.text,
+          source: 'katerina_chat',
+        })),
+        ...(sentNews || []).map(news => ({
+          text: news.ai_summary || news.summary || '',
+          source: 'news_content',
+        })),
+        ...(archivedPosts || [])
           .filter(post => post.text && post.text.trim().length > 20)
-          .map(post => ({ text: post.text }));
-        dataSource = 'channel_posts_archive';
-      } else {
-        // Combine both sources if available
-        const combinedPosts = [
-          ...(sentNews || []).map(news => ({
-            title: news.title,
-            text: news.ai_summary || news.summary || '',
+          .map(post => ({
+            text: post.text,
+            source: 'channel_archive',
           })),
-          ...(archivedPosts || [])
-            .filter(post => post.text && post.text.trim().length > 20)
-            .map(post => ({ text: post.text })),
-        ];
+      ];
 
-        if (combinedPosts.length >= 5) {
-          postsForAnalysis = combinedPosts;
-          dataSource = 'combined';
-        } else {
-          return new Response(JSON.stringify({
-            error: 'Недостаточно постов для анализа (нужно минимум 5). Импортируйте историю канала через JSON-экспорт из Telegram Desktop.',
-            posts_found: combinedPosts.length,
-            hint: 'Telegram Desktop → Канал → Меню (⋮) → Экспорт данных → JSON',
-          }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+      if (combinedPosts.length >= 5) {
+        postsForAnalysis = combinedPosts;
+        dataSource = 'combined';
+        console.log(`[learn-style] Using combined sources: ${combinedPosts.length} posts`);
+      } else {
+        return new Response(JSON.stringify({
+          error: 'Недостаточно данных для анализа стиля. Нужно минимум 5 сообщений.',
+          posts_found: combinedPosts.length,
+          katerina_messages: meaningfulKaterinaMessages.length,
+          hint: 'Дождитесь накопления сообщений от @katerinagorbova в чате клуба.',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
     }
 
-    console.log(`[learn-style] Using ${postsForAnalysis.length} posts from ${dataSource}`);
+    console.log(`[learn-style] Analyzing ${postsForAnalysis.length} posts from source: ${dataSource}`);
 
     // Prepare posts text for analysis
-    const postsText = postsForAnalysis.map((post, idx) => {
-      const title = 'title' in post && post.title ? `Заголовок: ${post.title}\n` : '';
-      return `--- Пост ${idx + 1} ---\n${title}Текст: ${post.text}`;
+    const postsText = postsForAnalysis.slice(0, 80).map((post, idx) => {
+      return `--- Сообщение ${idx + 1} ---\n${post.text}`;
     }).join('\n\n');
 
     if (!lovableApiKey) {
@@ -145,46 +161,57 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Analyze style with AI
-    const stylePrompt = `Проанализируй следующие посты из Telegram-канала и создай "Стилевой профиль" канала.
+    // Analyze style with AI - special prompt for Katerina's personal style
+    const stylePrompt = `Проанализируй следующие сообщения Екатерины Горбовой из Telegram и создай её "Стилевой профиль".
 
-ПОСТЫ ДЛЯ АНАЛИЗА:
-${postsText.slice(0, 20000)}
+ВАЖНО: Это реальные сообщения владельца бизнеса, эксперта по налогам. Выяви её УНИКАЛЬНЫЙ стиль общения.
+
+СООБЩЕНИЯ ДЛЯ АНАЛИЗА:
+${postsText.slice(0, 25000)}
 
 Проанализируй и верни JSON объект style_profile:
 {
-  "tone": "формальный/неформальный/деловой/дружелюбный/нейтральный",
-  "tone_details": "Подробное описание тона канала",
-  "avg_length": "краткий (до 200 слов) / средний (200-500) / длинный (500+)",
-  "length_recommendation": "Рекомендуемая длина поста в словах",
+  "tone": "экспертный/дружелюбный/ироничный/деловой",
+  "tone_details": "Подробное описание тона: как говорит, какие эмоции передаёт",
+  "personality_traits": ["черта 1", "черта 2", ...],
+  "avg_length": "краткий / средний / длинный",
   "emojis": {
     "used": true/false,
     "frequency": "редко/умеренно/часто",
     "examples": ["🔥", "📌", ...]
   },
   "structure": {
-    "has_headline": true/false,
-    "has_call_to_action": true/false,
-    "has_links": true/false,
-    "typical_structure": "Описание типичной структуры поста"
+    "uses_numbering": true/false,
+    "uses_paragraphs": true/false,
+    "typical_structure": "Описание типичной структуры сообщения"
   },
   "formatting": {
-    "uses_bold": true/false,
-    "uses_italic": true/false,
-    "uses_underline": true/false,
-    "uses_lists": true/false,
+    "uses_dashes": true/false,
+    "uses_emphasis": true/false,
     "html_tags_used": ["<b>", "<i>", ...]
   },
   "characteristic_phrases": ["фраза 1", "фраза 2", ...],
+  "communication_patterns": [
+    "Как начинает сообщения",
+    "Как аргументирует",
+    "Как завершает мысли"
+  ],
   "vocabulary_level": "простой/профессиональный/смешанный",
-  "target_audience": "Описание целевой аудитории на основе контента",
-  "content_themes": ["тема 1", "тема 2", ...],
+  "target_audience": "Кому адресованы сообщения",
   "writing_guidelines": [
-    "Правило 1 для написания в стиле канала",
+    "Правило 1 для написания в стиле Екатерины",
     "Правило 2",
+    "Правило 3",
     ...
   ]
 }
+
+Обрати особое внимание на:
+- Использование тире (—) для акцентов
+- Психологическую глубину в объяснениях
+- Структурированность мыслей
+- Профессионализм с человечностью
+- Характерные обороты речи
 
 Отвечай ТОЛЬКО валидным JSON без markdown.`;
 
@@ -198,11 +225,11 @@ ${postsText.slice(0, 20000)}
         body: JSON.stringify({
           model: 'google/gemini-3-flash-preview',
           messages: [
-            { role: 'system', content: 'Ты аналитик контента. Анализируй стиль и возвращай только валидный JSON.' },
+            { role: 'system', content: 'Ты аналитик стиля общения. Анализируй манеру речи и возвращай только валидный JSON.' },
             { role: 'user', content: stylePrompt },
           ],
           temperature: 0.3,
-          max_tokens: 2000,
+          max_tokens: 2500,
         }),
       });
 
@@ -237,6 +264,7 @@ ${postsText.slice(0, 20000)}
         style_profile_generated_at: new Date().toISOString(),
         style_profile_posts_analyzed: postsForAnalysis.length,
         style_profile_data_source: dataSource,
+        style_profile_katerina_messages: meaningfulKaterinaMessages.length,
       };
 
       const { error: updateError } = await supabase
@@ -259,6 +287,7 @@ ${postsText.slice(0, 20000)}
           channel_id: body.channel_id,
           posts_analyzed: postsForAnalysis.length,
           data_source: dataSource,
+          katerina_messages: meaningfulKaterinaMessages.length,
           profile_keys: Object.keys(styleProfile),
         },
       });
@@ -267,6 +296,7 @@ ${postsText.slice(0, 20000)}
         success: true,
         message: 'Style profile generated successfully',
         posts_analyzed: postsForAnalysis.length,
+        katerina_messages: meaningfulKaterinaMessages.length,
         data_source: dataSource,
         style_profile: styleProfile,
       }), {
