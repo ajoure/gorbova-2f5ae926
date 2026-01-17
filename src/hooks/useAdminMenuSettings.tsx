@@ -26,6 +26,7 @@ import {
   LifeBuoy,
   Newspaper,
   Globe,
+  Library,
   LucideIcon,
 } from "lucide-react";
 
