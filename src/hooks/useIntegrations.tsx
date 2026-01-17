@@ -118,6 +118,30 @@ export const PROVIDERS: ProviderConfig[] = [
       },
     ],
   },
+  {
+    id: "kinescope",
+    name: "Kinescope",
+    icon: "Video",
+    category: "other",
+    description: "Видеохостинг для онлайн-курсов",
+    fields: [
+      { key: "api_token", label: "API Токен", type: "password", required: true, placeholder: "Токен из личного кабинета Kinescope" },
+    ],
+    advancedFields: [
+      { key: "default_project_id", label: "Проект по умолчанию", type: "text", placeholder: "ID проекта" },
+      { 
+        key: "privacy_type", 
+        label: "Приватность видео по умолчанию", 
+        type: "select", 
+        options: [
+          { value: "anywhere", label: "Доступно везде" },
+          { value: "custom", label: "Только на указанных доменах" },
+          { value: "nowhere", label: "Недоступно нигде" },
+        ] 
+      },
+      { key: "privacy_domains", label: "Разрешённые домены", type: "textarea", placeholder: "gorbova.com\nschool.gorbova.com" },
+    ],
+  },
 ];
 
 export const CATEGORIES: { id: IntegrationCategory; label: string; icon: string }[] = [
@@ -125,6 +149,7 @@ export const CATEGORIES: { id: IntegrationCategory; label: string; icon: string 
   { id: "payments", label: "Платежи", icon: "CreditCard" },
   { id: "email", label: "Почта", icon: "Mail" },
   { id: "telegram", label: "Telegram", icon: "Send" },
+  { id: "other", label: "Разное", icon: "Settings" },
 ];
 
 export function useIntegrations(category?: IntegrationCategory) {
