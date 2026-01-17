@@ -80,6 +80,7 @@ import AdminSupport from "./pages/admin/AdminSupport";
 import AdminNews from "./pages/admin/AdminNews";
 import AdminCommunication from "./pages/admin/AdminCommunication";
 import AdminEditorial from "./pages/admin/AdminEditorial";
+import AdminIlex from "./pages/admin/AdminIlex";
 
 import Money from "./pages/Money";
 import AI from "./pages/AI";
