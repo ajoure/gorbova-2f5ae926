@@ -209,6 +209,50 @@ serve(async (req) => {
         break;
       }
 
+      case "kinescope": {
+        const apiToken = config.api_token as string;
+
+        if (!apiToken) {
+          errorMessage = "Отсутствует API токен Kinescope";
+          break;
+        }
+
+        try {
+          // Validate token by fetching projects list
+          const response = await fetch("https://api.kinescope.io/v1/projects", {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${apiToken}`,
+              "Content-Type": "application/json"
+            }
+          });
+
+          console.log("Kinescope response status:", response.status);
+
+          if (response.status === 200) {
+            const data = await response.json();
+            const projects = data.data || [];
+            success = true;
+            responseData = {
+              projects_count: projects.length,
+              projects: projects.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))
+            };
+          } else if (response.status === 401) {
+            errorMessage = "Неверный API токен Kinescope";
+          } else if (response.status === 403) {
+            errorMessage = "Доступ к API Kinescope запрещён";
+          } else {
+            const errData = await response.json();
+            errorMessage = errData.message || `HTTP ${response.status}`;
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          console.error("Kinescope API error:", err);
+          errorMessage = `Ошибка подключения к Kinescope: ${err}`;
+        }
+        break;
+      }
+
       default:
         errorMessage = `Неизвестный провайдер: ${provider}`;
     }
