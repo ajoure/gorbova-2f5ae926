@@ -101,7 +101,6 @@ export const DEFAULT_MENU: MenuSettings = [
     order: 1,
     items: [
       { id: "editorial", label: "Редакция", path: "/admin/editorial", icon: "Newspaper", order: 0, permission: "news.view" },
-      { id: "editorial-sources", label: "Источники новостей", path: "/admin/editorial/sources", icon: "Globe", order: 1, permission: "news.edit" },
       { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 2, permission: "entitlements.view" },
       { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 2, permission: "entitlements.view" },
       { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 3, permission: "roles.view" },

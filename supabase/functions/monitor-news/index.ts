@@ -32,7 +32,7 @@ interface AIAnalysis {
   keywords: string[];
 }
 
-// Keywords for filtering relevant business news
+// Extended keywords for filtering relevant business news (softened filter)
 const RELEVANCE_KEYWORDS = [
   // Taxes
   "налог", "ндс", "подоходн", "прибыль", "налогообложен",
@@ -54,7 +54,33 @@ const RELEVANCE_KEYWORDS = [
   "кодекс", "закон", "постановлен", "указ", "декрет", "нпа",
   // Other
   "ип", "предпринимат", "юрлиц", "организаци",
+  // Additional business terms (expanded)
+  "бизнес", "компани", "фирм", "предприят", "малый", "средний",
+  "регистрац", "ликвидац", "реорганизац",
+  "договор", "контракт", "сделк",
+  "штраф", "ответственност", "нарушен",
+  "тариф", "пошлин", "сбор", "плат",
+  "трудов", "зарплат", "оклад", "выплат",
+  "импорт", "экспорт", "внешнеэконом", "вэд",
+  "банкрот", "неплатежеспособн",
+  "электронн", "эцп", "цифров",
+  "маркировк", "прослеживаем",
+  "аренд", "недвижим", "имуществ",
+  "госзакупк", "тендер", "конкурс",
+  "минфин", "минэконом", "минтруд",
 ];
+
+// Specific deep URLs for certain sources
+const DEEP_URLS: Record<string, string[]> = {
+  "pravo.by": [
+    "/pravovaya-informatsiya/novosti-zakonodatelstva/",
+    "/news/",
+  ],
+  "nalog.gov.by": [
+    "/info/novosti/",
+    "/news/",
+  ],
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -98,8 +124,8 @@ serve(async (req) => {
       const sourceResult = { source: source.name, items: 0, errors: [] as string[] };
 
       try {
-        // Scrape source using Firecrawl
-        const scrapedItems = await scrapeSource(source, firecrawlKey);
+        // Scrape source using Firecrawl with improved depth
+        const scrapedItems = await scrapeSourceWithDepth(source, firecrawlKey);
         console.log(`[monitor-news] ${source.name}: scraped ${scrapedItems.length} items`);
 
         for (const item of scrapedItems) {
@@ -116,7 +142,7 @@ serve(async (req) => {
               continue;
             }
 
-            // Quick relevance check
+            // Quick relevance check (softened - any match passes)
             const contentLower = (item.title + " " + item.content).toLowerCase();
             const isQuickRelevant = RELEVANCE_KEYWORDS.some((kw) =>
               contentLower.includes(kw)
@@ -136,15 +162,13 @@ serve(async (req) => {
             }
 
             // Save to database
-            // IMPORTANT: category must be one of: digest, comments, urgent (CHECK constraint)
-            // Use AI-determined category, not source.category (which is: government, npa, media)
             const { error: insertError } = await supabase.from("news_content").insert({
               title: analysis.title || item.title,
               summary: analysis.summary,
               source: source.name,
               source_url: item.url,
               country: source.country,
-              category: analysis.category || "digest", // AI returns: digest | comments | urgent
+              category: analysis.category || "digest",
               source_id: source.id,
               raw_content: item.content.slice(0, 10000),
               ai_summary: analysis.summary,
@@ -208,15 +232,92 @@ serve(async (req) => {
   }
 });
 
-async function scrapeSource(
+// Scrape with depth - use Map to discover URLs, then scrape individual pages
+async function scrapeSourceWithDepth(
   source: NewsSource,
   firecrawlKey: string | undefined
 ): Promise<ScrapedItem[]> {
   if (!firecrawlKey) {
-    console.log(`[monitor-news] No Firecrawl key, using mock data for ${source.name}`);
+    console.log(`[monitor-news] No Firecrawl key, skipping ${source.name}`);
     return [];
   }
 
+  try {
+    const hostname = new URL(source.url).hostname;
+    const allItems: ScrapedItem[] = [];
+
+    // Step 1: Try to map the website to find article URLs
+    let articleUrls: string[] = [];
+    
+    try {
+      const mapResponse = await fetch("https://api.firecrawl.dev/v1/map", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${firecrawlKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: source.url,
+          limit: 30,
+          includeSubdomains: false,
+        }),
+      });
+
+      if (mapResponse.ok) {
+        const mapData = await mapResponse.json();
+        articleUrls = (mapData.links || []).filter((url: string) => {
+          // Filter out image URLs and non-article links
+          const lowerUrl = url.toLowerCase();
+          return !lowerUrl.match(/\.(jpg|jpeg|png|gif|webp|svg|pdf|doc|docx|xls|xlsx)(\?|$)/i) &&
+                 !lowerUrl.includes("/tag/") &&
+                 !lowerUrl.includes("/category/") &&
+                 !lowerUrl.includes("/author/") &&
+                 url.length > 30; // Likely to be article URLs
+        }).slice(0, 15);
+        console.log(`[monitor-news] ${source.name}: mapped ${articleUrls.length} article URLs`);
+      }
+    } catch (mapError) {
+      console.log(`[monitor-news] Map failed for ${source.name}, falling back to scrape`);
+    }
+
+    // Step 2: If no URLs from map, scrape the main page
+    if (articleUrls.length === 0) {
+      const scrapeResult = await scrapeUrl(source.url, firecrawlKey, source.country);
+      if (scrapeResult) {
+        const items = parseNewsFromMarkdown(scrapeResult, source.url);
+        allItems.push(...items);
+      }
+    } else {
+      // Step 3: Scrape individual article URLs (limit to 5 to save API calls)
+      for (const articleUrl of articleUrls.slice(0, 5)) {
+        try {
+          const scrapeResult = await scrapeUrl(articleUrl, firecrawlKey, source.country);
+          if (scrapeResult && scrapeResult.length > 100) {
+            // Extract article from scraped content
+            const title = extractTitle(scrapeResult);
+            if (title && title.length > 10) {
+              allItems.push({
+                title: title.slice(0, 300),
+                url: articleUrl,
+                content: scrapeResult.slice(0, 5000),
+              });
+            }
+          }
+        } catch (articleError) {
+          console.log(`[monitor-news] Failed to scrape article: ${articleUrl}`);
+        }
+      }
+    }
+
+    return allItems.slice(0, 10);
+  } catch (error) {
+    console.error(`[monitor-news] Scrape error for ${source.name}:`, error);
+    return [];
+  }
+}
+
+// Helper to scrape a single URL
+async function scrapeUrl(url: string, firecrawlKey: string, country: string): Promise<string | null> {
   try {
     const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
@@ -225,32 +326,41 @@ async function scrapeSource(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        url: source.url,
+        url: url,
         formats: ["markdown"],
         onlyMainContent: true,
         waitFor: 3000,
         location: {
-          country: source.country === "by" ? "BY" : "RU",
+          country: country === "by" ? "BY" : "RU",
           languages: ["ru"],
         },
       }),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Firecrawl error ${response.status}: ${errorText}`);
+      return null;
     }
 
     const data = await response.json();
-    const markdown = data.data?.markdown || "";
-
-    // Parse markdown to extract news items
-    const items = parseNewsFromMarkdown(markdown, source.url);
-    return items;
-  } catch (error) {
-    console.error(`[monitor-news] Scrape error for ${source.name}:`, error);
-    return [];
+    return data.data?.markdown || "";
+  } catch {
+    return null;
   }
+}
+
+// Extract title from markdown
+function extractTitle(markdown: string): string {
+  // Try to find H1 or first header
+  const h1Match = markdown.match(/^#\s+(.+)$/m);
+  if (h1Match) return h1Match[1].trim();
+
+  // Try first bold text
+  const boldMatch = markdown.match(/\*\*(.+?)\*\*/);
+  if (boldMatch) return boldMatch[1].trim();
+
+  // First line
+  const firstLine = markdown.split("\n").find(line => line.trim().length > 20);
+  return firstLine?.replace(/^[#*\d.]+\s*/, "").trim() || "";
 }
 
 function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[] {
@@ -268,9 +378,17 @@ function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[]
 
     if (titleLine.length < 10) continue;
 
-    // Extract URL if present
-    const urlMatch = section.match(/\[([^\]]+)\]\(([^)]+)\)/);
-    const url = urlMatch ? urlMatch[2] : baseUrl;
+    // Extract URL - prioritize non-image URLs
+    let url = baseUrl;
+    const urlMatches = section.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
+    for (const match of urlMatches) {
+      const extractedUrl = match[2];
+      // Skip image URLs
+      if (!extractedUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i)) {
+        url = extractedUrl;
+        break;
+      }
+    }
 
     // Clean content
     const content = lines.slice(1).join("\n").trim();
@@ -284,7 +402,7 @@ function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[]
     }
   }
 
-  return items.slice(0, 10); // Limit to 10 items per source
+  return items.slice(0, 10);
 }
 
 async function analyzeWithAI(
@@ -292,7 +410,6 @@ async function analyzeWithAI(
   lovableKey: string | undefined
 ): Promise<AIAnalysis> {
   if (!lovableKey) {
-    // Fallback without AI
     return {
       is_relevant: true,
       title: item.title,
@@ -304,6 +421,7 @@ async function analyzeWithAI(
   }
 
   try {
+    // Softened AI prompt - more inclusive for business news
     const systemPrompt = `Ты — редактор бизнес-издания для бухгалтеров и предпринимателей Беларуси и России.
 
 Проанализируй новость и верни JSON:
@@ -316,25 +434,34 @@ async function analyzeWithAI(
   "keywords": ["налоги", "ФСЗН", ...]
 }
 
-Критерии релевантности (is_relevant = true):
+Критерии релевантности (is_relevant = true) - ШИРОКИЙ ФИЛЬТР:
 - Изменения в налоговом законодательстве
 - Новые требования для бизнеса
 - Административные процедуры
 - Проверки и контроль
-- Изменения ставок, сроков, форм
+- Изменения ставок, сроков, форм отчётности
 - ФСЗН, пенсии, пособия
 - Валютное регулирование
+- Трудовое право, зарплаты
+- Госзакупки и тендеры
+- Регистрация/ликвидация бизнеса
+- Маркировка товаров
+- Электронный документооборот
+- ВЭД, импорт/экспорт
+- Любые изменения, которые МОГУТ затронуть бизнес
 
-НЕ релевантно (is_relevant = false):
-- Общие новости экономики без конкретных изменений
-- Политические новости
-- Спорт, развлечения
-- Статистика без практического значения
+НЕ релевантно (is_relevant = false) - только явно нерелевантное:
+- Спорт, развлечения, культура
+- Криминальная хроника (не связанная с бизнесом)
+- Погода, природные явления
+- Персональные новости политиков
 
 Категории:
 - urgent: срочные изменения, вступающие в силу в ближайшие 30 дней
 - digest: обычные новости для дайджеста
 - comments: требует комментария эксперта
+
+ВАЖНО: Если сомневаешься в релевантности - ставь is_relevant = true
 
 Отвечай ТОЛЬКО валидным JSON без markdown.`;
 
@@ -373,7 +500,6 @@ async function analyzeWithAI(
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content?.trim() || "";
 
-    // Parse JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
