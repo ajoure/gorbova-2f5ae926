@@ -1822,6 +1822,75 @@ export type Database = {
           },
         ]
       }
+      ilex_documents: {
+        Row: {
+          content: string | null
+          created_at: string | null
+          doc_date: string | null
+          doc_number: string | null
+          doc_type: string | null
+          id: string
+          ilex_id: string
+          metadata: Json | null
+          saved_by: string
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string | null
+          doc_date?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          id?: string
+          ilex_id: string
+          metadata?: Json | null
+          saved_by: string
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string | null
+          created_at?: string | null
+          doc_date?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          id?: string
+          ilex_id?: string
+          metadata?: Json | null
+          saved_by?: string
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      ilex_settings: {
+        Row: {
+          connection_status: string | null
+          id: string
+          last_connection_check: string | null
+          session_cookie: string | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          connection_status?: string | null
+          id?: string
+          last_connection_check?: string | null
+          session_cookie?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          connection_status?: string | null
+          id?: string
+          last_connection_check?: string | null
+          session_cookie?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       impersonation_sessions: {
         Row: {
           actor_user_id: string
