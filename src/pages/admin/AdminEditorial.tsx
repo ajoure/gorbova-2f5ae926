@@ -385,6 +385,25 @@ const AdminEditorial = () => {
     enabled: !!channelWithStyle,
   });
 
+  // Fetch Katerina Gorbova's message count (from_tg_user_id = 99340019)
+  const { data: katerinaMessagesCount } = useQuery({
+    queryKey: ["katerina-messages-count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("tg_chat_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("from_tg_user_id", 99340019)
+        .not("text", "is", null);
+      
+      if (error) return 0;
+      return count || 0;
+    },
+  });
+
+  // Total posts available for style learning
+  const totalPostsForStyle = (katerinaMessagesCount || 0) + (sentNews?.length || 0) + (archivedPostsCount || 0);
+  const hasEnoughPosts = totalPostsForStyle >= 5 || (katerinaMessagesCount || 0) >= 5;
+
   // Handle file upload for history import
   const handleHistoryFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1032,9 +1051,14 @@ const AdminEditorial = () => {
                             ⚠️ Нет активного Telegram-канала. Добавьте канал в настройках Telegram.
                           </p>
                         )}
-                        {channelWithStyle && ((sentNews?.length || 0) + (archivedPostsCount || 0)) < 5 && (
+                        {channelWithStyle && !hasEnoughPosts && (
                           <p className="text-xs text-orange-600">
-                            ⚠️ Постов для анализа: {(sentNews?.length || 0) + (archivedPostsCount || 0)} из 5 минимум. Импортируйте историю канала.
+                            ⚠️ Постов для анализа: {totalPostsForStyle} из 5 минимум.
+                          </p>
+                        )}
+                        {(katerinaMessagesCount || 0) > 0 && (
+                          <p className="text-xs text-green-600">
+                            ✅ Найдено {katerinaMessagesCount} сообщений @katerinagorbova
                           </p>
                         )}
                       </div>
@@ -1044,7 +1068,7 @@ const AdminEditorial = () => {
                     <Button
                       variant="outline"
                       onClick={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
-                      disabled={learnStyleMutation.isPending || !channelWithStyle || ((sentNews?.length || 0) + (archivedPostsCount || 0)) < 5}
+                      disabled={learnStyleMutation.isPending || !channelWithStyle || !hasEnoughPosts}
                     >
                       {learnStyleMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />

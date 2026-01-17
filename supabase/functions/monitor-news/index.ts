@@ -97,6 +97,52 @@ const DEEP_URLS: Record<string, string[]> = {
   ],
 };
 
+// Helper to get iLex session cookie for authenticated scraping
+async function getIlexSession(): Promise<string | null> {
+  const login = Deno.env.get('ILEX_LOGIN');
+  const password = Deno.env.get('ILEX_PASSWORD');
+  
+  if (!login || !password) {
+    console.log('[monitor-news] iLex credentials not configured');
+    return null;
+  }
+  
+  try {
+    console.log('[monitor-news] Authenticating with iLex...');
+    const response = await fetch('https://ilex-private.ilex.by/public/service-login', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      body: JSON.stringify({ login, password }),
+    });
+    
+    if (!response.ok) {
+      console.error('[monitor-news] iLex auth failed:', response.status);
+      return null;
+    }
+    
+    // Extract session cookie from response headers
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) {
+      console.log('[monitor-news] iLex session obtained');
+      return setCookie;
+    }
+    
+    // Some APIs return token in body
+    const body = await response.json().catch(() => null);
+    if (body?.token) {
+      return `Authorization: Bearer ${body.token}`;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('[monitor-news] iLex auth error:', error);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -207,6 +253,9 @@ async function runScraping(
 
     const styleProfile = channelData?.settings?.style_profile || null;
 
+    // Get iLex session for authenticated sources
+    const ilexSession = await getIlexSession();
+
     // Get active sources
     let query = supabase
       .from("news_sources")
@@ -239,7 +288,7 @@ async function runScraping(
 
       try {
         // Scrape source using Firecrawl with improved depth
-        const { items: scrapedItems, errorCode, errorDetails } = await scrapeSourceWithDepth(source, firecrawlKey);
+        const { items: scrapedItems, errorCode, errorDetails } = await scrapeSourceWithDepth(source, firecrawlKey, ilexSession);
         console.log(`[monitor-news] ${source.name}: scraped ${scrapedItems.length} items`);
 
         if (errorCode) {
@@ -435,11 +484,28 @@ async function runScraping(
 // Scrape with depth - use Map to discover URLs, then scrape individual pages
 async function scrapeSourceWithDepth(
   source: NewsSource,
-  firecrawlKey: string | undefined
+  firecrawlKey: string | undefined,
+  ilexSession?: string | null
 ): Promise<{ items: ScrapedItem[]; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   if (!firecrawlKey) {
     console.log(`[monitor-news] No Firecrawl key, skipping ${source.name}`);
     return { items: [] };
+  }
+
+  // Check if this is iLex source that requires authentication
+  const isIlexSource = source.url.includes('ilex-private.ilex.by');
+  const scrapeConfig = source.scrape_config as { requires_auth?: boolean } || {};
+  
+  if (isIlexSource || scrapeConfig.requires_auth) {
+    if (!ilexSession) {
+      console.log(`[monitor-news] ${source.name} requires auth but no session available`);
+      return { 
+        items: [], 
+        errorCode: 'auth_required',
+        errorDetails: { message: 'Source requires authentication but no session available' }
+      };
+    }
+    console.log(`[monitor-news] Using authenticated session for ${source.name}`);
   }
 
   try {
