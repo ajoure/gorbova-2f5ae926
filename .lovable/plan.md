@@ -1,101 +1,156 @@
-# План исправления системы "Редакция"
+# План: Исправление токенизации карт для recurring-платежей без 3DS
 
-## Обзор проблем
+## Проблема
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              ДИАГНОСТИКА: 3 КРИТИЧНЫЕ ПРОБЛЕМЫ                  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. Меню "Редакция" ведёт на /admin/news (старая страница)     │
-│     -> Нужно: /admin/editorial (новая система)                  │
-│                                                                 │
-│  2. Парсер пишет category = "government" | "npa" | "media"      │
-│     -> CHECK constraint разрешает только: digest|comments|urgent│
-│     -> ВСЕ INSERT-ы падают с ошибкой                            │
-│                                                                 │
-│  3. Нет подпунктов меню для "Источники" и "Каналы"             │
-│     -> Кнопка "Источники" работает, но нет в меню               │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+При ручном списании с привязанной карты bePaid возвращает ошибку P.4011 (требуется 3D-Secure), хотя карта уже была привязана с прохождением 3DS.
+
+**Причина:** При токенизации карты не указывается `contract: ["recurring"]`, поэтому банк не знает, что карта предназначена для автоматических списаний.
 
 ---
 
-## Этап 1: Исправить навигацию
+## Решение
 
-### Файл: `src/hooks/useAdminMenuSettings.tsx`
+### Шаг 1: Исправить токенизацию карты
 
-**Строка 101 - изменить:**
-```typescript
-// Было:
-{ id: "news", label: "Редакция", path: "/admin/news", icon: "Newspaper", order: 0, permission: "news.view" },
+**Файл:** `supabase/functions/payment-methods-tokenize/index.ts`
 
-// Станет:
-{ id: "editorial", label: "Редакция", path: "/admin/editorial", icon: "Newspaper", order: 0, permission: "news.view" },
-{ id: "editorial-sources", label: "Источники новостей", path: "/admin/editorial/sources", icon: "Globe", order: 1, permission: "news.edit" },
-```
-
----
-
-## Этап 2: Исправить Edge Function monitor-news
-
-### Файл: `supabase/functions/monitor-news/index.ts`
-
-**Проблема:** Строка 145 пишет `category: source.category` (значения: "government", "npa", "media"), но таблица `news_content` имеет CHECK constraint который разрешает только: "digest", "comments", "urgent".
-
-**Решение:** Добавить маппинг категорий или использовать значение из AI-анализа:
+Добавить `additional_data.contract: ["recurring"]` в запрос токенизации:
 
 ```typescript
-// Строка 139-156 - изменить:
-const { error: insertError } = await supabase.from("news_content").insert({
-  title: analysis.title || item.title,
-  summary: analysis.summary,
-  source: source.name,
-  source_url: item.url,
-  country: source.country,
-  // ИСПРАВЛЕНИЕ: использовать category из AI-анализа, а не из источника
-  category: analysis.category || "digest",  // AI возвращает: digest | comments | urgent
-  source_id: source.id,
-  raw_content: item.content.slice(0, 10000),
-  ai_summary: analysis.summary,
-  effective_date: analysis.effective_date,
-  keywords: analysis.keywords,
-  news_priority: analysis.category === "urgent" ? "urgent" : "normal",
-  telegram_status: "draft",
-  scraped_at: new Date().toISOString(),
-  is_published: false,
-  created_by: null,
-});
+// Строки 104-126 - изменить checkoutData:
+const checkoutData = {
+  checkout: {
+    test: testMode,
+    transaction_type: 'tokenization',
+    order: {
+      amount: tokenizationAmountSafe,
+      currency,
+      description: 'Card tokenization for recurring payments',
+    },
+    settings: {
+      return_url: returnUrl,
+      cancel_url: cancelUrl,
+      notification_url: `${supabaseUrl}/functions/v1/payment-methods-webhook`,
+      language: 'ru',
+    },
+    customer: {
+      email: user.email,
+      first_name: profile?.first_name || '',
+      last_name: profile?.last_name || '',
+      phone: profile?.phone || '',
+    },
+    // ДОБАВИТЬ: указываем что карта будет использоваться для recurring
+    additional_data: {
+      contract: ['recurring'],
+    },
+  },
+};
 ```
 
 ---
 
-## Этап 3: Добавить колонку source_category (опционально)
+### Шаг 2: Исправить функцию списания
 
-Если нужно сохранять оригинальную категорию источника (npa, government, media), можно добавить отдельную колонку:
+**Файл:** `supabase/functions/admin-manual-charge/index.ts`
 
+Добавить `card_on_file.initiator: "merchant"` в запрос списания (строки 110-124):
+
+```typescript
+const chargePayload = {
+  request: {
+    amount: amountKopecks,
+    currency,
+    description,
+    tracking_id: trackingId,
+    test: testMode,
+    credit_card: {
+      token: paymentToken,
+    },
+    additional_data: {
+      contract: ['recurring', 'unscheduled'],
+      // ДОБАВИТЬ: указываем что это merchant-initiated transaction
+      card_on_file: {
+        initiator: 'merchant',
+        type: 'delayed_charge',
+      },
+    },
+  },
+};
+```
+
+---
+
+### Шаг 3: Обработка карт, привязанных ДО исправления
+
+Карты, которые были привязаны без `contract: ["recurring"]`, могут продолжать требовать 3DS. Для таких случаев:
+
+1. **Добавить флаг в payment_methods** - колонка `supports_recurring` (boolean)
+2. **При новой привязке** - устанавливать `supports_recurring = true`
+3. **При списании** - проверять флаг и выводить понятное сообщение для старых карт:
+   - "Эта карта была привязана до обновления системы. Попросите клиента перепривязать карту для автоматических списаний."
+
+**SQL миграция:**
 ```sql
--- Добавить колонку для категории источника
-ALTER TABLE news_content 
-ADD COLUMN IF NOT EXISTS source_category TEXT;
-```
+ALTER TABLE payment_methods 
+ADD COLUMN IF NOT EXISTS supports_recurring BOOLEAN DEFAULT false;
 
-Тогда Edge Function будет писать:
-```typescript
-category: analysis.category || "digest",      // Для CHECK constraint
-source_category: source.category,             // Оригинальная категория источника
+-- Помечаем все существующие карты как НЕ поддерживающие recurring
+COMMENT ON COLUMN payment_methods.supports_recurring IS 
+  'true if card was tokenized with recurring contract, allowing merchant-initiated charges without 3DS';
 ```
 
 ---
 
-## Этап 4: Добавить страницу "Старые новости" (сохранить legacy)
+### Шаг 4: Обновить webhook для сохранения флага
 
-Чтобы не потерять функционал старой страницы `/admin/news`:
+**Файл:** `supabase/functions/payment-methods-webhook/index.ts`
+
+При сохранении новой карты устанавливать `supports_recurring = true`:
 
 ```typescript
-// В useAdminMenuSettings.tsx добавить:
-{ id: "news-legacy", label: "Все новости (legacy)", path: "/admin/news", icon: "FileText", order: 2, permission: "news.view" },
+// Строка 287-305 - добавить supports_recurring: true
+const { error: insertError } = await supabase
+  .from('payment_methods')
+  .insert({
+    user_id: userId,
+    provider: 'bepaid',
+    provider_token: cardToken,
+    brand: cardBrand,
+    last4: cardLast4,
+    exp_month: cardExpMonth,
+    exp_year: cardExpYear,
+    is_default: isFirstCard,
+    status: 'active',
+    card_product: cardProduct,
+    card_category: cardCategory,
+    supports_recurring: true,  // ДОБАВИТЬ
+    meta: {
+      tracking_id: trackingId,
+      transaction_id: transaction.uid,
+    },
+  });
+```
+
+---
+
+### Шаг 5: Улучшить UX при списании
+
+**Файл:** `supabase/functions/admin-manual-charge/index.ts`
+
+Перед списанием проверять флаг `supports_recurring`:
+
+```typescript
+// После получения payment method (строка ~217)
+if (!paymentMethod.supports_recurring) {
+  return new Response(JSON.stringify({ 
+    success: false, 
+    error: 'Карта не поддерживает автоматические списания. Клиенту нужно перепривязать карту.',
+    requires_rebind: true,
+  }), {
+    status: 400,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 ```
 
 ---
@@ -104,26 +159,34 @@ source_category: source.category,             // Оригинальная кат
 
 | Файл | Изменение |
 |------|-----------|
-| `src/hooks/useAdminMenuSettings.tsx` | Изменить путь меню "Редакция" на `/admin/editorial`, добавить "Источники" |
-| `supabase/functions/monitor-news/index.ts` | Строка 145: заменить `source.category` на `analysis.category || "digest"` |
-| SQL миграция (опционально) | Добавить колонку `source_category` в `news_content` |
+| `supabase/functions/payment-methods-tokenize/index.ts` | Добавить `additional_data.contract: ["recurring"]` |
+| `supabase/functions/admin-manual-charge/index.ts` | Добавить `card_on_file: {initiator: "merchant"}` + проверка `supports_recurring` |
+| `supabase/functions/payment-methods-webhook/index.ts` | Сохранять `supports_recurring: true` |
+| SQL миграция | Добавить колонку `supports_recurring` |
 
 ---
 
 ## Ожидаемый результат
 
-После исправления:
-- Меню "Редакция" откроет новую страницу `/admin/editorial`
-- Подпункт "Источники новостей" откроет `/admin/editorial/sources`
-- Парсер будет успешно сохранять новости (category = "digest" | "comments" | "urgent")
-- AI-анализ будет определять срочность: urgent для важных изменений, digest для обычных
-- Все найденные новости появятся во вкладке "Входящие"
+1. **Новые привязки карт:**
+   - Клиент проходит 3DS один раз при привязке
+   - Карта сохраняется с `supports_recurring = true`
+   - Все последующие списания проходят БЕЗ 3DS
+
+2. **Старые карты:**
+   - Система определяет что карта не поддерживает recurring
+   - Админ видит понятное сообщение с предложением перепривязать карту
+   - Нет попыток списания которые гарантированно провалятся
+
+3. **Автосписания по рассрочке:**
+   - Edge Function для автоматических списаний использует тот же подход
+   - Списания проходят автоматически без участия клиента
 
 ---
 
 ## Тестирование
 
-1. Перейти в меню "Редакция" - должна открыться новая страница
-2. Нажать "Запустить парсинг"
-3. Проверить, что новости появились во вкладке "Входящие"
-4. Проверить логи Edge Function на отсутствие ошибок constraint
+1. Привязать новую карту через личный кабинет
+2. Убедиться что карта сохранена с `supports_recurring = true`
+3. Сделать ручное списание через админку
+4. Убедиться что списание прошло без ошибки P.4011
