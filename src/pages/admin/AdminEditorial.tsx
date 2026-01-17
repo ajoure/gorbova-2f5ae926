@@ -8,8 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -27,6 +32,9 @@ import {
   Loader2,
   Play,
   Settings,
+  Plus,
+  XCircle,
+  AlertCircle,
 } from "lucide-react";
 
 interface NewsItem {
@@ -45,6 +53,7 @@ interface NewsItem {
   created_at: string;
   scraped_at: string | null;
   source_id: string | null;
+  is_published: boolean;
   news_sources?: {
     name: string;
   };
@@ -58,6 +67,59 @@ interface TelegramChannel {
   is_active: boolean;
 }
 
+interface NewsSource {
+  id: string;
+  name: string;
+  url: string;
+  country: string;
+  category: string;
+  is_active: boolean;
+  priority: number;
+  last_scraped_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+// Helper to format news for publication per regulations
+const formatNewsForPublication = (news: NewsItem) => {
+  const effectiveDateFormatted = news.effective_date
+    ? format(new Date(news.effective_date), "dd MMMM yyyy", { locale: ru })
+    : null;
+
+  let formattedSummary = news.ai_summary || news.summary || "";
+
+  // Auto-format with HTML tags per regulations
+  if (effectiveDateFormatted) {
+    formattedSummary = `${formattedSummary}\n\n<u>Вступает в силу: ${effectiveDateFormatted}</u>`;
+  }
+
+  return {
+    title: `<b>${news.title}</b>`,
+    summary: formattedSummary,
+  };
+};
+
+// Health status helper
+const getHealthStatus = (source: NewsSource) => {
+  if (source.last_error) {
+    return { status: "error", icon: "🔴", label: "Ошибка", color: "text-destructive" };
+  }
+  if (!source.last_scraped_at) {
+    return { status: "never", icon: "⚪", label: "Никогда", color: "text-muted-foreground" };
+  }
+
+  const hoursSinceLastScrape =
+    (Date.now() - new Date(source.last_scraped_at).getTime()) / (1000 * 60 * 60);
+
+  if (hoursSinceLastScrape < 24) {
+    return { status: "online", icon: "🟢", label: "Online", color: "text-green-600" };
+  }
+  if (hoursSinceLastScrape < 48) {
+    return { status: "stale", icon: "🟡", label: "Устарел", color: "text-yellow-600" };
+  }
+  return { status: "offline", icon: "🔴", label: "Offline", color: "text-destructive" };
+};
+
 const AdminEditorial = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("drafts");
@@ -66,6 +128,22 @@ const AdminEditorial = () => {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<string>("");
   const [editForm, setEditForm] = useState({ title: "", summary: "", effective_date: "" });
+  
+  // Publication options
+  const [publishToSite, setPublishToSite] = useState(true);
+  const [publishToTelegram, setPublishToTelegram] = useState(true);
+
+  // Sources management state
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<NewsSource | null>(null);
+  const [sourceForm, setSourceForm] = useState({
+    name: "",
+    url: "",
+    country: "by",
+    category: "npa",
+    priority: 50,
+    is_active: true,
+  });
 
   // Fetch news by status
   const { data: draftNews, isLoading: loadingDrafts } = useQuery({
@@ -123,6 +201,19 @@ const AdminEditorial = () => {
     },
   });
 
+  // Fetch sources for settings tab
+  const { data: sources, isLoading: loadingSources } = useQuery({
+    queryKey: ["news-sources-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("news_sources")
+        .select("*")
+        .order("priority", { ascending: false });
+      if (error) throw error;
+      return data as NewsSource[];
+    },
+  });
+
   // Run scraper mutation
   const runScraperMutation = useMutation({
     mutationFn: async () => {
@@ -135,24 +226,58 @@ const AdminEditorial = () => {
     onSuccess: (data) => {
       toast.success(`Парсинг завершён: ${data.totalItems} новых новостей`);
       queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+      queryClient.invalidateQueries({ queryKey: ["news-sources-all"] });
     },
     onError: (error) => {
       toast.error(`Ошибка парсинга: ${error.message}`);
     },
   });
 
-  // Publish mutation
+  // Publish mutation with dual-publishing support
   const publishMutation = useMutation({
-    mutationFn: async ({ newsId, channelId, action }: { newsId: string; channelId: string; action: string }) => {
-      const { data, error } = await supabase.functions.invoke("telegram-publish-news", {
-        body: { action, newsId, channelId },
-      });
-      if (error) throw error;
-      return data;
+    mutationFn: async ({
+      newsId,
+      channelId,
+      action,
+      toSite,
+      toTelegram,
+    }: {
+      newsId: string;
+      channelId: string;
+      action: string;
+      toSite: boolean;
+      toTelegram: boolean;
+    }) => {
+      const results: { site?: boolean; telegram?: boolean } = {};
+
+      // Update database if publishing to site
+      if (toSite) {
+        const { error } = await supabase
+          .from("news_content")
+          .update({ is_published: true })
+          .eq("id", newsId);
+        if (error) throw error;
+        results.site = true;
+      }
+
+      // Publish to Telegram if selected
+      if (toTelegram) {
+        const { data, error } = await supabase.functions.invoke("telegram-publish-news", {
+          body: { action, newsId, channelId },
+        });
+        if (error) throw error;
+        results.telegram = true;
+      }
+
+      return results;
     },
     onSuccess: (data, variables) => {
-      const actionText = variables.action === "add_to_queue" ? "добавлена в очередь" : "опубликована";
-      toast.success(`Новость ${actionText}`);
+      const parts = [];
+      if (data.site) parts.push("на сайт");
+      if (data.telegram) {
+        parts.push(variables.action === "add_to_queue" ? "в очередь Telegram" : "в Telegram");
+      }
+      toast.success(`Новость опубликована: ${parts.join(" и ")}`);
       queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
       setPublishDialogOpen(false);
     },
@@ -198,8 +323,106 @@ const AdminEditorial = () => {
     },
   });
 
+  // Source mutations
+  const saveSourceMutation = useMutation({
+    mutationFn: async (data: typeof sourceForm & { id?: string }) => {
+      if (data.id) {
+        const { error } = await supabase
+          .from("news_sources")
+          .update({
+            name: data.name,
+            url: data.url,
+            country: data.country,
+            category: data.category,
+            priority: data.priority,
+            is_active: data.is_active,
+          })
+          .eq("id", data.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("news_sources").insert({
+          name: data.name,
+          url: data.url,
+          country: data.country,
+          category: data.category,
+          priority: data.priority,
+          is_active: data.is_active,
+        });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      toast.success(editingSource ? "Источник обновлён" : "Источник добавлен");
+      queryClient.invalidateQueries({ queryKey: ["news-sources-all"] });
+      setSourceDialogOpen(false);
+      resetSourceForm();
+    },
+    onError: (error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  const deleteSourceMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("news_sources").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Источник удалён");
+      queryClient.invalidateQueries({ queryKey: ["news-sources-all"] });
+    },
+    onError: (error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  const toggleSourceMutation = useMutation({
+    mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
+      const { error } = await supabase
+        .from("news_sources")
+        .update({ is_active })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["news-sources-all"] });
+    },
+  });
+
+  const resetSourceForm = () => {
+    setSourceForm({
+      name: "",
+      url: "",
+      country: "by",
+      category: "npa",
+      priority: 50,
+      is_active: true,
+    });
+    setEditingSource(null);
+  };
+
+  const handleEditSource = (source: NewsSource) => {
+    setEditingSource(source);
+    setSourceForm({
+      name: source.name,
+      url: source.url,
+      country: source.country,
+      category: source.category,
+      priority: source.priority,
+      is_active: source.is_active,
+    });
+    setSourceDialogOpen(true);
+  };
+
+  const handleAddSource = () => {
+    resetSourceForm();
+    setSourceDialogOpen(true);
+  };
+
   const handleEdit = (news: NewsItem) => {
     setSelectedNews(news);
+    // Auto-format with HTML tags per regulations
+    const formatted = formatNewsForPublication(news);
     setEditForm({
       title: news.title,
       summary: news.ai_summary || news.summary || "",
@@ -210,6 +433,8 @@ const AdminEditorial = () => {
 
   const handlePublish = (news: NewsItem) => {
     setSelectedNews(news);
+    setPublishToSite(true);
+    setPublishToTelegram(true);
     if (channels && channels.length > 0) {
       setSelectedChannel(channels[0].id);
     }
@@ -229,6 +454,27 @@ const AdminEditorial = () => {
     return country === "by" ? "🇧🇾" : "🇷🇺";
   };
 
+  const getCategoryLabel = (category: string) => {
+    const labels: Record<string, string> = {
+      npa: "НПА",
+      government: "Госорган",
+      media: "СМИ",
+    };
+    return labels[category] || category;
+  };
+
+  // Health stats for settings tab
+  const healthStats = sources
+    ? {
+        online: sources.filter((s) => getHealthStatus(s).status === "online").length,
+        stale: sources.filter((s) => getHealthStatus(s).status === "stale").length,
+        error: sources.filter((s) => getHealthStatus(s).status === "error" || getHealthStatus(s).status === "offline").length,
+        never: sources.filter((s) => getHealthStatus(s).status === "never").length,
+        active: sources.filter((s) => s.is_active).length,
+        total: sources.length,
+      }
+    : null;
+
   const renderNewsCard = (news: NewsItem, showActions = true) => (
     <Card key={news.id} className="mb-4">
       <CardHeader className="pb-2">
@@ -246,6 +492,12 @@ const AdminEditorial = () => {
               <span className="text-muted-foreground text-xs">
                 {format(new Date(news.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
               </span>
+              {news.is_published && (
+                <Badge variant="outline" className="text-xs bg-green-50">
+                  <CheckCircle className="h-3 w-3 mr-1" />
+                  На сайте
+                </Badge>
+              )}
             </div>
             <CardTitle className="text-base leading-tight">{news.title}</CardTitle>
           </div>
@@ -297,7 +549,7 @@ const AdminEditorial = () => {
           <div className="flex gap-2 flex-wrap">
             <Button size="sm" onClick={() => handlePublish(news)}>
               <Send className="h-4 w-4 mr-1" />
-              В Telegram
+              Опубликовать
             </Button>
             <Button
               size="sm"
@@ -308,6 +560,8 @@ const AdminEditorial = () => {
                     newsId: news.id,
                     channelId: channels[0].id,
                     action: "add_to_queue",
+                    toSite: false,
+                    toTelegram: true,
                   });
                 } else {
                   toast.error("Нет настроенных каналов");
@@ -344,25 +598,17 @@ const AdminEditorial = () => {
               Мониторинг новостей и публикация в Telegram
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" asChild>
-              <a href="/admin/editorial/sources">
-                <Settings className="h-4 w-4 mr-2" />
-                Источники
-              </a>
-            </Button>
-            <Button
-              onClick={() => runScraperMutation.mutate()}
-              disabled={runScraperMutation.isPending}
-            >
-              {runScraperMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Play className="h-4 w-4 mr-2" />
-              )}
-              Запустить парсинг
-            </Button>
-          </div>
+          <Button
+            onClick={() => runScraperMutation.mutate()}
+            disabled={runScraperMutation.isPending}
+          >
+            {runScraperMutation.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4 mr-2" />
+            )}
+            Запустить парсинг
+          </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -384,6 +630,13 @@ const AdminEditorial = () => {
             <TabsTrigger value="sent" className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4" />
               Опубликовано
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Настройки
+              {healthStats && healthStats.error > 0 && (
+                <Badge variant="destructive">{healthStats.error}</Badge>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -446,9 +699,175 @@ const AdminEditorial = () => {
               </Card>
             )}
           </TabsContent>
+
+          {/* Settings Tab with Sources & Health Status */}
+          <TabsContent value="settings" className="mt-4 space-y-6">
+            {/* Health Status Overview */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold">{healthStats?.total || 0}</div>
+                  <div className="text-sm text-muted-foreground">Всего источников</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-green-600">🟢 {healthStats?.online || 0}</div>
+                  <div className="text-sm text-muted-foreground">Online</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-yellow-600">🟡 {healthStats?.stale || 0}</div>
+                  <div className="text-sm text-muted-foreground">Устарел</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold text-destructive">🔴 {healthStats?.error || 0}</div>
+                  <div className="text-sm text-muted-foreground">Ошибки</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-bold">{healthStats?.active || 0}</div>
+                  <div className="text-sm text-muted-foreground">Активных</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Sources Table */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Globe className="h-5 w-5" />
+                    Источники новостей
+                  </CardTitle>
+                  <CardDescription>
+                    Управление источниками для мониторинга
+                  </CardDescription>
+                </div>
+                <Button onClick={handleAddSource}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Добавить
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                {loadingSources ? (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">Вкл</TableHead>
+                        <TableHead className="w-12">Статус</TableHead>
+                        <TableHead>Источник</TableHead>
+                        <TableHead>Категория</TableHead>
+                        <TableHead className="w-20">Приор.</TableHead>
+                        <TableHead>Последний скан</TableHead>
+                        <TableHead className="w-24">Действия</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sources?.map((source) => {
+                        const health = getHealthStatus(source);
+                        return (
+                          <TableRow key={source.id}>
+                            <TableCell>
+                              <Switch
+                                checked={source.is_active}
+                                onCheckedChange={(checked) =>
+                                  toggleSourceMutation.mutate({ id: source.id, is_active: checked })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <span className={`text-lg ${health.color}`}>{health.icon}</span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="font-medium">{health.label}</p>
+                                    {source.last_error && (
+                                      <p className="text-xs text-destructive max-w-xs truncate">
+                                        {source.last_error}
+                                      </p>
+                                    )}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <span>{getCountryFlag(source.country)}</span>
+                                <div>
+                                  <div className="font-medium">{source.name}</div>
+                                  <a
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-muted-foreground hover:underline flex items-center gap-1"
+                                  >
+                                    {new URL(source.url).hostname}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{getCategoryLabel(source.category)}</Badge>
+                            </TableCell>
+                            <TableCell>{source.priority}</TableCell>
+                            <TableCell>
+                              {source.last_scraped_at ? (
+                                <div className="flex items-center gap-1">
+                                  {source.last_error ? (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  ) : (
+                                    <CheckCircle className="h-4 w-4 text-green-600" />
+                                  )}
+                                  <span className="text-sm">
+                                    {format(new Date(source.last_scraped_at), "dd.MM HH:mm", { locale: ru })}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">Никогда</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="icon" onClick={() => handleEditSource(source)}>
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    if (confirm("Удалить этот источник?")) {
+                                      deleteSourceMutation.mutate(source.id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
 
-        {/* Edit Dialog */}
+        {/* Edit News Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
@@ -469,6 +888,9 @@ const AdminEditorial = () => {
                   onChange={(e) => setEditForm({ ...editForm, summary: e.target.value })}
                   rows={5}
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Поддерживается HTML: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;u&gt;подчёркнутый&lt;/u&gt;
+                </p>
               </div>
               <div>
                 <label className="text-sm font-medium">Дата вступления в силу</label>
@@ -505,28 +927,57 @@ const AdminEditorial = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Publish Dialog */}
+        {/* Publish Dialog with dual-publishing options */}
         <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Опубликовать в Telegram</DialogTitle>
+              <DialogTitle>Опубликовать новость</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Канал</label>
-                <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите канал" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {channels?.map((ch) => (
-                      <SelectItem key={ch.id} value={ch.id}>
-                        {ch.channel_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Publication targets */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Куда опубликовать:</Label>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="publish-site"
+                    checked={publishToSite}
+                    onCheckedChange={(checked) => setPublishToSite(checked as boolean)}
+                  />
+                  <Label htmlFor="publish-site" className="font-normal">
+                    На сайт (пометить как опубликованное)
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="publish-telegram"
+                    checked={publishToTelegram}
+                    onCheckedChange={(checked) => setPublishToTelegram(checked as boolean)}
+                  />
+                  <Label htmlFor="publish-telegram" className="font-normal">
+                    В Telegram канал
+                  </Label>
+                </div>
               </div>
+
+              {/* Channel selection (only if Telegram selected) */}
+              {publishToTelegram && (
+                <div>
+                  <label className="text-sm font-medium">Канал</label>
+                  <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите канал" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {channels?.map((ch) => (
+                        <SelectItem key={ch.id} value={ch.id}>
+                          {ch.channel_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               {selectedNews && (
                 <Card className="bg-muted/50">
                   <CardContent className="p-4">
@@ -545,34 +996,134 @@ const AdminEditorial = () => {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  if (selectedNews && selectedChannel) {
+                  if (selectedNews && (publishToSite || (publishToTelegram && selectedChannel))) {
                     publishMutation.mutate({
                       newsId: selectedNews.id,
                       channelId: selectedChannel,
                       action: "add_to_queue",
+                      toSite: publishToSite,
+                      toTelegram: publishToTelegram,
                     });
                   }
                 }}
-                disabled={publishMutation.isPending || !selectedChannel}
+                disabled={publishMutation.isPending || (!publishToSite && !publishToTelegram) || (publishToTelegram && !selectedChannel)}
               >
                 <Clock className="h-4 w-4 mr-2" />
                 В очередь
               </Button>
               <Button
                 onClick={() => {
-                  if (selectedNews && selectedChannel) {
+                  if (selectedNews && (publishToSite || (publishToTelegram && selectedChannel))) {
                     publishMutation.mutate({
                       newsId: selectedNews.id,
                       channelId: selectedChannel,
                       action: "publish_single",
+                      toSite: publishToSite,
+                      toTelegram: publishToTelegram,
                     });
                   }
                 }}
-                disabled={publishMutation.isPending || !selectedChannel}
+                disabled={publishMutation.isPending || (!publishToSite && !publishToTelegram) || (publishToTelegram && !selectedChannel)}
               >
                 {publishMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 <Send className="h-4 w-4 mr-2" />
                 Опубликовать
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Source Add/Edit Dialog */}
+        <Dialog open={sourceDialogOpen} onOpenChange={setSourceDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {editingSource ? "Редактировать источник" : "Добавить источник"}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Название</label>
+                <Input
+                  value={sourceForm.name}
+                  onChange={(e) => setSourceForm({ ...sourceForm, name: e.target.value })}
+                  placeholder="МНС РБ"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">URL</label>
+                <Input
+                  value={sourceForm.url}
+                  onChange={(e) => setSourceForm({ ...sourceForm, url: e.target.value })}
+                  placeholder="https://nalog.gov.by/news/"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Страна</label>
+                  <Select
+                    value={sourceForm.country}
+                    onValueChange={(v) => setSourceForm({ ...sourceForm, country: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="by">🇧🇾 Беларусь</SelectItem>
+                      <SelectItem value="ru">🇷🇺 Россия</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Категория</label>
+                  <Select
+                    value={sourceForm.category}
+                    onValueChange={(v) => setSourceForm({ ...sourceForm, category: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="npa">НПА</SelectItem>
+                      <SelectItem value="government">Госорган</SelectItem>
+                      <SelectItem value="media">СМИ</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Приоритет (1-100)</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={sourceForm.priority}
+                  onChange={(e) => setSourceForm({ ...sourceForm, priority: parseInt(e.target.value) || 50 })}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={sourceForm.is_active}
+                  onCheckedChange={(checked) => setSourceForm({ ...sourceForm, is_active: checked })}
+                />
+                <label className="text-sm">Активен</label>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSourceDialogOpen(false)}>
+                Отмена
+              </Button>
+              <Button
+                onClick={() => {
+                  saveSourceMutation.mutate({
+                    ...sourceForm,
+                    id: editingSource?.id,
+                  });
+                }}
+                disabled={saveSourceMutation.isPending || !sourceForm.name || !sourceForm.url}
+              >
+                {saveSourceMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Сохранить
               </Button>
             </DialogFooter>
           </DialogContent>
