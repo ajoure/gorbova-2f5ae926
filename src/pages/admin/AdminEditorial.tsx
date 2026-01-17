@@ -45,6 +45,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { StyleProfileDialog } from "@/components/admin/StyleProfileDialog";
+import { SyncResultDialog } from "@/components/admin/SyncResultDialog";
 
 interface NewsItem {
   id: string;
@@ -179,6 +180,18 @@ const AdminEditorial = () => {
     katerina_messages: number;
     data_source: string;
     style_profile: Record<string, unknown>;
+  } | null>(null);
+
+  // Sync result dialog state
+  const [syncResultDialogOpen, setSyncResultDialogOpen] = useState(false);
+  const [syncResult, setSyncResult] = useState<{
+    total_messages: number;
+    meaningful_messages: number;
+    synced: number;
+    earliest_date?: string;
+    latest_date?: string;
+    ready_for_analysis: boolean;
+    author?: string;
   } | null>(null);
 
   // Sources management state
@@ -388,9 +401,17 @@ const AdminEditorial = () => {
       return data;
     },
     onSuccess: (data) => {
-      toast.success("История бота синхронизирована", {
-        description: `${data.meaningful_messages} сообщений готовы для анализа`,
+      // Show detailed dialog with sync results
+      setSyncResult({
+        total_messages: data.total_messages || 0,
+        meaningful_messages: data.meaningful_messages || 0,
+        synced: data.synced || 0,
+        earliest_date: data.earliest_date,
+        latest_date: data.latest_date,
+        ready_for_analysis: (data.meaningful_messages || 0) >= 5,
+        author: "Екатерина Горбова",
       });
+      setSyncResultDialogOpen(true);
       refetchKaterinaCount();
       refetchKaterinaDateRange();
       queryClient.invalidateQueries({ queryKey: ["archived-posts-count"] });
@@ -1794,6 +1815,18 @@ const AdminEditorial = () => {
           result={styleResult as any}
           onRelearn={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
           isRelearning={learnStyleMutation.isPending}
+        />
+
+        {/* Sync History Result Dialog */}
+        <SyncResultDialog
+          open={syncResultDialogOpen}
+          onOpenChange={setSyncResultDialogOpen}
+          result={syncResult}
+          onLearnStyle={() => {
+            setSyncResultDialogOpen(false);
+            channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id);
+          }}
+          isLearnStyleLoading={learnStyleMutation.isPending}
         />
       </div>
     </AdminLayout>
