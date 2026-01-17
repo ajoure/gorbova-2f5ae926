@@ -74,6 +74,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   LifeBuoy,
   Newspaper,
   Globe,
+  Library,
 };
 
 // Default menu configuration - Reorganized structure
@@ -109,6 +110,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 6, permission: "roles.view" },
       { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 7, permission: "roles.view" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 8 },
+      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 9, permission: "news.view" },
     ],
   },
 ];

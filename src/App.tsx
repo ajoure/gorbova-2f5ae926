@@ -197,6 +197,7 @@ const App = () => (
               {/* Admin routes - Editorial */}
               <Route path="/admin/editorial" element={<ProtectedRoute><AdminEditorial /></ProtectedRoute>} />
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
+              <Route path="/admin/ilex" element={<ProtectedRoute><AdminIlex /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
