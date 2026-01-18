@@ -13,6 +13,19 @@ interface LoyaltyProof {
   context?: string;
 }
 
+interface CommunicationStyle {
+  tone: string;
+  keywords_to_use: string[];
+  topics_to_avoid: string[];
+  recommendations: string;
+}
+
+interface PainPoint {
+  description: string;
+  keywords: string[];
+  sentiment_score: number;
+}
+
 interface LoyaltyAnalysisResult {
   score: number;
   status_label: string;
@@ -20,6 +33,8 @@ interface LoyaltyAnalysisResult {
   reason: string;
   proofs: LoyaltyProof[];
   messages_analyzed: number;
+  communication_style?: CommunicationStyle;
+  pain_points?: PainPoint[];
 }
 
 serve(async (req) => {
@@ -74,7 +89,6 @@ serve(async (req) => {
     }
 
     // Fetch all messages from this user
-    // Schema: id, chat_id, message_id, message_ts, from_tg_user_id, from_display_name, text, has_media, reply_to_message_id, raw_payload, created_at
     const { data: messages, error: messagesError } = await supabase
       .from("tg_chat_messages")
       .select("id, text, created_at, from_display_name, chat_id, message_ts")
@@ -102,6 +116,7 @@ serve(async (req) => {
           loyalty_proofs: [],
           loyalty_analyzed_messages_count: 0,
           loyalty_updated_at: new Date().toISOString(),
+          communication_style: null,
         })
         .eq("id", targetProfileId);
 
@@ -125,8 +140,11 @@ serve(async (req) => {
       .map(m => `[${m.message_ts || m.created_at}] ${m.from_display_name || "User"}: ${m.text}`)
       .join("\n");
 
-    // Send to AI for analysis
-    const systemPrompt = `Ты эксперт по анализу клиентской лояльности. Проанализируй сообщения клиента и определи его уровень лояльности к бренду/продукту.
+    // Enhanced system prompt with communication style and pain points
+    const systemPrompt = `Ты эксперт по анализу клиентской лояльности и коммуникаций. Проанализируй сообщения клиента и определи:
+1. Уровень лояльности к бренду/продукту
+2. Рекомендации по стилю общения с этим клиентом
+3. Болевые точки и проблемы клиента
 
 Твоя задача:
 1. Оценить общий тон сообщений (позитивный/негативный/нейтральный)
@@ -134,6 +152,10 @@ serve(async (req) => {
 3. Найти признаки недовольства (жалобы, критика, негатив)
 4. Выбрать до 10 ключевых цитат-доказательств
 5. Выставить итоговый балл от 1 до 10
+6. Определить предпочтительный стиль общения клиента
+7. Выявить болевые точки для сохранения в аналитику
+
+ВАЖНО: Детектируй сарказм! Если клиент пишет "Ну спасибо, очень 'быстро' ответили" - это негатив, не позитив.
 
 Ответь СТРОГО в формате JSON:
 {
@@ -147,6 +169,19 @@ serve(async (req) => {
       "date": "дата сообщения в ISO формате",
       "sentiment": "positive" | "negative" | "neutral",
       "context": "краткий контекст (опционально)"
+    }
+  ],
+  "communication_style": {
+    "tone": "Деловой" | "Дружеский" | "Экспертный" | "Неформальный",
+    "keywords_to_use": ["слова", "которые", "использует", "клиент"],
+    "topics_to_avoid": ["темы", "которые", "вызывали", "негатив"],
+    "recommendations": "Краткие рекомендации для менеджера (1-2 предложения)"
+  },
+  "pain_points": [
+    {
+      "description": "Описание болевой точки",
+      "keywords": ["ключевые", "слова"],
+      "sentiment_score": -0.5
     }
   ]
 }
@@ -249,7 +284,7 @@ serve(async (req) => {
     // Validate and clamp score
     const validScore = Math.min(10, Math.max(1, Math.round(analysisResult.score || 5)));
 
-    // Update profile with analysis results
+    // Update profile with analysis results including communication_style
     const { error: updateError } = await supabase
       .from("profiles")
       .update({
@@ -259,12 +294,39 @@ serve(async (req) => {
         loyalty_proofs: analysisResult.proofs || [],
         loyalty_analyzed_messages_count: messagesCount,
         loyalty_updated_at: new Date().toISOString(),
+        communication_style: analysisResult.communication_style || null,
       })
       .eq("id", targetProfileId);
 
     if (updateError) {
       console.error("[analyze-contact-loyalty] Error updating profile:", updateError);
       throw updateError;
+    }
+
+    // Save pain points to marketing_insights table
+    if (analysisResult.pain_points && analysisResult.pain_points.length > 0) {
+      console.log(`[analyze-contact-loyalty] Saving ${analysisResult.pain_points.length} pain points to marketing_insights`);
+      
+      for (const painPoint of analysisResult.pain_points) {
+        try {
+          await supabase.from("marketing_insights").upsert({
+            insight_type: "complaint",
+            content: painPoint.description,
+            source_type: "telegram_chat",
+            profile_id: targetProfileId,
+            sentiment_score: painPoint.sentiment_score || -0.5,
+            keywords: painPoint.keywords || [],
+            is_actionable: true,
+            extracted_by: "ai_loyalty_analysis",
+          }, { 
+            onConflict: "profile_id,content",
+            ignoreDuplicates: true 
+          });
+        } catch (insertError) {
+          // Non-critical, just log and continue
+          console.warn("[analyze-contact-loyalty] Failed to save pain point:", insertError);
+        }
+      }
     }
 
     console.log(`[analyze-contact-loyalty] Updated profile ${targetProfileId} with score ${validScore}`);
@@ -278,6 +340,8 @@ serve(async (req) => {
         ai_summary: analysisResult.ai_summary,
         proofs_count: analysisResult.proofs?.length || 0,
         messages_analyzed: messagesCount,
+        communication_style: analysisResult.communication_style || null,
+        pain_points_saved: analysisResult.pain_points?.length || 0,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

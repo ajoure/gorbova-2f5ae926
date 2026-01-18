@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   RefreshCw,
@@ -21,6 +20,10 @@ import {
   Calendar,
   AlertCircle,
   HelpCircle,
+  MessageCircle,
+  CheckCircle,
+  XCircle,
+  Lightbulb,
 } from "lucide-react";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { cn } from "@/lib/utils";
@@ -38,6 +41,13 @@ interface LoyaltyProof {
   context?: string;
 }
 
+interface CommunicationStyle {
+  tone: string;
+  keywords_to_use: string[];
+  topics_to_avoid: string[];
+  recommendations: string;
+}
+
 interface ContactLoyaltyTabProps {
   contact: {
     id: string;
@@ -48,6 +58,7 @@ interface ContactLoyaltyTabProps {
     loyalty_proofs?: LoyaltyProof[] | unknown[] | null;
     loyalty_analyzed_messages_count?: number | null;
     loyalty_updated_at?: string | null;
+    communication_style?: CommunicationStyle | null;
   };
 }
 
@@ -90,12 +101,23 @@ const getSentimentBadge = (sentiment: string) => {
   return <Badge variant="secondary" className={cn("text-xs", className)}>{label}</Badge>;
 };
 
+const getToneEmoji = (tone: string) => {
+  const toneMap: Record<string, string> = {
+    "Деловой": "🎯",
+    "Дружеский": "😊",
+    "Экспертный": "🎓",
+    "Неформальный": "👋",
+  };
+  return toneMap[tone] || "💬";
+};
+
 export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
   const queryClient = useQueryClient();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const proofs = (contact.loyalty_proofs as LoyaltyProof[] | null) || [];
   const hasData = contact.loyalty_score !== null && contact.loyalty_score !== undefined;
+  const commStyle = contact.communication_style as CommunicationStyle | null;
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
@@ -152,7 +174,7 @@ export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>AI анализирует все сообщения клиента в Telegram-чатах и определяет уровень лояльности на основе тона, благодарностей и жалоб.</p>
+                  <p>AI анализирует все сообщения клиента в Telegram-чатах и определяет уровень лояльности на основе тона, благодарностей и жалоб. Также выявляет сарказм и даёт рекомендации по общению.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -201,6 +223,82 @@ export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Communication Style Recommendations */}
+      {commStyle && (
+        <Card className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-blue-600" />
+              Как общаться с клиентом
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Tone */}
+            <div className="flex items-center gap-2">
+              <span className="text-lg">{getToneEmoji(commStyle.tone)}</span>
+              <span className="font-medium">Тон:</span>
+              <Badge variant="outline" className="bg-background">
+                {commStyle.tone}
+              </Badge>
+            </div>
+
+            {/* Keywords to use */}
+            {commStyle.keywords_to_use && commStyle.keywords_to_use.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 text-sm font-medium text-green-700 dark:text-green-400 mb-1.5">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Используйте:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {commStyle.keywords_to_use.map((keyword, idx) => (
+                    <Badge 
+                      key={idx} 
+                      variant="secondary" 
+                      className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 text-xs"
+                    >
+                      {keyword}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Topics to avoid */}
+            {commStyle.topics_to_avoid && commStyle.topics_to_avoid.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 text-sm font-medium text-red-700 dark:text-red-400 mb-1.5">
+                  <XCircle className="w-3.5 h-3.5" />
+                  Избегайте:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {commStyle.topics_to_avoid.map((topic, idx) => (
+                    <Badge 
+                      key={idx} 
+                      variant="secondary" 
+                      className="bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 text-xs"
+                    >
+                      {topic}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* AI Recommendation */}
+            {commStyle.recommendations && (
+              <div className="pt-2 border-t border-blue-200 dark:border-blue-800">
+                <div className="flex items-start gap-2">
+                  <Lightbulb className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-muted-foreground italic">
+                    {commStyle.recommendations}
+                  </p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* AI Summary */}
       {contact.loyalty_ai_summary && (
