@@ -1,10 +1,14 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { CashFlowTable } from "@/components/money/CashFlowTable";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   Briefcase, 
   ShieldCheck, 
@@ -15,7 +19,9 @@ import {
   FileText,
   MessageSquare,
   AlertTriangle,
-  CheckCircle
+  CheckCircle,
+  ArrowRight,
+  Lock
 } from "lucide-react";
 
 // Mock data for Business tab
@@ -113,8 +119,29 @@ const getSeverityIcon = (severity: string) => {
 };
 
 const Money = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("business");
 
+  // Check if user has access to "Бухгалтерия как бизнес" product
+  const { data: hasBusinessAccess } = useQuery({
+    queryKey: ["buh-business-access", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return false;
+      
+      // Check entitlements for product access
+      const { data: entitlement } = await supabase
+        .from("entitlements")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .in("status", ["active", "trial"])
+        .maybeSingle();
+      
+      return !!entitlement;
+    },
+    enabled: !!user?.id,
+  });
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -154,6 +181,61 @@ const Money = () => {
 
           {/* Business Tab */}
           <TabsContent value="business" className="mt-6">
+            {/* Promo for Business Training if no access */}
+            {!hasBusinessAccess && (
+              <GlassCard className="p-6 mb-6 bg-gradient-to-br from-primary/5 to-blue-500/5 border-primary/20">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-0">
+                        Новинка
+                      </Badge>
+                      <Lock className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <h3 className="text-lg font-semibold">Бухгалтерия как бизнес</h3>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      Ежемесячный тренинг: от бухгалтера в найме к владельцу своего бизнеса. 
+                      Получите доступ к вебинарам и сообществу профессионалов.
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={() => navigate("/business-training")}
+                    className="shrink-0"
+                  >
+                    Записаться — 250 BYN/мес
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+              </GlassCard>
+            )}
+
+            {/* Business Training Content (if has access) */}
+            {hasBusinessAccess && (
+              <GlassCard className="p-6 mb-6 border-emerald-500/30 bg-emerald-500/5">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <Briefcase className="h-6 w-6" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="font-semibold">Бухгалтерия как бизнес</h3>
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Доступ активен
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Следующий тренинг: 3 февраля в 19:00. Тема: «Поиск первых клиентов на бухгалтерские услуги»
+                    </p>
+                    <Button variant="outline" size="sm">
+                      <Play className="h-4 w-4 mr-2" />
+                      Перейти к материалам
+                    </Button>
+                  </div>
+                </div>
+              </GlassCard>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
               {businessMaterials.map((material) => (
                 <GlassCard key={material.id} className="p-5 space-y-4">
