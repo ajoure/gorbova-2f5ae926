@@ -88,9 +88,30 @@ import {
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
+import { ContactDetailSheet } from '@/components/admin/ContactDetailSheet';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+
+// Interface for contact to show in sheet
+interface SheetContact {
+  id: string;
+  user_id: string | null;
+  email: string | null;
+  full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  telegram_username: string | null;
+  telegram_user_id: number | null;
+  avatar_url: string | null;
+  status: string;
+  created_at: string;
+  last_seen_at: string | null;
+  duplicate_flag: string | null;
+  deals_count: number;
+  last_deal_at: string | null;
+}
 
 type FilterTab = 'all' | 'clients' | 'with_access' | 'violators' | 'removed';
 
@@ -134,7 +155,40 @@ export default function TelegramClubMembers() {
   const [messageTarget, setMessageTarget] = useState<TelegramClubMember | null>(null);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  
+  // Contact detail sheet state
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<SheetContact | null>(null);
 
+  // Open contact detail sheet
+  const openContactSheet = async (profileId: string) => {
+    try {
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("id, user_id, email, full_name, first_name, last_name, phone, telegram_username, telegram_user_id, avatar_url, status, created_at, last_seen_at, duplicate_flag")
+        .eq("id", profileId)
+        .single();
+      
+      if (error) throw error;
+      if (profile) {
+        // Calculate deals count
+        const { count } = await supabase
+          .from("orders_v2")
+          .select("*", { count: "exact", head: true })
+          .eq("profile_id", profileId);
+        
+        setSelectedContact({
+          ...profile,
+          deals_count: count || 0,
+          last_deal_at: null,
+        });
+        setContactSheetOpen(true);
+      }
+    } catch (error) {
+      console.error("Failed to fetch contact:", error);
+      toast.error("Не удалось загрузить контакт");
+    }
+  };
   // Calculate counts for tabs
   // Нарушитель = без доступа (не ok) И реально находится в чате или канале
   const counts = useMemo(() => {
@@ -968,11 +1022,18 @@ export default function TelegramClubMembers() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {member.link_status === 'linked' ? (
-                          <div>
-                            <div className="text-sm font-medium">{member.profiles?.full_name || 'Без имени'}</div>
-                            <div className="text-xs text-muted-foreground">{member.profiles?.email}</div>
-                          </div>
+                        {member.link_status === 'linked' && member.profiles?.id ? (
+                          <button
+                            onClick={() => openContactSheet(member.profiles!.id)}
+                            className="text-left hover:underline focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+                          >
+                            <div className="text-sm font-medium text-primary hover:text-primary/80">
+                              {member.profiles?.full_name || 'Без имени'}
+                            </div>
+                            <div className="text-xs text-muted-foreground hover:text-muted-foreground/80">
+                              {member.profiles?.email}
+                            </div>
+                          </button>
                         ) : (
                           <Badge variant="outline" className="text-muted-foreground">Не связан</Badge>
                         )}
@@ -1309,6 +1370,13 @@ export default function TelegramClubMembers() {
           clubId={clubId || null}
           onClose={() => setSelectedMember(null)}
           onRefresh={() => refetch()}
+        />
+
+        {/* Contact detail sheet */}
+        <ContactDetailSheet
+          contact={selectedContact}
+          open={contactSheetOpen}
+          onOpenChange={setContactSheetOpen}
         />
       </div>
     </AdminLayout>

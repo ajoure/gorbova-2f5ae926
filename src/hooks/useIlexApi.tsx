@@ -464,6 +464,78 @@ export function useIlexApi() {
     }
   }, [toast]);
 
+  // ========== PUBLIC API (pravo.by, no auth required) ==========
+  // These methods work without authentication - for bot usage
+
+  const searchPublic = useCallback(async (query: string): Promise<{
+    success: boolean;
+    results?: Array<{ title: string; url: string; date?: string; number?: string }>;
+    error?: string;
+  }> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'search_public', query },
+      });
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Public search failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
+    }
+  }, []);
+
+  const fetchPublicDocument = useCallback(async (url: string): Promise<{
+    success: boolean;
+    title?: string;
+    text?: string;
+    date?: string;
+    number?: string;
+    organ?: string;
+    url: string;
+    error?: string;
+  }> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'fetch_public_document', url },
+      });
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Fetch public document failed:', error);
+      return { success: false, url, error: error instanceof Error ? error.message : 'Ошибка загрузки' };
+    }
+  }, []);
+
+  const setManualSession = useCallback(async (sessionCookie: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'set_manual_session', session_cookie: sessionCookie },
+      });
+
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast({
+          title: 'Session cookie сохранён',
+          description: 'Теперь можно использовать iLex Private',
+        });
+        return true;
+      }
+      
+      throw new Error(data?.error || 'Ошибка сохранения');
+    } catch (error) {
+      console.error('Set manual session failed:', error);
+      toast({
+        title: 'Ошибка',
+        description: error instanceof Error ? error.message : 'Не удалось сохранить session',
+        variant: 'destructive',
+      });
+      return false;
+    }
+  }, [toast]);
+
   return {
     isLoading,
     connectionStatus,
@@ -478,5 +550,9 @@ export function useIlexApi() {
     saveDocument,
     getSavedDocuments,
     deleteDocument,
+    // Public API (no auth required)
+    searchPublic,
+    fetchPublicDocument,
+    setManualSession,
   };
 }
