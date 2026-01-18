@@ -423,6 +423,7 @@ export default function AdminPayments() {
               isLoading={isLoading} 
               activeFilter={dashboardFilter}
               onFilterChange={setDashboardFilter}
+              dateFilter={dateFilter}
             />
 
         {/* Main content */}
