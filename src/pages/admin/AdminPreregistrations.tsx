@@ -69,6 +69,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 const productNames: Record<string, string> = {
   CB20: "Бухгалтер частной практики 2.0",
   CLUB: "Клуб Буква Закона",
+  buh_business: "Бухгалтерия как бизнес",
 };
 
 export default function AdminPreregistrations() {

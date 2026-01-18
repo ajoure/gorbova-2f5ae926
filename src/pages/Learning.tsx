@@ -22,6 +22,7 @@ import {
 import productClubImage from "@/assets/product-club.png";
 import productCourseImage from "@/assets/product-course.png";
 import productConsultationImage from "@/assets/product-consultation.png";
+import katerinaBusinessImage from "@/assets/katerina-business.jpg";
 
 interface Product {
   id: string;
@@ -68,6 +69,19 @@ const products: Product[] = [
     courseSlug: "accountant-course",
     lessonCount: 25,
     duration: "7 недель",
+  },
+  {
+    id: "5",
+    title: "Бухгалтерия как бизнес",
+    description: "Ежемесячный тренинг: от бухгалтера в найме к владельцу своего бизнеса",
+    badge: "Новинка",
+    badgeVariant: "secondary",
+    price: "250 BYN/мес",
+    image: katerinaBusinessImage,
+    isPurchased: false,
+    purchaseLink: "/business-training",
+    courseSlug: "buh-business",
+    duration: "Подписка",
   },
   {
     id: "3",

@@ -90,6 +90,7 @@ import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
 import Money from "./pages/Money";
 import AI from "./pages/AI";
 import Knowledge from "./pages/Knowledge";
+import BusinessTraining from "./pages/BusinessTraining";
 
 const queryClient = new QueryClient();
 
@@ -119,6 +120,7 @@ const App = () => (
               <Route path="/help" element={<Help />} />
               <Route path="/consultation" element={<Consultation />} />
               <Route path="/course-accountant" element={<CourseAccountant />} />
+              <Route path="/business-training" element={<BusinessTraining />} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><Learning /></ProtectedRoute>} />
