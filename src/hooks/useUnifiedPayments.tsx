@@ -93,6 +93,37 @@ export interface PaymentsStats {
   cancelled: number;
 }
 
+// Helper to fetch all pages from Supabase (bypasses 1000 row limit)
+const PAGE_SIZE = 1000;
+
+async function fetchAllPages<T>(
+  buildQuery: (page: number) => any
+): Promise<T[]> {
+  const allData: T[] = [];
+  let page = 0;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    
+    const { data, error } = await buildQuery(page).range(from, to);
+    
+    if (error) throw error;
+    
+    if (data && data.length > 0) {
+      allData.push(...data);
+      hasMore = data.length === PAGE_SIZE;
+      page++;
+    } else {
+      hasMore = false;
+    }
+  }
+  
+  console.log(`[Unified Payments] Fetched ${allData.length} records in ${page} pages`);
+  return allData;
+}
+
 export function useUnifiedPayments(dateFilter: DateFilter) {
   const queryClient = useQueryClient();
 
@@ -101,73 +132,74 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
     queryFn: async () => {
       // Default to early date to show ALL historical data (no hidden payments)
       const fromDate = dateFilter.from || "2020-01-01";
+      const toDate = dateFilter.to;
       
-      // Fetch from payment_reconcile_queue (queue items) - NO STATUS FILTER, show all
-      // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
-      // Build queue query with date filter
-      let queueQuery = supabase
-        .from("payment_reconcile_queue")
-        .select(`
-          id, bepaid_uid, tracking_id, amount, currency, 
-          customer_email, customer_phone, customer_name, customer_surname,
-          card_holder, card_last4, card_brand, 
-          status, status_normalized, transaction_type,
-          paid_at, created_at, source, receipt_url, description, product_name,
-          matched_profile_id, matched_order_id, matched_product_id, matched_tariff_id, matched_offer_id,
-          is_external, has_conflict, provider,
-          profiles:matched_profile_id(id, full_name, email, phone, user_id),
-          orders:matched_order_id(id, order_number, status, profile_id, profiles(id, full_name, email, phone, user_id))
-        `)
-        .eq("is_fee", false)
-        .not("bepaid_uid", "is", null)
-        .gte("paid_at", `${fromDate}T00:00:00Z`);
+      console.log(`[Unified Payments] Loading data for period: ${fromDate} to ${toDate || 'now'}`);
       
-      if (dateFilter.to) {
-        queueQuery = queueQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
-      }
+      // Build queue query factory for pagination
+      const buildQueueQuery = () => {
+        let query = supabase
+          .from("payment_reconcile_queue")
+          .select(`
+            id, bepaid_uid, tracking_id, amount, currency, 
+            customer_email, customer_phone, customer_name, customer_surname,
+            card_holder, card_last4, card_brand, 
+            status, status_normalized, transaction_type,
+            paid_at, created_at, source, receipt_url, description, product_name,
+            matched_profile_id, matched_order_id, matched_product_id, matched_tariff_id, matched_offer_id,
+            is_external, has_conflict, provider,
+            profiles:matched_profile_id(id, full_name, email, phone, user_id),
+            orders:matched_order_id(id, order_number, status, profile_id, profiles(id, full_name, email, phone, user_id))
+          `)
+          .eq("is_fee", false)
+          .not("bepaid_uid", "is", null)
+          .gte("paid_at", `${fromDate}T00:00:00Z`);
+        
+        if (toDate) {
+          query = query.lte("paid_at", `${toDate}T23:59:59Z`);
+        }
+        
+        // IMPORTANT: order() must come before range() for proper pagination
+        return query.order("paid_at", { ascending: false, nullsFirst: false });
+      };
       
-      // IMPORTANT: order() must come before range() for proper pagination
-      queueQuery = queueQuery
-        .order("paid_at", { ascending: false, nullsFirst: false })
-        .limit(10000); // Explicit limit to load all records
+      // Build payments query factory for pagination
+      const buildPaymentsQuery = () => {
+        let query = supabase
+          .from("payments_v2")
+          .select(`
+            id, provider_payment_id, order_id, user_id, profile_id,
+            amount, currency, status, transaction_type, provider,
+            card_last4, card_brand, paid_at, created_at,
+            receipt_url, refunds, refunded_amount, provider_response, meta,
+            orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
+            profiles:profile_id(id, full_name, email, phone, user_id)
+          `)
+          .eq("provider", "bepaid")
+          .gte("paid_at", `${fromDate}T00:00:00Z`);
+        
+        if (toDate) {
+          query = query.lte("paid_at", `${toDate}T23:59:59Z`);
+        }
+        
+        // IMPORTANT: order() must come before range() for proper pagination
+        return query.order("paid_at", { ascending: false, nullsFirst: false });
+      };
       
-      // Fetch from payments_v2 (processed payments)
-      // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
-      let paymentsQuery = supabase
-        .from("payments_v2")
-        .select(`
-          id, provider_payment_id, order_id, user_id, profile_id,
-          amount, currency, status, transaction_type, provider,
-          card_last4, card_brand, paid_at, created_at,
-          receipt_url, refunds, refunded_amount, provider_response, meta,
-          orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
-          profiles:profile_id(id, full_name, email, phone, user_id)
-        `)
-        .eq("provider", "bepaid")
-        .gte("paid_at", `${fromDate}T00:00:00Z`);
-      
-      if (dateFilter.to) {
-        paymentsQuery = paymentsQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
-      }
-      
-      // IMPORTANT: order() must come before limit() for proper pagination
-      paymentsQuery = paymentsQuery
-        .order("paid_at", { ascending: false, nullsFirst: false })
-        .limit(10000); // Explicit limit to load all records
-      
-      // Fetch status overrides for CSV reconciliation
+      // Fetch status overrides (small table, no pagination needed)
       const overridesQuery = supabase
         .from("payment_status_overrides")
         .select("provider, uid, status_override");
       
-      const [queueResult, paymentsResult, overridesResult] = await Promise.all([
-        queueQuery,
-        paymentsQuery,
+      // Fetch all data with pagination
+      const [queueData, paymentsData, overridesResult] = await Promise.all([
+        fetchAllPages<any>(buildQueueQuery),
+        fetchAllPages<any>(buildPaymentsQuery),
         overridesQuery,
       ]);
       
-      if (queueResult.error) throw queueResult.error;
-      if (paymentsResult.error) throw paymentsResult.error;
+      console.log(`[Unified Payments] Queue: ${queueData.length}, Payments: ${paymentsData.length}`);
+      
       // Overrides are optional, don't throw on error
       
       // Build overrides map: provider:uid -> status_override
@@ -178,7 +210,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       
       // Get product names for orders
       const productIds = new Set<string>();
-      (paymentsResult.data || []).forEach(p => {
+      paymentsData.forEach(p => {
         const order = p.orders as any;
         if (order?.product_id) productIds.add(order.product_id);
       });
@@ -193,7 +225,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       const processedKeys = new Set<string>();
       
       // Transform payments_v2 data
-      const paymentsData: UnifiedPayment[] = (paymentsResult.data || []).map(p => {
+      const transformedPayments: UnifiedPayment[] = paymentsData.map(p => {
         const order = p.orders as any;
         const directProfile = p.profiles as any;
         
@@ -292,7 +324,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       });
       
       // Transform queue data - NO STATUS FILTER, show all (pending/failed/refunded)
-      const queueData: UnifiedPayment[] = (queueResult.data || [])
+      const transformedQueue: UnifiedPayment[] = queueData
         .filter(q => {
           // Dedup only by provider:uid key
           const qUid = q.bepaid_uid;
@@ -392,17 +424,19 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         });
       
       // Combine and sort by paid_at (newest first)
-      const allPayments = [...paymentsData, ...queueData].sort((a, b) => {
+      const allPayments = [...transformedPayments, ...transformedQueue].sort((a, b) => {
         const dateA = new Date(a.paid_at || a.created_at).getTime();
         const dateB = new Date(b.paid_at || b.created_at).getTime();
         return dateB - dateA;
       });
       
+      console.log(`[Unified Payments] Total after dedup: ${allPayments.length} (queue: ${transformedQueue.length}, payments_v2: ${transformedPayments.length})`);
+      
       // Calculate stats
       const stats: PaymentsStats = {
         total: allPayments.length,
-        inQueue: queueData.length,
-        processed: paymentsData.length,
+        inQueue: transformedQueue.length,
+        processed: transformedPayments.length,
         withContact: allPayments.filter(p => p.profile_id).length,
         withoutContact: allPayments.filter(p => !p.profile_id).length,
         withDeal: allPayments.filter(p => p.order_id).length,
