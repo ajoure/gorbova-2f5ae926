@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { 
   Calendar, 
   CheckCircle, 
@@ -22,6 +23,8 @@ import {
   Check,
   ArrowLeft
 } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 import katerinaImage from "@/assets/katerina-business.jpg";
 
@@ -56,16 +59,59 @@ const whatIncluded = [
   "Прогресс-трекер вашего пути",
 ];
 
-const paymentTerms = [
-  { icon: CreditCard, text: "Привязка карты в личном кабинете" },
-  { icon: Bell, text: "Уведомление за день до списания" },
-  { icon: Calendar, text: "Автосписание с 1 по 4 число месяца" },
-];
-
 export default function BusinessTraining() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [showPreregistration, setShowPreregistration] = useState(false);
+
+  // Fetch dynamic product data from API
+  const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
+
+  // Extract dynamic settings from product data
+  const dynamicSettings = useMemo(() => {
+    if (!productData?.tariffs?.[0]) {
+      return {
+        startDate: "5 февраля 2026",
+        price: 250,
+        chargeWindowStart: 1,
+        chargeWindowEnd: 4,
+        notifyDays: 1,
+        tariffName: "Ежемесячный доступ",
+      };
+    }
+
+    const tariff = productData.tariffs[0];
+    const preregOffer = tariff.offers.find(o => o.offer_type === "preregistration");
+    const payNowOffer = tariff.offers.find(o => o.offer_type === "pay_now" && o.is_primary);
+    
+    const preregMeta = preregOffer?.meta?.preregistration;
+    const payNowMeta = payNowOffer?.meta;
+    
+    const chargeDate = preregMeta?.first_charge_date;
+    
+    let formattedStartDate = "5 февраля 2026";
+    if (chargeDate) {
+      try {
+        formattedStartDate = format(new Date(chargeDate), "d MMMM yyyy", { locale: ru });
+      } catch {}
+    }
+
+    return {
+      startDate: formattedStartDate,
+      price: payNowOffer?.amount || 250,
+      chargeWindowStart: preregMeta?.charge_window_start || payNowMeta?.charge_window_start || 1,
+      chargeWindowEnd: preregMeta?.charge_window_end || payNowMeta?.charge_window_end || 4,
+      notifyDays: preregMeta?.notify_before_days || 1,
+      tariffName: tariff.name || "Ежемесячный доступ",
+    };
+  }, [productData]);
+
+  // Dynamic payment terms based on product settings
+  const paymentTerms = useMemo(() => [
+    { icon: CreditCard, text: "Привязка карты в личном кабинете" },
+    { icon: Bell, text: `Уведомление за ${dynamicSettings.notifyDays} ${dynamicSettings.notifyDays === 1 ? "день" : "дня"} до списания` },
+    { icon: Calendar, text: `Автосписание с ${dynamicSettings.chargeWindowStart} по ${dynamicSettings.chargeWindowEnd} число месяца` },
+  ], [dynamicSettings]);
 
   // Check if user has existing booking or active subscription
   const { data: existingAccess } = useQuery({
@@ -133,7 +179,7 @@ export default function BusinessTraining() {
                 className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-0 px-4 py-1.5"
               >
                 <Calendar className="h-3.5 w-3.5 mr-1.5" />
-                Старт 5 февраля 2026
+                Старт {dynamicSettings.startDate}
               </Badge>
 
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-foreground leading-tight">
@@ -256,10 +302,10 @@ export default function BusinessTraining() {
                   Один тариф — всё включено
                 </Badge>
                 <h2 className="text-2xl lg:text-3xl font-bold mb-2">
-                  Ежемесячный доступ
+                  {dynamicSettings.tariffName}
                 </h2>
                 <div className="flex items-baseline justify-center gap-2">
-                  <span className="text-4xl lg:text-5xl font-bold text-primary">250</span>
+                  <span className="text-4xl lg:text-5xl font-bold text-primary">{dynamicSettings.price}</span>
                   <span className="text-xl text-muted-foreground">BYN/месяц</span>
                 </div>
               </div>
@@ -339,7 +385,7 @@ export default function BusinessTraining() {
       <PreregistrationDialog
         open={showPreregistration}
         onOpenChange={setShowPreregistration}
-        tariffName="Ежемесячный доступ — 250 BYN/мес"
+        tariffName={`${dynamicSettings.tariffName} — ${dynamicSettings.price} BYN/мес`}
         productCode="buh_business"
       />
     </div>

@@ -16,10 +16,25 @@ export interface TariffFeature {
   link_url: string | null;
 }
 
+export interface TariffOfferMeta {
+  charge_window_start?: number;
+  charge_window_end?: number;
+  is_recurring?: boolean;
+  recurring_interval_days?: number;
+  preregistration?: {
+    first_charge_date?: string;
+    charge_offer_id?: string;
+    notify_before_days?: number;
+    auto_convert_after_date?: boolean;
+    charge_window_start?: number;
+    charge_window_end?: number;
+  };
+}
+
 export interface TariffOffer {
   id: string;
   tariff_id: string;
-  offer_type: "pay_now" | "trial";
+  offer_type: "pay_now" | "trial" | "preregistration";
   button_label: string;
   amount: number;
   trial_days: number | null;
@@ -32,6 +47,7 @@ export interface TariffOffer {
   is_primary?: boolean;
   payment_method?: string;
   installment_count?: number;
+  meta?: TariffOfferMeta;
 }
 
 export interface PublicTariff {

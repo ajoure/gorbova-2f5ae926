@@ -1120,6 +1120,12 @@ export default function AdminProductDetailV2() {
                               {offer.is_primary && " (основная)"}
                             </SelectItem>
                           ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Preregistration settings */}
@@ -1225,35 +1231,52 @@ export default function AdminProductDetailV2() {
               </div>
             )}
 
-            {/* Virtual card blocking - show when tokenization is required or installment */}
-            {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial" || offerForm.payment_method === "internal_installment") && (
-              <div className="border-t pt-4">
-                <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
-                  <Switch
-                    checked={offerForm.reject_virtual_cards}
-                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, reject_virtual_cards: checked })}
-                  />
-                  <div>
-                    <Label className="cursor-pointer">Блокировать виртуальные карты</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Принимать только физические банковские карты (для рассрочки)
-                    </p>
+            {/* Advanced Settings - Collapsible */}
+            <Collapsible className="border-t pt-4">
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between px-0 hover:bg-transparent">
+                  <span className="text-sm font-medium text-muted-foreground">Расширенные настройки</span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-4">
+                {/* Virtual card blocking */}
+                {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial" || offerForm.payment_method === "internal_installment") && (
+                  <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
+                    <Switch
+                      checked={offerForm.reject_virtual_cards}
+                      onCheckedChange={(checked) => setOfferForm({ ...offerForm, reject_virtual_cards: checked })}
+                    />
+                    <div>
+                      <Label className="cursor-pointer">Блокировать виртуальные карты</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Принимать только физические банковские карты
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
+                )}
 
-            <div className="border-t pt-4 space-y-2">
-              <Label>GetCourse код предложения</Label>
-              <Input
-                placeholder="например: offer_12345"
-                value={offerForm.getcourse_offer_id}
-                onChange={(e) => setOfferForm({ ...offerForm, getcourse_offer_id: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Код предложения для автоматического проброса в GetCourse при выдаче доступа
-              </p>
-            </div>
+                {/* GetCourse code */}
+                <div className="space-y-2">
+                  <Label>GetCourse код предложения</Label>
+                  <Input
+                    placeholder="например: offer_12345"
+                    value={offerForm.getcourse_offer_id}
+                    onChange={(e) => setOfferForm({ ...offerForm, getcourse_offer_id: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Код для автоматического проброса в GetCourse
+                  </p>
+                </div>
+
+                {/* Welcome Message Editor */}
+                <OfferWelcomeMessageEditor
+                  offerId={offerDialog.editing?.id || null}
+                  meta={offerForm.meta}
+                  onMetaChange={(newMeta) => setOfferForm({ ...offerForm, meta: newMeta })}
+                />
+              </CollapsibleContent>
+            </Collapsible>
 
             <div className="flex items-center space-x-2">
               <Switch
@@ -1272,15 +1295,6 @@ export default function AdminProductDetailV2() {
                 <Label>Основная цена</Label>
               </div>
             )}
-
-            {/* Welcome Message Editor for Offer */}
-            <div className="border-t pt-4">
-              <OfferWelcomeMessageEditor
-                offerId={offerDialog.editing?.id || null}
-                meta={offerForm.meta}
-                onMetaChange={(newMeta) => setOfferForm({ ...offerForm, meta: newMeta })}
-              />
-            </div>
           </div>
 
           <DialogFooter>
