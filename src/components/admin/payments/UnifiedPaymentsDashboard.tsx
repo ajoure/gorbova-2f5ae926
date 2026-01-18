@@ -1,15 +1,29 @@
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { TrendingUp, RotateCcw, Ban, Percent, Wallet, Filter } from "lucide-react";
-import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
+import { UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   useBepaidFeeRules, 
   calculateFallbackFee, 
   detectPaymentChannel, 
   extractIssuerCountry 
 } from "@/hooks/useBepaidFeeRules";
+
+interface ServerStats {
+  successful_amount: number;
+  successful_count: number;
+  refunded_amount: number;
+  refunded_count: number;
+  failed_amount: number;
+  failed_count: number;
+  pending_amount: number;
+  pending_count: number;
+  total_count: number;
+}
 
 export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'failed' | null;
 
@@ -22,6 +36,7 @@ interface UnifiedPaymentsDashboardProps {
   isLoading: boolean;
   activeFilter?: UnifiedDashboardFilter;
   onFilterChange?: (filter: UnifiedDashboardFilter) => void;
+  dateFilter?: DateFilter; // For server-side stats
 }
 
 interface DashboardCardProps {
@@ -164,9 +179,33 @@ export default function UnifiedPaymentsDashboard({
   isLoading,
   activeFilter,
   onFilterChange,
+  dateFilter,
 }: UnifiedPaymentsDashboardProps) {
   // Fetch fee rules from integration settings
   const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
+  
+  // Fetch accurate server-side statistics
+  const { data: serverStats, isLoading: isLoadingStats } = useQuery({
+    queryKey: ["payment-stats", dateFilter],
+    queryFn: async () => {
+      const fromDate = dateFilter?.from || "2020-01-01";
+      const toDate = dateFilter?.to || new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await supabase.rpc('get_payments_stats', {
+        from_date: `${fromDate}T00:00:00Z`,
+        to_date: `${toDate}T23:59:59Z`
+      });
+      
+      if (error) {
+        console.error('[ServerStats] Error fetching stats:', error);
+        return null;
+      }
+      
+      return data as unknown as ServerStats;
+    },
+    enabled: !!dateFilter,
+    staleTime: 30000,
+  });
   
   const analytics = useMemo(() => {
     if (!payments.length || !feeRules) {
@@ -321,18 +360,36 @@ export default function UnifiedPaymentsDashboard({
     const feesAmount = result.fees[primaryCurrency] || 0;
     const netRevenue = successfulAmount - refundedAmount - feesAmount;
 
+    // Use server stats for accurate counts if available (amounts stored in BYN, not kopecks)
+    const finalSuccessfulAmount = serverStats?.successful_amount != null 
+      ? serverStats.successful_amount
+      : successfulAmount;
+    const finalSuccessfulCount = serverStats?.successful_count ?? result.successful.count;
+    
+    const finalRefundedAmount = serverStats?.refunded_amount != null
+      ? serverStats.refunded_amount
+      : refundedAmount;
+    const finalRefundedCount = serverStats?.refunded_count ?? result.refunded.count;
+    
+    const finalFailedAmount = serverStats?.failed_amount != null
+      ? serverStats.failed_amount
+      : (result.failed[primaryCurrency] || 0);
+    const finalFailedCount = serverStats?.failed_count ?? result.failed.count;
+    
+    const finalNetRevenue = finalSuccessfulAmount - finalRefundedAmount - feesAmount;
+
     return { 
-      successful: { amount: successfulAmount, count: result.successful.count },
-      refunded: { amount: refundedAmount, count: result.refunded.count },
-      failed: { amount: result.failed[primaryCurrency] || 0, count: result.failed.count },
+      successful: { amount: finalSuccessfulAmount, count: finalSuccessfulCount },
+      refunded: { amount: finalRefundedAmount, count: finalRefundedCount },
+      failed: { amount: finalFailedAmount, count: finalFailedCount },
       fees: { amount: feesAmount, count: result.feesKnown + result.feesFallback },
       feesUnknown: result.feesUnknown,
       feesKnown: result.feesKnown,
       feesFallback: result.feesFallback,
       primaryCurrency,
-      netRevenue,
+      netRevenue: finalNetRevenue,
     };
-  }, [payments, feeRules]);
+  }, [payments, feeRules, serverStats]);
 
   const handleFilterClick = (filter: UnifiedDashboardFilter) => {
     if (onFilterChange) {
@@ -340,7 +397,7 @@ export default function UnifiedPaymentsDashboard({
     }
   };
 
-  if (isLoading || isLoadingRules) {
+  if (isLoading || isLoadingRules || isLoadingStats) {
     return (
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         {[...Array(5)].map((_, i) => (

@@ -120,6 +120,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         .eq("is_fee", false)
         .not("bepaid_uid", "is", null)
         .gte("paid_at", `${fromDate}T00:00:00Z`)
+        .range(0, 9999) // Load up to 10,000 records to avoid Supabase default 1000 limit
         .order("paid_at", { ascending: false, nullsFirst: false });
       
       if (dateFilter.to) {
@@ -140,6 +141,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         `)
         .eq("provider", "bepaid")
         .gte("paid_at", `${fromDate}T00:00:00Z`)
+        .range(0, 9999) // Load up to 10,000 records to avoid Supabase default 1000 limit
         .order("paid_at", { ascending: false, nullsFirst: false });
       
       if (dateFilter.to) {
