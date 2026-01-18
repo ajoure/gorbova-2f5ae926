@@ -430,24 +430,46 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     }
   };
 
+  // Helper to normalize DB status to our standard
+  const normalizeDbStatus = (status: string): string => {
+    const s = (status || '').toLowerCase();
+    if (s === 'succeeded' || s === 'successful' || s === 'completed') return 'successful';
+    if (s === 'failed' || s === 'error' || s === 'declined') return 'failed';
+    if (s === 'refunded' || s === 'refund') return 'refund';
+    if (s === 'cancelled' || s === 'voided' || s === 'void') return 'cancel';
+    return s || 'pending';
+  };
+
   const runReconciliation = async (txs: ParsedTransaction[]) => {
-    // Fetch existing UIDs from both tables
+    // Fetch existing UIDs from both tables - batch to avoid query limits
     const uids = txs.map(t => t.uid);
+    const batchSize = 500;
     
-    // Check in payment_reconcile_queue
-    const { data: queueRecords } = await supabase
-      .from('payment_reconcile_queue')
-      .select('bepaid_uid, status_normalized, amount, matched_profile_id')
-      .in('bepaid_uid', uids);
+    let allQueueRecords: any[] = [];
+    let allPaymentRecords: any[] = [];
     
-    // Check in payments_v2
-    const { data: paymentRecords } = await supabase
-      .from('payments_v2')
-      .select('provider_payment_id, status, amount')
-      .in('provider_payment_id', uids);
+    // Batch fetch from queue
+    for (let i = 0; i < uids.length; i += batchSize) {
+      const batch = uids.slice(i, i + batchSize);
+      const { data } = await supabase
+        .from('payment_reconcile_queue')
+        .select('bepaid_uid, status_normalized, amount, matched_profile_id')
+        .in('bepaid_uid', batch);
+      if (data) allQueueRecords.push(...data);
+    }
     
-    const queueMap = new Map(queueRecords?.map(r => [r.bepaid_uid, r]) || []);
-    const paymentsMap = new Map(paymentRecords?.map(r => [r.provider_payment_id, r]) || []);
+    // Batch fetch from payments_v2
+    for (let i = 0; i < uids.length; i += batchSize) {
+      const batch = uids.slice(i, i + batchSize);
+      const { data } = await supabase
+        .from('payments_v2')
+        .select('provider_payment_id, status, amount, transaction_type')
+        .in('provider_payment_id', batch);
+      if (data) allPaymentRecords.push(...data);
+    }
+    
+    const queueMap = new Map(allQueueRecords.map(r => [r.bepaid_uid, r]));
+    const paymentsMap = new Map(allPaymentRecords.map(r => [r.provider_payment_id, r]));
 
     const newRecords: ParsedTransaction[] = [];
     const updates: ParsedTransaction[] = [];
@@ -459,10 +481,24 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
       const existingPayment = paymentsMap.get(tx.uid);
 
       if (existingPayment) {
-        // Already in payments_v2 - exact match
-        tx.reconcile_status = 'match';
         tx.existing_record = existingPayment;
-        matches.push(tx);
+        
+        // CRITICAL FIX: Compare CSV status vs DB status
+        const dbStatusNormalized = normalizeDbStatus(existingPayment.status);
+        const csvStatus = tx.status_normalized;
+        
+        // Check if statuses conflict (e.g., DB says succeeded, CSV says failed)
+        const statusConflict = dbStatusNormalized !== csvStatus;
+        const amountDiff = Math.abs((existingPayment.amount || 0) - tx.amount) > 0.01;
+        
+        if (statusConflict || amountDiff) {
+          // CRITICAL CONFLICT: payments_v2 has different status than CSV
+          tx.reconcile_status = 'conflict';
+          conflicts.push(tx);
+        } else {
+          tx.reconcile_status = 'match';
+          matches.push(tx);
+        }
       } else if (existingQueue) {
         // In queue - check for updates
         tx.existing_record = existingQueue;
@@ -671,6 +707,40 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     importMutation.mutate();
   };
 
+  // Apply status overrides for conflicts with payments_v2
+  const applyOverridesMutation = useMutation({
+    mutationFn: async () => {
+      const conflictsToOverride = report?.conflicts.filter(c => 
+        c.existing_record && c.reconcile_status === 'conflict'
+      ) || [];
+      
+      let applied = 0;
+      for (const tx of conflictsToOverride) {
+        const { error } = await supabase
+          .from('payment_status_overrides')
+          .upsert({
+            provider: 'bepaid',
+            uid: tx.uid,
+            status_override: tx.status_normalized,
+            original_status: tx.existing_record?.status,
+            reason: `CSV reconciliation: CSV status "${tx.status_normalized}" vs DB status "${tx.existing_record?.status}"`,
+            source: 'csv_import',
+          }, { onConflict: 'provider,uid' });
+        
+        if (!error) applied++;
+      }
+      
+      return { applied, total: conflictsToOverride.length };
+    },
+    onSuccess: ({ applied, total }) => {
+      toast.success(`Применено ${applied} из ${total} переопределений статусов`);
+      queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+    },
+    onError: (error: any) => {
+      toast.error("Ошибка применения переопределений: " + error.message);
+    },
+  });
+
   const resetDialog = () => {
     setFiles([]);
     setTransactions([]);
@@ -817,6 +887,47 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                 />
               </div>
 
+              {/* CSV Financial Summary */}
+              <Card className="bg-primary/5 border-primary/20">
+                <CardContent className="p-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Успешные в CSV</p>
+                      <p className="text-xl font-bold text-green-600">
+                        {transactions.filter(t => t.status_normalized === 'successful' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase().replace('возврат средств', 'refund').replace('отмена', 'void'))).reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {transactions.filter(t => t.status_normalized === 'successful' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase())).length} операций
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Возвраты в CSV</p>
+                      <p className="text-xl font-bold text-amber-600">
+                        {transactions.filter(t => t.status_normalized === 'refund' || (t.transaction_type || '').toLowerCase().includes('возврат')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Неуспешные в CSV</p>
+                      <p className="text-xl font-bold text-red-600">
+                        {transactions.filter(t => t.status_normalized === 'failed').reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {transactions.filter(t => t.status_normalized === 'failed').length} операций
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Конфликты статусов</p>
+                      <p className="text-xl font-bold text-orange-600">
+                        {report.conflicts.length}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        CSV ≠ База
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               <div className="flex items-center gap-4 flex-wrap p-3 bg-muted/50 rounded-lg">
                 <div className="flex items-center gap-2">
                   <FileText className="h-4 w-4 text-primary" />
@@ -890,10 +1001,24 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
         </div>
 
         {phase === 'reconciliation' && (
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 flex-wrap">
             <Button variant="outline" onClick={resetDialog}>
               Отмена
             </Button>
+            {report && report.conflicts.length > 0 && (
+              <Button 
+                variant="secondary"
+                onClick={() => applyOverridesMutation.mutate()}
+                disabled={applyOverridesMutation.isPending}
+              >
+                {applyOverridesMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                )}
+                Применить статусы из CSV ({report.conflicts.length})
+              </Button>
+            )}
             <Button 
               onClick={handleImport} 
               disabled={transactionsToImport.length === 0}

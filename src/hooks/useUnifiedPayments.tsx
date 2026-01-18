@@ -155,13 +155,26 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         .order("paid_at", { ascending: false, nullsFirst: false })
         .limit(10000); // Explicit limit to load all records
       
-      const [queueResult, paymentsResult] = await Promise.all([
+      // Fetch status overrides for CSV reconciliation
+      const overridesQuery = supabase
+        .from("payment_status_overrides")
+        .select("provider, uid, status_override");
+      
+      const [queueResult, paymentsResult, overridesResult] = await Promise.all([
         queueQuery,
         paymentsQuery,
+        overridesQuery,
       ]);
       
       if (queueResult.error) throw queueResult.error;
       if (paymentsResult.error) throw paymentsResult.error;
+      // Overrides are optional, don't throw on error
+      
+      // Build overrides map: provider:uid -> status_override
+      const overridesMap = new Map<string, string>();
+      (overridesResult.data || []).forEach(o => {
+        overridesMap.set(`${o.provider}:${o.uid}`, o.status_override);
+      });
       
       // Get product names for orders
       const productIds = new Set<string>();
@@ -222,13 +235,27 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           processedKeys.add(`${provider}:${pUid}`);
         }
         
+        // Check for status override from CSV reconciliation
+        const overrideKey = `${provider}:${pUid}`;
+        const statusOverride = pUid ? overridesMap.get(overrideKey) : null;
+        
+        // Normalize DB status for comparison and display
+        // Keep original status value but normalize for display purposes
+        let dbStatus = p.status || 'pending';
+        
+        // Apply override if exists
+        const effectiveStatus = statusOverride || dbStatus;
+        
+        // Check if there's a conflict (override differs from original)
+        const hasStatusConflict = statusOverride && statusOverride !== dbStatus;
+        
         return {
           id: p.id,
           uid: pUid || p.id,
           source: 'processed' as PaymentSource,
           rawSource: 'payments_v2' as const,
           transaction_type: (p as any).transaction_type || 'payment',
-          status_normalized: p.status || 'pending',
+          status_normalized: effectiveStatus,
           amount: p.amount,
           currency: p.currency,
           paid_at: p.paid_at,
@@ -257,7 +284,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           refunds_count: refunds.length,
           total_refunded: p.refunded_amount || 0,
           is_external: false,
-          has_conflict: false,
+          has_conflict: hasStatusConflict || false,
           provider,
           tracking_id: null,
           provider_response: providerResponse,
