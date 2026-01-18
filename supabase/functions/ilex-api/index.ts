@@ -888,6 +888,209 @@ function extractCleanText(html: string): string {
   return text;
 }
 
+// ================== PUBLIC API via pravo.by ==================
+// These functions work without authentication - for bot usage
+
+const PRAVO_BASE_URL = 'https://pravo.by';
+
+interface PravoSearchResult {
+  title: string;
+  url: string;
+  date?: string;
+  number?: string;
+  organ?: string;
+  snippet?: string;
+}
+
+// Search legal documents on pravo.by (public, no auth required)
+async function searchPravoBy(query: string): Promise<{ 
+  success: boolean; 
+  results?: PravoSearchResult[]; 
+  error?: string;
+  source: 'pravo.by';
+}> {
+  try {
+    const searchUrl = `${PRAVO_BASE_URL}/search/?text=${encodeURIComponent(query)}`;
+    
+    console.log('Searching pravo.by:', searchUrl);
+    
+    const response = await fetch(searchUrl, {
+      headers: getHeaders(),
+      redirect: 'follow',
+    });
+    
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}`, source: 'pravo.by' };
+    }
+    
+    const html = await response.text();
+    const results: PravoSearchResult[] = [];
+    
+    // Parse search results - pravo.by uses standard HTML structure
+    // Look for search result items
+    const itemRegex = /<div[^>]*class="[^"]*search-item[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
+    const linkRegex = /<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/i;
+    const dateRegex = /(\d{2}\.\d{2}\.\d{4})/;
+    const numberRegex = /№\s*([^\s<]+)/;
+    
+    let match;
+    while ((match = itemRegex.exec(html)) !== null && results.length < 20) {
+      const itemHtml = match[1];
+      const linkMatch = linkRegex.exec(itemHtml);
+      
+      if (linkMatch) {
+        let url = linkMatch[1];
+        if (url.startsWith('/')) {
+          url = PRAVO_BASE_URL + url;
+        }
+        
+        const title = linkMatch[2].trim();
+        const dateMatch = dateRegex.exec(itemHtml);
+        const numberMatch = numberRegex.exec(itemHtml);
+        
+        results.push({
+          title,
+          url,
+          date: dateMatch ? dateMatch[1] : undefined,
+          number: numberMatch ? numberMatch[1] : undefined,
+        });
+      }
+    }
+    
+    // Alternative parsing if no results with search-item class
+    if (results.length === 0) {
+      // Try to find links to documents
+      const docLinkRegex = /<a[^>]*href="(\/document\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
+      while ((match = docLinkRegex.exec(html)) !== null && results.length < 20) {
+        results.push({
+          title: match[2].trim(),
+          url: PRAVO_BASE_URL + match[1],
+        });
+      }
+    }
+    
+    return { success: true, results, source: 'pravo.by' };
+  } catch (error) {
+    console.error('pravo.by search error:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error',
+      source: 'pravo.by'
+    };
+  }
+}
+
+// Fetch document text from pravo.by (public, no auth required)
+async function fetchPravoByDocument(url: string): Promise<{
+  success: boolean;
+  title?: string;
+  text?: string;
+  date?: string;
+  number?: string;
+  organ?: string;
+  url: string;
+  error?: string;
+  source: 'pravo.by';
+}> {
+  try {
+    console.log('Fetching pravo.by document:', url);
+    
+    // Ensure URL is for pravo.by
+    if (!url.includes('pravo.by')) {
+      return { success: false, url, error: 'URL must be from pravo.by', source: 'pravo.by' };
+    }
+    
+    const response = await fetch(url, {
+      headers: getHeaders(),
+      redirect: 'follow',
+    });
+    
+    if (!response.ok) {
+      return { success: false, url, error: `HTTP ${response.status}`, source: 'pravo.by' };
+    }
+    
+    const html = await response.text();
+    
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].replace(' - Pravo.by', '').trim() : undefined;
+    
+    // Extract document metadata
+    const dateMatch = html.match(/Дата(?:\s*принятия)?[:\s]*(\d{2}\.\d{2}\.\d{4})/i);
+    const numberMatch = html.match(/№\s*([^\s<,]+)/);
+    const organMatch = html.match(/Орган[:\s]*([^<]+)/i);
+    
+    // Extract main content - look for document body
+    let text = '';
+    
+    // Try to find document content container
+    const contentPatterns = [
+      /<div[^>]*class="[^"]*document-body[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<div[^>]*class="[^"]*(?:document-footer|sidebar)/i,
+      /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<(?:footer|aside|div[^>]*class="[^"]*footer)/i,
+      /<article[^>]*>([\s\S]*?)<\/article>/i,
+      /<main[^>]*>([\s\S]*?)<\/main>/i,
+    ];
+    
+    for (const pattern of contentPatterns) {
+      const contentMatch = html.match(pattern);
+      if (contentMatch) {
+        text = extractCleanText(contentMatch[1]);
+        break;
+      }
+    }
+    
+    // Fallback: extract all text from body
+    if (!text) {
+      const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (bodyMatch) {
+        text = extractCleanText(bodyMatch[1]);
+      }
+    }
+    
+    // Trim excessively long text (keep first 50000 chars)
+    if (text.length > 50000) {
+      text = text.substring(0, 50000) + '\n\n[... текст сокращён ...]';
+    }
+    
+    return {
+      success: true,
+      title,
+      text,
+      date: dateMatch ? dateMatch[1] : undefined,
+      number: numberMatch ? numberMatch[1] : undefined,
+      organ: organMatch ? organMatch[1].trim() : undefined,
+      url,
+      source: 'pravo.by',
+    };
+  } catch (error) {
+    console.error('pravo.by fetch error:', error);
+    return {
+      success: false,
+      url,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      source: 'pravo.by',
+    };
+  }
+}
+
+// Get session cookie from database settings (manual mode)
+async function getManualSessionCookie(): Promise<string | null> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    const { data } = await supabase
+      .from('ilex_settings')
+      .select('session_cookie')
+      .single();
+    
+    return data?.session_cookie || null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -987,6 +1190,65 @@ Deno.serve(async (req) => {
           error: refreshResult.error,
           debugHints: refreshResult.debugHints,
         };
+        break;
+      
+      // ========== PUBLIC API (no auth required) ==========
+      // These work through pravo.by - for bot usage
+      
+      case 'search_public':
+        if (!params.query) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Запрос обязателен' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        result = await searchPravoBy(params.query);
+        break;
+        
+      case 'fetch_public_document':
+        if (!params.url) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'URL обязателен' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        result = await fetchPravoByDocument(params.url);
+        break;
+        
+      case 'set_manual_session':
+        // Save manual session cookie for iLex Private
+        if (!params.session_cookie) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Session cookie обязателен' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        try {
+          const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+          const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+          const supabase = createClient(supabaseUrl, supabaseKey);
+          
+          await supabase
+            .from('ilex_settings')
+            .upsert({
+              id: 'default',
+              session_cookie: params.session_cookie,
+              connection_status: 'connected',
+              last_connection_check: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          
+          // Update session cache
+          sessionCache = {
+            cookie: params.session_cookie,
+            expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour
+            authenticated: true,
+          };
+          
+          result = { success: true, message: 'Session cookie сохранён' };
+        } catch (error) {
+          result = { success: false, error: error instanceof Error ? error.message : 'Ошибка сохранения' };
+        }
         break;
         
       default:
