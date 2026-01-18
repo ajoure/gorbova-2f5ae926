@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
   Loader2, X, FileText, ArrowRight, User, Mail, CreditCard, ShoppingCart,
-  AlertTriangle, Plus, RefreshCw, GitCompare, ArrowUp, ArrowDown, Equal
+  AlertTriangle, Plus, RefreshCw, GitCompare, ArrowUp, ArrowDown, Equal, FileWarning
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappings";
@@ -24,6 +24,15 @@ import { ru } from "date-fns/locale";
 import * as XLSX from "xlsx";
 import { transliterateToCyrillic } from "@/utils/transliteration";
 import { cn } from "@/lib/utils";
+import { 
+  parseCSVContent, 
+  normalizeStatus, 
+  parseAmount, 
+  parseDate, 
+  detectPaymentMethod,
+  extractCardLast4,
+  detectCardBrand
+} from "@/lib/csv-parser";
 
 interface SmartImportDialogProps {
   open: boolean;
@@ -102,69 +111,26 @@ type ImportPhase = 'upload' | 'parsing' | 'reconciliation' | 'importing' | 'comp
 
 const BATCH_SIZE = 50;
 
-// Parse bePaid CSV/Excel row
+// Parse bePaid CSV/Excel row using improved parser
 function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   const uid = row['UID'] || row['uid'] || row['ID транзакции'];
   if (!uid) return null;
 
-  const statusRaw = (row['Статус'] || row['Status'] || '').toLowerCase();
+  const statusRaw = row['Статус'] || row['Status'] || '';
   const typeRaw = row['Тип транзакции'] || row['Transaction type'] || 'Платеж';
-  const messageRaw = (row['Сообщение'] || row['Message'] || '').toLowerCase();
+  const messageRaw = row['Сообщение'] || row['Message'] || '';
   
-  const isRefund = typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund');
-  const isCancel = typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel');
-  const isDeclined = messageRaw.includes('declined') || messageRaw.includes('отклон') || 
-                     messageRaw.includes('error') || messageRaw.includes('insufficient') ||
-                     messageRaw.includes('reject') || messageRaw.includes('fail') ||
-                     messageRaw.includes('ошибк') || messageRaw.includes('denied') ||
-                     messageRaw.includes('refused') || messageRaw.includes('cancel');
-  
-  let status_normalized: ParsedTransaction['status_normalized'] = 'pending';
-  
-  if (isRefund) {
-    status_normalized = 'refund';
-  } else if (isCancel) {
-    status_normalized = 'cancel';
-  } else if (isDeclined) {
-    status_normalized = 'failed';
-  } else if (statusRaw.includes('неуспеш') || statusRaw.includes('ошибк') || statusRaw === 'failed' || statusRaw === 'error' || statusRaw.includes('fail')) {
-    status_normalized = 'failed';
-  } else if (statusRaw === 'успешно' || statusRaw === 'successful' || statusRaw.startsWith('успеш')) {
-    status_normalized = 'successful';
-  }
+  // Use improved status normalization
+  const status_normalized = normalizeStatus(statusRaw, typeRaw, messageRaw);
 
-  const parseNum = (val: any): number | undefined => {
-    if (val === undefined || val === null || val === '') return undefined;
-    const str = typeof val === 'number' ? String(val) : String(val);
-    const num = parseFloat(str.replace(',', '.').replace(/[^\d.-]/g, ''));
-    return isNaN(num) ? undefined : num;
-  };
-
-  const amount = parseNum(row['Сумма'] || row['Amount']) || 0;
+  const amount = parseAmount(row['Сумма'] || row['Amount']);
 
   const cardMask = row['Карта'] || row['Card'] || '';
-  const cardLast4Match = cardMask.match(/(\d{4})\s*$/);
-  const card_last4 = cardLast4Match ? cardLast4Match[1] : undefined;
-
-  const paymentMethod = row['Способ оплаты'] || row['Payment method'] || '';
-  let card_brand = paymentMethod.toLowerCase();
-  if (cardMask.startsWith('4')) card_brand = 'visa';
-  else if (cardMask.startsWith('5')) card_brand = 'mastercard';
-
-  const parseDate = (dateStr: string | undefined): string | undefined => {
-    if (!dateStr) return undefined;
-    let match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):?(\d{2})?/);
-    if (match) {
-      const [, day, month, year, hour, min, sec = '00'] = match;
-      return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
-    }
-    match = dateStr.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*([+-]\d{4})?/);
-    if (match) {
-      const [, year, month, day, hour, min, sec] = match;
-      return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
-    }
-    return dateStr;
-  };
+  const card_last4 = extractCardLast4(cardMask);
+  
+  const paymentMethodRaw = row['Способ оплаты'] || row['Payment method'] || '';
+  const payment_method = detectPaymentMethod(row);
+  const card_brand = payment_method === 'erip' ? 'erip' : detectCardBrand(cardMask, paymentMethodRaw);
 
   const parse3DSecure = (val: string | undefined): boolean | undefined => {
     if (!val) return undefined;
@@ -190,11 +156,11 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
     card_last4,
     card_holder: row['Владелец карты'] || row['Card holder'] || undefined,
     card_brand,
-    payment_method: paymentMethod.toLowerCase() || undefined,
-    fee_percent: parseNum(row['Комиссия,%'] || row['Fee %']),
-    fee_amount: parseNum(row['Комиссия за операцию'] || row['Fee amount']),
-    total_fee: parseNum(row['Сумма комиссий'] || row['Total fee']),
-    transferred_amount: parseNum(row['Перечисленная сумма'] || row['Transferred amount']),
+    payment_method: payment_method === 'erip' ? 'erip' : paymentMethodRaw.toLowerCase() || undefined,
+    fee_percent: parseAmount(row['Комиссия,%'] || row['Fee %']),
+    fee_amount: parseAmount(row['Комиссия за операцию'] || row['Fee amount']),
+    total_fee: parseAmount(row['Сумма комиссий'] || row['Total fee']),
+    transferred_amount: parseAmount(row['Перечисленная сумма'] || row['Transferred amount']),
     transferred_at: parseDate(row['Дата перечисления'] || row['Transferred at']),
     valid_until: parseDate(row['Действует до'] || row['Valid until']),
     message: row['Сообщение'] || row['Message'] || undefined,
@@ -236,13 +202,14 @@ function isFeeTransaction(tx: ParsedTransaction): boolean {
 }
 
 export default function SmartImportDialog({ open, onOpenChange, onSuccess }: SmartImportDialogProps) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [phase, setPhase] = useState<ImportPhase>('upload');
   const [transactions, setTransactions] = useState<ParsedTransaction[]>([]);
   const [report, setReport] = useState<ReconciliationReport | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0, message: '' });
   const [selectedCategories, setSelectedCategories] = useState({ new: true, updates: true, conflicts: false });
   const [autoCreateOrders, setAutoCreateOrders] = useState(true);
+  const [fileSummary, setFileSummary] = useState<{ cards: number; erip: number; delimiter?: string }>({ cards: 0, erip: 0 });
   
   const queryClient = useQueryClient();
   const { mappings } = useBepaidMappings();
@@ -260,81 +227,112 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) handleFile(droppedFile);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length > 0) handleFiles(droppedFiles);
   }, []);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) handleFile(selectedFile);
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length > 0) handleFiles(selectedFiles);
   };
 
-  const handleFile = async (selectedFile: File) => {
-    const isCSV = selectedFile.name.endsWith('.csv');
-    const isXLSX = selectedFile.name.endsWith('.xlsx') || selectedFile.name.endsWith('.xls');
+  const handleFiles = async (selectedFiles: File[]) => {
+    // Filter valid files
+    const validFiles = selectedFiles.filter(f => 
+      f.name.endsWith('.csv') || f.name.endsWith('.xlsx') || f.name.endsWith('.xls')
+    );
     
-    if (!isCSV && !isXLSX) {
+    if (validFiles.length === 0) {
       toast.error("Поддерживаются только CSV и Excel файлы");
       return;
     }
 
-    setFile(selectedFile);
+    setFiles(validFiles);
     setPhase('parsing');
-    setProgress({ current: 0, total: 0, message: 'Чтение файла...' });
+    setProgress({ current: 0, total: 0, message: 'Чтение файлов...' });
 
     try {
-      let rows: Record<string, string>[] = [];
+      let allRows: Record<string, string>[] = [];
+      let cardCount = 0;
+      let eripCount = 0;
+      let lastDelimiter: string | undefined;
 
-      if (isCSV) {
-        const text = await selectedFile.text();
-        const lines = text.split('\n');
-        if (lines.length < 2) throw new Error("Файл пустой или не содержит данных");
+      for (const selectedFile of validFiles) {
+        const isCSV = selectedFile.name.endsWith('.csv');
         
-        const headers = lines[0].split(';').map(h => h.trim().replace(/"/g, ''));
-        rows = lines.slice(1)
-          .filter(line => line.trim())
-          .map(line => {
-            const values = line.split(';').map(v => v.trim().replace(/"/g, ''));
-            const row: Record<string, string> = {};
-            headers.forEach((h, i) => { row[h] = values[i] || ''; });
-            return row;
-          });
-      } else {
-        const buffer = await selectedFile.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: 'array' });
-        
-        let cardRows: Record<string, string>[] = [];
-        if (workbook.SheetNames.length > 1) {
-          const cardSheet = workbook.Sheets[workbook.SheetNames[1]];
-          cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
-          if (cardRows.length > 0 && !('UID' in cardRows[0])) cardRows = [];
-        }
-        
-        let eripRows: Record<string, string>[] = [];
-        if (workbook.SheetNames.length > 2) {
-          const eripSheet = workbook.Sheets[workbook.SheetNames[2]];
-          const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
-          if (rawEripRows.length > 0 && 'UID' in rawEripRows[0]) {
-            eripRows = rawEripRows.map(row => ({
-              ...row,
-              'Способ оплаты': 'erip',
-              '_source': 'erip'
-            }));
+        if (isCSV) {
+          const text = await selectedFile.text();
+          // Use proper CSV parser with auto-detect delimiter
+          const parseResult = parseCSVContent(text);
+          
+          if (parseResult.errors.length > 0) {
+            console.warn('CSV parse warnings:', parseResult.errors.slice(0, 5));
           }
+          
+          lastDelimiter = parseResult.delimiter;
+          
+          // Determine if this is ERIP or cards file
+          const isEripFile = selectedFile.name.toLowerCase().includes('erip') || 
+                             parseResult.rows.some(r => r['Номер операции ЕРИП'] || r['Расчетный агент']);
+          
+          const rowsWithSource = parseResult.rows.map(row => ({
+            ...row,
+            ...(isEripFile ? { 'Способ оплаты': 'erip', '_source': 'erip' } : {})
+          }));
+          
+          if (isEripFile) {
+            eripCount += rowsWithSource.length;
+          } else {
+            cardCount += rowsWithSource.length;
+          }
+          
+          allRows = [...allRows, ...rowsWithSource];
+          console.log(`CSV parsed: ${parseResult.rows.length} rows from ${selectedFile.name}, delimiter: "${parseResult.delimiter}"`);
+        } else {
+          // Excel file processing
+          const buffer = await selectedFile.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          
+          let cardRows: Record<string, string>[] = [];
+          if (workbook.SheetNames.length > 1) {
+            const cardSheet = workbook.Sheets[workbook.SheetNames[1]];
+            cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
+            if (cardRows.length > 0 && !('UID' in cardRows[0])) cardRows = [];
+          }
+          
+          let eripRows: Record<string, string>[] = [];
+          if (workbook.SheetNames.length > 2) {
+            const eripSheet = workbook.Sheets[workbook.SheetNames[2]];
+            const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
+            if (rawEripRows.length > 0 && 'UID' in rawEripRows[0]) {
+              eripRows = rawEripRows.map(row => ({
+                ...row,
+                'Способ оплаты': 'erip',
+                '_source': 'erip'
+              }));
+            }
+          }
+          
+          cardCount += cardRows.length;
+          eripCount += eripRows.length;
+          allRows = [...allRows, ...cardRows, ...eripRows];
         }
-        
-        rows = [...cardRows, ...eripRows];
       }
 
-      setProgress({ current: 0, total: rows.length, message: 'Разбор транзакций...' });
+      if (allRows.length === 0) {
+        throw new Error("Файлы пустые или не содержат данных");
+      }
+
+      setFileSummary({ cards: cardCount, erip: eripCount, delimiter: lastDelimiter });
+      setProgress({ current: 0, total: allRows.length, message: 'Разбор транзакций...' });
 
       // Parse transactions
       const parsed: ParsedTransaction[] = [];
-      for (let i = 0; i < rows.length; i++) {
-        const tx = parseCSVRow(rows[i]);
+      for (let i = 0; i < allRows.length; i++) {
+        const tx = parseCSVRow(allRows[i]);
         if (tx) parsed.push(tx);
         if (i % 100 === 0) {
-          setProgress({ current: i, total: rows.length, message: `Разбор: ${i} из ${rows.length}` });
+          setProgress({ current: i, total: allRows.length, message: `Разбор: ${i} из ${allRows.length}` });
         }
       }
 
@@ -353,7 +351,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
       await runReconciliation(parsed);
       
       setPhase('reconciliation');
-      toast.success(`Загружено ${parsed.length} транзакций`);
+      toast.success(`Загружено ${parsed.length} транзакций (карты: ${cardCount}, ЕРИП: ${eripCount})`);
     } catch (err: any) {
       toast.error("Ошибка парсинга: " + err.message);
       resetDialog();
@@ -674,12 +672,13 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
   };
 
   const resetDialog = () => {
-    setFile(null);
+    setFiles([]);
     setTransactions([]);
     setReport(null);
     setPhase('upload');
     setProgress({ current: 0, total: 0, message: '' });
     setSelectedCategories({ new: true, updates: true, conflicts: false });
+    setFileSummary({ cards: 0, erip: 0 });
   };
 
   const StatCard = ({ 
@@ -751,13 +750,17 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                 id="smart-file-input"
                 type="file"
                 accept=".csv,.xlsx,.xls"
+                multiple
                 className="hidden"
                 onChange={handleFileSelect}
               />
               <Upload className="h-12 w-12 mb-4 text-muted-foreground" />
-              <p className="text-lg font-medium">Перетащите файл сюда</p>
+              <p className="text-lg font-medium">Перетащите файлы сюда</p>
               <p className="text-sm text-muted-foreground mt-1">
-                CSV или Excel экспорт из bePaid (Card + ERIP)
+                CSV (карты + ЕРИП) или Excel экспорт из bePaid
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Можно загрузить несколько CSV файлов одновременно
               </p>
             </div>
           )}
@@ -817,7 +820,11 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
               <div className="flex items-center gap-4 flex-wrap p-3 bg-muted/50 rounded-lg">
                 <div className="flex items-center gap-2">
                   <FileText className="h-4 w-4 text-primary" />
-                  <span className="font-medium">{file?.name}</span>
+                  <span className="font-medium">
+                    {files.length === 1 ? files[0].name : `${files.length} файлов`}
+                    {fileSummary.cards > 0 && ` (карты: ${fileSummary.cards})`}
+                    {fileSummary.erip > 0 && ` (ЕРИП: ${fileSummary.erip})`}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 ml-auto">
                   <Switch
