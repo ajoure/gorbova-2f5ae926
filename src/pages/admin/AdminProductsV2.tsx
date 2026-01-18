@@ -15,13 +15,14 @@ import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
 import { useTelegramClubs } from "@/hooks/useTelegramIntegration";
 import { useNavigate } from "react-router-dom";
-
+import { PRODUCT_CATEGORIES, PRODUCT_CATEGORY_LABELS, getCategoryLabel } from "@/lib/product-names";
 interface ProductFormData {
   code: string;
   name: string;
   description: string;
   slug: string;
   status: string;
+  category: string;
   primary_domain: string;
   currency: string;
   public_title: string;
@@ -37,6 +38,7 @@ const defaultFormData: ProductFormData = {
   description: "",
   slug: "",
   status: "active",
+  category: "course",
   primary_domain: "",
   currency: "BYN",
   public_title: "",
@@ -68,6 +70,7 @@ export default function AdminProductsV2() {
         description: product.description || "",
         slug: product.slug || "",
         status: product.status || "active",
+        category: product.category || "course",
         primary_domain: product.primary_domain || "",
         currency: product.currency || "BYN",
         public_title: product.public_title || "",
@@ -101,6 +104,7 @@ export default function AdminProductsV2() {
       description: formData.description || null,
       slug: formData.slug || null,
       status: formData.status,
+      category: formData.category,
       primary_domain: formData.primary_domain || null,
       currency: formData.currency,
       public_title: formData.public_title || null,
@@ -232,6 +236,7 @@ export default function AdminProductsV2() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Продукт</TableHead>
+                    <TableHead>Категория</TableHead>
                     <TableHead>Домен</TableHead>
                     <TableHead>Telegram клуб</TableHead>
                     <TableHead>Статус</TableHead>
@@ -252,6 +257,11 @@ export default function AdminProductsV2() {
                             {product.code}
                           </code>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {getCategoryLabel(product.category || 'course')}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         {product.primary_domain ? (
@@ -393,6 +403,25 @@ export default function AdminProductsV2() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Категория</Label>
+                <Select
+                  value={formData.category}
+                  onValueChange={(v) => setFormData({ ...formData, category: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRODUCT_CATEGORIES.map((cat) => (
+                      <SelectItem key={cat} value={cat}>
+                        {PRODUCT_CATEGORY_LABELS[cat]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2">

@@ -4193,6 +4193,7 @@ export type Database = {
       }
       products_v2: {
         Row: {
+          category: string | null
           code: string
           created_at: string
           currency: string
@@ -4212,6 +4213,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          category?: string | null
           code: string
           created_at?: string
           currency?: string
@@ -4231,6 +4233,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          category?: string | null
           code?: string
           created_at?: string
           currency?: string
