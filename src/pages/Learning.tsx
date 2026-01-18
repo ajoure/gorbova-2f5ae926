@@ -199,11 +199,11 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
       </div>
       
       <div className="p-5">
-        <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors line-clamp-1">
+        <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">
           {product.title}
         </h3>
         
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
+        <p className="text-sm text-muted-foreground mb-4 line-clamp-3 min-h-[3.75rem]">
           {product.description}
         </p>
 

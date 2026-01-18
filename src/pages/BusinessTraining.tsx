@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   Calendar, 
   CheckCircle, 
@@ -14,7 +17,9 @@ import {
   CreditCard,
   Bell,
   Briefcase,
-  TrendingUp
+  TrendingUp,
+  Clock,
+  Check
 } from "lucide-react";
 
 import katerinaImage from "@/assets/katerina-business.jpg";
@@ -58,7 +63,42 @@ const paymentTerms = [
 
 export default function BusinessTraining() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showPreregistration, setShowPreregistration] = useState(false);
+
+  // Check if user has existing booking or active subscription
+  const { data: existingAccess } = useQuery({
+    queryKey: ["buh-business-landing-access", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return { hasPreregistration: false, hasActiveSubscription: false };
+      
+      // Check preregistration
+      const { data: preregistration } = await supabase
+        .from("course_preregistrations")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .in("status", ["new", "contacted"])
+        .maybeSingle();
+      
+      // Check entitlements
+      const { data: entitlement } = await supabase
+        .from("entitlements")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .eq("status", "active")
+        .maybeSingle();
+      
+      return {
+        hasPreregistration: !!preregistration,
+        hasActiveSubscription: !!entitlement,
+      };
+    },
+    enabled: !!user?.id,
+  });
+
+  const hasAccess = existingAccess?.hasPreregistration || existingAccess?.hasActiveSubscription;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
@@ -109,16 +149,46 @@ export default function BusinessTraining() {
                 ))}
               </div>
 
+              {/* Existing access badge */}
+              {hasAccess && (
+                <div className="flex items-center gap-2">
+                  <Badge 
+                    variant="outline" 
+                    className={existingAccess?.hasActiveSubscription 
+                      ? "bg-emerald-500/10 text-emerald-600 border-0 px-3 py-1.5" 
+                      : "bg-amber-500/20 text-amber-600 border-0 px-3 py-1.5"
+                    }
+                  >
+                    {existingAccess?.hasActiveSubscription ? (
+                      <><Check className="h-3.5 w-3.5 mr-1.5" /> Активный доступ</>
+                    ) : (
+                      <><Clock className="h-3.5 w-3.5 mr-1.5" /> У вас есть бронь</>
+                    )}
+                  </Badge>
+                </div>
+              )}
+
               {/* CTA */}
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                <Button 
-                  size="lg" 
-                  className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                  onClick={() => setShowPreregistration(true)}
-                >
-                  Забронировать место
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
+                {hasAccess ? (
+                  <Button 
+                    size="lg" 
+                    className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                    onClick={() => navigate("/library/buh-business")}
+                  >
+                    Перейти к тренингу
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button 
+                    size="lg" 
+                    className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                    onClick={() => setShowPreregistration(true)}
+                  >
+                    Забронировать место
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                )}
                 <Button 
                   variant="outline" 
                   size="lg"
@@ -220,14 +290,25 @@ export default function BusinessTraining() {
 
               {/* CTA */}
               <div className="text-center space-y-4">
-                <Button 
-                  size="lg" 
-                  className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                  onClick={() => setShowPreregistration(true)}
-                >
-                  Забронировать место
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
+                {hasAccess ? (
+                  <Button 
+                    size="lg" 
+                    className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                    onClick={() => navigate("/library/buh-business")}
+                  >
+                    Перейти к тренингу
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button 
+                    size="lg" 
+                    className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                    onClick={() => setShowPreregistration(true)}
+                  >
+                    Забронировать место
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Нажимая кнопку, вы соглашаетесь с{" "}
                   <a href="/offer" className="underline hover:text-foreground">Офертой</a>

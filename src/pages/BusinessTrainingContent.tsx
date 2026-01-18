@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -8,37 +8,28 @@ import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
+import { toast } from "sonner";
 import { 
   Calendar, 
   Lock, 
-  Play, 
   Check, 
   Clock, 
   MessageCircle,
   Bell,
   ExternalLink,
   Loader2,
-  ArrowLeft
+  ArrowLeft,
+  BookOpen,
+  Info,
+  XCircle,
+  CreditCard
 } from "lucide-react";
 
-// Mock lessons for the training
-const trainingLessons = [
-  { id: 1, title: "Урок 1: Анализ своих компетенций", status: "locked", date: "5 февраля 2026" },
-  { id: 2, title: "Урок 2: Исследование рынка", status: "locked", date: "12 февраля 2026" },
-  { id: 3, title: "Урок 3: Позиционирование услуг", status: "locked", date: "19 февраля 2026" },
-  { id: 4, title: "Урок 4: Ценообразование", status: "locked", date: "26 февраля 2026" },
-  { id: 5, title: "Урок 5: Первые клиенты", status: "locked", date: "5 марта 2026" },
-  { id: 6, title: "Урок 6: Юридические аспекты", status: "locked", date: "12 марта 2026" },
-  { id: 7, title: "Урок 7: Маркетинг и продвижение", status: "locked", date: "19 марта 2026" },
-  { id: 8, title: "Урок 8: Автоматизация процессов", status: "locked", date: "26 марта 2026" },
-  { id: 9, title: "Урок 9: Масштабирование бизнеса", status: "locked", date: "2 апреля 2026" },
-  { id: 10, title: "Урок 10: Работа с командой", status: "locked", date: "9 апреля 2026" },
-  { id: 11, title: "Урок 11: Финансовое планирование", status: "locked", date: "16 апреля 2026" },
-  { id: 12, title: "Урок 12: Итоги и следующие шаги", status: "locked", date: "23 апреля 2026" },
-];
+const TOTAL_LESSONS = 12;
 
 export default function BusinessTrainingContent() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, loading: authLoading } = useAuth();
   const { data: telegramStatus } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
@@ -47,7 +38,7 @@ export default function BusinessTrainingContent() {
   const { data: accessData, isLoading: accessLoading } = useQuery({
     queryKey: ["buh-business-access", user?.id],
     queryFn: async () => {
-      if (!user?.id) return { hasAccess: false, type: null };
+      if (!user?.id) return { hasAccess: false, type: null, preregistrationId: null };
       
       // Check preregistration
       const { data: preregistration } = await supabase
@@ -58,7 +49,7 @@ export default function BusinessTrainingContent() {
         .in("status", ["new", "contacted"])
         .maybeSingle();
       
-      // Check entitlements
+      // Check entitlements (active)
       const { data: entitlement } = await supabase
         .from("entitlements")
         .select("id, status, expires_at")
@@ -66,17 +57,55 @@ export default function BusinessTrainingContent() {
         .eq("product_code", "buh_business")
         .eq("status", "active")
         .maybeSingle();
+
+      // Check expired entitlements
+      const { data: expiredEntitlement } = await supabase
+        .from("entitlements")
+        .select("id, status, expires_at")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .eq("status", "expired")
+        .maybeSingle();
       
       if (entitlement) {
-        return { hasAccess: true, type: "active" as const, expiresAt: entitlement.expires_at };
+        return { hasAccess: true, type: "active" as const, expiresAt: entitlement.expires_at, preregistrationId: null };
       }
       if (preregistration) {
-        return { hasAccess: true, type: "preregistration" as const };
+        return { hasAccess: true, type: "preregistration" as const, preregistrationId: preregistration.id };
       }
-      return { hasAccess: false, type: null };
+      if (expiredEntitlement) {
+        return { hasAccess: true, type: "expired" as const, preregistrationId: null };
+      }
+      return { hasAccess: false, type: null, preregistrationId: null };
     },
     enabled: !!user?.id,
   });
+
+  // Cancel booking mutation
+  const cancelBookingMutation = useMutation({
+    mutationFn: async (preregistrationId: string) => {
+      const { error } = await supabase
+        .from("course_preregistrations")
+        .update({ status: "cancelled" })
+        .eq("id", preregistrationId);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Бронь отменена");
+      queryClient.invalidateQueries({ queryKey: ["buh-business-access"] });
+      navigate("/business-training");
+    },
+    onError: () => {
+      toast.error("Не удалось отменить бронь");
+    },
+  });
+
+  const handleCancelBooking = () => {
+    if (accessData?.preregistrationId) {
+      cancelBookingMutation.mutate(accessData.preregistrationId);
+    }
+  };
 
   const handleStartTelegramLink = async () => {
     try {
@@ -121,7 +150,7 @@ export default function BusinessTrainingContent() {
   }
 
   const completedCount = 0;
-  const totalCount = trainingLessons.length;
+  const totalCount = TOTAL_LESSONS;
   const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
@@ -198,6 +227,56 @@ export default function BusinessTrainingContent() {
           </GlassCard>
         )}
 
+        {/* Expired Access Warning */}
+        {accessData.type === "expired" && (
+          <GlassCard className="p-5 border-amber-500/30 bg-amber-500/5">
+            <div className="flex items-start gap-4">
+              <div className="h-12 w-12 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <CreditCard className="h-6 w-6 text-amber-600" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-foreground mb-1">Ваш доступ закончился</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Чтобы продолжить обучение, продлите подписку на следующий месяц
+                </p>
+                <Button onClick={() => navigate("/business-training")}>
+                  Продлить доступ — 250 BYN
+                </Button>
+              </div>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Product Description */}
+        <GlassCard className="p-5 border-border/50">
+          <div className="flex items-start gap-4">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <Info className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-medium mb-1">О тренинге</h4>
+              <p className="text-sm text-muted-foreground mb-3">
+                Ежемесячный тренинг для бухгалтеров, которые хотят перейти из найма в собственный бизнес. 
+                Вебинары с Катериной Горбовой, практические задания и нетворкинг с единомышленниками.
+              </p>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline" className="bg-muted/50">
+                  <BookOpen className="h-3 w-3 mr-1" />
+                  {totalCount} уроков
+                </Badge>
+                <Badge variant="outline" className="bg-muted/50">
+                  <Clock className="h-3 w-3 mr-1" />
+                  Квест
+                </Badge>
+                <Badge variant="outline" className="bg-muted/50">
+                  <CreditCard className="h-3 w-3 mr-1" />
+                  250 BYN/мес
+                </Badge>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
         {/* Progress */}
         <GlassCard className="p-4">
           <div className="flex items-center justify-between mb-2">
@@ -207,53 +286,45 @@ export default function BusinessTrainingContent() {
           <Progress value={progress} className="h-2" />
         </GlassCard>
 
-        {/* Lessons List */}
-        <div className="space-y-3">
-          <h2 className="text-lg font-semibold">Программа тренинга</h2>
-          <div className="space-y-2">
-            {trainingLessons.map((lesson, index) => (
-              <GlassCard 
-                key={lesson.id} 
-                className={`p-4 transition-all ${
-                  lesson.status === "locked" 
-                    ? "opacity-60" 
-                    : lesson.status === "completed"
-                    ? "border-emerald-500/20"
-                    : "hover:border-primary/30 cursor-pointer"
-                }`}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                    lesson.status === "completed" 
-                      ? "bg-emerald-500/20 text-emerald-600"
-                      : lesson.status === "available"
-                      ? "bg-primary/20 text-primary"
-                      : "bg-muted text-muted-foreground"
-                  }`}>
-                    {lesson.status === "completed" ? (
-                      <Check className="h-5 w-5" />
-                    ) : lesson.status === "available" ? (
-                      <Play className="h-5 w-5" />
-                    ) : (
-                      <Lock className="h-5 w-5" />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{lesson.title}</p>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Calendar className="h-3 w-3" />
-                      {lesson.date}
-                    </p>
-                  </div>
-                  {lesson.status === "locked" && (
-                    <Badge variant="outline" className="text-xs">
-                      Скоро
-                    </Badge>
-                  )}
-                </div>
-              </GlassCard>
-            ))}
+        {/* Lessons List - Hidden Names */}
+        <GlassCard className="p-6 text-center">
+          <Lock className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+          <h3 className="font-semibold mb-2">Программа тренинга</h3>
+          <p className="text-muted-foreground text-sm mb-4">
+            {totalCount} уроков — расписание и темы будут доступны после старта 5 февраля
+          </p>
+          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            <span>Первый урок: 5 февраля 2026</span>
           </div>
+        </GlassCard>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate("/business-training")}
+            className="flex-1"
+          >
+            <ExternalLink className="h-4 w-4 mr-2" />
+            Подробнее о тренинге
+          </Button>
+          
+          {accessData.type === "preregistration" && (
+            <Button 
+              variant="outline" 
+              onClick={handleCancelBooking}
+              disabled={cancelBookingMutation.isPending}
+              className="border-destructive/30 text-destructive hover:bg-destructive/10"
+            >
+              {cancelBookingMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <XCircle className="h-4 w-4 mr-2" />
+              )}
+              Отменить бронь
+            </Button>
+          )}
         </div>
       </div>
     </DashboardLayout>
