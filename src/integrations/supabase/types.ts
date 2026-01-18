@@ -3668,6 +3668,45 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_status_overrides: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          original_status: string | null
+          provider: string
+          reason: string | null
+          source: string | null
+          status_override: string
+          uid: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_status?: string | null
+          provider?: string
+          reason?: string | null
+          source?: string | null
+          status_override: string
+          uid: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_status?: string | null
+          provider?: string
+          reason?: string | null
+          source?: string | null
+          status_override?: string
+          uid?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       payments_v2: {
         Row: {
           amount: number
