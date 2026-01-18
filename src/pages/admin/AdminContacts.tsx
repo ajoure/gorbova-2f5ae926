@@ -997,12 +997,12 @@ export default function AdminContacts() {
               }
             }}
           >
-            <Sparkles className="h-4 w-4 mr-2" />
-            Лояльность
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden sm:inline ml-2">Лояльность</span>
           </Button>
           <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Обновить
+            <RefreshCw className="h-4 w-4" />
+            <span className="hidden sm:inline ml-2">Обновить</span>
           </Button>
         </div>
       </div>

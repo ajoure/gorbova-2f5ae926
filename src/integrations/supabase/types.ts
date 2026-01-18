@@ -4227,6 +4227,7 @@ export type Database = {
           card_masks: Json | null
           club_exit_at: string | null
           club_exit_reason: string | null
+          communication_style: Json | null
           consent_given_at: string | null
           consent_version: string | null
           created_at: string
@@ -4281,6 +4282,7 @@ export type Database = {
           card_masks?: Json | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
+          communication_style?: Json | null
           consent_given_at?: string | null
           consent_version?: string | null
           created_at?: string
@@ -4335,6 +4337,7 @@ export type Database = {
           card_masks?: Json | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
+          communication_style?: Json | null
           consent_given_at?: string | null
           consent_version?: string | null
           created_at?: string
