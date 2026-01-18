@@ -376,7 +376,7 @@ Deno.serve(async (req) => {
             access_start_at: now.toISOString(),
             access_end_at: accessEnd.toISOString(),
             next_charge_at: accessEnd.toISOString(),
-            auto_renew: false,
+            auto_renew: true, // Enable auto-renew by default for subscription products
             meta: {
               source: 'admin_manual_charge',
               charged_by: user.id,

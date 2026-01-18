@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
           access_end_at: accessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
-          auto_renew: hasPaymentMethod, // Enable auto-renew if user has a card
+          auto_renew: true, // Enable auto-renew by default for subscription products
           meta: {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
@@ -243,7 +243,7 @@ Deno.serve(async (req) => {
       if (createSubError) {
         console.error("Error creating subscription:", createSubError);
       } else {
-        results.subscription = { action: "created", id: newSub?.id, auto_renew: hasPaymentMethod };
+        results.subscription = { action: "created", id: newSub?.id, auto_renew: true };
       }
     }
 
