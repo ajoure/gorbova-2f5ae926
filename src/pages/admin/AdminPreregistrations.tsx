@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { toast } from "sonner";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -24,8 +26,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDetailSheet";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { getProductName } from "@/lib/product-names";
 import {
   Search,
   Download,
@@ -66,19 +80,18 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Отменена", variant: "destructive" },
 };
 
-const productNames: Record<string, string> = {
-  CB20: "Бухгалтер частной практики 2.0",
-  CLUB: "Клуб Буква Закона",
-  buh_business: "Бухгалтерия как бизнес",
-};
-
 export default function AdminPreregistrations() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [productFilter, setProductFilter] = useState<string>("all");
   const [selectedPreregistration, setSelectedPreregistration] = useState<Preregistration | null>(null);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // Fetch preregistrations
   const { data: preregistrations, isLoading, refetch } = useQuery({
@@ -166,6 +179,58 @@ export default function AdminPreregistrations() {
     },
   });
 
+  // Bulk delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const { error } = await supabase
+        .from("course_preregistrations")
+        .delete()
+        .in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success(`Удалено предзаписей: ${selectedIds.size}`);
+      setSelectedIds(new Set());
+      setDeleteDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["admin-preregistrations"] });
+      queryClient.invalidateQueries({ queryKey: ["preregistration-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["preregistration-products"] });
+    },
+    onError: (error) => {
+      console.error("Delete error:", error);
+      toast.error("Ошибка удаления");
+    },
+  });
+
+  // Selection handlers
+  const toggleSelection = useCallback((id: string, ctrlKey: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (!ctrlKey) {
+          next.clear();
+        }
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    if (preregistrations) {
+      setSelectedIds(new Set(preregistrations.map(p => p.id)));
+    }
+  }, [preregistrations]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const isAllSelected = preregistrations && preregistrations.length > 0 && selectedIds.size === preregistrations.length;
+  const isSomeSelected = selectedIds.size > 0 && !isAllSelected;
+
   const handleExportCSV = () => {
     if (!preregistrations) return;
 
@@ -174,7 +239,7 @@ export default function AdminPreregistrations() {
       p.name,
       p.email,
       p.phone || "",
-      productNames[p.product_code] || p.product_code,
+      getProductName(p.product_code),
       p.tariff_name || "",
       statusConfig[p.status]?.label || p.status,
       format(new Date(p.created_at), "dd.MM.yyyy HH:mm"),
@@ -197,6 +262,16 @@ export default function AdminPreregistrations() {
   const openDetail = (prereg: Preregistration) => {
     setSelectedPreregistration(prereg);
     setDetailSheetOpen(true);
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size > 0) {
+      setDeleteDialogOpen(true);
+    }
+  };
+
+  const confirmDelete = () => {
+    deleteMutation.mutate(Array.from(selectedIds));
   };
 
   return (
@@ -246,7 +321,7 @@ export default function AdminPreregistrations() {
               <div className="text-xs space-y-1">
                 {stats?.byProduct && Object.entries(stats.byProduct).map(([code, count]) => (
                   <div key={code} className="flex justify-between">
-                    <span className="text-muted-foreground">{code}</span>
+                    <span className="text-muted-foreground truncate">{getProductName(code)}</span>
                     <span className="font-medium">{count}</span>
                   </div>
                 ))}
@@ -289,7 +364,7 @@ export default function AdminPreregistrations() {
                   <SelectItem value="all">Все продукты</SelectItem>
                   {products?.map((code) => (
                     <SelectItem key={code} value={code}>
-                      {productNames[code] || code}
+                      {getProductName(code)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -313,6 +388,23 @@ export default function AdminPreregistrations() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">
+                      <Checkbox
+                        checked={isAllSelected}
+                        ref={(ref) => {
+                          if (ref) {
+                            (ref as any).indeterminate = isSomeSelected;
+                          }
+                        }}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            selectAll();
+                          } else {
+                            clearSelection();
+                          }
+                        }}
+                      />
+                    </TableHead>
                     <TableHead>Имя</TableHead>
                     <TableHead>Контакты</TableHead>
                     <TableHead>Продукт</TableHead>
@@ -326,7 +418,7 @@ export default function AdminPreregistrations() {
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        <TableCell colSpan={7}>
+                        <TableCell colSpan={8}>
                           <Skeleton className="h-10 w-full" />
                         </TableCell>
                       </TableRow>
@@ -334,12 +426,19 @@ export default function AdminPreregistrations() {
                   ) : preregistrations && preregistrations.length > 0 ? (
                     preregistrations.map((prereg) => {
                       const status = statusConfig[prereg.status] || { label: prereg.status, variant: "secondary" as const };
+                      const isSelected = selectedIds.has(prereg.id);
                       return (
                         <TableRow
                           key={prereg.id}
-                          className="cursor-pointer hover:bg-muted/50"
+                          className={`cursor-pointer hover:bg-muted/50 transition-colors ${isSelected ? "bg-primary/10" : ""}`}
                           onClick={() => openDetail(prereg)}
                         >
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={() => toggleSelection(prereg.id, true)}
+                            />
+                          </TableCell>
                           <TableCell>
                             {prereg.user_id ? (
                               <button
@@ -365,7 +464,7 @@ export default function AdminPreregistrations() {
                           </TableCell>
                           <TableCell>
                             <span className="text-sm">
-                              {productNames[prereg.product_code] || prereg.product_code}
+                              {getProductName(prereg.product_code)}
                             </span>
                           </TableCell>
                           <TableCell>
@@ -395,7 +494,7 @@ export default function AdminPreregistrations() {
                     })
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                         Предзаписи не найдены
                       </TableCell>
                     </TableRow>
@@ -406,6 +505,37 @@ export default function AdminPreregistrations() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Bulk Actions Bar */}
+      <BulkActionsBar
+        selectedCount={selectedIds.size}
+        onClearSelection={clearSelection}
+        onBulkDelete={handleBulkDelete}
+        onSelectAll={selectAll}
+        totalCount={preregistrations?.length || 0}
+        entityName="предзаписей"
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить предзаписи?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы собираетесь удалить {selectedIds.size} предзаписей. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Удаление..." : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <PreregistrationDetailSheet
         preregistration={selectedPreregistration}
