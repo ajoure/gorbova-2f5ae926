@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, Package } from "lucide-react";
+import { getProductName } from "@/lib/product-names";
 
 interface CoursePreregistration {
   id: string;
@@ -24,15 +25,9 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Отменена", variant: "destructive" },
 };
 
-const productNames: Record<string, string> = {
-  CB20: "Бухгалтер частной практики 2.0",
-  CLUB: "Клуб Буква Закона",
-  buh_business: "Бухгалтерия как бизнес",
-};
-
 export function PreregistrationListItem({ preregistration }: PreregistrationListItemProps) {
   const status = statusConfig[preregistration.status] || { label: preregistration.status, variant: "secondary" as const };
-  const productName = productNames[preregistration.product_code] || preregistration.product_code;
+  const productName = getProductName(preregistration.product_code);
 
   return (
     <div className="p-4 rounded-xl border border-border/50 bg-card/50 hover:bg-card/80 transition-colors">
