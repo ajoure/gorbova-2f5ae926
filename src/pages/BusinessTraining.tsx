@@ -195,7 +195,7 @@ export default function BusinessTraining() {
         <Button 
           variant="ghost" 
           size="sm"
-          onClick={() => navigate("/learning")}
+          onClick={() => navigate("/products")}
           className="hover:bg-card/50"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
