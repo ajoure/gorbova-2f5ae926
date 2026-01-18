@@ -1007,10 +1007,12 @@ export function PaymentDialog({
                   <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
                 </div>
                 {(isSubscription || isTrial) && (
-                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm">
-                    <p className="text-amber-700 dark:text-amber-400">
-                      <strong>Подписка с автопродлением:</strong> Ваша карта будет сохранена для автоматического списания ежемесячного платежа. Вы можете отменить подписку в любой момент в личном кабинете.
-                    </p>
+                  <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1.5">
+                    <p className="font-medium text-foreground">Ежемесячная подписка</p>
+                    <p className="text-muted-foreground">Сегодня вы оплачиваете первый месяц обучения ({price}).</p>
+                    <p className="text-muted-foreground">Это даёт вам мгновенный доступ к материалам после старта 5 февраля.</p>
+                    <p className="text-muted-foreground">Следующее автоматическое списание произойдёт через месяц (в начале марта).</p>
+                    <p className="text-muted-foreground">Управление подпиской доступно в вашем профиле 24/7.</p>
                   </div>
                 )}
               </div>

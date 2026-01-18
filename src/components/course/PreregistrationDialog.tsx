@@ -12,7 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Loader2, CheckCircle, MessageCircle, ExternalLink, LogIn } from "lucide-react";
+import { Loader2, CheckCircle, MessageCircle, ExternalLink, LogIn, Info } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
@@ -233,6 +234,17 @@ export function PreregistrationDialog({
               }
             </DialogDescription>
           </DialogHeader>
+
+          <Alert className="bg-primary/5 border-primary/20">
+            <Info className="h-4 w-4 text-primary" />
+            <AlertTitle>Как работает бронирование?</AlertTitle>
+            <AlertDescription className="text-sm space-y-1">
+              <p>Мы сохраним ваше место в потоке. <strong>Сейчас платить не нужно.</strong></p>
+              <p>Ваша карта будет привязана, а первое списание в размере 250 BYN произойдёт автоматически в период с 1 по 4 февраля.</p>
+              <p>Далее оплата будет списываться ежемесячно в эти же даты.</p>
+              <p>Вы сможете отменить подписку в любой момент в личном кабинете.</p>
+            </AlertDescription>
+          </Alert>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
