@@ -174,19 +174,24 @@ async function fetchTransaction(
 
   const listSearchEndpoint = buildListSearchEndpoint();
 
-  const endpoints = [
+  // Deterministic endpoint order (max 4, no slice):
+  // 1) gateway uid
+  // 2) gateway tracking_id
+  // 3) list search (only if built)
+  // 4) api uid
+  const endpoints: string[] = [
     `https://gateway.bepaid.by/transactions/${uid}`,
     `https://gateway.bepaid.by/v2/transactions/tracking_id/${uid}`,
-    `https://api.bepaid.by/v2/transactions/${uid}`,
     ...(listSearchEndpoint ? [listSearchEndpoint] : []),
-  ].slice(0, 4);
+    `https://api.bepaid.by/v2/transactions/${uid}`,
+  ];
 
   const tried: string[] = [];
 
   // Not-found signals include:
   // - HTTP 404
-  // - HTTP 200 with {"transactions": []} or transactions.length === 0
-  // - List endpoint returns transactions but none match uid/order/payment/amount
+  // - tracking_id endpoint: HTTP 200 with {"transactions": []}
+  // - list endpoint: transactions[] empty OR none match uid/order/payment/amount
   let lastNotFoundEndpoint: string | undefined;
   let lastNotFoundStatus: number | undefined;
   let lastNotFoundExcerpt: string | undefined;
@@ -196,6 +201,7 @@ async function fetchTransaction(
   // - non-404 non-2xx statuses (401/403/5xx)
   // - invalid JSON
   // - network exceptions
+  // - res.ok but unparseable tx for non-list endpoints
   let lastErrorEndpoint: string | undefined;
   let lastErrorStatus: number | undefined;
   let lastErrorExcerpt: string | undefined;
@@ -242,10 +248,6 @@ async function fetchTransaction(
     return { tx: null, matched_shape: 'no_match' };
   };
 
-  const isEmptyTransactionsList = (data: any): boolean => {
-    return Array.isArray(data?.transactions) && data.transactions.length === 0;
-  };
-
   const tryMatchFromTransactionsList = (data: any): { tx: any | null; matched_shape?: string } => {
     const txs: any[] = Array.isArray(data?.transactions) ? data.transactions : [];
     if (!txs.length) return { tx: null, matched_shape: 'list.empty' };
@@ -254,21 +256,42 @@ async function fetchTransaction(
       .filter(Boolean)
       .map(String);
 
-    // 1) Prefer tracking_id match
+    // 1) Strict tracking_id match only (no includes/startsWith)
     for (const tx of txs) {
       const trackingId = tx?.tracking_id ?? tx?.trackingId ?? tx?.additional_data?.order_id ?? null;
       if (!trackingId) continue;
       const trackingStr = String(trackingId);
-      if (candidates.some((c) => trackingStr === c || trackingStr.startsWith(c) || trackingStr.includes(c))) {
+      if (candidates.some((c) => trackingStr === c)) {
         return { tx, matched_shape: 'list.match.tracking_id' };
       }
     }
 
-    // 2) Fallback: amount match (kopecks)
-    if (typeof opts?.amount_byn === 'number') {
-      const expected = Math.round(opts.amount_byn * 100);
-      const amountMatch = txs.find((tx) => Number(tx?.amount) === expected);
-      if (amountMatch) return { tx: amountMatch, matched_shape: 'list.match.amount' };
+    // 2) Fallback: amount match (kopecks) WITH extra safety filters
+    //    - currency must be BYN
+    //    - |created_at - paid_at| <= 2h (must be parseable)
+    if (typeof opts?.amount_byn === 'number' && opts?.paid_at) {
+      const paidAt = new Date(opts.paid_at);
+      if (!Number.isNaN(paidAt.getTime())) {
+        const expected = Math.round(opts.amount_byn * 100);
+        const maxDiffMs = 2 * 60 * 60 * 1000;
+
+        const amountMatch = txs.find((tx) => {
+          if (Number(tx?.amount) !== expected) return false;
+
+          const currency = String(tx?.currency ?? tx?.currency_code ?? tx?.currencyCode ?? '').toUpperCase();
+          if (currency !== 'BYN') return false;
+
+          const createdAtRaw = tx?.created_at ?? tx?.createdAt ?? tx?.paid_at ?? tx?.paidAt ?? null;
+          if (!createdAtRaw) return false;
+
+          const createdAt = new Date(String(createdAtRaw));
+          if (Number.isNaN(createdAt.getTime())) return false;
+
+          return Math.abs(createdAt.getTime() - paidAt.getTime()) <= maxDiffMs;
+        });
+
+        if (amountMatch) return { tx: amountMatch, matched_shape: 'list.match.amount' };
+      }
     }
 
     return { tx: null, matched_shape: 'list.no_match' };
@@ -315,8 +338,10 @@ async function fetchTransaction(
       }
 
       // Special-case: tracking_id endpoint returns {"transactions": []} with 200 => NOT_FOUND
-      if (isEmptyTransactionsList(data)) {
-        recordNotFound(endpoint, status, 'data.transactions(empty)', JSON.stringify(data).substring(0, 200));
+      // IMPORTANT: apply ONLY to tracking_id endpoint to avoid short-circuiting list-search
+      const isTrackingIdEndpoint = endpoint.includes('/v2/transactions/tracking_id/');
+      if (isTrackingIdEndpoint && Array.isArray(data?.transactions) && data.transactions.length === 0) {
+        recordNotFound(endpoint, status, 'tracking_id.empty', JSON.stringify(data).substring(0, 200));
         continue;
       }
 
