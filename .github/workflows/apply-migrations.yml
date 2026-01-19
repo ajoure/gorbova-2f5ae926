@@ -42,7 +42,6 @@ jobs:
 
   deploy-functions:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.action == 'deploy-functions' || github.event.inputs.action == 'full-deploy' }}
     needs: [migrate]
     # Allow to run even if migrate was skipped
     if: ${{ always() && (github.event.inputs.action == 'deploy-functions' || github.event.inputs.action == 'full-deploy') }}
