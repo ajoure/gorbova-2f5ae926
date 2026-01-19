@@ -84,15 +84,19 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
 }
 
 async function fetchTransaction(uid: string, authString: string): Promise<FetchResult> {
-  // Canonical endpoint first, then fallbacks
+  // Try multiple endpoint patterns - the uid might be a transaction uid or a tracking_id
+  // bePaid uses format like "4107-310b0da80b" for transaction UIDs
+  // Our provider_payment_id might be a tracking_id (UUID format) instead
   const endpoints = [
-    `https://gateway.bepaid.by/transactions/${uid}`,  // Canonical
+    `https://gateway.bepaid.by/transactions/${uid}`,  // Canonical - if uid is transaction uid
+    `https://gateway.bepaid.by/v2/transactions/tracking_id/${uid}`,  // If uid is actually tracking_id
     `https://api.bepaid.by/beyag/transactions/${uid}`,
     `https://api.bepaid.by/v2/transactions/${uid}`,
   ];
 
   const tried: string[] = [];
   let lastStatus = 0;
+  let lastError = '';
 
   for (const endpoint of endpoints) {
     tried.push(endpoint);
@@ -118,18 +122,23 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         }
       }
 
-      if (res.status === 404) {
-        // Try next endpoint
+      // For 400/404 errors, continue trying other endpoints
+      if (res.status === 400 || res.status === 404) {
+        const errText = await res.text();
+        lastError = `${res.status}: ${errText.substring(0, 100)}`;
+        // Continue to next endpoint
         continue;
       }
 
-      // Non-404 error - stop trying
+      // Other errors (500, etc.) - still try other endpoints but log
       const errText = await res.text();
-      console.error(`[Reconcile] API error ${res.status} for ${endpoint}: ${errText}`);
-      break;
-    } catch (err) {
-      console.error(`[Reconcile] Network error for ${endpoint}:`, err);
-      break;
+      lastError = `${res.status}: ${errText.substring(0, 100)}`;
+      console.warn(`[Reconcile] API error ${res.status} for ${endpoint}, trying next...`);
+      continue;
+    } catch (err: any) {
+      lastError = `Network: ${err.message}`;
+      console.warn(`[Reconcile] Network error for ${endpoint}:`, err.message);
+      continue; // Try next endpoint on network errors too
     }
   }
 
