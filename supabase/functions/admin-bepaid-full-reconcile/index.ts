@@ -264,10 +264,12 @@ Deno.serve(async (req) => {
 
     console.log(`[full-reconcile] mode=${requestedMode}, from=${from_date}, to=${to_date}, dry_run=${dry_run}`);
 
-    const { data: integrations } = await supabase.from('integration_instances').select('credentials, config').eq('provider', 'bepaid').in('status', ['active', 'connected']).limit(1);
-    const creds = integrations?.[0]?.credentials || integrations?.[0]?.config;
-    const shopId = creds?.shop_id || Deno.env.get("BEPAID_SHOP_ID");
-    const secretKey = creds?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
+    const { data: integrations } = await supabase.from('integration_instances').select('config').eq('provider', 'bepaid').in('status', ['active', 'connected']).limit(1);
+    const config = integrations?.[0]?.config as Record<string, any> | null;
+    const shopId = config?.shop_id || Deno.env.get("BEPAID_SHOP_ID");
+    const secretKey = config?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
+
+    console.log(`[full-reconcile] Credentials: shopId=${shopId ? 'found' : 'missing'}, secretKey=${secretKey ? 'found' : 'missing'}, source=${config ? 'db' : 'env'}`);
 
     if (!shopId || !secretKey) return new Response(JSON.stringify({ ok: false, error: "bePaid credentials not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
