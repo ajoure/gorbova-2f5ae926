@@ -12,6 +12,12 @@ const corsHeaders = {
  * Full reconciliation of bePaid transactions with payments_v2.
  * bePaid is the source of truth - adds missing, fixes amounts/statuses.
  * 
+ * NEW IN THIS VERSION:
+ * - normalizeCardBrand: Canonical brand normalization (master -> mastercard)
+ * - Backfill card_last4/card_brand for existing records
+ * - Refund card inheritance from parent payments
+ * - fetchTransactionDetails: Detail fetch for missing card data
+ * 
  * STOP GUARDS:
  * - Admin-only (has_role check)
  * - dry_run=true by default
@@ -45,6 +51,9 @@ interface ReconcileResponse {
     updated_amount: number;
     updated_status: number;
     updated_paid_at: number;
+    updated_card_fields: number;    // NEW: backfilled card_last4/brand
+    brand_normalized: number;        // NEW: 'master' -> 'mastercard'
+    refunds_card_filled: number;     // NEW: refunds with inherited card data
     unchanged: number;
     errors: number;
   };
@@ -53,6 +62,7 @@ interface ReconcileResponse {
     discrepancies_amount: Array<{ uid: string; our_amount: number; bepaid_amount: number; fixed: boolean }>;
     discrepancies_status: Array<{ uid: string; our_status: string; bepaid_status: string; fixed: boolean }>;
     discrepancies_paid_at: Array<{ uid: string; our_paid_at: string; bepaid_paid_at: string; fixed: boolean }>;
+    card_backfilled: Array<{ uid: string; field: string; old_value: string | null; new_value: string }>;
     errors: Array<{ uid: string; error: string }>;
   };
   error?: string;
@@ -85,9 +95,62 @@ function normalizeStatus(status: string): 'pending' | 'processing' | 'succeeded'
   }
 }
 
+// Normalize card brand to canonical format
+function normalizeCardBrand(brand: string | null | undefined): string | null {
+  if (!brand) return null;
+  const lower = brand.toLowerCase().trim();
+  const brandMap: Record<string, string> = {
+    'master': 'mastercard',
+    'mc': 'mastercard',
+    'mastercard': 'mastercard',
+    'visa': 'visa',
+    'belkart': 'belkart',
+    'belcard': 'belkart',
+    'maestro': 'maestro',
+    'mir': 'mir',
+  };
+  return brandMap[lower] || lower;
+}
+
+// Normalize last4 - strip non-digits, take last 4
+function normalizeLast4(last4: string | null | undefined): string | null {
+  if (!last4) return null;
+  const cleaned = last4.replace(/\D/g, '').slice(-4);
+  return cleaned.length === 4 ? cleaned : null;
+}
+
 // Format date for bePaid Reports API
 function formatBepaidDate(d: Date): string {
   return d.toISOString().replace('T', ' ').substring(0, 19);
+}
+
+// Fetch transaction details by UID from bePaid
+async function fetchTransactionDetails(auth: string, uid: string): Promise<any | null> {
+  const endpoints = [
+    `https://gateway.bepaid.by/transactions/${uid}`,
+    `https://api.bepaid.by/transactions/${uid}`,
+  ];
+  
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          Accept: "application/json",
+          "X-Api-Version": "3",
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.transaction || data;
+      }
+    } catch (err) {
+      console.error(`[full-reconcile] Detail fetch error for ${uid}:`, err);
+    }
+  }
+  return null;
 }
 
 // Fetch transactions from bePaid Reports API
@@ -338,10 +401,10 @@ serve(async (req) => {
 
     console.log(`[full-reconcile] Fetched ${bepaidTx.length} transactions from bePaid`);
 
-    // 6. Get our payments for the period
+    // 6. Get our payments for the period (include card fields for backfill check)
     const { data: ourPayments, error: ourError } = await supabase
       .from("payments_v2")
-      .select("id, provider_payment_id, amount, status, paid_at, meta")
+      .select("id, provider_payment_id, amount, status, paid_at, card_last4, card_brand, meta")
       .gte("paid_at", from_date)
       .lte("paid_at", to_date + "T23:59:59Z");
 
@@ -368,6 +431,9 @@ serve(async (req) => {
         updated_amount: 0,
         updated_status: 0,
         updated_paid_at: 0,
+        updated_card_fields: 0,
+        brand_normalized: 0,
+        refunds_card_filled: 0,
         unchanged: 0,
         errors: 0,
       },
@@ -376,6 +442,7 @@ serve(async (req) => {
         discrepancies_amount: [],
         discrepancies_status: [],
         discrepancies_paid_at: [],
+        card_backfilled: [],
         errors: [],
       },
     };
@@ -394,6 +461,56 @@ serve(async (req) => {
         const bepaidStatus = normalizeStatus(beTx.status);
         const bepaidPaidAt = beTx.created_at || beTx.paid_at || beTx.completed_at;
 
+        // Extract card data from bePaid transaction
+        let bepaidCardLast4 = normalizeLast4(beTx.credit_card?.last_4 || beTx.card?.last_4);
+        let bepaidCardBrand = normalizeCardBrand(beTx.credit_card?.brand || beTx.card?.brand);
+        
+        // Determine if this is a refund transaction
+        const txType = beTx.type?.toLowerCase() || beTx.transaction_type?.toLowerCase() || '';
+        const isRefund = ['refund', 'void', 'credit'].includes(txType) || 
+                         bepaidStatus === 'refunded';
+
+        // For refunds missing card data, try to get from parent
+        if (isRefund && !bepaidCardLast4) {
+          const parentUid = beTx.parent_uid || beTx.parent_transaction_uid || beTx.original_transaction?.uid;
+          
+          if (parentUid) {
+            // First check our DB for parent
+            const { data: parentPayment } = await supabase
+              .from("payments_v2")
+              .select("card_last4, card_brand")
+              .eq("provider_payment_id", parentUid)
+              .maybeSingle();
+            
+            if (parentPayment?.card_last4) {
+              bepaidCardLast4 = normalizeLast4(parentPayment.card_last4);
+              bepaidCardBrand = normalizeCardBrand(parentPayment.card_brand);
+              result.changes.refunds_card_filled++;
+            }
+          }
+          
+          // If still missing, fetch details from bePaid
+          if (!bepaidCardLast4) {
+            const detailTx = await fetchTransactionDetails(auth, uid);
+            if (detailTx) {
+              if (detailTx.credit_card?.last_4) {
+                bepaidCardLast4 = normalizeLast4(detailTx.credit_card.last_4);
+                bepaidCardBrand = normalizeCardBrand(detailTx.credit_card.brand);
+                result.changes.refunds_card_filled++;
+              } else if (detailTx.parent_uid || detailTx.parent_transaction_uid) {
+                // Try to get from parent via API
+                const parentDetailUid = detailTx.parent_uid || detailTx.parent_transaction_uid;
+                const parentDetailTx = await fetchTransactionDetails(auth, parentDetailUid);
+                if (parentDetailTx?.credit_card?.last_4) {
+                  bepaidCardLast4 = normalizeLast4(parentDetailTx.credit_card.last_4);
+                  bepaidCardBrand = normalizeCardBrand(parentDetailTx.credit_card.brand);
+                  result.changes.refunds_card_filled++;
+                }
+              }
+            }
+          }
+        }
+
         const ourPayment = ourMap.get(uid);
 
         if (!ourPayment) {
@@ -411,9 +528,6 @@ serve(async (req) => {
 
           if (!dry_run) {
             // Extract additional data from bePaid transaction
-            const cardLast4 = beTx.credit_card?.last_4 || beTx.card?.last_4 || null;
-            const cardBrand = beTx.credit_card?.brand || beTx.card?.brand || null;
-            const txType = beTx.type || beTx.transaction_type || 'payment';
             const productName = beTx.description || beTx.order?.description || null;
             const trackingId = beTx.tracking_id;
             
@@ -436,9 +550,9 @@ serve(async (req) => {
                 currency: beTx.currency || "BYN",
                 status: bepaidStatus,
                 paid_at: bepaidPaidAt,
-                card_last4: cardLast4,
-                card_brand: cardBrand,
-                transaction_type: txType,
+                card_last4: bepaidCardLast4,
+                card_brand: bepaidCardBrand,
+                transaction_type: isRefund ? 'refund' : (beTx.type || beTx.transaction_type || 'payment'),
                 product_name_raw: productName,
                 order_id: orderId,
                 meta: {
@@ -520,6 +634,60 @@ serve(async (req) => {
             }
           }
 
+          // ========== CARD BACKFILL LOGIC ==========
+          
+          // Backfill card_last4 if missing
+          if (bepaidCardLast4 && !ourPayment.card_last4) {
+            updates.card_last4 = bepaidCardLast4;
+            result.changes.updated_card_fields++;
+            hasChanges = true;
+            
+            if (result.samples.card_backfilled.length < maxSamples) {
+              result.samples.card_backfilled.push({
+                uid,
+                field: 'card_last4',
+                old_value: ourPayment.card_last4,
+                new_value: bepaidCardLast4,
+              });
+            }
+          }
+
+          // Backfill or normalize card_brand
+          if (bepaidCardBrand) {
+            const currentNormalized = normalizeCardBrand(ourPayment.card_brand);
+            
+            if (!ourPayment.card_brand) {
+              // Missing card_brand - backfill
+              updates.card_brand = bepaidCardBrand;
+              result.changes.updated_card_fields++;
+              hasChanges = true;
+              
+              if (result.samples.card_backfilled.length < maxSamples) {
+                result.samples.card_backfilled.push({
+                  uid,
+                  field: 'card_brand',
+                  old_value: null,
+                  new_value: bepaidCardBrand,
+                });
+              }
+            } else if (ourPayment.card_brand !== bepaidCardBrand && currentNormalized === bepaidCardBrand) {
+              // Brand needs normalization (e.g., 'master' -> 'mastercard')
+              originalValues.card_brand = ourPayment.card_brand;
+              updates.card_brand = bepaidCardBrand;
+              result.changes.brand_normalized++;
+              hasChanges = true;
+              
+              if (result.samples.card_backfilled.length < maxSamples) {
+                result.samples.card_backfilled.push({
+                  uid,
+                  field: 'card_brand_normalized',
+                  old_value: ourPayment.card_brand,
+                  new_value: bepaidCardBrand,
+                });
+              }
+            }
+          }
+
           if (hasChanges && !dry_run) {
             // Preserve original values in meta
             updates.meta = {
@@ -577,13 +745,14 @@ serve(async (req) => {
           sample_uids_added: result.samples.added.slice(0, 5).map(s => s.uid),
           sample_uids_fixed_amount: result.samples.discrepancies_amount.slice(0, 5).map(s => s.uid),
           sample_uids_fixed_status: result.samples.discrepancies_status.slice(0, 5).map(s => s.uid),
+          sample_uids_card_backfilled: result.samples.card_backfilled.slice(0, 5).map(s => s.uid),
           runtime_ms: Date.now() - startTime,
         },
       });
     }
 
     const runtime = Date.now() - startTime;
-    console.log(`[full-reconcile] Completed in ${runtime}ms: added=${result.changes.added}, updated_amount=${result.changes.updated_amount}, updated_status=${result.changes.updated_status}, unchanged=${result.changes.unchanged}, errors=${result.changes.errors}`);
+    console.log(`[full-reconcile] Completed in ${runtime}ms: added=${result.changes.added}, updated_amount=${result.changes.updated_amount}, updated_status=${result.changes.updated_status}, updated_card_fields=${result.changes.updated_card_fields}, brand_normalized=${result.changes.brand_normalized}, refunds_card_filled=${result.changes.refunds_card_filled}, unchanged=${result.changes.unchanged}, errors=${result.changes.errors}`);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

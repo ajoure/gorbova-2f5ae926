@@ -32,6 +32,7 @@ interface AutolinkRequest {
   dry_run?: boolean;
   limit?: number;
   unsafe_allow_large?: boolean;
+  force_ignore_collision?: boolean; // NEW: bypass collision check
 }
 
 interface AutolinkResponse {
@@ -47,6 +48,7 @@ interface AutolinkResponse {
     conflicts: number;
   };
   stop_reason?: string;
+  force_linked?: boolean; // NEW: indicates forced linking despite collision
   samples?: {
     payments_updated: Array<{ id: string; bepaid_uid?: string; amount: number; paid_at?: string }>;
     conflicts: Array<{ id: string; reason: string }>;
@@ -93,6 +95,7 @@ serve(async (req) => {
       dry_run = true,
       limit = 200,
       unsafe_allow_large = false,
+      force_ignore_collision = false,
     } = body;
 
     console.log(`[payments-autolink-by-card] Starting: profile=${profile_id}, last4=${card_last4}, brand=${card_brand}, dry_run=${dry_run}`);
@@ -149,40 +152,63 @@ serve(async (req) => {
       }
     }
 
-    // Collision check: if linked to 2+ profiles, STOP
+    // Collision check: if linked to 2+ profiles, STOP (unless force_ignore_collision)
     // But allow if all are the same profile (ours)
     linkedProfileIds.delete(profile_id); // Remove our target profile
     
+    let forceLinked = false;
+    
     if (linkedProfileIds.size > 0) {
       // Card is linked to at least one OTHER profile
-      console.log(`[payments-autolink-by-card] COLLISION: last4=${normalizedLast4} brand=${normalizedBrand} linked to ${linkedProfileIds.size + 1} profiles`);
+      console.log(`[payments-autolink-by-card] COLLISION: last4=${normalizedLast4} brand=${normalizedBrand} linked to ${linkedProfileIds.size + 1} profiles, force=${force_ignore_collision}`);
       
-      // Log the collision
-      await supabase.from('audit_logs').insert({
-        actor_type: 'system',
-        actor_label: 'payments_autolink_by_card',
-        action: 'payments_autolink_by_card',
-        meta: {
-          profile_id,
-          last4: normalizedLast4,
-          brand: normalizedBrand,
+      if (!force_ignore_collision) {
+        // Log the collision and stop
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'payments_autolink_by_card',
+          action: 'payments_autolink_by_card',
+          meta: {
+            profile_id,
+            last4: normalizedLast4,
+            brand: normalizedBrand,
+            dry_run,
+            status: 'stop',
+            stop_reason: 'card_collision_last4_brand',
+            other_profiles: Array.from(linkedProfileIds).slice(0, 5),
+          },
+        });
+
+        return new Response(JSON.stringify({
+          ok: false,
           dry_run,
           status: 'stop',
+          stats: { candidates_payments: 0, candidates_queue: 0, updated_payments_profile: 0, updated_queue_profile: 0, skipped_already_linked: 0, conflicts: 0 },
           stop_reason: 'card_collision_last4_brand',
-          other_profiles: Array.from(linkedProfileIds).slice(0, 5),
-        },
-      });
-
-      return new Response(JSON.stringify({
-        ok: false,
-        dry_run,
-        status: 'stop',
-        stats: { candidates_payments: 0, candidates_queue: 0, updated_payments_profile: 0, updated_queue_profile: 0, skipped_already_linked: 0, conflicts: 0 },
-        stop_reason: 'card_collision_last4_brand',
-      } as AutolinkResponse), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+        } as AutolinkResponse), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } else {
+        // Force ignore collision - log warning and continue
+        console.log(`[payments-autolink-by-card] FORCE LINK: bypassing collision for profile ${profile_id}`);
+        forceLinked = true;
+        
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'payments_autolink_by_card',
+          action: 'payments_autolink_force_collision',
+          meta: {
+            profile_id,
+            last4: normalizedLast4,
+            brand: normalizedBrand,
+            dry_run,
+            force_ignore_collision: true,
+            other_profiles: Array.from(linkedProfileIds).slice(0, 5),
+            warning: 'Admin forced link despite collision - card may be shared',
+          },
+        });
+      }
     }
 
     // ========== FIND CANDIDATES ==========
@@ -456,12 +482,13 @@ serve(async (req) => {
       },
     });
 
-    console.log(`[payments-autolink-by-card] DONE: updated ${updatedPayments} payments, ${updatedQueue} queue items for profile ${profile_id}`);
+    console.log(`[payments-autolink-by-card] DONE: updated ${updatedPayments} payments, ${updatedQueue} queue items for profile ${profile_id}${forceLinked ? ' (force linked)' : ''}`);
 
     return new Response(JSON.stringify({
       ok: true,
       dry_run: false,
       status: 'success',
+      force_linked: forceLinked,
       stats: { 
         candidates_payments: candidatesPayments, 
         candidates_queue: candidatesQueue, 
@@ -475,6 +502,9 @@ serve(async (req) => {
         conflicts: conflictsSamples.slice(0, 10),
       },
     } as AutolinkResponse), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

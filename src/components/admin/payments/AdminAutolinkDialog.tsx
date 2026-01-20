@@ -8,11 +8,13 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Link2, Search, Loader2, AlertTriangle, CheckCircle2, XCircle, Users } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Link2, Search, Loader2, AlertTriangle, CheckCircle2, XCircle, Users, Wrench, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { CARD_BRANDS, normalizeBrand } from "@/lib/card-utils";
+import AdminRepairCollisionDialog from "./AdminRepairCollisionDialog";
 
 interface ProfileSearchResult {
   id: string;
@@ -34,6 +36,7 @@ interface AutolinkResult {
     conflicts: number;
   };
   stop_reason?: string;
+  force_linked?: boolean;
   samples?: {
     payments_updated: Array<{ id: string; bepaid_uid?: string; amount: number; paid_at?: string }>;
     conflicts: Array<{ id: string; reason: string }>;
@@ -129,7 +132,7 @@ function AdminAutolinkDialog({
     setSearchResults([]);
   };
 
-  const handleExecute = async (isDryRun: boolean) => {
+  const handleExecute = async (isDryRun: boolean, forceIgnoreCollision = false) => {
     if (!selectedProfile || !cardLast4 || !cardBrand) {
       toast.error("Заполните все обязательные поля");
       return;
@@ -152,6 +155,7 @@ function AdminAutolinkDialog({
           dry_run: isDryRun,
           limit,
           unsafe_allow_large: unsafeAllowLarge,
+          force_ignore_collision: forceIgnoreCollision,
         }
       });
 
@@ -162,15 +166,19 @@ function AdminAutolinkDialog({
 
       if (isDryRun) {
         setDryRunCompleted(autoResult.status === 'success');
-        if (autoResult.status === 'stop') {
+        if (autoResult.status === 'stop' && autoResult.stop_reason !== 'card_collision_last4_brand') {
           toast.warning(`Остановлено: ${getStopReasonLabel(autoResult.stop_reason)}`);
+        } else if (autoResult.status === 'stop' && autoResult.stop_reason === 'card_collision_last4_brand') {
+          // Allow collision to be shown but don't block completely
+          toast.warning("Обнаружена коллизия карты. Вы можете исправить или принудительно связать.");
         } else {
           toast.success(`Dry-run завершён: найдено ${autoResult.stats.candidates_payments + autoResult.stats.candidates_queue} кандидатов`);
         }
       } else {
         if (autoResult.status === 'success') {
           const total = autoResult.stats.updated_payments_profile + autoResult.stats.updated_queue_profile;
-          toast.success(`Привязано ${total} транзакций к контакту`);
+          const forceMsg = autoResult.force_linked ? " (принудительно)" : "";
+          toast.success(`Привязано ${total} транзакций к контакту${forceMsg}`);
           onComplete();
         } else {
           toast.error(`Ошибка: ${getStopReasonLabel(autoResult.stop_reason)}`);
@@ -183,6 +191,11 @@ function AdminAutolinkDialog({
     } finally {
       setExecuting(false);
     }
+  };
+
+  const handleForceLink = async () => {
+    // Execute with force_ignore_collision = true
+    await handleExecute(false, true);
   };
 
   const getStopReasonLabel = (reason?: string): string => {
@@ -402,11 +415,52 @@ function AdminAutolinkDialog({
                       </div>
                     </div>
 
-                    {result.stop_reason && (
+                    {result.stop_reason && result.stop_reason !== 'card_collision_last4_brand' && (
                       <div className="flex items-center gap-2 p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded text-sm">
                         <AlertTriangle className="h-4 w-4 text-yellow-600" />
                         <span>{getStopReasonLabel(result.stop_reason)}</span>
                       </div>
+                    )}
+                    
+                    {/* Collision handling with options */}
+                    {result.stop_reason === 'card_collision_last4_brand' && (
+                      <Alert className="border-yellow-500/50 bg-yellow-50 dark:bg-yellow-950/20">
+                        <ShieldAlert className="h-4 w-4 text-yellow-600" />
+                        <AlertTitle className="text-yellow-800 dark:text-yellow-200">
+                          Карта связана с несколькими контактами
+                        </AlertTitle>
+                        <AlertDescription className="space-y-3">
+                          <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                            Обнаружена коллизия: эта карта уже привязана к другим профилям. 
+                            Вы можете исправить коллизию или принудительно привязать к выбранному контакту.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <AdminRepairCollisionDialog 
+                              last4={cardLast4} 
+                              brand={cardBrand}
+                              onComplete={() => { 
+                                // After repair, retry dry-run
+                                handleExecute(true); 
+                              }}
+                              renderTrigger={(onClick) => (
+                                <Button variant="outline" size="sm" onClick={onClick}>
+                                  <Wrench className="h-4 w-4 mr-1" />
+                                  Исправить коллизию
+                                </Button>
+                              )}
+                            />
+                            <Button 
+                              variant="secondary" 
+                              size="sm"
+                              onClick={handleForceLink}
+                              disabled={executing}
+                            >
+                              {executing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ShieldAlert className="h-4 w-4 mr-1" />}
+                              Принудительно привязать
+                            </Button>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
                     )}
 
                     {result.samples?.payments_updated && result.samples.payments_updated.length > 0 && (
