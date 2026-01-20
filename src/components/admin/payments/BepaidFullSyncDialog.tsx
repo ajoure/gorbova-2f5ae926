@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, CheckCircle, AlertCircle, Plus, ArrowRight, Clock } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Plus, ArrowRight, Clock, CreditCard, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -39,6 +39,9 @@ interface ReconcileResult {
     updated_amount: number;
     updated_status: number;
     updated_paid_at: number;
+    updated_card_fields?: number;
+    brand_normalized?: number;
+    refunds_card_filled?: number;
     unchanged: number;
     errors: number;
   };
@@ -47,6 +50,7 @@ interface ReconcileResult {
     discrepancies_amount: Array<{ uid: string; our_amount: number; bepaid_amount: number; fixed: boolean }>;
     discrepancies_status: Array<{ uid: string; our_status: string; bepaid_status: string; fixed: boolean }>;
     discrepancies_paid_at: Array<{ uid: string; our_paid_at: string; bepaid_paid_at: string; fixed: boolean }>;
+    card_backfilled?: Array<{ uid: string; field: string; old_value: string | null; new_value: string }>;
     errors: Array<{ uid: string; error: string }>;
   };
   error?: string;
@@ -97,7 +101,8 @@ export default function BepaidFullSyncDialog({
   const handleExecute = async () => {
     if (!result) return;
     
-    const totalChanges = result.changes.added + result.changes.updated_amount + result.changes.updated_status;
+    const totalChanges = result.changes.added + result.changes.updated_amount + result.changes.updated_status + 
+      (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0);
     if (totalChanges === 0) {
       toast.info("Нет изменений для применения");
       return;
@@ -118,11 +123,22 @@ export default function BepaidFullSyncDialog({
       
       if (data.ok) {
         setResult(data);
-        const { added, updated_amount, updated_status, errors } = data.changes;
-        toast.success(
-          `Готово! Добавлено: ${added}, исправлено сумм: ${updated_amount}, статусов: ${updated_status}` +
-          (errors > 0 ? `, ошибок: ${errors}` : "")
-        );
+        const { added, updated_amount, updated_status, updated_card_fields, brand_normalized, refunds_card_filled, errors } = data.changes;
+        const parts = [
+          `Добавлено: ${added}`,
+          `сумм: ${updated_amount}`,
+          `статусов: ${updated_status}`,
+        ];
+        if (updated_card_fields > 0 || brand_normalized > 0) {
+          parts.push(`карт: ${(updated_card_fields || 0) + (brand_normalized || 0)}`);
+        }
+        if (refunds_card_filled > 0) {
+          parts.push(`возвратов: ${refunds_card_filled}`);
+        }
+        if (errors > 0) {
+          parts.push(`ошибок: ${errors}`);
+        }
+        toast.success(`Готово! ${parts.join(", ")}`);
         onComplete?.();
       } else {
         toast.error(data.error || "Ошибка при выполнении");
@@ -142,7 +158,11 @@ export default function BepaidFullSyncDialog({
   };
 
   const totalChanges = result ? 
-    result.changes.added + result.changes.updated_amount + result.changes.updated_status + result.changes.updated_paid_at : 0;
+    result.changes.added + result.changes.updated_amount + result.changes.updated_status + result.changes.updated_paid_at +
+    (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0) : 0;
+
+  const cardChanges = result ? 
+    (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0) + (result.changes.refunds_card_filled || 0) : 0;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -150,7 +170,7 @@ export default function BepaidFullSyncDialog({
         <DialogHeader>
           <DialogTitle>Полная сверка с bePaid</DialogTitle>
           <DialogDescription>
-            bePaid — источник истины. Добавляем недостающие платежи, исправляем суммы и статусы.
+            bePaid — источник истины. Добавляем недостающие платежи, исправляем суммы, статусы и данные карт.
           </DialogDescription>
         </DialogHeader>
 
@@ -224,7 +244,7 @@ export default function BepaidFullSyncDialog({
 
               {/* Tabs with details */}
               <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-                <TabsList className="grid grid-cols-5 w-full">
+                <TabsList className="grid grid-cols-6 w-full">
                   <TabsTrigger value="summary" className="gap-1">
                     Итого
                   </TabsTrigger>
@@ -243,6 +263,14 @@ export default function BepaidFullSyncDialog({
                     <Badge variant="secondary" className="ml-1 h-5 px-1">
                       {result.changes.updated_status}
                     </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="cards" className="gap-1">
+                    <CreditCard className="h-3 w-3" />
+                    {cardChanges > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1">
+                        {cardChanges}
+                      </Badge>
+                    )}
                   </TabsTrigger>
                   <TabsTrigger value="errors" className="gap-1">
                     Ошибки
@@ -286,6 +314,27 @@ export default function BepaidFullSyncDialog({
                         <span>Исправить даты</span>
                         <span className="font-bold">{result.changes.updated_paid_at}</span>
                       </div>
+                      <hr />
+                      {/* Card fields section */}
+                      <div className="flex justify-between items-center text-blue-600">
+                        <span className="flex items-center gap-1">
+                          <CreditCard className="h-3 w-3" />
+                          Заполнить карты
+                        </span>
+                        <span className="font-bold">{result.changes.updated_card_fields || 0}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-purple-600">
+                        <span className="flex items-center gap-1">
+                          <RefreshCw className="h-3 w-3" />
+                          Нормализовать бренды
+                        </span>
+                        <span className="font-bold">{result.changes.brand_normalized || 0}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-teal-600">
+                        <span>Карты для возвратов</span>
+                        <span className="font-bold">{result.changes.refunds_card_filled || 0}</span>
+                      </div>
+                      <hr />
                       <div className="flex justify-between items-center text-muted-foreground">
                         <span>Без изменений</span>
                         <span>{result.changes.unchanged}</span>
@@ -397,6 +446,50 @@ export default function BepaidFullSyncDialog({
                         Расхождений по статусам не найдено
                       </div>
                     )}
+                  </TabsContent>
+
+                  <TabsContent value="cards" className="m-0">
+                    {/* Card changes summary */}
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="p-3 rounded-lg bg-blue-500/10 text-center">
+                          <div className="text-xl font-bold text-blue-600">{result.changes.updated_card_fields || 0}</div>
+                          <div className="text-xs text-muted-foreground">Заполнено</div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-purple-500/10 text-center">
+                          <div className="text-xl font-bold text-purple-600">{result.changes.brand_normalized || 0}</div>
+                          <div className="text-xs text-muted-foreground">Нормализовано</div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-teal-500/10 text-center">
+                          <div className="text-xl font-bold text-teal-600">{result.changes.refunds_card_filled || 0}</div>
+                          <div className="text-xs text-muted-foreground">Возвраты</div>
+                        </div>
+                      </div>
+
+                      {result.samples.card_backfilled && result.samples.card_backfilled.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-muted-foreground">Примеры изменений:</div>
+                          {result.samples.card_backfilled.map((item, idx) => (
+                            <div key={idx} className="p-2 rounded border text-sm">
+                              <div className="flex items-center justify-between">
+                                <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
+                                <Badge variant="outline" className="text-xs">{item.field}</Badge>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-muted-foreground">{item.old_value || '∅'}</span>
+                                <ArrowRight className="h-3 w-3" />
+                                <span className="text-green-600 font-medium">{item.new_value}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : cardChanges === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <CreditCard className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                          Данные карт в порядке
+                        </div>
+                      ) : null}
+                    </div>
                   </TabsContent>
 
                   <TabsContent value="errors" className="m-0">
