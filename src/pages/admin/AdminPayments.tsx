@@ -23,6 +23,7 @@ import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
 import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
 import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPaymentsReport";
+import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
 
 export type PaymentFilters = {
   search: string;
@@ -79,11 +80,11 @@ export default function AdminPayments() {
   // Import dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   
+  // Full sync dialog
+  const [fullSyncDialogOpen, setFullSyncDialogOpen] = useState(false);
+  
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
-  
-  // bePaid resync state
-  const [isSyncing, setIsSyncing] = useState(false);
   
   // Fetch unified payment data
   const { 
@@ -258,48 +259,9 @@ export default function AdminPayments() {
     }
   };
   
-  // Sync with bePaid (Discovery mode - fetches ALL transactions for date range)
-  const handleBepaidSync = async () => {
-    setIsSyncing(true);
-    try {
-      // Use bepaid-fetch-transactions with explicit dates (Discovery mode)
-      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions', {
-        body: {
-          fromDate: dateFilter.from || format(startOfMonth(now), 'yyyy-MM-dd'),
-          toDate: dateFilter.to || format(new Date(), 'yyyy-MM-dd'),
-          mode: 'execute',
-          syncMode: 'BULK',
-        }
-      });
-      
-      if (error) throw error;
-      
-      const result = data as {
-        transactions_fetched?: number;
-        upserted?: number;
-        queued_for_review?: number;
-        already_exists?: number;
-        payments_found?: number;
-        refunds_found?: number;
-        error?: string;
-      };
-      
-      if (result.error) {
-        toast.error(`Ошибка: ${result.error}`);
-      } else {
-        toast.success(
-          `Найдено ${result.transactions_fetched || 0} транзакций: ` +
-          `${result.upserted || 0} новых, ${result.already_exists || 0} уже были` +
-          (result.queued_for_review ? `, ${result.queued_for_review} в очередь` : '')
-        );
-        refetch();
-      }
-    } catch (e: any) {
-      console.error('Error syncing with bePaid:', e);
-      toast.error('Ошибка синхронизации: ' + (e.message || 'Неизвестная ошибка'));
-    } finally {
-      setIsSyncing(false);
-    }
+  // Open full sync dialog (replaces old handleBepaidSync)
+  const handleBepaidSync = () => {
+    setFullSyncDialogOpen(true);
   };
 
   // Export to CSV
@@ -406,14 +368,9 @@ export default function AdminPayments() {
                 <Button
                   variant="outline"
                   onClick={handleBepaidSync}
-                  disabled={isSyncing}
                   className="gap-2 h-9"
                 >
-                  {isSyncing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
+                  <RefreshCw className="h-4 w-4" />
                   <span className="hidden sm:inline">Синхронизировать</span>
                 </Button>
                 
@@ -544,6 +501,14 @@ export default function AdminPayments() {
             refetch();
             setImportDialogOpen(false);
           }}
+        />
+        
+        {/* Full Sync dialog */}
+        <BepaidFullSyncDialog
+          open={fullSyncDialogOpen}
+          onOpenChange={setFullSyncDialogOpen}
+          onComplete={refetch}
+          defaultFromDate="2026-01-01"
         />
           </>
         )}
