@@ -329,7 +329,84 @@ serve(async (req) => {
 
     console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4} (product: ${cardProduct})`);
     
-    return new Response(JSON.stringify({ status: 'created' }), {
+    // ========== AUTO-LINK historical payments ==========
+    // Call payments-autolink-by-card to link historical unlinked payments to this profile
+    let autolinkResult: any = null;
+    try {
+      // Get profile_id for the user
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+      
+      if (profileData?.id && cardLast4 && cardBrand) {
+        console.log(`[payment-methods-webhook] Calling autolink for profile=${profileData.id}, last4=${cardLast4}, brand=${cardBrand}`);
+        
+        const autolinkResponse = await fetch(`${supabaseUrl}/functions/v1/payments-autolink-by-card`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            profile_id: profileData.id,
+            user_id: userId,
+            card_last4: cardLast4,
+            card_brand: cardBrand,
+            provider_token: cardToken,
+            dry_run: false, // Execute for real
+            limit: 200,
+          }),
+        });
+        
+        autolinkResult = await autolinkResponse.json();
+        console.log(`[payment-methods-webhook] Autolink result:`, JSON.stringify(autolinkResult));
+        
+        // Store result in payment_methods.meta for UI to display
+        if (autolinkResult?.stats) {
+          const { data: newCard } = await supabase
+            .from('payment_methods')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('last4', cardLast4)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (newCard?.id) {
+            await supabase
+              .from('payment_methods')
+              .update({
+                meta: {
+                  tracking_id: trackingId,
+                  transaction_id: transaction.uid,
+                  autolink_result: {
+                    updated_payments: autolinkResult.stats.updated_payments_profile || 0,
+                    updated_queue: autolinkResult.stats.updated_queue_profile || 0,
+                    status: autolinkResult.status,
+                    stop_reason: autolinkResult.stop_reason || null,
+                  },
+                },
+              })
+              .eq('id', newCard.id);
+          }
+        }
+      }
+    } catch (autolinkError) {
+      // Don't fail the main flow if autolink fails
+      console.error('[payment-methods-webhook] Autolink error (non-blocking):', autolinkError);
+    }
+    
+    return new Response(JSON.stringify({ 
+      status: 'created',
+      autolink: autolinkResult?.stats ? {
+        updated_payments: autolinkResult.stats.updated_payments_profile || 0,
+        updated_queue: autolinkResult.stats.updated_queue_profile || 0,
+        status: autolinkResult.status,
+      } : null,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error: unknown) {

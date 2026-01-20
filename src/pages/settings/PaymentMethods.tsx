@@ -41,20 +41,65 @@ export default function PaymentMethodsSettings() {
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Check for virtual card rejection in URL params
+  // Check for tokenization result in URL params
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('tokenize') === 'rejected') {
+    const tokenizeStatus = params.get('tokenize');
+    
+    if (tokenizeStatus === 'rejected') {
       const reason = params.get('reason');
       if (reason === 'virtual_card_not_allowed') {
         toast.error('Виртуальные карты не принимаются для рассрочки. Используйте физическую банковскую карту.');
       } else {
         toast.error('Карта отклонена. Попробуйте другую карту.');
       }
-      // Clear the params
+      navigate(location.pathname, { replace: true });
+    } else if (tokenizeStatus === 'success') {
+      // Card added successfully - check for autolink result in newest card's meta
+      const checkAutolinkResult = async () => {
+        if (!user) return;
+        
+        const { data: newestCard } = await supabase
+          .from('payment_methods')
+          .select('meta')
+          .eq('user_id', user.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        const autolinkResult = newestCard?.meta?.autolink_result as { 
+          updated_payments?: number; 
+          updated_queue?: number; 
+          status?: string;
+          stop_reason?: string;
+        } | undefined;
+        
+        if (autolinkResult) {
+          const totalLinked = (autolinkResult.updated_payments || 0) + (autolinkResult.updated_queue || 0);
+          
+          if (autolinkResult.status === 'stop') {
+            if (autolinkResult.stop_reason === 'card_collision_last4_brand') {
+              toast.info('Карта добавлена. Автопривязка транзакций пропущена (карта используется несколькими контактами).', { duration: 6000 });
+            } else if (autolinkResult.stop_reason === 'too_many_candidates') {
+              toast.info('Карта добавлена. Слишком много совпадений — обратитесь в поддержку.', { duration: 6000 });
+            }
+          } else if (totalLinked > 0) {
+            toast.success(`Карта добавлена. Привязано ${totalLinked} исторических транзакций.`, { duration: 5000 });
+          } else {
+            toast.success('Карта успешно добавлена');
+          }
+        } else {
+          toast.success('Карта успешно добавлена');
+        }
+        
+        queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
+      };
+      
+      checkAutolinkResult();
       navigate(location.pathname, { replace: true });
     }
-  }, [location.search, navigate, location.pathname]);
+  }, [location.search, navigate, location.pathname, user, queryClient]);
 
   // Check for pending installments - blocks card deletion
   const { data: pendingInstallments } = useUserPendingInstallments(user?.id);
