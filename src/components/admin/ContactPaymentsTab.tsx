@@ -28,6 +28,20 @@ interface PaymentItem {
   productName?: string | null;
 }
 
+// Helper: get brand variants for matching (handles master vs mastercard)
+function getBrandVariants(brand: string): string[] {
+  const normalized = (brand || 'unknown').toLowerCase().trim();
+  const variants = [normalized];
+  
+  if (normalized === 'mastercard' || normalized === 'master' || normalized === 'mc') {
+    variants.push('mastercard', 'master', 'mc');
+  } else if (normalized === 'belkart' || normalized === 'belcard') {
+    variants.push('belkart', 'belcard');
+  }
+  
+  return [...new Set(variants.filter(Boolean))];
+}
+
 export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProps) {
   const queryClient = useQueryClient();
   const [isRelinking, setIsRelinking] = useState(false);
@@ -45,11 +59,11 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
     },
   });
 
-  // Fetch payments for this contact
+  // Fetch payments for this contact - BOTH by profile_id AND by linked cards
   const { data: payments, isLoading } = useQuery({
     queryKey: ['contact-payments', contactId],
     queryFn: async () => {
-      // Get payments directly linked to profile_id
+      // 1. Get payments directly linked to profile_id
       const { data: directPayments, error } = await supabase
         .from('payments_v2')
         .select(`
@@ -63,8 +77,41 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
 
       if (error) throw error;
 
-      // Fetch related orders for product names
-      const orderIds = (directPayments || [])
+      // 2. Get linked cards for this contact
+      const { data: cards } = await supabase
+        .from('card_profile_links')
+        .select('card_last4, card_brand')
+        .eq('profile_id', contactId);
+
+      // 3. Find payments by card (even if not linked to profile yet)
+      let cardPayments: any[] = [];
+      if (cards && cards.length > 0) {
+        for (const card of cards) {
+          const brandVariants = getBrandVariants(card.card_brand || 'unknown');
+          const { data: byCard } = await supabase
+            .from('payments_v2')
+            .select(`
+              id, provider_payment_id, amount, paid_at, status, transaction_type, 
+              card_last4, card_brand, order_id
+            `)
+            .eq('card_last4', card.card_last4)
+            .in('card_brand', brandVariants)
+            .in('status', ['succeeded', 'refunded'])
+            .order('paid_at', { ascending: false })
+            .limit(50);
+          cardPayments.push(...(byCard || []));
+        }
+      }
+
+      // 4. Merge and deduplicate
+      const allPayments = [...(directPayments || []), ...cardPayments];
+      const uniquePaymentsMap = new Map(allPayments.map(p => [p.id, p]));
+      const uniquePayments = Array.from(uniquePaymentsMap.values())
+        .sort((a, b) => new Date(b.paid_at || 0).getTime() - new Date(a.paid_at || 0).getTime())
+        .slice(0, 100);
+
+      // 5. Fetch related orders for product names
+      const orderIds = uniquePayments
         .filter(p => p.order_id)
         .map(p => p.order_id!);
 
@@ -80,7 +127,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         ]));
       }
 
-      return (directPayments || []).map(p => ({
+      return uniquePayments.map(p => ({
         ...p,
         productName: p.order_id ? ordersMap.get(p.order_id)?.product_name : null,
       })) as PaymentItem[];
