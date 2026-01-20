@@ -332,14 +332,19 @@ export default function BepaidFullSyncDialog({
                 </div>
               )}
 
-              {/* Unverifiable warning */}
+              {/* Unverifiable info (not an error - expected for imported transactions) */}
               {result.uid_verify_stats && result.uid_verify_stats.unverifiable > 0 && (
-                <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-orange-600 shrink-0" />
-                  <span className="text-sm">
-                    {result.uid_verify_stats.unverifiable} транзакций нельзя подтвердить через bePaid API 
-                    (ограничение доступа). Данные оставлены как в импорте.
-                  </span>
+                <div className="p-3 rounded-lg bg-muted/50 border border-border flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="text-sm space-y-1">
+                    <div className="font-medium">
+                      {result.uid_verify_stats.unverifiable} транзакций — импортированные данные
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      bePaid API не предоставляет информацию о транзакциях, созданных вне системы. 
+                      Это нормальное поведение для загруженных данных — они сохранены как есть.
+                    </div>
+                  </div>
                 </div>
               )}
 

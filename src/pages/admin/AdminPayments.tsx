@@ -24,6 +24,7 @@ import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettin
 import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
 import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPaymentsReport";
 import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
+import AutolinkAllCardsButton from "@/components/admin/payments/AutolinkAllCardsButton";
 
 export type PaymentFilters = {
   search: string;
@@ -382,6 +383,9 @@ export default function AdminPayments() {
                   <Upload className="h-4 w-4" />
                   <span className="hidden sm:inline">Импорт</span>
                 </Button>
+                
+                {/* Mass autolink button */}
+                <AutolinkAllCardsButton />
                 
                 {/* Settings dropdown */}
                 <PaymentsSettingsDropdown 
