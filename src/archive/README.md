@@ -7,7 +7,7 @@
 
 ### pages/
 - `AdminProducts.tsx` - Legacy V1 продукты (заменён на AdminProductsV2)
-- `AdminPayments.tsx` - Legacy V1 платежи (заменён на AdminPaymentsV2)
+- `AdminPayments.tsx` - Legacy V1 платежи (удалён, используется единая страница /admin/payments)
 - `AdminUsers.tsx` - Legacy управление пользователями (заменён на AdminContacts)
 - `Pricing.tsx` - Старая страница тарифов (заменена на /#pricing)
 

@@ -46,7 +46,7 @@ import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
 import AdminProductsV2 from "./pages/admin/AdminProductsV2";
 import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
-import AdminPaymentsV2 from "./pages/admin/AdminPaymentsV2";
+
 import AdminPaymentsPage from "./pages/admin/AdminPayments";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
 import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
@@ -192,7 +192,7 @@ const App = () => (
               <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetailV2 /></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
-              <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
+              <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
               <Route path="/admin/installments" element={<ProtectedRoute><AdminInstallments /></ProtectedRoute>} />
               <Route path="/admin/consents" element={<ProtectedRoute><AdminLayout><AdminConsents /></AdminLayout></ProtectedRoute>} />

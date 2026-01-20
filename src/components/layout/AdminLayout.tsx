@@ -19,7 +19,6 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/orders': 'orders',
   '/admin/orders-v2': 'orders',
   '/admin/payments': 'orders',
-  '/admin/payments-v2': 'orders',
   '/admin/products': 'admin',
   '/admin/products-v2': 'admin',
   '/admin/subscriptions-v2': 'subscriptions',

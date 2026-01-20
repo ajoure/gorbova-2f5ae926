@@ -166,7 +166,6 @@ export function AdminChargeDialog({
     onSuccess: (data) => {
       toast.success(`Успешно списано ${amount} BYN. Сделка #${data.order_number}`);
       queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
-      queryClient.invalidateQueries({ queryKey: ["payments-v2"] });
       queryClient.invalidateQueries({ queryKey: ["orders-v2"] });
       queryClient.invalidateQueries({ queryKey: ["subscriptions-v2"] });
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
