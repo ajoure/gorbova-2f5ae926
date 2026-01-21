@@ -26,10 +26,7 @@ interface PaymentItem {
   card_brand: string | null;
   order_id: string | null;
   productName?: string | null;
-  source?: 'payments_v2' | 'queue'; // Track data source for transparency
 }
-
-// Removed DoD Debug Stats interface - debug panel has been removed after DoD verification
 
 // Helper: get brand variants for matching (handles master vs mastercard)
 function getBrandVariants(brand: string): string[] {
@@ -62,9 +59,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
     },
   });
 
-  // Fetch payments for this contact - BOTH by profile_id AND by linked cards
-  // Also includes payment_reconcile_queue for completed transactions not yet in payments_v2
-  // STRICT: Only succeeded/refunded from payments_v2, only completed from queue (NO pending)
+  // Fetch payments for this contact - ONLY from payments_v2 (queue is fully materialized)
+  // By profile_id AND by linked cards
   const { data: payments, isLoading } = useQuery({
     queryKey: ['contact-payments', contactId],
     queryFn: async (): Promise<PaymentItem[]> => {
@@ -177,120 +173,16 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         }
       }
 
-      // 4. Get ONLY COMPLETED payments from payment_reconcile_queue (NO pending!)
-      let queuePayments: any[] = [];
-      
-      const { data: directQueuePayments } = await supabase
-        .from('payment_reconcile_queue')
-        .select(`
-          id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-          card_last4, card_brand, matched_order_id, processed_order_id, product_name
-        `)
-        .eq('matched_profile_id', contactId)
-        .eq('status', 'completed')
-        .order('paid_at', { ascending: false })
-        .limit(100);
-      
-      queuePayments.push(...(directQueuePayments || []));
-
-      if (linkedCardsNormalized.length > 0) {
-        for (const card of linkedCardsNormalized) {
-          const hasBrand = !!card.card_brand && card.card_brand.trim().length > 0;
-          const last4IsAmbiguousWithinContact = (last4Counts.get(card.card_last4) || 0) > 1;
-
-          if (hasBrand && card.brandVariants.length > 0) {
-            const orIlike = card.brandVariants.map((v) => `card_brand.ilike.${v}`).join(',');
-            const { data: byCardQueueBrand, error: byCardQueueBrandError } = await supabase
-              .from('payment_reconcile_queue')
-              .select(`
-                id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                card_last4, card_brand, matched_order_id, processed_order_id, product_name
-              `)
-              .eq('card_last4', card.card_last4)
-              .eq('status', 'completed')
-              .or(orIlike)
-              .order('paid_at', { ascending: false })
-              .limit(50);
-
-            if (!byCardQueueBrandError) {
-              queuePayments.push(...(byCardQueueBrand || []));
-            }
-
-            if (!last4IsAmbiguousWithinContact) {
-              const [{ data: byCardQueueNull }, { data: byCardQueueEmpty }] = await Promise.all([
-                supabase
-                  .from('payment_reconcile_queue')
-                  .select(`
-                    id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                    card_last4, card_brand, matched_order_id, processed_order_id, product_name
-                  `)
-                  .eq('card_last4', card.card_last4)
-                  .eq('status', 'completed')
-                  .is('card_brand', null)
-                  .order('paid_at', { ascending: false })
-                  .limit(50),
-                supabase
-                  .from('payment_reconcile_queue')
-                  .select(`
-                    id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                    card_last4, card_brand, matched_order_id, processed_order_id, product_name
-                  `)
-                  .eq('card_last4', card.card_last4)
-                  .eq('status', 'completed')
-                  .eq('card_brand', '')
-                  .order('paid_at', { ascending: false })
-                  .limit(50),
-              ]);
-
-              queuePayments.push(...(byCardQueueNull || []), ...(byCardQueueEmpty || []));
-            }
-            continue;
-          }
-
-          if (last4IsAmbiguousWithinContact) {
-            continue;
-          }
-
-          const { data: byLast4QueueAnyBrand, error: byLast4QueueAnyBrandError } = await supabase
-            .from('payment_reconcile_queue')
-            .select(`
-              id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-              card_last4, card_brand, matched_order_id, processed_order_id, product_name
-            `)
-            .eq('card_last4', card.card_last4)
-            .eq('status', 'completed')
-            .order('paid_at', { ascending: false })
-            .limit(50);
-
-          if (!byLast4QueueAnyBrandError) {
-            queuePayments.push(...(byLast4QueueAnyBrand || []));
-          }
-        }
-      }
-
-      // 5. Mark sources and merge
-      const paymentsV2WithSource = [...(directPayments || []), ...cardPaymentsV2].map((p) => ({
-        ...p,
-        source: 'payments_v2' as const,
-      }));
-      
-      const queueWithSource = queuePayments.map((p) => ({
-        ...p,
-        provider_payment_id: p.bepaid_uid || p.tracking_id || p.id,
-        order_id: p.matched_order_id || p.processed_order_id || null,
-        source: 'queue' as const,
-      }));
-
-      // 6. Merge all sources and deduplicate by id
-      const allPayments = [...paymentsV2WithSource, ...queueWithSource];
+      // 4. Merge all and deduplicate by id
+      const allPayments = [...(directPayments || []), ...cardPaymentsV2];
       const uniquePaymentsMap = new Map(allPayments.map(p => [p.id, p]));
       const uniquePayments = Array.from(uniquePaymentsMap.values())
         .sort((a, b) => new Date(b.paid_at || 0).getTime() - new Date(a.paid_at || 0).getTime())
         .slice(0, 100);
 
-      // 7. Fetch related orders for product names
+      // 5. Fetch related orders for product names
       const orderIds = uniquePayments
-        .filter(p => p.order_id && !p.product_name)
+        .filter(p => p.order_id)
         .map(p => p.order_id!);
 
       let ordersMap = new Map<string, { id: string; product_name: string | null }>();
@@ -307,7 +199,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
 
       return uniquePayments.map(p => ({
         ...p,
-        productName: p.product_name || (p.order_id ? ordersMap.get(p.order_id)?.product_name : null),
+        productName: p.order_id ? ordersMap.get(p.order_id)?.product_name : null,
       })) as PaymentItem[];
     },
     enabled: !!contactId,
@@ -375,22 +267,12 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'succeeded':
-      case 'completed': // from payment_reconcile_queue - treated as succeeded
         return <Badge variant="default" className="text-xs">Успешно</Badge>;
       case 'refunded':
         return <Badge variant="secondary" className="text-xs">Возврат</Badge>;
-      // NOTE: pending is NO LONGER shown per ТЗ requirements
       default:
         return <Badge variant="outline" className="text-xs">{status}</Badge>;
     }
-  };
-  
-  // Source badge for transparency
-  const getSourceBadge = (source?: 'payments_v2' | 'queue') => {
-    if (source === 'queue') {
-      return <Badge variant="outline" className="text-xs ml-1 text-orange-600 border-orange-300">Очередь</Badge>;
-    }
-    return null; // payments_v2 is default, no badge needed
   };
 
   if (isLoading) {
@@ -433,7 +315,6 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         </div>
       </div>
 
-
       {/* Linked cards summary */}
       {linkedCards && linkedCards.length > 0 && (
         <Card>
@@ -457,73 +338,76 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
       {!payments || payments.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            Нет платежей
+            <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>Платежи не найдены</p>
+            <p className="text-xs mt-1">
+              {linkedCards && linkedCards.length > 0 
+                ? 'Нет платежей по привязанным картам' 
+                : 'Привяжите карту для отображения платежей'}
+            </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
+          <div className="text-sm text-muted-foreground mb-2">
+            Найдено платежей: {payments.length}
+          </div>
           {payments.map((payment) => (
             <Card key={payment.id} className="hover:bg-muted/50 transition-colors">
-              <CardContent className="py-3">
-                <div className="flex items-center justify-between gap-4">
-                  {/* Left: transaction info */}
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
+              <CardContent className="py-3 px-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
                     {getTransactionIcon(payment.transaction_type)}
-                    <div className="min-w-0 flex-1">
+                    <div>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">
-                          {payment.amount?.toFixed(2) || '0.00'} BYN
+                          {payment.amount ? `${payment.amount.toLocaleString('ru-RU')} BYN` : '—'}
                         </span>
-                        <span className="text-xs text-muted-foreground">
-                          {getTransactionLabel(payment.transaction_type)}
-                        </span>
+                        {getStatusBadge(payment.status)}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                        <span>{getTransactionLabel(payment.transaction_type)}</span>
                         {payment.paid_at && (
-                          <span>
-                            {format(new Date(payment.paid_at), 'dd.MM.yyyy HH:mm', { locale: ru })}
-                          </span>
+                          <>
+                            <span>•</span>
+                            <span>
+                              {format(new Date(payment.paid_at), 'dd MMM yyyy, HH:mm', { locale: ru })}
+                            </span>
+                          </>
                         )}
                         {payment.card_last4 && (
-                          <span className="flex items-center gap-1">
-                            <CreditCard className="w-3 h-3" />
-                            ****{payment.card_last4}
-                          </span>
+                          <>
+                            <span>•</span>
+                            <span className="font-mono">****{payment.card_last4}</span>
+                          </>
                         )}
                       </div>
-                      {/* Product name */}
-                      {payment.productName && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                          <Package className="w-3 h-3" />
-                          {payment.productName}
-                        </div>
-                      )}
                     </div>
                   </div>
-
-                  {/* Right: status, source badge and UID */}
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <div className="flex items-center">
-                      {getStatusBadge(payment.status)}
-                      {getSourceBadge(payment.source)}
-                    </div>
-                    {payment.provider_payment_id && (
-                      <code className="text-xs text-muted-foreground">
-                        {payment.provider_payment_id.slice(0, 12)}...
-                      </code>
+                  
+                  <div className="flex items-center gap-2">
+                    {payment.productName && (
+                      <Badge variant="outline" className="text-xs gap-1 max-w-[150px] truncate">
+                        <Package className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{payment.productName}</span>
+                      </Badge>
+                    )}
+                    {payment.order_id && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={() => window.open(`/admin/orders/${payment.order_id}`, '_blank')}
+                        title="Открыть заказ"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </Button>
                     )}
                   </div>
                 </div>
               </CardContent>
             </Card>
           ))}
-        </div>
-      )}
-
-      {/* Summary */}
-      {payments && payments.length > 0 && (
-        <div className="text-xs text-muted-foreground text-right">
-          Показано: {payments.length} платежей
         </div>
       )}
     </div>
