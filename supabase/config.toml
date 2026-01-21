@@ -257,3 +257,6 @@ verify_jwt = false
 
 [functions.bepaid-sync-orchestrator]
 verify_jwt = false
+
+[functions.bepaid-reconcile-file]
+verify_jwt = false
