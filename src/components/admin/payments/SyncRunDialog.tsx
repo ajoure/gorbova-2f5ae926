@@ -36,6 +36,7 @@ interface SyncStats {
   dry_run?: boolean;
   // Origin-based filtering
   excluded_import_count?: number;
+  excluded_null_paid_at_count?: number;
   strategy_used?: 'list' | 'uid_fallback' | 'unknown';
   selected_host?: string;
   uid_breakdown?: {
@@ -315,6 +316,12 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
                   <div className="flex justify-between p-2 rounded bg-yellow-500/10 border border-yellow-500/20 col-span-2">
                     <span className="text-yellow-700 dark:text-yellow-400">Исключено (import):</span>
                     <span className="font-mono text-yellow-700 dark:text-yellow-400">{stats.excluded_import_count}</span>
+                  </div>
+                )}
+                {stats.excluded_null_paid_at_count !== undefined && stats.excluded_null_paid_at_count > 0 && (
+                  <div className="flex justify-between p-2 rounded bg-orange-500/10 border border-orange-500/20 col-span-2">
+                    <span className="text-orange-700 dark:text-orange-400">Исключено (pending/manual):</span>
+                    <span className="font-mono text-orange-700 dark:text-orange-400">{stats.excluded_null_paid_at_count}</span>
                   </div>
                 )}
               </div>
