@@ -130,7 +130,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["unified-payments", dateFilter],
+    // Use primitives for stable queryKey (not object reference)
+    queryKey: ["unified-payments", dateFilter.from, dateFilter.to || null, dateFilter.includeImport ?? false],
     queryFn: async () => {
       // Default to early date to show ALL historical data (no hidden payments)
       const fromDate = dateFilter.from || "2020-01-01";

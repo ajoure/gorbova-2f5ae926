@@ -84,14 +84,17 @@ export default function AdminPayments() {
   const [dashboardFilter, setDashboardFilter] = useState<UnifiedDashboardFilter>(null);
   
   // Include import toggle - persistent via URL + localStorage
-  // Priority: URL > localStorage > default false
+  // Priority: URL > localStorage > default TRUE (show all by default)
   const [includeImport, setIncludeImport] = useState(() => {
     const urlValue = searchParams.get('include_import');
     if (urlValue !== null) {
       return urlValue === '1' || urlValue === 'true';
     }
     const storedValue = localStorage.getItem(INCLUDE_IMPORT_KEY);
-    return storedValue === 'true';
+    if (storedValue !== null) {
+      return storedValue === 'true';
+    }
+    return true; // Default TRUE: показываем всё (API + CSV)
   });
   
   // Sync includeImport to localStorage and URL
