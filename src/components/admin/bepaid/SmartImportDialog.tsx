@@ -723,6 +723,16 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     importMutation.mutate();
   };
 
+  // Map status_normalized to canonical DB values for overrides
+  const toCanonicalStatus = (status: string): string => {
+    switch (status) {
+      case 'successful': return 'succeeded';
+      case 'refund': return 'refunded';
+      case 'cancel': return 'canceled';
+      default: return status;
+    }
+  };
+
   // Apply status overrides for conflicts with payments_v2
   const applyOverridesMutation = useMutation({
     mutationFn: async () => {
@@ -732,14 +742,15 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
       
       let applied = 0;
       for (const tx of conflictsToOverride) {
+        const canonicalStatus = toCanonicalStatus(tx.status_normalized);
         const { error } = await supabase
           .from('payment_status_overrides')
           .upsert({
             provider: 'bepaid',
             uid: tx.uid,
-            status_override: tx.status_normalized,
+            status_override: canonicalStatus,
             original_status: tx.existing_record?.status,
-            reason: `CSV reconciliation: CSV status "${tx.status_normalized}" vs DB status "${tx.existing_record?.status}"`,
+            reason: `CSV reconciliation: CSV status "${tx.status_normalized}" → "${canonicalStatus}" vs DB status "${tx.existing_record?.status}"`,
             source: 'csv_import',
           }, { onConflict: 'provider,uid' });
         
@@ -750,7 +761,12 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     },
     onSuccess: ({ applied, total }) => {
       toast.success(`Применено ${applied} из ${total} переопределений статусов`);
+      // Invalidate all payment-related queries to refresh totals
       queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['bepaid-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['bepaid-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['bepaid-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['contact-payments'] });
     },
     onError: (error: any) => {
       toast.error("Ошибка применения переопределений: " + error.message);
@@ -868,6 +884,41 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
 
           {phase === 'reconciliation' && report && (
             <div className="space-y-6">
+              {/* Info message when nothing to import but there are conflicts */}
+              {report.newRecords.length === 0 && report.updates.length === 0 && report.conflicts.length > 0 && (
+                <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-900/10">
+                  <CardContent className="p-4 flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-amber-800 dark:text-amber-200">
+                        Все транзакции уже в базе
+                      </p>
+                      <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                        Импортировать нечего, но есть {report.conflicts.length} конфликтов статусов. 
+                        Нажмите <strong>"Применить статусы из CSV"</strong> для выравнивания базы с файлом.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Info message when everything matches */}
+              {report.newRecords.length === 0 && report.updates.length === 0 && report.conflicts.length === 0 && (
+                <Card className="border-green-500/50 bg-green-50 dark:bg-green-900/10">
+                  <CardContent className="p-4 flex items-start gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-green-800 dark:text-green-200">
+                        База данных полностью синхронизирована с файлом
+                      </p>
+                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                        Все {report.matches.length} транзакций совпадают. Никаких действий не требуется.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Stats cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard 
@@ -877,6 +928,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                   color="bg-green-100 text-green-600 dark:bg-green-900/30"
                   selected={selectedCategories.new}
                   onToggle={() => setSelectedCategories(s => ({ ...s, new: !s.new }))}
+                  disabled={report.newRecords.length === 0}
                 />
                 <StatCard 
                   title="Обновления" 
@@ -885,6 +937,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                   color="bg-blue-100 text-blue-600 dark:bg-blue-900/30"
                   selected={selectedCategories.updates}
                   onToggle={() => setSelectedCategories(s => ({ ...s, updates: !s.updates }))}
+                  disabled={report.updates.length === 0}
                 />
                 <StatCard 
                   title="Совпадения" 
@@ -900,6 +953,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                   color="bg-amber-100 text-amber-600 dark:bg-amber-900/30"
                   selected={selectedCategories.conflicts}
                   onToggle={() => setSelectedCategories(s => ({ ...s, conflicts: !s.conflicts }))}
+                  disabled={report.conflicts.length === 0}
                 />
               </div>
 
@@ -1038,9 +1092,10 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
             <Button 
               onClick={handleImport} 
               disabled={transactionsToImport.length === 0}
+              title={transactionsToImport.length === 0 ? "Все транзакции уже в базе. Для выравнивания статусов нажмите 'Применить статусы из CSV'" : undefined}
             >
               <ArrowRight className="h-4 w-4 mr-2" />
-              Импортировать ({transactionsToImport.length})
+              {transactionsToImport.length === 0 ? 'Нечего импортировать' : `Импортировать (${transactionsToImport.length})`}
             </Button>
           </DialogFooter>
         )}
