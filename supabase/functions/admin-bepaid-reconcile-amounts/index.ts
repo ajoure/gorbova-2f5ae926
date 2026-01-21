@@ -222,6 +222,19 @@ async function fetchTransaction(
   };
 
   const extractTxFromKnownShapes = (data: any): { tx: any | null; matched_shape?: string } => {
+    // 0) DIRECT TRANSACTION: bePaid Gateway format with uid at root level
+    //    This is the most common format from single-transaction endpoints
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const hasUid = typeof data.uid === 'string' && data.uid.length > 0;
+      const hasAmount = typeof data.amount === 'number';
+      const hasStatus = typeof data.status === 'string';
+      
+      // Strong signal: uid + (amount OR status) = direct transaction
+      if (hasUid && (hasAmount || hasStatus)) {
+        return { tx: data, matched_shape: 'direct_transaction' };
+      }
+    }
+
     // 1) data.transaction
     if (data?.transaction && typeof data.transaction === 'object') {
       return { tx: data.transaction, matched_shape: 'data.transaction' };
@@ -239,7 +252,7 @@ async function fetchTransaction(
       if (hasTxnFields) return { tx: d, matched_shape: 'data.data' };
     }
 
-    // 4) data (if it is the transaction)
+    // 4) data (if it is the transaction) - fallback for other shapes
     if (data && typeof data === 'object') {
       const hasTxnFields = data?.uid || data?.id || data?.amount || data?.type || data?.status;
       if (hasTxnFields) return { tx: data, matched_shape: 'data' };
@@ -626,8 +639,21 @@ serve(async (req) => {
           });
         }
 
-        // bePaid stores in cents/kopecks
-        let bepaidAmount = (tx.amount ?? 0) / 100;
+        // === CURRENCY VALIDATION (STOP if not BYN) ===
+        const txCurrency = String(tx.currency ?? tx.currency_code ?? tx.currencyCode ?? 'BYN').toUpperCase();
+        if (txCurrency !== 'BYN') {
+          result.errors++;
+          result.error_details.push({
+            payment_id: payment.id,
+            error: `Currency mismatch: expected BYN, got ${txCurrency}. STOP - manual review required.`,
+          });
+          continue;
+        }
+
+        // === AMOUNT NORMALIZATION (minor units → major units) ===
+        // bePaid stores in kopecks: 10000 = 100.00 BYN, 15000 = 150.00 BYN
+        const rawBepaidAmount = tx.amount ?? 0;
+        let bepaidAmount = rawBepaidAmount / 100;
 
         // Refunds should be negative in our system
         const isRefund =
@@ -641,6 +667,17 @@ serve(async (req) => {
 
         const ourAmount = Number(payment.amount);
         const diff = Math.abs(ourAmount - bepaidAmount);
+
+        // === STOP GUARD: Delta > 1000 BYN threshold ===
+        const MAX_DELTA_BYN = 1000;
+        if (diff > MAX_DELTA_BYN) {
+          result.errors++;
+          result.error_details.push({
+            payment_id: payment.id,
+            error: `Delta exceeds safety threshold: ${diff.toFixed(2)} BYN (max: ${MAX_DELTA_BYN}). STOP - manual review required.`,
+          });
+          continue;
+        }
 
         if (diff > 0.01) {
           const discrepancy: Discrepancy = {
@@ -680,10 +717,12 @@ serve(async (req) => {
               throw new Error(`Failed to update payment: ${updateError.message}`);
             }
 
+            // SYSTEM ACTOR audit log (as per spec)
             await supabase.from('audit_logs').insert({
-              actor_user_id: user.id,
-              actor_type: 'admin',
-              action: 'payment_amount_reconciled',
+              actor_user_id: null, // system action
+              actor_type: 'system',
+              actor_label: 'bepaid_reconcile_2026',
+              action: 'bepaid_reconcile_amounts',
               target_user_id: payment.profile_id,
               meta: {
                 payment_id: payment.id,
@@ -691,7 +730,12 @@ serve(async (req) => {
                 order_id: payment.order_id,
                 old_amount: ourAmount,
                 new_amount: bepaidAmount,
+                delta: bepaidAmount - ourAmount,
+                raw_bepaid_amount: rawBepaidAmount,
+                currency: txCurrency,
+                matched_shape: fetched.matched_shape,
                 source: 'bepaid_api_reconcile_2026',
+                initiated_by_user_id: user.id,
               },
             });
 
@@ -699,8 +743,9 @@ serve(async (req) => {
           }
         }
 
-        if (max_payments_to_check > 20) {
-          await new Promise((resolve) => setTimeout(resolve, 80));
+        // Reduced throttle for faster execution (bePaid allows higher rate)
+        if (max_payments_to_check > 50) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
         }
       } catch (error) {
         console.error(`[Reconcile] Error processing payment ${payment.id}:`, error);
