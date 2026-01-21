@@ -83,6 +83,8 @@ interface ImportStats {
   errors: string[];
   refundsProcessed: number;
   productsAutoCreated: number;
+  voidsProcessed: number;
+  failedProcessed: number;
 }
 
 Deno.serve(async (req) => {
@@ -172,6 +174,8 @@ Deno.serve(async (req) => {
       errors: [],
       refundsProcessed: 0,
       productsAutoCreated: 0,
+      voidsProcessed: 0,
+      failedProcessed: 0,
     };
 
     for (const item of queueItems) {
@@ -314,9 +318,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Check if it's a refund
-        const isRefund = item.transaction_type?.toLowerCase().includes("возврат") ||
-                        (item.amount && item.amount < 0);
+        // Determine transaction type from queue item
+        const txType = (item.transaction_type || '').toLowerCase();
+        const statusNorm = (item.status_normalized || '').toLowerCase();
+        
+        // Check transaction types
+        const isRefund = txType.includes("возврат") || txType.includes("refund") || 
+                        statusNorm === 'refund' || statusNorm === 'refunded';
+        const isVoid = txType.includes("отмен") || txType.includes("cancel") || txType.includes("void") ||
+                      statusNorm === 'cancel' || statusNorm === 'cancelled';
+        const isFailed = statusNorm === 'failed' || statusNorm === 'error' || statusNorm === 'declined';
 
         // Find or create profile
         let profile: any = null;
@@ -422,13 +433,14 @@ Deno.serve(async (req) => {
               status: "refunded",
               provider: "bepaid",
               provider_payment_id: refundUid,
+              transaction_type: "refund",
               card_last4: item.card_last4,
               card_brand: item.card_brand,
               paid_at: item.paid_at,
               product_name_raw: description,
               provider_response: payload,
-              origin: 'import',  // Mark as imported, not real-time bePaid
-              import_ref: item.id,  // Reference to queue item
+              origin: 'bepaid',  // CRITICAL: Use 'bepaid' for financial summary inclusion
+              import_ref: item.id,
             });
 
           if (refundError) {
@@ -439,6 +451,88 @@ Deno.serve(async (req) => {
           }
 
           // Update queue item
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({ 
+              status: "completed",
+              matched_profile_id: profile.id,
+              last_error: null,
+            })
+            .eq("id", item.id);
+
+          continue;
+        }
+        
+        // Handle voids/cancellations
+        if (isVoid) {
+          const { error: voidError } = await supabase
+            .from("payments_v2")
+            .insert({
+              user_id: profile.user_id || profile.id,
+              profile_id: profile.id,
+              amount: Math.abs(item.amount || 0) * -1,
+              currency: item.currency || "BYN",
+              status: "canceled",
+              provider: "bepaid",
+              provider_payment_id: item.bepaid_uid,
+              transaction_type: "void",
+              card_last4: item.card_last4,
+              card_brand: item.card_brand,
+              paid_at: item.paid_at,
+              product_name_raw: description,
+              provider_response: payload,
+              origin: 'bepaid',
+              import_ref: item.id,
+            });
+
+          if (voidError) {
+            console.error(`Void error: ${voidError.message}`);
+            stats.errors.push(`Void error: ${voidError.message}`);
+          } else {
+            stats.voidsProcessed++;
+          }
+
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({ 
+              status: "completed",
+              matched_profile_id: profile.id,
+              last_error: null,
+            })
+            .eq("id", item.id);
+
+          continue;
+        }
+        
+        // Handle failed payments (for accurate reporting)
+        if (isFailed) {
+          const { error: failedError } = await supabase
+            .from("payments_v2")
+            .insert({
+              user_id: profile.user_id || profile.id,
+              profile_id: profile.id,
+              amount: Math.abs(item.amount || 0),
+              currency: item.currency || "BYN",
+              status: "failed",
+              provider: "bepaid",
+              provider_payment_id: item.bepaid_uid,
+              transaction_type: item.transaction_type || "payment",
+              card_last4: item.card_last4,
+              card_brand: item.card_brand,
+              paid_at: item.paid_at,
+              product_name_raw: description,
+              provider_response: payload,
+              origin: 'bepaid',
+              import_ref: item.id,
+            });
+
+          if (failedError) {
+            console.error(`Failed payment error: ${failedError.message}`);
+            stats.errors.push(`Failed payment error: ${failedError.message}`);
+          } else {
+            stats.failedProcessed++;
+          }
+
           await supabase
             .from("payment_reconcile_queue")
             .update({ 
@@ -531,14 +625,15 @@ Deno.serve(async (req) => {
             status: "succeeded",
             provider: "bepaid",
             provider_payment_id: item.bepaid_uid,
+            transaction_type: item.transaction_type || "payment",
             card_last4: item.card_last4,
             card_brand: item.card_brand,
             paid_at: actualPaymentDate,
             receipt_url: item.receipt_url,
             product_name_raw: description,
             provider_response: payload,
-            origin: 'import',  // Mark as imported, not real-time bePaid
-            import_ref: item.id,  // Reference to queue item
+            origin: 'bepaid',  // CRITICAL: Use 'bepaid' for financial summary inclusion
+            import_ref: item.id,
           });
 
         if (paymentError) {
