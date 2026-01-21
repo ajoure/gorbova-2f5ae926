@@ -71,6 +71,7 @@ interface SyncStats {
   retries_performed_count?: number;
   // Origin-based filtering stats
   excluded_import_count?: number;
+  excluded_null_paid_at_count?: number;
   bepaid_origin_count?: number;
 }
 
@@ -727,6 +728,7 @@ serve(async (req) => {
         .eq('provider', 'bepaid')
         .eq('origin', 'bepaid')  // CRITICAL: Only real bePaid transactions
         .not('provider_payment_id', 'is', null)
+        .not('paid_at', 'is', null)  // CRITICAL: Exclude pending/manual (NULL paid_at goes first in ORDER BY DESC)
         .order('paid_at', { ascending: false })
         .limit(3);
 
@@ -786,8 +788,8 @@ serve(async (req) => {
         let offset = 0;
         const pageSize = 1000;
 
-        // Count excluded imports for stats
-        const { count: excludedCount } = await supabase
+        // Count excluded imports for stats (origin != 'bepaid' in date range)
+        const { count: excludedImportCount } = await supabase
           .from('payments_v2')
           .select('*', { count: 'exact', head: true })
           .eq('provider', 'bepaid')
@@ -795,7 +797,16 @@ serve(async (req) => {
           .gte('paid_at', startISO)
           .lte('paid_at', endISO);
         
-        stats.excluded_import_count = excludedCount || 0;
+        // Count NULL paid_at records (pending/manual - separate from imports)
+        const { count: excludedNullPaidAtCount } = await supabase
+          .from('payments_v2')
+          .select('*', { count: 'exact', head: true })
+          .eq('provider', 'bepaid')
+          .eq('origin', 'bepaid')
+          .is('paid_at', null);
+        
+        stats.excluded_import_count = excludedImportCount || 0;
+        stats.excluded_null_paid_at_count = excludedNullPaidAtCount || 0;
 
         while (uidSet.size < Math.min(limit, MAX_TRANSACTIONS)) {
           const { data: rows, error: rowsErr } = await supabase
@@ -804,6 +815,7 @@ serve(async (req) => {
             .eq('provider', 'bepaid')
             .eq('origin', 'bepaid')  // CRITICAL: Only real bePaid transactions
             .not('provider_payment_id', 'is', null)
+            .not('paid_at', 'is', null)  // Explicit: exclude pending/manual with NULL paid_at
             .gte('paid_at', startISO)
             .lte('paid_at', endISO)
             .order('paid_at', { ascending: false })
