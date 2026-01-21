@@ -49,7 +49,7 @@ interface SyncStats {
   endpoint_used?: string;
   endpoint_attempts?: any[];
   selected_host?: string;
-  strategy_used?: 'list' | 'uid_fallback';
+  strategy_used?: 'list' | 'uid_fallback' | 'unknown';
   not_found_rate?: number;
   sample_uids?: string[];
   uid_probe_attempts?: Array<{ host: string; uid: string; status: number | null; ok: boolean; error: string | null }>;
@@ -57,6 +57,18 @@ interface SyncStats {
   auth_mode?: string;
   pages_fetched?: number;
   api_total_count?: number;
+  // Task B: uid_breakdown for diagnostics
+  uid_breakdown?: {
+    ok_tx_found: number;
+    uid_not_transaction_404: number;
+    auth_errors: number;
+    rate_limited: number;
+    server_errors: number;
+    other_4xx: number;
+  };
+  list_error?: string;
+  not_found_all_hosts_count?: number;
+  retries_performed_count?: number;
 }
 
 interface EndpointAttempt {
@@ -75,9 +87,10 @@ const MAX_DELTA_PER_TX_BYN = 1000;
 const MAX_TRANSACTIONS = 10000;
 const MAX_ERROR_SAMPLES = 20;
 
+// Task E: Prioritize api.bepaid.by (proven working in bepaid-fetch-receipt)
 const BEPAID_HOSTS_FOR_UID = [
+  'https://api.bepaid.by',      // PROVEN working in bepaid-fetch-receipt
   'https://merchant.bepaid.by',
-  'https://api.bepaid.by',
   'https://gateway.bepaid.by',
 ] as const;
 
@@ -744,10 +757,13 @@ serve(async (req) => {
         startTime
       );
 
-      stats.endpoint_attempts = listResult.endpoint_attempts;
-      stats.endpoint_used = listResult.endpoint_used;
-      stats.pages_fetched = listResult.pages;
-      stats.api_total_count = listResult.transactions.length;
+      // Task A: Safe-access for listResult.*
+      stats.endpoint_attempts = listResult.endpoint_attempts || [];
+      stats.pages_fetched = typeof listResult.pages === 'number' ? listResult.pages : 0;
+      stats.api_total_count = Array.isArray(listResult.transactions) ? listResult.transactions.length : 0;
+      if (!listResult.success && listResult.error) {
+        stats.list_error = listResult.error;
+      }
 
       // If list returned any transactions, we proceed with list strategy.
       const canUseList = listResult.success && Array.isArray(listResult.transactions) && listResult.transactions.length > 0;
@@ -809,7 +825,17 @@ serve(async (req) => {
           .eq('id', runId);
 
         let notFound = 0;
-        const host = stats.selected_host || 'https://merchant.bepaid.by';
+        const host = stats.selected_host || 'https://api.bepaid.by';
+
+        // Task B: Initialize uid_breakdown for diagnostics
+        const uidBreakdown = {
+          ok_tx_found: 0,
+          uid_not_transaction_404: 0,
+          auth_errors: 0,
+          rate_limited: 0,
+          server_errors: 0,
+          other_4xx: 0,
+        };
 
         for (let i = 0; i < uids.length; i++) {
           if (stopped) break;
@@ -825,35 +851,92 @@ serve(async (req) => {
           try {
             const res = await fetchBeyagTransactionByUid(host, auth, uid);
             if (!res.ok) {
+              // Task D: Classify errors properly - 404 ≠ consecutive error
               if (res.status === 404) {
-                notFound++;
-                // NOT_FOUND ≠ ERROR
-              } else {
+                // Task F: Retry 404 on all hosts before counting as not_found
+                let foundOnOtherHost = false;
+                for (const altHost of BEPAID_HOSTS_FOR_UID) {
+                  if (altHost === host) continue;
+                  stats.retries_performed_count = (stats.retries_performed_count || 0) + 1;
+                  try {
+                    const altRes = await fetchBeyagTransactionByUid(altHost, auth, uid);
+                    if (altRes.ok) {
+                      rawTx = altRes.data?.transaction || altRes.data?.data?.transaction || altRes.data;
+                      foundOnOtherHost = true;
+                      uidBreakdown.ok_tx_found++;
+                      break;
+                    }
+                  } catch {
+                    // ignore alt host errors
+                  }
+                }
+                
+                if (!foundOnOtherHost) {
+                  notFound++;
+                  uidBreakdown.uid_not_transaction_404++;
+                  stats.not_found_all_hosts_count = (stats.not_found_all_hosts_count || 0) + 1;
+                  // 404 does NOT increment consecutiveErrors!
+                }
+                
+                if (!foundOnOtherHost) {
+                  // Update not_found_rate for UID_MISMATCH detection
+                  const processed = i + 1;
+                  const rate = processed > 0 ? notFound / processed : 0;
+                  stats.not_found_rate = rate;
+                  stats.not_found = notFound;
+                  
+                  // Task G: Separate STOP for UID_MISMATCH (only after 50 processed)
+                  if (processed >= 50 && rate > 0.20) {
+                    stopped = true;
+                    stats.stopped_reason = `STOP: UID_MISMATCH - provider_payment_id is not bePaid transaction.uid; ` +
+                      `need mapping/fix import contract. Found ${notFound}/${processed} 404s (${(rate * 100).toFixed(1)}%)`;
+                  }
+                  continue;
+                }
+              } else if (res.status === 401 || res.status === 403) {
+                uidBreakdown.auth_errors++;
                 consecutiveErrors++;
                 stats.errors++;
                 if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
                   stats.error_samples.push({ uid, error: `HTTP ${res.status}: ${res.errorBody || 'no body'}` });
                 }
-                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                  stopped = true;
-                  stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive fetch errors`;
+              } else if (res.status === 429) {
+                uidBreakdown.rate_limited++;
+                consecutiveErrors++;
+                stats.errors++;
+                if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                  stats.error_samples.push({ uid, error: `HTTP ${res.status}: rate limited` });
+                }
+              } else if (res.status >= 500) {
+                uidBreakdown.server_errors++;
+                consecutiveErrors++;
+                stats.errors++;
+                if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                  stats.error_samples.push({ uid, error: `HTTP ${res.status}: ${res.errorBody || 'server error'}` });
+                }
+              } else {
+                // Other 4xx (400, 422, etc.) - log but don't count as consecutive
+                uidBreakdown.other_4xx++;
+                stats.errors++;
+                if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                  stats.error_samples.push({ uid, error: `HTTP ${res.status}: ${res.errorBody || 'no body'}` });
                 }
               }
-              // update not_found_rate and stop guard
-              const processed = i + 1;
-              const rate = processed > 0 ? notFound / processed : 0;
-              stats.not_found_rate = rate;
-              stats.not_found = notFound;
-              if (processed >= 20 && rate > 0.10) {
+              
+              // STOP guard only for transport/auth errors (not 404)
+              if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                 stopped = true;
-                stats.stopped_reason = 'UID exists in bePaid UI but API host mismatch detected';
+                stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive transport/auth errors (not 404)`;
               }
-              continue;
+              
+              if (!rawTx) continue;
+            } else {
+              rawTx = res.data?.transaction || res.data?.data?.transaction || res.data;
+              uidBreakdown.ok_tx_found++;
             }
-
-            rawTx = res.data?.transaction || res.data?.data?.transaction || res.data;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            uidBreakdown.server_errors++;
             consecutiveErrors++;
             stats.errors++;
             if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
@@ -861,7 +944,7 @@ serve(async (req) => {
             }
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
               stopped = true;
-              stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive fetch errors`;
+              stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive transport/auth errors (not 404)`;
             }
             continue;
           }
@@ -973,12 +1056,16 @@ serve(async (req) => {
           }
         }
 
-        // Final not_found_rate guard
+        // Task B: Store uid_breakdown in stats
+        stats.uid_breakdown = uidBreakdown;
+        
+        // Final not_found_rate guard with proper UID_MISMATCH message
         stats.not_found = notFound;
         stats.not_found_rate = total > 0 ? notFound / total : 0;
-        if (!stopped && stats.not_found_rate > 0.10) {
+        if (!stopped && total >= 50 && stats.not_found_rate > 0.20) {
           stopped = true;
-          stats.stopped_reason = 'UID exists in bePaid UI but API host mismatch detected';
+          stats.stopped_reason = `STOP: UID_MISMATCH - provider_payment_id is not bePaid transaction.uid; ` +
+            `need mapping/fix import contract. Found ${notFound}/${total} 404s (${(stats.not_found_rate * 100).toFixed(1)}%)`;
         }
 
         // UID-based path done → finalize below
@@ -987,18 +1074,23 @@ serve(async (req) => {
         stats.strategy_used = 'list';
       }
 
+      // Task A: Safe-access for total_pages
+      const safePages = typeof listResult.pages === 'number' && listResult.pages > 0 ? listResult.pages : 1;
+      
       // Update run with endpoint info
       await supabase
         .from("payments_sync_runs")
         .update({
           stats: { ...stats, phase: 'fetched_api' },
-          total_pages: listResult.pages,
+          total_pages: safePages,
           updated_at: new Date().toISOString(),
         })
         .eq("id", runId);
 
       if (stats.strategy_used === 'list') {
-        console.log(`[Sync] Fetched ${listResult.transactions.length} transactions from bePaid via ${listResult.endpoint_used}`);
+        // Task A: Safe-access for listResult.transactions.length
+        const txCount = Array.isArray(listResult.transactions) ? listResult.transactions.length : 0;
+        console.log(`[Sync] Fetched ${txCount} transactions from bePaid via ${listResult.endpoint_used}`);
 
         // ========== STEP 2: FETCH EXISTING PAYMENTS FROM DB ==========
         const uids = listResult.transactions
@@ -1180,7 +1272,9 @@ serve(async (req) => {
 
           // Update progress periodically
           if (stats.scanned % 100 === 0) {
-            const progress = Math.round((stats.scanned / listResult.transactions.length) * 100);
+            // Task A: Safe-access for listResult.transactions.length
+            const totalTx = Array.isArray(listResult.transactions) ? listResult.transactions.length : 1;
+            const progress = Math.round((stats.scanned / totalTx) * 100);
             await supabase
               .from("payments_sync_runs")
               .update({
@@ -1190,7 +1284,7 @@ serve(async (req) => {
               })
               .eq("id", runId);
 
-            console.log(`[Sync] Progress: ${stats.scanned}/${listResult.transactions.length} (${progress}%)`);
+            console.log(`[Sync] Progress: ${stats.scanned}/${totalTx} (${progress}%)`);
           }
         }
       }
@@ -1214,6 +1308,21 @@ serve(async (req) => {
         .eq("id", runId);
 
       // === AUDIT LOG ===
+      // Task H: Limit meta size
+      const limitedStats = {
+        ...stats,
+        uid_probe_attempts: (stats.uid_probe_attempts || []).slice(0, 50),
+        endpoint_attempts: (stats.endpoint_attempts || []).slice(0, 50),
+        error_samples: (stats.error_samples || []).slice(0, 20),
+      };
+      
+      // Task C: Guarantee stats/audit fields are always filled
+      const endpointUsed = stats.strategy_used === 'list' && listResult.success
+        ? listResult.endpoint_used
+        : (stats.selected_host 
+            ? `beyag_uid@${new URL(stats.selected_host).hostname}` 
+            : 'beyag_uid');
+      
       await supabase.from("audit_logs").insert({
         actor_user_id: null,
         actor_type: 'system',
@@ -1224,14 +1333,17 @@ serve(async (req) => {
           mode,
           period: { from_date, to_date },
           dry_run,
-          selected_host: stats.selected_host,
-          strategy_used: stats.strategy_used,
+          selected_host: stats.selected_host || 'unknown',
+          strategy_used: stats.strategy_used || 'unknown',
           not_found_rate: stats.not_found_rate,
-          sample_uids: stats.sample_uids,
-          stats,
+          sample_uids: (stats.sample_uids || []).slice(0, 10),
+          uid_breakdown: stats.uid_breakdown || null,
+          list_error: stats.list_error || null,
+          stopped_reason: stats.stopped_reason,
+          stats: limitedStats,
           duration_ms: duration,
           initiated_by: user.id,
-          endpoint_used: listResult.endpoint_used,
+          endpoint_used: endpointUsed,
         },
       });
 
@@ -1264,7 +1376,15 @@ serve(async (req) => {
         .eq("id", runId);
 
       // Audit proof even on fatal error
+      // Task C & H: Guarantee fields + limit size
       try {
+        const limitedErrorStats = {
+          ...stats,
+          uid_probe_attempts: (stats.uid_probe_attempts || []).slice(0, 50),
+          endpoint_attempts: (stats.endpoint_attempts || []).slice(0, 50),
+          error_samples: (stats.error_samples || []).slice(0, 20),
+        };
+        
         await supabase.from("audit_logs").insert({
           actor_user_id: null,
           actor_type: 'system',
@@ -1277,12 +1397,18 @@ serve(async (req) => {
             dry_run,
             status: 'failed',
             error: message,
-            selected_host: stats.selected_host,
-            strategy_used: stats.strategy_used,
+            selected_host: stats.selected_host || 'unknown',
+            strategy_used: stats.strategy_used || 'unknown',
             not_found_rate: stats.not_found_rate,
-            sample_uids: stats.sample_uids,
-            stats,
+            uid_breakdown: stats.uid_breakdown || null,
+            list_error: stats.list_error || null,
+            stopped_reason: stats.stopped_reason,
+            sample_uids: (stats.sample_uids || []).slice(0, 10),
+            stats: limitedErrorStats,
             initiated_by: user.id,
+            endpoint_used: stats.selected_host 
+              ? `beyag_uid@${new URL(stats.selected_host).hostname}` 
+              : 'unknown',
           },
         });
       } catch {
