@@ -226,10 +226,11 @@ Deno.serve(async (req) => {
 
     console.log(`Notified ${sentCount}/${adminProfiles.length} eligible admins (super_admin + deals.edit), source=${source || 'unknown'}`);
 
-    // Log success summary
+    // Log success summary with full message text
     await supabase.from('telegram_logs').insert({
       action: 'ADMIN_NOTIFY_SENT',
       status: sentCount > 0 ? 'success' : 'warning',
+      message_text: message,  // PATCH: Store full message text for history
       meta: { 
         sent: sentCount, 
         total: adminProfiles.length,

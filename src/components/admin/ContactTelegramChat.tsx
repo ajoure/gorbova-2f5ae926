@@ -517,8 +517,8 @@ export function ContactTelegramChat({
   const renderChatItem = (item: ChatItem) => {
     if (item.type === "event") {
       const event = item as TelegramEvent;
-      const isNotification = event.action === 'manual_notification' || event.action === 'system_notification';
-      const hasMessageText = isNotification && event.message_text;
+      // PATCH: Show message_text for ANY event that has it (not just manual/system notifications)
+      const hasMessageText = !!event.message_text;
       
       return (
         <div key={event.id} className="flex justify-center my-2">

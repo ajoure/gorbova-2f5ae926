@@ -288,13 +288,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Log the broadcast action
+    // Log the broadcast action with full message text
     await supabase.from('telegram_logs').insert({
       action: 'MASS_NOTIFICATION',
       target: `${sent}/${sent + failed} users`,
       status: failed === 0 ? 'ok' : 'partial',
+      message_text: message || null,  // PATCH: Store full message text for history
       meta: {
-        message_preview: message.substring(0, 100),
         total_users: sent + failed,
         sent,
         failed,
