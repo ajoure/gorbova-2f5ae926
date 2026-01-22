@@ -104,39 +104,42 @@ serve(async (req) => {
     }
 
     // Filter out cards that already have a notification sent after verification_checked_at
+    // PATCH B: Dedup by (user_id, message_type, payment_method_id, created_at > verification_checked_at)
     const cardsToNotify: RejectedCardForNotification[] = [];
     for (const card of rejectedCards) {
       const checkedAt = card.verification_checked_at || '2000-01-01';
       
-      // Check if notification already sent via notification_outbox OR telegram_logs
+      // Check if notification already sent via notification_outbox for THIS SPECIFIC CARD
       const { data: existingNotification } = await supabase
         .from('notification_outbox')
         .select('id')
         .eq('user_id', card.user_id)
         .eq('message_type', 'card_not_suitable_for_autopay')
         .eq('status', 'sent')
+        .filter('meta->>payment_method_id', 'eq', card.id) // PATCH B: Check by payment_method_id
         .gt('created_at', checkedAt)
         .limit(1)
         .maybeSingle();
 
       if (existingNotification) {
-        console.log(`[notify_only] Skipping ${card.id} - already notified via outbox`);
+        console.log(`[notify_only] Skipping ${card.id} - already notified via outbox (payment_method_id match)`);
         continue;
       }
 
-      // Also check telegram_logs
+      // Also check telegram_logs by payment_method_id
       const { data: existingLog } = await supabase
         .from('telegram_logs')
         .select('id')
         .eq('user_id', card.user_id)
         .eq('action', 'card_not_suitable_for_autopay')
         .eq('status', 'success')
+        .filter('meta->>payment_method_id', 'eq', card.id) // PATCH B: Check by payment_method_id
         .gt('created_at', checkedAt)
         .limit(1)
         .maybeSingle();
 
       if (existingLog) {
-        console.log(`[notify_only] Skipping ${card.id} - already notified via telegram_logs`);
+        console.log(`[notify_only] Skipping ${card.id} - already notified via telegram_logs (payment_method_id match)`);
         continue;
       }
 
@@ -162,9 +165,11 @@ serve(async (req) => {
     }
 
     // EXECUTE notify_only
+    const startedAt = new Date().toISOString();
     let notifiedCount = 0;
     let failedCount = 0;
     const errors: string[] = [];
+    const skippedCount = rejectedCards.length - cardsToNotify.length;
 
     for (const card of cardsToNotify) {
       try {
@@ -173,7 +178,13 @@ serve(async (req) => {
           supabaseServiceKey, 
           card.user_id, 
           'card_not_suitable_for_autopay',
-          { id: card.id, brand: card.brand, last4: card.last4 }
+          { 
+            id: card.id, 
+            brand: card.brand, 
+            last4: card.last4,
+            // PATCH A: Pass verification_checked_at for idempotency key
+            verification_checked_at: card.verification_checked_at,
+          }
         );
         notifiedCount++;
         console.log(`[notify_only] Sent notification for ${card.id} to user ${card.user_id}`);
@@ -187,11 +198,33 @@ serve(async (req) => {
       }
     }
 
+    const finishedAt = new Date().toISOString();
+    const remaining = cardsToNotify.length - notifiedCount;
+
+    // PATCH C2: Write backfill summary to audit_logs (SYSTEM ACTOR)
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'payment-method-verify-recurring',
+      action: 'card.notifications.backfill.completed',
+      meta: {
+        total_rejected: rejectedCards.length,
+        sent: notifiedCount,
+        skipped: skippedCount,
+        failed: failedCount,
+        remaining,
+        started_at: startedAt,
+        finished_at: finishedAt,
+      },
+    });
+
     return new Response(JSON.stringify({
       mode: 'execute',
       notify_only: true,
       notified: notifiedCount,
       failed: failedCount,
+      skipped: skippedCount,
+      remaining,
       errors,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
@@ -721,7 +754,7 @@ async function sendNotification(
   supabaseServiceKey: string,
   userId: string,
   messageType: 'card_not_suitable_for_autopay' | 'card_verification_failed',
-  paymentMethodMeta: { id: string; brand: string; last4: string }
+  paymentMethodMeta: { id: string; brand: string; last4: string; verification_checked_at?: string | null }
 ) {
   // SECURITY: Do NOT pass custom_message - let the edge function use its secure template
   const resp = await fetch(`${supabaseUrl}/functions/v1/telegram-send-notification`, {
