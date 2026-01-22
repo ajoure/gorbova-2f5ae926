@@ -16,6 +16,13 @@ interface GrantAccessRequest {
   source_id?: string;
 }
 
+// PATCH 13+: Throttle delay between Telegram API calls
+const THROTTLE_DELAY_MS = 500;
+
+async function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
   console.log(`Telegram API: ${method}`, params);
@@ -24,7 +31,20 @@ async function telegramRequest(botToken: string, method: string, params: Record<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return response.json();
+  const result = await response.json();
+  
+  // PATCH 13+: Check for rate limit (429)
+  if (!result.ok && result.error_code === 429) {
+    const retryAfter = result.parameters?.retry_after || 60;
+    console.warn(`Telegram rate limited! Retry after ${retryAfter}s`);
+    return { 
+      ...result, 
+      rate_limited: true, 
+      retry_after: retryAfter 
+    };
+  }
+  
+  return result;
 }
 
 async function unbanUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
@@ -350,11 +370,19 @@ Deno.serve(async (req) => {
         }, { onConflict: 'user_id,club_id' });
       }
 
-      // Update member record
-      await supabase.from('telegram_club_members').update({
+      // PATCH 13+: Update member record with invite tracking
+      const inviteTrackingUpdate: Record<string, unknown> = {
         access_status: 'ok',
         updated_at: new Date().toISOString(),
-      }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
+        invite_sent_at: new Date().toISOString(),
+        invite_status: 'sent',
+        invite_error: null,
+        invite_retry_after: null,
+        last_invite_link: chatInviteLink || channelInviteLink || null,
+      };
+      
+      await supabase.from('telegram_club_members').update(inviteTrackingUpdate)
+        .eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
 
       // Send invite links via bot
       let dmSent = false;

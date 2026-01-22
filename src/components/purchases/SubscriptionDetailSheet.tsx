@@ -39,6 +39,9 @@ interface Subscription {
   canceled_at: string | null;
   next_charge_at: string | null;
   created_at: string;
+  auto_renew?: boolean;
+  auto_renew_disabled_by?: string | null;
+  auto_renew_disabled_at?: string | null;
   products_v2: {
     id: string;
     name: string;
@@ -191,6 +194,21 @@ export function SubscriptionDetailSheet({
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Доступ до</span>
                 <span className="font-medium text-amber-600">{formatDate(subscription.cancel_at)}</span>
+              </div>
+            )}
+
+            {/* PATCH 13+: Auto-renew disabled indicator */}
+            {subscription.auto_renew === false && subscription.auto_renew_disabled_by && (
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Автопродление</span>
+                <span className="font-medium text-amber-600">
+                  Отключено {subscription.auto_renew_disabled_by === 'admin' ? 'администратором' : 'вами'}
+                  {subscription.auto_renew_disabled_at && (
+                    <span className="text-xs ml-1">
+                      ({formatShortDate(subscription.auto_renew_disabled_at)})
+                    </span>
+                  )}
+                </span>
               </div>
             )}
           </div>

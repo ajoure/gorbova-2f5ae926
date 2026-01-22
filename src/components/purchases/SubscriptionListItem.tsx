@@ -14,6 +14,9 @@ interface Subscription {
   canceled_at: string | null;
   next_charge_at: string | null;
   created_at: string;
+  auto_renew?: boolean;
+  auto_renew_disabled_by?: string | null;
+  auto_renew_disabled_at?: string | null;
   products_v2: {
     id: string;
     name: string;
@@ -84,6 +87,12 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
           <h3 className="font-medium text-foreground truncate">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </h3>
+          {/* PATCH 13+: Показывать метку если автопродление отключено */}
+          {subscription.auto_renew === false && subscription.auto_renew_disabled_by && (
+            <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+              Автопродление откл. {subscription.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
+            </Badge>
+          )}
           {getStatusBadge()}
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mt-1 text-sm text-muted-foreground">
