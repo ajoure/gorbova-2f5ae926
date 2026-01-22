@@ -214,9 +214,23 @@ Deno.serve(async (req) => {
 
     // =================================================================
     // PATCH 10B + 10C: Idempotency через notification_outbox
+    // PATCH A: For card_* types, include payment_method_id + verification_version
     // =================================================================
     const bucket = Math.floor(Date.now() / (10 * 60 * 1000)); // 10-минутные интервалы
-    const idempotencyKey = `${user_id}:${message_type}:${bucket}`;
+    
+    // Build idempotency key based on message_type
+    let idempotencyKey: string;
+    
+    if (SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type) && payment_method_meta?.id) {
+      // For card_* types: include payment_method_id + verification_version
+      // verification_version = verification_checked_at (passed in meta) OR current timestamp bucket
+      const verificationVersion = payment_method_meta.verification_checked_at || bucket;
+      idempotencyKey = `${user_id}:${message_type}:${payment_method_meta.id}:${verificationVersion}`;
+      console.log(`[telegram-send-notification] Card idempotency key: ${idempotencyKey}`);
+    } else {
+      // Default: time-based bucket
+      idempotencyKey = `${user_id}:${message_type}:${bucket}`;
+    }
 
     // Атомарная проверка через INSERT в notification_outbox
     const { error: outboxInsertError } = await supabase
@@ -231,6 +245,8 @@ Deno.serve(async (req) => {
           attempted_by: actorUserId,
           invocation: isServiceInvocation ? 'service_role' : 'user',
           payment_method_meta,
+          // PATCH B: Explicitly store payment_method_id as separate key for dedup queries
+          payment_method_id: payment_method_meta?.id || null,
         }
       });
 

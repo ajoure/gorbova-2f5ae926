@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle } from "lucide-react";
+import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface PaymentMethod {
@@ -31,6 +31,7 @@ interface PaymentMethod {
   recurring_verified: boolean | null;
   verification_status: string | null;
   verification_error: string | null;
+  verification_checked_at: string | null;
 }
 
 interface Subscription {
@@ -238,6 +239,53 @@ export default function PaymentMethodsSettings() {
     },
   });
 
+  // PATCH D: Re-verify card mutation
+  const reverifyMutation = useMutation({
+    mutationFn: async (methodId: string) => {
+      if (!user) throw new Error("Не авторизован");
+      
+      // Guard: check if there's already an active job for this card
+      const { data: existingJob } = await supabase
+        .from('payment_method_verification_jobs')
+        .select('id, status')
+        .eq('payment_method_id', methodId)
+        .in('status', ['pending', 'processing', 'rate_limited'])
+        .maybeSingle();
+      
+      if (existingJob) {
+        throw new Error("Карта уже в очереди на проверку");
+      }
+      
+      // Create new verification job
+      const idempotencyKey = `reverify_${methodId}_${Date.now()}`;
+      const { error } = await supabase
+        .from('payment_method_verification_jobs')
+        .insert({
+          payment_method_id: methodId,
+          user_id: user.id,
+          status: 'pending',
+          attempt_count: 0,
+          max_attempts: 3,
+          idempotency_key: idempotencyKey,
+        });
+      
+      if (error) throw error;
+      
+      // Update card status to pending
+      await supabase
+        .from('payment_methods')
+        .update({ verification_status: 'pending' })
+        .eq('id', methodId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
+      toast.success('Карта поставлена в очередь на проверку');
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const handleAddCard = async () => {
     try {
       const { data, error } = await supabase.functions.invoke("payment-methods-tokenize", {
@@ -440,6 +488,24 @@ export default function PaymentMethodsSettings() {
                       </div>
                       
                       <div className="flex items-center gap-2">
+                        {/* PATCH D: Re-verify button for rejected/failed cards */}
+                        {(method.verification_status === 'rejected' || method.verification_status === 'failed') && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => reverifyMutation.mutate(method.id)}
+                            disabled={reverifyMutation.isPending}
+                            className="gap-1"
+                          >
+                            {reverifyMutation.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
+                            Перепроверить
+                          </Button>
+                        )}
+                        
                         {!method.is_default && !expired && (
                           <Button
                             variant="outline"
