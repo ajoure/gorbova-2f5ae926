@@ -552,15 +552,25 @@ export function useCurrentUserTelegramStatus() {
 }
 
 // Club Members hooks
-export function useClubMembers(clubId: string | null) {
+// showAll=false: shows only relevant members (active access, removed, or in chat/channel)
+// showAll=true: shows all synchronized members including no_access without presence
+export function useClubMembers(clubId: string | null, showAll: boolean = false) {
   return useQuery({
-    queryKey: ['telegram-club-members', clubId],
+    queryKey: ['telegram-club-members', clubId, showAll],
     queryFn: async () => {
       if (!clubId) return [];
-      const { data, error } = await supabase
+      
+      let query = supabase
         .from('telegram_club_members')
         .select('*, profiles(id, user_id, full_name, email, phone)')
-        .eq('club_id', clubId)
+        .eq('club_id', clubId);
+      
+      // By default filter to show only relevant members
+      if (!showAll) {
+        query = query.or('access_status.eq.ok,access_status.eq.removed,in_chat.eq.true,in_channel.eq.true');
+      }
+      
+      const { data, error } = await query
         .order('access_status', { ascending: true })
         .order('telegram_username', { ascending: true });
 

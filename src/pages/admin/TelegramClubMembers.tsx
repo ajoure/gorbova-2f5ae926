@@ -12,6 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Table,
@@ -123,7 +124,10 @@ export default function TelegramClubMembers() {
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
   
-  const { data: members, isLoading, refetch } = useClubMembers(clubId || null);
+  // Show all synced members or only relevant ones
+  const [showAllMembers, setShowAllMembers] = useState(false);
+  
+  const { data: members, isLoading, refetch } = useClubMembers(clubId || null, showAllMembers);
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
   const grantAccess = useGrantTelegramAccess();
@@ -716,28 +720,61 @@ export default function TelegramClubMembers() {
           </CollapsibleContent>
         </Collapsible>
 
-        {/* Quick Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
+        {/* Quick Stats - Enhanced with tooltips */}
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4" />
-                Чат
+                Telegram API: Чат
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>Telegram API показывает всех участников, включая админов и ботов.</p>
+                  </TooltipContent>
+                </Tooltip>
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{club.members_count_chat || 0}</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                DB: {members?.filter(m => m.in_chat).length || 0} отслеживается
+              </div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
                 <Megaphone className="h-4 w-4" />
-                Канал
+                Telegram API: Канал
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>Полный список подписчиков канала недоступен через Bot API.</p>
+                  </TooltipContent>
+                </Tooltip>
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{club.members_count_channel || 0}</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                DB: {members?.filter(m => m.in_channel).length || 0} отслеживается
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription className="flex items-center gap-2">
+                <UserCheck className="h-4 w-4 text-green-600" />
+                С доступом
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-green-600">{counts.with_access}</div>
             </CardContent>
           </Card>
           <Card>
@@ -803,14 +840,35 @@ export default function TelegramClubMembers() {
         <Card>
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:w-80">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Поиск по имени, email, телефону..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9"
-                />
+              <div className="flex items-center gap-4 flex-1">
+                <div className="relative flex-1 sm:w-80">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Поиск по имени, email, телефону..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {/* Toggle to show all synced members */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch
+                    id="show-all"
+                    checked={showAllMembers}
+                    onCheckedChange={setShowAllMembers}
+                  />
+                  <Label htmlFor="show-all" className="text-sm cursor-pointer whitespace-nowrap">
+                    Показать всех
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3 w-3 ml-1 inline text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>Включите, чтобы увидеть всех синхронизированных пользователей, включая тех, кто никогда не имел доступа к клубу.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
