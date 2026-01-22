@@ -95,6 +95,10 @@ serve(async (req) => {
             cancel_at: cancelAt,
             canceled_at: new Date().toISOString(),
             auto_renew: false, // IMPORTANT: disable auto-renew when user cancels
+            // PATCH 13+: Track who disabled auto_renew
+            auto_renew_disabled_by: 'user',
+            auto_renew_disabled_at: new Date().toISOString(),
+            auto_renew_disabled_by_user_id: userId,
             meta: newMeta,
             updated_at: new Date().toISOString(),
           })
@@ -160,6 +164,10 @@ serve(async (req) => {
           cancel_at: null,
           canceled_at: null,
           auto_renew: true, // IMPORTANT: re-enable auto-renew when user resumes
+          // PATCH 13+: Clear disabled tracking when re-enabled
+          auto_renew_disabled_by: null,
+          auto_renew_disabled_at: null,
+          auto_renew_disabled_by_user_id: null,
           meta: newMeta,
           updated_at: new Date().toISOString(),
         };

@@ -157,10 +157,20 @@ Deno.serve(async (req) => {
 
       for (const u of toProcess) {
         try {
+          // PATCH 13+: Throttle between users to avoid rate limits
+          await new Promise(r => setTimeout(r, 500));
+          
           // PATCH 13C: Skip if already in_chat (idempotency)
           if (u.in_chat === true) {
             skipped++;
             results.push({ user_id: u.user_id, status: 'skipped', error: 'already_in_chat' });
+            
+            // Update invite tracking
+            await supabase.from('telegram_club_members').update({
+              invite_status: 'skipped',
+              invite_sent_at: new Date().toISOString(),
+            }).eq('telegram_user_id', u.telegram_user_id).eq('club_id', u.club_id);
+            
             continue;
           }
 
@@ -174,9 +184,60 @@ Deno.serve(async (req) => {
             },
           });
 
+          // PATCH 13+: Check for rate limit and STOP batch
+          if (data?.blocked_by_rate_limit || data?.rate_limited) {
+            const retryAfter = data.retry_after || 60;
+            const retryAt = new Date(Date.now() + retryAfter * 1000);
+            
+            // Update invite tracking for this user
+            await supabase.from('telegram_club_members').update({
+              invite_status: 'rate_limited',
+              invite_retry_after: retryAt.toISOString(),
+              invite_error: `Rate limited for ${retryAfter}s`,
+            }).eq('telegram_user_id', u.telegram_user_id).eq('club_id', u.club_id);
+            
+            // Log the rate limit event
+            await supabase.from('audit_logs').insert({
+              action: 'telegram.regrant_rate_limited',
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'admin-regrant-wrongly-revoked',
+              meta: {
+                initiated_by: user.id,
+                stopped_at_user: u.user_id,
+                retry_after: retryAfter,
+                processed_before_stop: regranted + skipped + failed,
+                remaining: toProcess.length - (regranted + skipped + failed),
+              }
+            });
+            
+            // STOP batch and return
+            return new Response(JSON.stringify({
+              mode: 'execute',
+              blocked_by_rate_limit: true,
+              retry_after: retryAfter,
+              processed: regranted + skipped + failed,
+              regranted,
+              skipped,
+              failed,
+              remaining: users.length - (regranted + skipped + failed),
+              message: `Rate limited by Telegram. Retry after ${retryAfter} seconds.`,
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
           if (error) {
             failed++;
             results.push({ user_id: u.user_id, status: 'error', error: error.message });
+            
+            // Update invite tracking
+            await supabase.from('telegram_club_members').update({
+              invite_status: 'error',
+              invite_error: error.message,
+              invite_sent_at: new Date().toISOString(),
+            }).eq('telegram_user_id', u.telegram_user_id).eq('club_id', u.club_id);
+            
           } else if (data?.success) {
             regranted++;
             results.push({ user_id: u.user_id, status: 'regranted' });
@@ -199,6 +260,13 @@ Deno.serve(async (req) => {
           } else {
             failed++;
             results.push({ user_id: u.user_id, status: 'error', error: data?.error || 'Unknown' });
+            
+            // Update invite tracking
+            await supabase.from('telegram_club_members').update({
+              invite_status: 'error',
+              invite_error: data?.error || 'Unknown error',
+              invite_sent_at: new Date().toISOString(),
+            }).eq('telegram_user_id', u.telegram_user_id).eq('club_id', u.club_id);
           }
         } catch (e) {
           failed++;
@@ -207,6 +275,13 @@ Deno.serve(async (req) => {
             status: 'error', 
             error: e instanceof Error ? e.message : 'Unknown error' 
           });
+          
+          // Update invite tracking
+          await supabase.from('telegram_club_members').update({
+            invite_status: 'error',
+            invite_error: e instanceof Error ? e.message : 'Unknown error',
+            invite_sent_at: new Date().toISOString(),
+          }).eq('telegram_user_id', u.telegram_user_id).eq('club_id', u.club_id);
         }
       }
 

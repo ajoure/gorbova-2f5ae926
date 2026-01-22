@@ -4936,6 +4936,9 @@ export type Database = {
           access_end_at: string | null
           access_start_at: string
           auto_renew: boolean
+          auto_renew_disabled_at: string | null
+          auto_renew_disabled_by: string | null
+          auto_renew_disabled_by_user_id: string | null
           cancel_at: string | null
           cancel_reason: string | null
           canceled_at: string | null
@@ -4964,6 +4967,9 @@ export type Database = {
           access_end_at?: string | null
           access_start_at?: string
           auto_renew?: boolean
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
@@ -4992,6 +4998,9 @@ export type Database = {
           access_end_at?: string | null
           access_start_at?: string
           auto_renew?: boolean
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
@@ -5703,8 +5712,13 @@ export type Database = {
           id: string
           in_channel: boolean | null
           in_chat: boolean | null
+          invite_error: string | null
+          invite_retry_after: string | null
+          invite_sent_at: string | null
+          invite_status: string | null
           joined_channel_at: string | null
           joined_chat_at: string | null
+          last_invite_link: string | null
           last_synced_at: string | null
           last_telegram_check_at: string | null
           last_telegram_check_result: Json | null
@@ -5724,8 +5738,13 @@ export type Database = {
           id?: string
           in_channel?: boolean | null
           in_chat?: boolean | null
+          invite_error?: string | null
+          invite_retry_after?: string | null
+          invite_sent_at?: string | null
+          invite_status?: string | null
           joined_channel_at?: string | null
           joined_chat_at?: string | null
+          last_invite_link?: string | null
           last_synced_at?: string | null
           last_telegram_check_at?: string | null
           last_telegram_check_result?: Json | null
@@ -5745,8 +5764,13 @@ export type Database = {
           id?: string
           in_channel?: boolean | null
           in_chat?: boolean | null
+          invite_error?: string | null
+          invite_retry_after?: string | null
+          invite_sent_at?: string | null
+          invite_status?: string | null
           joined_channel_at?: string | null
           joined_chat_at?: string | null
+          last_invite_link?: string | null
           last_synced_at?: string | null
           last_telegram_check_at?: string | null
           last_telegram_check_result?: Json | null
@@ -6860,6 +6884,14 @@ export type Database = {
           updated_count: number
         }[]
       }
+      check_payment_status_for_deal: {
+        Args: { p_payment_id: string; p_payment_source: string }
+        Returns: {
+          error_message: string
+          is_valid: boolean
+          payment_status: string
+        }[]
+      }
       cleanup_demo_counts: {
         Args: never
         Returns: {
@@ -6957,21 +6989,40 @@ export type Database = {
           user_id: string
         }[]
       }
-      find_wrongly_revoked_users: {
-        Args: never
-        Returns: {
-          access_end_at: string
-          access_status: string
-          club_id: string
-          email: string
-          full_name: string
-          in_chat: boolean
-          profile_id: string
-          status: string
-          telegram_user_id: number
-          user_id: string
-        }[]
-      }
+      find_wrongly_revoked_users:
+        | {
+            Args: never
+            Returns: {
+              access_end_at: string
+              access_status: string
+              club_id: string
+              email: string
+              full_name: string
+              in_chat: boolean
+              profile_id: string
+              status: string
+              telegram_user_id: number
+              user_id: string
+            }[]
+          }
+        | {
+            Args: { p_limit?: number }
+            Returns: {
+              access_end_at: string
+              access_status: string
+              club_id: string
+              email: string
+              full_name: string
+              in_chat: boolean
+              invite_sent_at: string
+              invite_status: string
+              profile_id: string
+              status: string
+              subscription_id: string
+              telegram_user_id: number
+              user_id: string
+            }[]
+          }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       get_club_members_enriched: {
