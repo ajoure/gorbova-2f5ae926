@@ -3327,6 +3327,62 @@ export type Database = {
           },
         ]
       }
+      payment_method_verification_jobs: {
+        Row: {
+          attempt_count: number
+          charge_tx_uid: string | null
+          created_at: string
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          max_attempts: number
+          next_retry_at: string | null
+          payment_method_id: string
+          refund_tx_uid: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          charge_tx_uid?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          last_error?: string | null
+          max_attempts?: number
+          next_retry_at?: string | null
+          payment_method_id: string
+          refund_tx_uid?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          charge_tx_uid?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          last_error?: string | null
+          max_attempts?: number
+          next_retry_at?: string | null
+          payment_method_id?: string
+          refund_tx_uid?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_method_verification_jobs_payment_method_id_fkey"
+            columns: ["payment_method_id"]
+            isOneToOne: false
+            referencedRelation: "payment_methods"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_methods: {
         Row: {
           brand: string | null
@@ -3341,10 +3397,15 @@ export type Database = {
           meta: Json | null
           provider: string
           provider_token: string
+          recurring_verified: boolean | null
           status: string
           supports_recurring: boolean | null
           updated_at: string
           user_id: string
+          verification_checked_at: string | null
+          verification_error: string | null
+          verification_status: string | null
+          verification_tx_uid: string | null
         }
         Insert: {
           brand?: string | null
@@ -3359,10 +3420,15 @@ export type Database = {
           meta?: Json | null
           provider?: string
           provider_token: string
+          recurring_verified?: boolean | null
           status?: string
           supports_recurring?: boolean | null
           updated_at?: string
           user_id: string
+          verification_checked_at?: string | null
+          verification_error?: string | null
+          verification_status?: string | null
+          verification_tx_uid?: string | null
         }
         Update: {
           brand?: string | null
@@ -3377,10 +3443,15 @@ export type Database = {
           meta?: Json | null
           provider?: string
           provider_token?: string
+          recurring_verified?: boolean | null
           status?: string
           supports_recurring?: boolean | null
           updated_at?: string
           user_id?: string
+          verification_checked_at?: string | null
+          verification_error?: string | null
+          verification_status?: string | null
+          verification_tx_uid?: string | null
         }
         Relationships: []
       }
