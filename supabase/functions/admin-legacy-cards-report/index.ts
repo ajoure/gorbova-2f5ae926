@@ -243,32 +243,19 @@ Deno.serve(async (req) => {
 
             if (!recentLog?.length) {
               try {
-                const message = `⚠️ *Обновление платёжной системы*
-
-Ваша сохранённая карта (\\*\\*\\*\\* ${card.last4 || '????'}) удалена из личного кабинета.
-
-*Причина:* карта была привязана в старом формате и не поддерживает автоматическое продление.
-
-Пожалуйста, привяжите карту заново:
-🔗 [Привязать карту](https://club.gorbova.by/settings/payment-methods)`;
-
-                await supabase.functions.invoke('telegram-send-notification', {
+                // Use the unified gateway with message_type (gateway handles templates and logging)
+                const { data: notifyResult, error: notifyError } = await supabase.functions.invoke('telegram-send-notification', {
                   body: {
                     user_id: card.user_id,
-                    message,
-                    parse_mode: 'Markdown',
+                    message_type: 'legacy_card_notification',
                   },
                 });
 
-                // Log the notification
-                await supabase.from('telegram_logs').insert({
-                  user_id: card.user_id,
-                  event_type: 'legacy_card_notification',
-                  success: true,
-                  meta: { card_id: card.id, last4: card.last4 },
-                });
-
-                notifiedCount++;
+                if (notifyError) {
+                  console.error('Notification error:', notifyError);
+                } else if (notifyResult?.success) {
+                  notifiedCount++;
+                }
               } catch (notifyErr) {
                 console.error('Notification error:', notifyErr);
               }
