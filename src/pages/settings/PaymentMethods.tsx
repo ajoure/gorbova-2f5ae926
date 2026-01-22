@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Plus, Star, Trash2, AlertTriangle } from "lucide-react";
+import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface PaymentMethod {
   id: string;
@@ -26,6 +27,10 @@ interface PaymentMethod {
   is_default: boolean;
   status: string;
   created_at: string;
+  // Verification fields for recurring payments
+  recurring_verified: boolean | null;
+  verification_status: string | null;
+  verification_error: string | null;
 }
 
 interface Subscription {
@@ -383,6 +388,49 @@ export default function PaymentMethodsSettings() {
                                 <AlertTriangle className="h-3 w-3" />
                                 Истекла
                               </Badge>
+                            )}
+                            {/* Verification status badges */}
+                            {method.verification_status === 'pending' && (
+                              <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Проверяем...
+                              </Badge>
+                            )}
+                            {method.verification_status === 'verified' && (
+                              <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                <Check className="h-3 w-3" />
+                                Для автоплатежей
+                              </Badge>
+                            )}
+                            {method.verification_status === 'rejected' && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="gap-1 cursor-help">
+                                      <AlertTriangle className="h-3 w-3" />
+                                      Не для автоплатежей
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    <p>{method.verification_error || 'Карта требует 3D-Secure на каждую операцию'}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                            {method.verification_status === 'failed' && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="secondary" className="gap-1 cursor-help">
+                                      <AlertCircle className="h-3 w-3" />
+                                      Не удалось проверить
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    <p>{method.verification_error || 'Ошибка проверки карты'}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             )}
                           </div>
                           <p className="text-sm text-muted-foreground">

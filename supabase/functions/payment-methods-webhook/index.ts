@@ -394,6 +394,68 @@ serve(async (req) => {
     }
 
     console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4} (product: ${cardProduct})`);
+
+    // ========== QUEUE VERIFICATION JOB ==========
+    // Create job for recurring verification worker (test charge 1 BYN + refund)
+    // Webhook does NOT perform the test charge - worker handles it asynchronously
+    try {
+      // Get the newly created payment method ID
+      const { data: newPmForVerify } = await supabase
+        .from('payment_methods')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('last4', cardLast4)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (newPmForVerify?.id) {
+        // Set initial verification status to pending
+        await supabase
+          .from('payment_methods')
+          .update({ verification_status: 'pending' })
+          .eq('id', newPmForVerify.id);
+
+        // Create verification job with idempotency key (hourly bucket)
+        const bucket = Math.floor(Date.now() / 3600000);
+        const idempotencyKey = `pm_verify:${newPmForVerify.id}:${bucket}`;
+
+        const { error: jobError } = await supabase
+          .from('payment_method_verification_jobs')
+          .insert({
+            payment_method_id: newPmForVerify.id,
+            user_id: userId,
+            status: 'pending',
+            idempotency_key: idempotencyKey,
+          });
+
+        // Ignore duplicate key errors (idempotency)
+        if (jobError && jobError.code !== '23505') {
+          console.error('[payment-methods-webhook] Job creation error:', jobError);
+        } else {
+          console.log(`[payment-methods-webhook] Created verification job for card ${cardLast4}, idempotency_key=${idempotencyKey}`);
+        }
+
+        // SYSTEM ACTOR audit
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'payment-methods-webhook',
+          action: 'card.verification.queued',
+          meta: {
+            payment_method_id: newPmForVerify.id,
+            user_id: userId,
+            card_last4: cardLast4,
+            card_brand: cardBrand,
+            idempotency_key: idempotencyKey,
+          },
+        });
+      }
+    } catch (jobQueueError) {
+      // Non-blocking error
+      console.error('[payment-methods-webhook] Verification job queue error (non-blocking):', jobQueueError);
+    }
     
     // ========== AUTO-LINK historical payments ==========
     // Call payments-autolink-by-card to link historical unlinked payments to this profile
