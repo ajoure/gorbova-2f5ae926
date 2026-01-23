@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -177,6 +177,12 @@ export function ContactTelegramChat({
 
   const prevMessageCountRef = useRef<number>(0);
 
+  // === AUTO-REFRESH FOR PENDING MEDIA ===
+  const pendingAutoRefreshRef = useRef<number | null>(null);
+  const pendingRefreshCountRef = useRef(0);
+  const MAX_PENDING_REFRESH_ATTEMPTS = 12; // 2 minutes at 10s interval
+  const PENDING_REFRESH_INTERVAL = 10000; // 10 seconds
+
   function mergeByIdPreferEnriched(prev: TelegramMessage[], next: TelegramMessage[]) {
     const map = new Map<string, TelegramMessage>();
     for (const m of prev) map.set(m.id, m);
@@ -262,6 +268,15 @@ export function ContactTelegramChat({
 
   const isLoading = messagesLoading || eventsLoading;
 
+  // Check if any messages have pending upload status
+  const hasPendingMedia = useMemo(() => {
+    if (!messages) return false;
+    return messages.some((m: TelegramMessage) => {
+      const meta = m.meta || {};
+      return (meta as any).upload_status === 'pending';
+    });
+  }, [messages]);
+
   const refetch = useCallback(() => {
     refetchMessages();
     refetchEvents();
@@ -336,6 +351,67 @@ export function ContactTelegramChat({
       supabase.removeChannel(channel);
     };
   }, [userId, debouncedRefetch]);
+
+  // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
+  // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
+  useEffect(() => {
+    // Clear existing timer
+    if (pendingAutoRefreshRef.current) {
+      window.clearInterval(pendingAutoRefreshRef.current);
+      pendingAutoRefreshRef.current = null;
+    }
+
+    // Reset counter when no pending or when user changes
+    if (!hasPendingMedia) {
+      pendingRefreshCountRef.current = 0;
+      return;
+    }
+
+    // Start polling if there are pending items and haven't exceeded max attempts
+    if (hasPendingMedia && pendingRefreshCountRef.current < MAX_PENDING_REFRESH_ATTEMPTS) {
+      console.log(`[AUTO-REFRESH] Starting polling for pending media (attempt ${pendingRefreshCountRef.current + 1}/${MAX_PENDING_REFRESH_ATTEMPTS})`);
+      
+      pendingAutoRefreshRef.current = window.setInterval(async () => {
+        // Stop if max attempts reached
+        if (pendingRefreshCountRef.current >= MAX_PENDING_REFRESH_ATTEMPTS) {
+          console.log("[AUTO-REFRESH] Max attempts reached, stopping polling");
+          if (pendingAutoRefreshRef.current) {
+            window.clearInterval(pendingAutoRefreshRef.current);
+            pendingAutoRefreshRef.current = null;
+          }
+          return;
+        }
+
+        // Skip if already refetching
+        if (isRefetchingRef.current) {
+          console.log("[AUTO-REFRESH] Skipping - already refetching");
+          return;
+        }
+        
+        isRefetchingRef.current = true;
+        pendingRefreshCountRef.current += 1;
+        
+        try {
+          console.log(`[AUTO-REFRESH] Refreshing messages (attempt ${pendingRefreshCountRef.current}/${MAX_PENDING_REFRESH_ATTEMPTS})`);
+          await refetchMessages();
+        } finally {
+          isRefetchingRef.current = false;
+        }
+      }, PENDING_REFRESH_INTERVAL);
+    }
+
+    return () => {
+      if (pendingAutoRefreshRef.current) {
+        window.clearInterval(pendingAutoRefreshRef.current);
+        pendingAutoRefreshRef.current = null;
+      }
+    };
+  }, [hasPendingMedia, refetchMessages]);
+
+  // Reset pending counter when user changes
+  useEffect(() => {
+    pendingRefreshCountRef.current = 0;
+  }, [userId]);
 
   // Helper function to translate Telegram API errors to Russian
   const translateTelegramError = (errorMessage: string): string => {
