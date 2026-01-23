@@ -28,6 +28,7 @@ import {
   Globe,
   Library,
   Target,
+  BarChart3,
   LucideIcon,
 } from "lucide-react";
 
@@ -78,6 +79,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Globe,
   Library,
   Target,
+  BarChart3,
 };
 
 // Default menu configuration - Reorganized structure
@@ -97,6 +99,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 3, permission: "entitlements.view" },
       { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 4, permission: "users.view" },
       { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 5, permission: "entitlements.view" },
+      { id: "payment-diagnostics", label: "Диагностика", path: "/admin/payments/diagnostics", icon: "BarChart3", order: 6, permission: "payments.read" },
     ],
   },
   {
