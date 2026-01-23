@@ -99,6 +99,15 @@ export const EVENT_LABELS: Record<string, string> = {
   card_revoked: "Карта отвязана",
   card_added: "Карта добавлена",
   
+  // ===== Верификация карт =====
+  "card.reverify.requested": "Перепроверка карты запрошена (админ)",
+  "card.verification.queued": "Карта добавлена в очередь верификации",
+  "card.verification.verified": "Карта подтверждена для автосписаний",
+  "card.verification.rejected": "Карта отклонена для автосписаний",
+  "card.verification.failed": "Ошибка проверки карты",
+  "card.verification.started": "Проверка карты начата",
+  "card.verification.refunded": "Тестовый платёж возвращён",
+  
   // ===== Триал =====
   "trial.started": "Начало триала",
   "trial.ended": "Окончание триала",
