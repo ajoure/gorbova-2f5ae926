@@ -760,8 +760,8 @@ export function ContactTelegramChat({
           </div>
         )}
 
-        {/* Input - shrink-0 to always stay visible */}
-        <div className="pt-3 border-t shrink-0">
+        {/* Input - shrink-0 sticky bottom to always stay visible */}
+        <div className="pt-3 border-t shrink-0 sticky bottom-0 bg-background z-10">
         <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
