@@ -12,7 +12,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -1083,6 +1083,44 @@ Deno.serve(async (req) => {
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      case "process_media_jobs": {
+        const limit = Math.min(Math.max(Number(payload.limit || 5), 1), 20);
+        const filterUserId = payload.user_id || null;
+
+        const workerUrl = `${supabaseUrl}/functions/v1/telegram-media-worker`;
+        const workerToken = Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN");
+
+        if (!workerToken) {
+          return new Response(JSON.stringify({ error: "Worker token not configured" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        try {
+          const res = await fetch(workerUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Worker-Token": workerToken,
+            },
+            body: JSON.stringify({ limit, user_id: filterUserId }),
+          });
+
+          const json = await res.json().catch(() => ({ ok: false, error: "bad_json" }));
+          return new Response(JSON.stringify(json), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: res.status,
+          });
+        } catch (fetchErr) {
+          console.error("[ADMIN-CHAT] process_media_jobs fetch failed:", fetchErr);
+          return new Response(JSON.stringify({ error: "Worker call failed" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
       }
 
       default:

@@ -2709,6 +2709,62 @@ export type Database = {
           },
         ]
       }
+      media_jobs: {
+        Row: {
+          attempts: number
+          bot_id: string
+          created_at: string
+          file_name: string | null
+          file_type: string | null
+          id: string
+          last_error: string | null
+          locked_at: string | null
+          message_db_id: string
+          status: string
+          telegram_file_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempts?: number
+          bot_id: string
+          created_at?: string
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          message_db_id: string
+          status?: string
+          telegram_file_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempts?: number
+          bot_id?: string
+          created_at?: string
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          message_db_id?: string
+          status?: string
+          telegram_file_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_jobs_message_db_id_fkey"
+            columns: ["message_db_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       merge_history: {
         Row: {
           case_id: string | null
@@ -7147,6 +7203,30 @@ export type Database = {
           payment_status: string
         }[]
       }
+      claim_media_jobs: {
+        Args: { p_limit?: number; p_user_id?: string }
+        Returns: {
+          attempts: number
+          bot_id: string
+          created_at: string
+          file_name: string | null
+          file_type: string | null
+          id: string
+          last_error: string | null
+          locked_at: string | null
+          message_db_id: string
+          status: string
+          telegram_file_id: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "media_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       cleanup_demo_counts: {
         Args: never
         Returns: {
@@ -7470,6 +7550,10 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      unlock_stuck_media_jobs: {
+        Args: { stuck_seconds?: number }
+        Returns: number
       }
     }
     Enums: {

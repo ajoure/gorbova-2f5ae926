@@ -32,6 +32,7 @@ interface ChatMediaMessageProps {
   isOutgoing: boolean;
   storageBucket?: string | null;
   storagePath?: string | null;
+  uploadStatus?: string | null; // 'pending' | 'ok' | 'error' | null
   onRetry?: () => void;
   onRefresh?: () => void;
 }
@@ -62,6 +63,7 @@ export function ChatMediaMessage({
   isOutgoing,
   storageBucket,
   storagePath,
+  uploadStatus,
   onRetry,
   onRefresh,
 }: ChatMediaMessageProps) {
@@ -69,6 +71,47 @@ export function ChatMediaMessage({
   const [imageError, setImageError] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Handle upload_status BEFORE other logic
+  if (uploadStatus === 'pending') {
+    return (
+      <div className={cn(
+        "flex items-center gap-2 p-3 rounded-lg",
+        isOutgoing ? "bg-primary/20" : "bg-muted"
+      )}>
+        <RefreshCw className="w-4 h-4 animate-spin" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{fileName || "Файл"}</p>
+          <p className="text-xs text-muted-foreground">Загружается…</p>
+        </div>
+        {onRefresh && (
+          <Button size="sm" variant="ghost" onClick={onRefresh}>
+            Обновить
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (uploadStatus === 'error' && !fileUrl) {
+    return (
+      <div className={cn(
+        "flex items-center gap-2 p-3 rounded-lg",
+        isOutgoing ? "bg-destructive/20" : "bg-muted"
+      )}>
+        <AlertCircle className="w-4 h-4 text-destructive" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{fileName || "Файл"}</p>
+          <p className="text-xs text-destructive">Ошибка загрузки</p>
+        </div>
+        {onRefresh && (
+          <Button size="sm" variant="ghost" onClick={onRefresh}>
+            Повторить
+          </Button>
+        )}
+      </div>
+    );
+  }
 
   const hasFile = !!fileUrl && !imageError;
   

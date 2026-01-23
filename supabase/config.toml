@@ -272,3 +272,6 @@ verify_jwt = false
 
 [functions.admin-manual-charge]
 verify_jwt = false
+
+[functions.telegram-media-worker]
+verify_jwt = false
