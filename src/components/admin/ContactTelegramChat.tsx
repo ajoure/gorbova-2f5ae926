@@ -668,6 +668,9 @@ export function ContactTelegramChat({
                   fileName={fileName}
                   errorMessage={msg.meta?.upload_error as string | null}
                   isOutgoing={msg.direction === "outgoing"}
+                  storageBucket={msg.meta?.storage_bucket as string | null}
+                  storagePath={msg.meta?.storage_path as string | null}
+                  onRefresh={refetchMessages}
                 />
               </div>
             )}
