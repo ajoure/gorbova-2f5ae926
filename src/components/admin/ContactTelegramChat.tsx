@@ -210,7 +210,10 @@ export function ContactTelegramChat({
       }
     }
 
-    return Array.from(map.values());
+    // Sort by created_at ASC to maintain correct order after merge
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
   }
 
   // Fetch messages - with polling interval as backup

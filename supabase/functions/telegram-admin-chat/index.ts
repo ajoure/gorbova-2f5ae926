@@ -495,7 +495,7 @@ Deno.serve(async (req) => {
             admin_profile:profiles!telegram_messages_sent_by_admin_fkey(full_name, avatar_url)
           `)
           .eq("user_id", user_id)
-          .order("created_at", { ascending: true })
+          .order("created_at", { ascending: false })  // DESC - get LATEST N messages
           .limit(limit);
 
         const isPdfLike = (meta: any) => {
@@ -557,7 +557,7 @@ Deno.serve(async (req) => {
               telegram_bots(id, bot_name, bot_username)
             `)
             .eq("user_id", user_id)
-            .order("created_at", { ascending: true })
+            .order("created_at", { ascending: false })  // DESC - get LATEST N messages
             .limit(limit);
           
           if (fallbackError) {
@@ -586,8 +586,9 @@ Deno.serve(async (req) => {
             }
           }
           
-          // Enrich with admin profile and signed URLs
-          const enrichedMessages = await Promise.all((fallbackMessages || []).map(async (m: any) => {
+          // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
+          const messagesAsc = [...(fallbackMessages || [])].reverse();
+          const enrichedMessages = await Promise.all(messagesAsc.map(async (m: any) => {
             const withAdmin = {
               ...m,
               admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
@@ -600,8 +601,9 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Enrich all messages with signed URLs
-        const enrichedMessages = await Promise.all((messages || []).map(enrichMessageWithSignedUrl));
+        // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
+        const messagesAsc = [...(messages || [])].reverse();
+        const enrichedMessages = await Promise.all(messagesAsc.map(enrichMessageWithSignedUrl));
 
         // Temporary debug payload: helps confirm url enrichment without guessing.
         const debug = enrichedMessages.slice(-5).map((m: any) => {
