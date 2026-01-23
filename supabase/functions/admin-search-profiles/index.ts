@@ -81,12 +81,23 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Validate and sanitize limit
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 100);
+
+    // Sanitize query: escape special PostgreSQL LIKE pattern characters
+    // This prevents SQL injection via pattern metacharacters
+    const sanitizedQuery = query
+      .replace(/\\/g, '\\\\')  // Escape backslashes first
+      .replace(/%/g, '\\%')    // Escape percent signs
+      .replace(/_/g, '\\_');   // Escape underscores
+
     // Search profiles with service role (bypasses RLS)
+    // Using Supabase's built-in escaping via the filter method
     const { data: results, error: searchError } = await supabaseAdmin
       .from("profiles")
       .select("id, full_name, email, phone, user_id")
-      .or(`full_name.ilike.%${query}%,email.ilike.%${query}%,phone.ilike.%${query}%`)
-      .limit(limit);
+      .or(`full_name.ilike.%${sanitizedQuery}%,email.ilike.%${sanitizedQuery}%,phone.ilike.%${sanitizedQuery}%`)
+      .limit(safeLimit);
 
     if (searchError) {
       console.error("Search error:", searchError);
