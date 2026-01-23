@@ -677,6 +677,10 @@ Deno.serve(async (req) => {
           let storageBucket: string | null = null;
           let storagePath: string | null = null;
           
+          // HOTFIX: Declare these OUTSIDE the if block so they're available for INSERT
+          let contentType: string | null = null;
+          let uploadedFileSize: number | null = null;
+          
           if (fileId && botToken) {
             try {
               // Get file path from Telegram
@@ -690,9 +694,10 @@ Deno.serve(async (req) => {
                 const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
                 const fileResponse = await fetch(telegramFileUrl);
                 const arrayBuffer = await fileResponse.arrayBuffer();
+                uploadedFileSize = arrayBuffer.byteLength;
                 
                 // Determine content type
-                let contentType = 'application/octet-stream';
+                contentType = 'application/octet-stream';
                 if (fileType === 'photo') contentType = 'image/jpeg';
                 else if (fileType === 'video' || fileType === 'video_note') contentType = 'video/mp4';
                 else if (fileType === 'voice') contentType = 'audio/ogg';
@@ -865,29 +870,49 @@ Deno.serve(async (req) => {
             }
           }
 
-          await supabase.from('telegram_messages').insert({
-            user_id: profile.user_id,
-            telegram_user_id: telegramUserId,
-            bot_id: botId,
-            direction: 'incoming',
-            message_text: msg.text || msg.caption || null,
-            message_id: msg.message_id,
-            reply_to_message_id: msg.reply_to_message?.message_id || null,
-            status: 'sent',
-            meta: { 
-              file_type: fileType, 
-              file_name: fileName,
-              file_id: fileId,
-              mime_type: contentType,
-              file_size: arrayBuffer?.byteLength || null,
-              storage_bucket: storageBucket,
-              storage_path: storagePath,
-              upload_error: (storageBucket && storagePath) ? null : 'storage_upload_failed',
-              raw: msg 
-            },
-          });
-          
-          console.log(`Saved incoming message ${msg.message_id} from user ${profile.user_id}`);
+          // HOTFIX: Fail-open pattern - message MUST be saved even if some meta is broken
+          try {
+            await supabase.from('telegram_messages').insert({
+              user_id: profile.user_id,
+              telegram_user_id: telegramUserId,
+              bot_id: botId,
+              direction: 'incoming',
+              message_text: msg.text || msg.caption || null,
+              message_id: msg.message_id,
+              reply_to_message_id: msg.reply_to_message?.message_id || null,
+              status: 'sent',
+              meta: { 
+                file_type: fileType || null, 
+                file_name: fileName || null,
+                file_id: fileId || null,
+                mime_type: contentType || null,
+                file_size: uploadedFileSize || null,
+                storage_bucket: storageBucket || null,
+                storage_path: storagePath || null,
+                upload_error: (fileId && !storageBucket) ? 'storage_upload_failed' : null,
+                raw: msg 
+              },
+            });
+            console.log(`[WEBHOOK] Saved incoming message ${msg.message_id} from user ${profile.user_id}`);
+          } catch (insertErr) {
+            console.error('[WEBHOOK] Failed to insert message:', insertErr);
+            // Last resort: try minimal insert without broken meta
+            try {
+              await supabase.from('telegram_messages').insert({
+                user_id: profile.user_id,
+                telegram_user_id: telegramUserId,
+                bot_id: botId,
+                direction: 'incoming',
+                message_text: msg.text || msg.caption || null,
+                message_id: msg.message_id,
+                status: 'sent',
+                meta: { raw: msg, insert_error: String(insertErr) }
+              });
+              console.log(`[WEBHOOK] Saved minimal message ${msg.message_id} after error`);
+            } catch (minimalErr) {
+              console.error('[WEBHOOK] Even minimal insert failed:', minimalErr);
+            }
+          }
         }
       }
 
