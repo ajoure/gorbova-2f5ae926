@@ -454,11 +454,13 @@ export function ContactTelegramChat({
     const shouldScroll = !didInitialScrollRef.current || isNearBottom;
     if (!shouldScroll) return;
 
-    // Wait for DOM paint - use scrollTo to avoid layout shift
+    // Wait for DOM paint - double rAF for reliable scroll after paint
     requestAnimationFrame(() => {
-      const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-      if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
-      didInitialScrollRef.current = true;
+      requestAnimationFrame(() => {
+        const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+        if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
+        didInitialScrollRef.current = true;
+      });
     });
   }, [userId, isLoading, chatItems.length]);
 

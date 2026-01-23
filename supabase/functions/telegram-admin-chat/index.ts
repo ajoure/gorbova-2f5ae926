@@ -397,8 +397,8 @@ Deno.serve(async (req) => {
                 const arrayBuffer = await fileResponse.arrayBuffer();
                 
                 // Upload to Supabase Storage
-                storageBucket = 'documents';
-                storagePath = `chat-media/${user_id}/${Date.now()}_${file.name}`;
+                storageBucket = 'telegram-media';
+                storagePath = `outbound/${user_id}/${Date.now()}_${file.name}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
                   .from(storageBucket)
                   .upload(storagePath, arrayBuffer, { 
@@ -440,6 +440,7 @@ Deno.serve(async (req) => {
             file_id: fileId,
             storage_bucket: storageBucket,
             storage_path: storagePath,
+            mime_type: file ? guessMimeType(file.name, file.type) : null,
           },
         };
 
@@ -503,6 +504,25 @@ Deno.serve(async (req) => {
               
               if (signedData && !signedError) {
                 meta.file_url = signedData.signedUrl;
+                
+                // AUDIT LOG: signed URL issued (BLOCKER B)
+                try {
+                  await supabase.from('audit_logs').insert({
+                    actor_type: 'system',
+                    actor_user_id: null,
+                    actor_label: 'telegram-signed-url',
+                    action: 'telegram_media_signed_url_issued',
+                    meta: {
+                      message_id: msg.id ?? null,
+                      storage_bucket: meta.storage_bucket ?? null,
+                      storage_path: meta.storage_path ?? null,
+                      ttl_seconds: 3600,
+                      file_type: meta.file_type ?? null
+                    }
+                  });
+                } catch (auditErr) {
+                  console.error('[telegram-admin-chat] audit_logs signed url insert failed', auditErr);
+                }
               }
             } catch (e) {
               console.error("Error creating signed URL:", e);
