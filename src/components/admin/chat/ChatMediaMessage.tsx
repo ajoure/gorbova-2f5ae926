@@ -113,6 +113,22 @@ export function ChatMediaMessage({
     );
   }
 
+  // Legacy files without telegram_file_id - cannot be recovered
+  if (uploadStatus === 'unavailable') {
+    return (
+      <div className={cn(
+        "flex items-center gap-2 p-3 rounded-lg",
+        isOutgoing ? "bg-muted/50" : "bg-muted"
+      )}>
+        <AlertCircle className="w-4 h-4 text-muted-foreground" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{fileName || "Файл"}</p>
+          <p className="text-xs text-muted-foreground">Файл недоступен (устаревшие данные)</p>
+        </div>
+      </div>
+    );
+  }
+
   const hasFile = !!fileUrl && !imageError;
   
   // 3 media states: READY, CAN_ENRICH, NO_STORAGE
