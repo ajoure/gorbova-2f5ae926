@@ -768,26 +768,52 @@ Deno.serve(async (req) => {
           const webhookMs = Date.now() - webhookStartTime;
           console.log(`[WEBHOOK] Early ACK for message ${msg.message_id}, dbId: ${dbMessageId}, file pending: ${!!fileId}, ms: ${webhookMs}`);
           
-          // Best-effort audit log (non-blocking via Promise, don't await)
-          supabase.from('audit_logs').insert({
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'telegram-webhook',
-            action: 'webhook_message_received',
-            meta: {
-              message_id: msg.message_id,
-              db_message_id: dbMessageId,
-              telegram_user_id: telegramUserId,
-              stage: webhookStage,
-              ms: webhookMs,
-              has_file: !!fileId,
-              file_type: fileType,
-              upload_status: fileId ? 'pending' : null,
-              error: webhookError
+          // Queue media job if file present (BEFORE return)
+          if (fileId && dbMessageId && botId) {
+            try {
+              await supabase.from("media_jobs").insert({
+                message_db_id: dbMessageId,
+                user_id: profile.user_id,
+                bot_id: botId,
+                telegram_file_id: fileId,
+                file_type: fileType,
+                file_name: fileName,
+              });
+
+              // Update meta.upload_status='pending' (merge with existing)
+              const prev = baseMeta || {};
+              await supabase.from("telegram_messages")
+                .update({ meta: { ...prev, upload_status: "pending", webhook_stage: "queued" } })
+                .eq("id", dbMessageId);
+                
+              console.log(`[WEBHOOK] Media job queued for ${dbMessageId}`);
+            } catch (qErr) {
+              console.error("[WEBHOOK] queue media_jobs failed:", qErr);
             }
-          }).then(() => {
+          }
+
+          // Best-effort audit log (non-blocking)
+          Promise.resolve(
+            supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'telegram-webhook',
+              action: 'webhook_message_received',
+              meta: {
+                message_id: msg.message_id,
+                db_message_id: dbMessageId,
+                telegram_user_id: telegramUserId,
+                stage: webhookStage,
+                ms: webhookMs,
+                has_file: !!fileId,
+                file_type: fileType,
+                upload_status: fileId ? 'pending' : null,
+                error: webhookError
+              }
+            })
+          ).then(() => {
             console.log('[WEBHOOK] Audit log written');
-          }).catch((err) => {
+          }).catch((err: unknown) => {
             console.error('[WEBHOOK] Audit log failed:', err);
           });
           

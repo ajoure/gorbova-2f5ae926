@@ -762,20 +762,9 @@ export function ContactTelegramChat({
                   isOutgoing={msg.direction === "outgoing"}
                   storageBucket={bucket}
                   storagePath={path}
+                  uploadStatus={(metaAny.upload_status ?? metaAny.uploadStatus ?? null) as string | null}
                   onRefresh={() => refetchMessages()}
                 />
-
-                {import.meta.env.DEV && (
-                  <div
-                    className={
-                      "mt-1 text-[10px] " +
-                      (msg.direction === "outgoing" ? "text-primary-foreground/70" : "text-muted-foreground")
-                    }
-                  >
-                    media: {fileType || mimeType || "unknown"} · url: {fileUrl ? "yes" : "no"} · bucket: {bucket ? "yes" : "no"}
-                    {fileUrl ? ` · ${fileUrl.slice(0, 30)}…` : ""}
-                  </div>
-                )}
               </div>
             )}
             
