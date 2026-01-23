@@ -495,7 +495,7 @@ export function InboxTabContent() {
 
   return (
     <TooltipProvider>
-      <div className="h-full flex flex-col overflow-hidden p-4">
+      <div className="h-full min-h-0 flex flex-col overflow-hidden p-4">
         {/* Channel Tabs */}
         <div className="mb-4 shrink-0">
           <Tabs value={channel} onValueChange={(v) => setChannel(v as "telegram" | "email")}>
@@ -706,7 +706,7 @@ export function InboxTabContent() {
               !selectedUserId && "hidden md:flex items-center justify-center"
             )}>
               {selectedUserId ? (
-                <div className="h-full flex flex-col">
+                <div className="h-full min-h-0 flex flex-col overflow-hidden">
                   {/* Mobile back button */}
                   <div className="md:hidden p-2 border-b border-border/30">
                     <Button

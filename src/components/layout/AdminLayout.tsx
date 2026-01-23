@@ -76,9 +76,9 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full">
+      <div className="h-screen flex w-full overflow-hidden">
         <AdminSidebar />
-        <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <main className="flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
           <header 
             className="border-b flex items-center justify-between px-3 md:px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10"
             style={{ 
