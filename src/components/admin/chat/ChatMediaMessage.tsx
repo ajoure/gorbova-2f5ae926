@@ -29,7 +29,10 @@ interface ChatMediaMessageProps {
   fileName: string | null;
   errorMessage?: string | null;
   isOutgoing: boolean;
+  storageBucket?: string | null;
+  storagePath?: string | null;
   onRetry?: () => void;
+  onRefresh?: () => void;
 }
 
 // Human-readable error messages
@@ -55,7 +58,10 @@ export function ChatMediaMessage({
   fileName,
   errorMessage,
   isOutgoing,
+  storageBucket,
+  storagePath,
   onRetry,
+  onRefresh,
 }: ChatMediaMessageProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -63,6 +69,15 @@ export function ChatMediaMessage({
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const hasFile = !!fileUrl && !imageError;
+  
+  // 3 media states: READY, CAN_ENRICH, NO_STORAGE
+  const hasStorageRef = !!storageBucket && !!storagePath;
+  type MediaState = 'READY' | 'CAN_ENRICH' | 'NO_STORAGE';
+  const mediaState: MediaState = hasFile 
+    ? 'READY' 
+    : hasStorageRef 
+      ? 'CAN_ENRICH' 
+      : 'NO_STORAGE';
   const isPhoto = fileType === "photo";
   const isVideo = fileType === "video";
   const isVideoNote = fileType === "video_note";
@@ -76,8 +91,22 @@ export function ChatMediaMessage({
   }, [fileUrl]);
 
   const getErrorMessage = () => {
-    if (!errorMessage) return "Файл не загружен";
-    return ERROR_MESSAGES[errorMessage] || errorMessage;
+    // Explicit error takes priority
+    if (errorMessage) {
+      return ERROR_MESSAGES[errorMessage] || errorMessage;
+    }
+    
+    // State-based messages
+    switch (mediaState) {
+      case 'CAN_ENRICH':
+        return "Файл загружается...";
+      case 'NO_STORAGE':
+        return isOutgoing 
+          ? "Отправлено в Telegram" 
+          : "Файл недоступен";
+      default:
+        return "Файл не загружен";
+    }
   };
 
   const copyErrorToClipboard = () => {
@@ -128,6 +157,12 @@ export function ChatMediaMessage({
       <div className="flex flex-col items-center justify-center p-4 bg-muted/30 border border-border/30 rounded-lg w-48 h-32">
         <ImageIcon className="w-8 h-8 opacity-40 mb-1" />
         <span className="text-xs text-muted-foreground text-center">{getErrorMessage()}</span>
+        {mediaState === 'CAN_ENRICH' && onRefresh && (
+          <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRefresh}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Обновить
+          </Button>
+        )}
         {errorMessage && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -202,9 +237,17 @@ export function ChatMediaMessage({
       <div className="flex flex-col items-center justify-center bg-muted/30 border border-border/30 w-32 h-32 rounded-full">
         <Circle className="w-8 h-8 opacity-40 mb-1" />
         <span className="text-xs text-muted-foreground text-center px-2">
-          Кружок {getErrorMessage().toLowerCase()}
+          {mediaState === 'CAN_ENRICH' && "Загрузка..."}
+          {mediaState === 'NO_STORAGE' && (isOutgoing ? "Отправлено" : "Недоступен")}
+          {errorMessage && getErrorMessage()}
         </span>
-        {onRetry && (
+        {mediaState === 'CAN_ENRICH' && onRefresh && (
+          <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRefresh}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Обновить
+          </Button>
+        )}
+        {errorMessage && onRetry && (
           <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRetry}>
             <RefreshCw className="w-3 h-3 mr-1" />
             Повторить
@@ -250,9 +293,17 @@ export function ChatMediaMessage({
       <div className="flex flex-col items-center justify-center bg-muted/30 border border-border/30 w-48 h-32 rounded-lg">
         <Play className="w-8 h-8 opacity-40 mb-1" />
         <span className="text-xs text-muted-foreground text-center px-2">
-          Видео {getErrorMessage().toLowerCase()}
+          {mediaState === 'CAN_ENRICH' && "Загрузка видео..."}
+          {mediaState === 'NO_STORAGE' && (isOutgoing ? "Отправлено" : "Видео недоступно")}
+          {errorMessage && getErrorMessage()}
         </span>
-        {onRetry && (
+        {mediaState === 'CAN_ENRICH' && onRefresh && (
+          <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRefresh}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Обновить
+          </Button>
+        )}
+        {errorMessage && onRetry && (
           <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRetry}>
             <RefreshCw className="w-3 h-3 mr-1" />
             Повторить
@@ -281,8 +332,15 @@ export function ChatMediaMessage({
           <Music className="w-4 h-4 opacity-40" />
         </div>
         <span className="text-xs text-muted-foreground">
-          {fileType === "voice" ? "Голосовое" : "Аудио"} {getErrorMessage().toLowerCase()}
+          {mediaState === 'CAN_ENRICH' && "Загрузка..."}
+          {mediaState === 'NO_STORAGE' && (isOutgoing ? "Отправлено" : (fileType === "voice" ? "Голосовое" : "Аудио"))}
+          {errorMessage && getErrorMessage()}
         </span>
+        {mediaState === 'CAN_ENRICH' && onRefresh && (
+          <Button variant="ghost" size="sm" className="h-6" onClick={onRefresh}>
+            <RefreshCw className="w-3 h-3" />
+          </Button>
+        )}
       </div>
     );
   }
@@ -316,7 +374,16 @@ export function ChatMediaMessage({
     <div className="flex items-center gap-2 p-2 bg-muted/30 border border-border/30 rounded">
       <FileText className="w-4 h-4 opacity-40" />
       <span className="text-xs truncate">{fileName || "Файл"}</span>
-      <span className="text-xs text-muted-foreground">({getErrorMessage()})</span>
+      <span className="text-xs text-muted-foreground">
+        ({mediaState === 'CAN_ENRICH' ? "Загрузка..." : 
+          mediaState === 'NO_STORAGE' && isOutgoing ? "Отправлено" : 
+          getErrorMessage()})
+      </span>
+      {mediaState === 'CAN_ENRICH' && onRefresh && (
+        <Button variant="ghost" size="sm" className="h-5 px-1" onClick={onRefresh}>
+          <RefreshCw className="w-3 h-3" />
+        </Button>
+      )}
     </div>
   );
 }

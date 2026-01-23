@@ -407,9 +407,16 @@ Deno.serve(async (req) => {
                   });
                 
                 if (uploadData && !uploadError) {
-                  console.log(`Uploaded outgoing file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}`);
+                  console.log(`[OUTBOUND] Upload OK: bucket=${storageBucket} path=${storagePath} bytes=${arrayBuffer.byteLength}`);
                 } else {
-                  console.error(`Upload error for ${storagePath}:`, uploadError);
+                  console.error(`[OUTBOUND] Upload FAILED: path=${storagePath}`, uploadError);
+                  // Log to audit_logs
+                  await supabase.from('audit_logs').insert({
+                    actor_type: 'system',
+                    actor_label: 'telegram-admin-chat',
+                    action: 'telegram_media_upload_failed',
+                    meta: { error: uploadError?.message, bucket: storageBucket, path: storagePath, file_name: file?.name }
+                  });
                   storageBucket = null;
                   storagePath = null;
                 }
@@ -529,6 +536,7 @@ Deno.serve(async (req) => {
             }
           }
           
+          console.log(`[ENRICH] msg=${msg.id} type=${meta.file_type} bucket=${meta.storage_bucket} path=${meta.storage_path} url_set=${!!meta.file_url}`);
           return { ...msg, meta };
         };
 
