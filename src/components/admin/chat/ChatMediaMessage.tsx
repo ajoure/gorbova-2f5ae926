@@ -202,17 +202,18 @@ export function ChatMediaMessage({
   // Document
   if (hasFile) {
     return (
-      <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
+      <div className="flex items-center gap-2 p-2 bg-background/20 rounded border border-border/30">
         <FileText className="w-4 h-4" />
         <span className="text-xs truncate max-w-[150px]">{fileName || "Файл"}</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={() => window.open(fileUrl, "_blank")}
+        <a
+          href={fileUrl}
+          download={fileName || "file"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center h-6 w-6 rounded-md text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           <Download className="w-3 h-3" />
-        </Button>
+        </a>
       </div>
     );
   }
