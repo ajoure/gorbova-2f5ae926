@@ -31,7 +31,7 @@ export default function AdminCommunication() {
 
   return (
     <AdminLayout>
-      <div className="h-full flex flex-col">
+      <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-4 md:px-6 pt-4 md:pt-6 pb-4 border-b shrink-0">
           <div className="flex items-center gap-3 mb-4">

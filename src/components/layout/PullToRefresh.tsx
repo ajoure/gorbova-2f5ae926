@@ -110,7 +110,7 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
   return (
     <div
-      className="flex-1 flex flex-col relative touch-pan-y"
+      className="flex-1 min-h-0 flex flex-col relative touch-pan-y overflow-hidden"
       onPointerDownCapture={blurIfNeeded}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -139,7 +139,7 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
       {/* Content with pull offset */}
       <div
-        className="flex-1 min-h-0 flex flex-col"
+        className="flex-1 min-h-0 flex flex-col overflow-hidden"
         style={{
           transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : "none",
           transition: isPulling.current ? "none" : "transform 0.2s ease-out",
