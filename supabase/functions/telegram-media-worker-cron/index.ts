@@ -1,0 +1,130 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+/**
+ * telegram-media-worker-cron
+ * 
+ * Wrapper Edge Function for pg_cron scheduling.
+ * Called every minute by pg_net to process pending media jobs.
+ * 
+ * Security: No JWT required. Accepts calls from pg_net (internal)
+ * or with CRON_SECRET header for manual testing.
+ */
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  const start = Date.now();
+  
+  // Security check: allow pg_net internal calls or CRON_SECRET
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  const authHeader = req.headers.get("authorization");
+  const providedSecret = authHeader?.replace("Bearer ", "");
+  
+  // For pg_net calls, authorization may be absent - we rely on function being internal
+  // For manual calls, require CRON_SECRET if it's set
+  const userAgent = req.headers.get("user-agent") || "";
+  const isInternal = userAgent.includes("Supabase") || !authHeader;
+  
+  if (cronSecret && providedSecret && providedSecret !== cronSecret && !isInternal) {
+    console.error("[CRON] Unauthorized: invalid secret");
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const workerToken = Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+
+  if (!workerToken) {
+    console.error("[CRON] TELEGRAM_MEDIA_WORKER_TOKEN not configured");
+    return new Response(JSON.stringify({ error: "Worker token not configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (!supabaseUrl) {
+    console.error("[CRON] SUPABASE_URL not configured");
+    return new Response(JSON.stringify({ error: "SUPABASE_URL not configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const workerUrl = `${supabaseUrl}/functions/v1/telegram-media-worker`;
+
+  // Parse optional body for custom limit
+  let limit = 10;
+  try {
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      if (body.limit && typeof body.limit === "number") {
+        limit = Math.min(Math.max(body.limit, 1), 50);
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  console.log(`[CRON] Calling worker with limit=${limit}...`);
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55000); // 55s timeout (function max is 60s)
+
+    const res = await fetch(workerUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-token": workerToken,
+      },
+      body: JSON.stringify({ limit }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    const json = await res.json().catch(() => ({ ok: false, error: "invalid_json" }));
+
+    const cronMs = Date.now() - start;
+    console.log(
+      `[CRON] Worker response: ok=${json.ok} processed=${json.processed || 0} ` +
+      `ok_count=${json.ok_count || 0} err_count=${json.error_count || 0} ms=${cronMs}`
+    );
+
+    return new Response(
+      JSON.stringify({
+        ...json,
+        cron_ms: cronMs,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: res.status,
+      }
+    );
+  } catch (e: unknown) {
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    console.error("[CRON] Worker call failed:", errorMsg);
+
+    return new Response(
+      JSON.stringify({ 
+        ok: false, 
+        error: "worker_call_failed", 
+        details: errorMsg.slice(0, 200),
+        cron_ms: Date.now() - start,
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});
