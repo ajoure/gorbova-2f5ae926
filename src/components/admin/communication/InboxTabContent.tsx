@@ -501,23 +501,23 @@ export function InboxTabContent() {
 
   return (
     <TooltipProvider>
-      <div className="h-full min-h-0 flex flex-col overflow-hidden p-3">
-        {/* Glass Channel Tabs */}
-        <div className="mb-2 shrink-0">
-          <div className="inline-flex p-1 rounded-full bg-card/60 backdrop-blur-xl border border-border/30 shadow-lg">
+      <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
+        {/* Compact Channel Tabs - Bitrix24 style */}
+        <div className="mb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/30 backdrop-blur-md border border-border/20">
             <button
               onClick={() => setChannel("telegram")}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200",
                 channel === "telegram"
-                  ? "bg-card text-foreground shadow-md"
+                  ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <MessageSquare className="h-4 w-4" />
+              <MessageSquare className="h-3 w-3" />
               Telegram
               {totalUnread > 0 && (
-                <Badge className="h-5 min-w-5 px-1.5 text-xs rounded-full bg-primary text-primary-foreground">
+                <Badge className="h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
                   {totalUnread}
                 </Badge>
               )}
@@ -525,34 +525,34 @@ export function InboxTabContent() {
             <button
               onClick={() => setChannel("email")}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200",
                 channel === "email"
-                  ? "bg-card text-foreground shadow-md"
+                  ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <Mail className="h-4 w-4" />
+              <Mail className="h-3 w-3" />
               Email
             </button>
           </div>
         </div>
 
         {channel === "email" ? (
-          <div className="flex-1 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden">
+          <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
             <EmailInboxView 
               onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
             />
           </div>
         ) : (
-          <div className="flex flex-1 gap-4 min-h-0 w-full min-w-0">
-            {/* Dialog List - Glass Panel */}
+          <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
+            {/* Dialog List - Light Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[340px] shrink-0 min-w-0",
-              "bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl",
+              "flex flex-col w-full md:w-[320px] shrink-0 min-w-0",
+              "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
               {/* Header */}
-              <div className="p-2 space-y-2 border-b border-border/20">
+              <div className="p-1.5 space-y-1.5 border-b border-border/10">
                 {selectionMode ? (
                   /* Selection Mode Header */
                   <div className="flex items-center justify-between bg-primary/5 rounded-xl p-2">

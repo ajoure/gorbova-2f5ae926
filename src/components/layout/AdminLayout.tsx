@@ -118,16 +118,16 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         <AdminSidebar />
         <main className="flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-y-auto overflow-x-hidden">
           <header 
-            className="border-b flex items-center justify-between px-3 md:px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10"
+            className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
             style={{ 
               paddingTop: 'env(safe-area-inset-top, 0px)',
-              minHeight: 'calc(3.5rem + env(safe-area-inset-top, 0px))'
+              minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
             }}
           >
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <SidebarTrigger className="shrink-0" />
               {pageTitle && (
-                <h1 className="text-sm font-semibold text-foreground truncate">
+                <h1 className="text-xs font-medium text-foreground/80 truncate">
                   {pageTitle}
                 </h1>
               )}
@@ -140,7 +140,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
                     to={`/help#${helpAnchor}`}
                     className="text-muted-foreground hover:text-foreground transition-colors p-1"
                   >
-                    <HelpCircle className="h-5 w-5" />
+                    <HelpCircle className="h-4 w-4" />
                   </Link>
                 </TooltipTrigger>
                 <TooltipContent>

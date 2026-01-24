@@ -58,10 +58,9 @@ export default function AdminCommunication() {
   return (
     <AdminLayout>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
-        {/* Glass Pill Tabs - directly after topbar */}
-        <div className="px-4 md:px-6 pt-2 pb-2 shrink-0">
-          {/* Glass Pill Tabs */}
-          <div className="inline-flex p-1.5 rounded-full bg-background/60 backdrop-blur-xl border border-border/50 shadow-lg">
+        {/* Compact Glass Tabs - Bitrix24 style */}
+        <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const unread = getUnreadCount(tab.id);
@@ -72,18 +71,18 @@ export default function AdminCommunication() {
                   key={tab.id}
                   onClick={() => handleTabChange(tab.id)}
                   className={cn(
-                    "relative flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium transition-all duration-300",
+                    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200",
                     isActive 
-                      ? "bg-card text-foreground shadow-md" 
-                      : "text-muted-foreground hover:text-foreground hover:bg-card/50"
+                      ? "bg-background text-foreground shadow-sm" 
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">{tab.label}</span>
                   {unread > 0 && (
                     <Badge 
                       className={cn(
-                        "h-5 min-w-5 px-1.5 text-xs font-semibold rounded-full",
+                        "h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full",
                         tab.id === "support" 
                           ? "bg-orange-500 text-white" 
                           : "bg-primary text-primary-foreground"
