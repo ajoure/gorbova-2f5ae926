@@ -40,9 +40,18 @@ export default function AdminCommunication() {
 
   const inboxUnread = telegramUnread + emailUnread + ticketsUnread;
 
-  // Sync tab with URL
+  // Sync tab with URL - handle legacy "support" tab redirect
   useEffect(() => {
     const tabFromUrl = searchParams.get("tab");
+    
+    // Redirect legacy "support" tab to inbox with support channel
+    if (tabFromUrl === "support") {
+      setActiveTab("inbox");
+      setInboxChannel("support");
+      setSearchParams({ tab: "inbox" }, { replace: true });
+      return;
+    }
+    
     if (tabFromUrl && tabFromUrl !== activeTab) {
       setActiveTab(tabFromUrl);
     }

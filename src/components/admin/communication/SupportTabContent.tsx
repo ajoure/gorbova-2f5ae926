@@ -58,7 +58,7 @@ export function SupportTabContent() {
   const { data: selectedTicket } = useTicket(selectedTicketId || undefined);
   const updateTicket = useUpdateTicket();
 
-  // Update URL when ticket is selected
+  // Update URL when ticket is selected (keep existing tab parameter)
   useEffect(() => {
     const currentParams = new URLSearchParams(searchParams);
     if (selectedTicketId) {
@@ -66,9 +66,8 @@ export function SupportTabContent() {
     } else {
       currentParams.delete("ticket");
     }
-    // Keep the tab parameter
-    currentParams.set("tab", "support");
-    setSearchParams(currentParams);
+    // Don't override tab - preserve existing navigation
+    setSearchParams(currentParams, { replace: true });
   }, [selectedTicketId]);
 
   const filteredTickets = tickets?.filter((ticket) => {
