@@ -24,7 +24,6 @@ import { useUnreadTicketsCount } from "@/hooks/useUnreadTicketsCount";
 
 const tabs = [
   { id: "inbox", label: "Сообщения", icon: Inbox },
-  { id: "support", label: "Техподдержка", icon: LifeBuoy },
   { id: "broadcasts", label: "Рассылки", icon: Send },
   { id: "settings", label: "Настройки", icon: Settings },
 ];
@@ -32,14 +31,14 @@ const tabs = [
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
-  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email">("telegram");
+  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email" | "support">("telegram");
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();
   const { data: emailUnread = 0 } = useUnreadEmailCount();
   const ticketsUnread = useUnreadTicketsCount();
 
-  const inboxUnread = telegramUnread + emailUnread;
+  const inboxUnread = telegramUnread + emailUnread + ticketsUnread;
 
   // Sync tab with URL
   useEffect(() => {
@@ -57,7 +56,6 @@ export default function AdminCommunication() {
   const getUnreadCount = (tabId: string) => {
     switch (tabId) {
       case "inbox": return inboxUnread;
-      case "support": return ticketsUnread;
       default: return 0;
     }
   };
@@ -130,6 +128,21 @@ export default function AdminCommunication() {
                           </Badge>
                         )}
                       </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => { handleTabChange("inbox"); setInboxChannel("support"); }}
+                        className={cn(
+                          "flex items-center gap-2 text-xs cursor-pointer rounded-md",
+                          inboxChannel === "support" && activeTab === "inbox" && "bg-muted"
+                        )}
+                      >
+                        <LifeBuoy className="h-3.5 w-3.5" />
+                        Техподдержка
+                        {ticketsUnread > 0 && (
+                          <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-orange-500 text-white">
+                            {ticketsUnread}
+                          </Badge>
+                        )}
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 );
@@ -170,7 +183,6 @@ export default function AdminCommunication() {
         {/* Tab Content */}
         <div className="flex-1 min-h-0 overflow-hidden">
           {activeTab === "inbox" && <InboxTabContent defaultChannel={inboxChannel} />}
-          {activeTab === "support" && <SupportTabContent />}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}
           {activeTab === "settings" && <CommunicationSettingsTabContent />}
         </div>
