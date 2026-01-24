@@ -19,12 +19,13 @@ interface ModulesBySection {
 
 /**
  * Fetches active training modules grouped by their menu_section_key
- * for dynamic sidebar navigation
+ * for dynamic sidebar navigation. Maps child keys to parent keys
+ * so modules appear in the correct sidebar sections.
  */
 export function useSidebarModules() {
   const { user } = useAuth();
 
-  const { data: modules, isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["sidebar-modules", user?.id],
     queryFn: async () => {
       // Get active modules with their access info
@@ -42,6 +43,20 @@ export function useSidebarModules() {
         .order("sort_order");
 
       if (modulesError) throw modulesError;
+
+      // Fetch menu sections to map child keys to parent keys
+      const { data: menuSections } = await supabase
+        .from("user_menu_sections")
+        .select("key, parent_key")
+        .eq("is_active", true);
+
+      // Create child → parent mapping
+      const childToParentMap = new Map<string, string>();
+      menuSections?.forEach(section => {
+        if (section.parent_key) {
+          childToParentMap.set(section.key, section.parent_key);
+        }
+      });
 
       // If user is logged in, check access
       let accessibleModuleIds = new Set<string>();
@@ -77,30 +92,41 @@ export function useSidebarModules() {
         freeModules?.forEach(m => accessibleModuleIds.add(m.id));
       }
 
-      return modulesData?.map(m => ({
+      const modules = modulesData?.map(m => ({
         ...m,
         has_access: !user || accessibleModuleIds.has(m.id),
       })) || [];
+
+      return { modules, childToParentMap };
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Group modules by section
+  const modules = data?.modules || [];
+  const childToParentMap = data?.childToParentMap || new Map<string, string>();
+
+  // Group modules by section, mapping child keys to parent keys
   const modulesBySection = useMemo<ModulesBySection>(() => {
-    if (!modules) return {};
+    if (!modules.length) return {};
 
     return modules.reduce((acc, module) => {
-      const key = module.menu_section_key || "products"; // Default to products
+      let key = module.menu_section_key || "products";
+      
+      // Map child key (e.g., "products-library") to parent key ("products")
+      if (childToParentMap.has(key)) {
+        key = childToParentMap.get(key)!;
+      }
+      
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(module);
       return acc;
     }, {} as ModulesBySection);
-  }, [modules]);
+  }, [modules, childToParentMap]);
 
   return {
-    modules: modules || [],
+    modules,
     modulesBySection,
     isLoading,
   };
