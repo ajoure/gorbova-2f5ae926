@@ -737,7 +737,7 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-24 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 pr-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/10 outline outline-2 outline-primary/30 -outline-offset-2" 
                             : "hover:bg-card/80"
@@ -790,74 +790,138 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
-                        {/* Quick Actions on Hover - ABSOLUTE positioned with bg */}
+                        {/* Quick Actions - FLEX positioned (no absolute) */}
                         {!selectionMode && (
-                          <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity duration-200 bg-background/95 backdrop-blur-sm rounded-lg p-0.5 shadow-md border border-border/30 pointer-events-auto">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 rounded-full hover:bg-primary/20"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    togglePrefMutation.mutate({
-                                      contactUserId: dialog.user_id,
-                                      field: "is_favorite",
-                                      value: !dialog.is_favorite
-                                    });
-                                  }}
-                                >
-                                  <Star className={cn(
-                                    "h-4 w-4",
-                                    dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
-                                  )} />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="left" className="text-xs">
-                                {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 rounded-full hover:bg-primary/20"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    togglePrefMutation.mutate({
-                                      contactUserId: dialog.user_id,
-                                      field: "is_pinned",
-                                      value: !dialog.is_pinned
-                                    });
-                                  }}
-                                >
-                                  <Pin className={cn(
-                                    "h-4 w-4",
-                                    dialog.is_pinned ? "text-primary" : "text-muted-foreground"
-                                  )} />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="left" className="text-xs">
-                                {dialog.is_pinned ? "Открепить" : "Закрепить"}
-                              </TooltipContent>
-                            </Tooltip>
-                            {dialog.unread_count > 0 && (
+                          <div className="flex items-center shrink-0 ml-1 self-center">
+                            {/* Desktop: 3 buttons */}
+                            <div className="hidden md:flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity duration-200 bg-card/95 backdrop-blur-sm rounded-lg p-0.5 shadow-sm border border-border/30">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-8 w-8 rounded-full hover:bg-primary/20"
-                                    onClick={(e) => markChatAsRead(dialog.user_id, e)}
+                                    className="h-7 w-7 rounded-full hover:bg-primary/20"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePrefMutation.mutate({
+                                        contactUserId: dialog.user_id,
+                                        field: "is_favorite",
+                                        value: !dialog.is_favorite
+                                      });
+                                    }}
                                   >
-                                    <Check className="h-4 w-4 text-muted-foreground" />
+                                    <Star className={cn(
+                                      "h-4 w-4",
+                                      dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
+                                    )} />
                                   </Button>
                                 </TooltipTrigger>
-                                <TooltipContent side="left" className="text-xs">Прочитать</TooltipContent>
+                                <TooltipContent side="left" className="text-xs">
+                                  {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
+                                </TooltipContent>
                               </Tooltip>
-                            )}
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 rounded-full hover:bg-primary/20"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePrefMutation.mutate({
+                                        contactUserId: dialog.user_id,
+                                        field: "is_pinned",
+                                        value: !dialog.is_pinned
+                                      });
+                                    }}
+                                  >
+                                    <Pin className={cn(
+                                      "h-4 w-4",
+                                      dialog.is_pinned ? "text-primary" : "text-muted-foreground"
+                                    )} />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="text-xs">
+                                  {dialog.is_pinned ? "Открепить" : "Закрепить"}
+                                </TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={cn(
+                                      "h-7 w-7 rounded-full",
+                                      dialog.unread_count > 0 
+                                        ? "hover:bg-primary/20" 
+                                        : "opacity-30 cursor-not-allowed"
+                                    )}
+                                    onClick={(e) => dialog.unread_count > 0 && markChatAsRead(dialog.user_id, e)}
+                                    disabled={dialog.unread_count === 0}
+                                  >
+                                    <Check className={cn(
+                                      "h-4 w-4",
+                                      dialog.unread_count > 0 ? "text-muted-foreground" : "text-muted-foreground/50"
+                                    )} />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="text-xs">
+                                  {dialog.unread_count > 0 ? "Прочитать" : "Уже прочитано"}
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            {/* Mobile: ⋯ menu */}
+                            <div className="md:hidden">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 rounded-full opacity-70"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePrefMutation.mutate({
+                                        contactUserId: dialog.user_id,
+                                        field: "is_favorite",
+                                        value: !dialog.is_favorite
+                                      });
+                                    }}
+                                  >
+                                    <Star className={cn(
+                                      "h-4 w-4 mr-2",
+                                      dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : ""
+                                    )} />
+                                    {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePrefMutation.mutate({
+                                        contactUserId: dialog.user_id,
+                                        field: "is_pinned",
+                                        value: !dialog.is_pinned
+                                      });
+                                    }}
+                                  >
+                                    <Pin className={cn("h-4 w-4 mr-2", dialog.is_pinned ? "text-primary" : "")} />
+                                    {dialog.is_pinned ? "Открепить" : "Закрепить"}
+                                  </DropdownMenuItem>
+                                  {dialog.unread_count > 0 && (
+                                    <DropdownMenuItem onClick={(e) => markChatAsRead(dialog.user_id, e)}>
+                                      <Check className="h-4 w-4 mr-2" />
+                                      Прочитать
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
                           </div>
                         )}
                       </SwipeableDialogCard>
