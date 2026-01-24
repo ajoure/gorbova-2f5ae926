@@ -119,6 +119,13 @@ export const DEFAULT_MENU: MenuSettings = [
   },
 ];
 
+// IDs consolidated into Payments Hub - auto-removed from saved settings
+const DEPRECATED_ITEM_IDS = new Set([
+  "installments",        // → /admin/payments/installments
+  "preregistrations",    // → /admin/payments/preorders
+  "payment-diagnostics", // → /admin/payments/diagnostics
+]);
+
 // Remove duplicate items across all groups (keeps first occurrence)
 export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
   const seenIds = new Set<string>();
@@ -137,9 +144,15 @@ export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
 
 // Merge new DEFAULT_MENU items into saved settings
 function mergeMenuSettings(saved: MenuSettings): MenuSettings {
-  // 1. Collect ALL item IDs from ALL saved groups to prevent duplicates
+  // 1. Filter out deprecated items from ALL saved groups FIRST
+  const cleanedSaved = saved.map(group => ({
+    ...group,
+    items: (group.items || []).filter(item => !DEPRECATED_ITEM_IDS.has(item.id))
+  }));
+  
+  // 2. Collect ALL item IDs from cleaned saved groups to prevent duplicates
   const allSavedItemIds = new Set<string>();
-  for (const group of saved) {
+  for (const group of cleanedSaved) {
     for (const item of group.items) {
       allSavedItemIds.add(item.id);
     }
@@ -148,7 +161,7 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
   const merged: MenuSettings = [];
   
   for (const defaultGroup of DEFAULT_MENU) {
-    const savedGroup = saved.find(g => g.id === defaultGroup.id);
+    const savedGroup = cleanedSaved.find(g => g.id === defaultGroup.id);
     
     if (!savedGroup) {
       // New group - add only items that don't exist in other groups
@@ -174,7 +187,7 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
   }
   
   // Keep any custom groups that user added
-  for (const savedGroup of saved) {
+  for (const savedGroup of cleanedSaved) {
     if (!DEFAULT_MENU.find(g => g.id === savedGroup.id)) {
       merged.push(savedGroup);
     }
@@ -197,7 +210,7 @@ export function useAdminMenuSettings() {
         .single();
       
       if (error) {
-        console.log("Using default menu:", error.message);
+        console.info("[Menu] Using default menu:", error.message);
         return DEFAULT_MENU;
       }
       
@@ -206,8 +219,51 @@ export function useAdminMenuSettings() {
         return DEFAULT_MENU;
       }
       
-      // Merge new items from DEFAULT_MENU
-      return mergeMenuSettings(items as unknown as MenuSettings);
+      const savedItems = items as unknown as MenuSettings;
+      
+      // Check if deprecated items exist in saved settings
+      const hasDeprecated = savedItems.some(group => 
+        group.items?.some(item => DEPRECATED_ITEM_IDS.has(item.id))
+      );
+      
+      // Merge (which filters deprecated items)
+      const cleaned = mergeMenuSettings(savedItems);
+      
+      // One-time auto-cleanup with guards
+      if (hasDeprecated && data?.id) {
+        // Guard 1: Check if data actually changed (idempotency)
+        const savedJson = JSON.stringify(savedItems);
+        const cleanedJson = JSON.stringify(cleaned);
+        const hasChanges = savedJson !== cleanedJson;
+        
+        if (hasChanges) {
+          console.info("[Menu] Deprecated items found:", 
+            Array.from(DEPRECATED_ITEM_IDS).filter(id => 
+              savedItems.some(g => g.items?.some(i => i.id === id))
+            ).join(", "));
+          
+          // Guard 2: RBAC - check user is authenticated before write
+          const { data: userData } = await supabase.auth.getUser();
+          if (userData?.user?.id) {
+            // Attempt cleanup - RLS will enforce permissions
+            // Do NOT pass updated_at - let DB trigger handle it
+            supabase
+              .from("admin_menu_settings")
+              .update({ items: cleaned as any })
+              .eq("id", data.id)
+              .then(({ error: updateError }) => {
+                if (updateError) {
+                  console.warn("[Menu] Auto-cleanup skipped (no permission or RLS):", 
+                    updateError.message);
+                } else {
+                  console.info("[Menu] Auto-cleanup completed");
+                }
+              });
+          }
+        }
+      }
+      
+      return cleaned;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
