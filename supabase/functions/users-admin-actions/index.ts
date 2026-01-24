@@ -614,8 +614,8 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Check permission - require users.edit
-        if (!(await hasPermission("users.edit"))) {
+        // Check permission - require users.update or contacts.edit
+        if (!(await hasPermission("users.update")) && !(await hasPermission("contacts.edit"))) {
           return new Response(JSON.stringify({ error: "Permission denied" }), {
             status: 403,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
