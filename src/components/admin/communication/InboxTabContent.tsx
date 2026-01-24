@@ -790,6 +790,75 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
+                        
+                        {/* Quick Actions - IN FLOW, not absolute */}
+                        {!selectionMode && (
+                          <div className="flex-none self-center ml-2">
+                            <div className="flex items-center gap-1 rounded-lg border bg-background/80 p-1 shadow-sm">
+                              {/* ⭐ Favorite */}
+                              <button
+                                type="button"
+                                className={cn(
+                                  "h-7 w-7 rounded-md flex items-center justify-center transition-colors",
+                                  dialog.is_favorite 
+                                    ? "text-yellow-500" 
+                                    : "text-muted-foreground hover:bg-primary/10"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePrefMutation.mutate({
+                                    contactUserId: dialog.user_id,
+                                    field: "is_favorite",
+                                    value: !dialog.is_favorite,
+                                  });
+                                }}
+                              >
+                                <Star className={cn("h-4 w-4", dialog.is_favorite && "fill-yellow-500")} />
+                              </button>
+                              
+                              {/* 📌 Pin */}
+                              <button
+                                type="button"
+                                className={cn(
+                                  "h-7 w-7 rounded-md flex items-center justify-center transition-colors",
+                                  dialog.is_pinned 
+                                    ? "text-primary" 
+                                    : "text-muted-foreground hover:bg-primary/10"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePrefMutation.mutate({
+                                    contactUserId: dialog.user_id,
+                                    field: "is_pinned",
+                                    value: !dialog.is_pinned,
+                                  });
+                                }}
+                              >
+                                <Pin className={cn("h-4 w-4", dialog.is_pinned && "fill-primary")} />
+                              </button>
+                              
+                              {/* ✓ Mark as Read */}
+                              <button
+                                type="button"
+                                disabled={dialog.unread_count === 0}
+                                className={cn(
+                                  "h-7 w-7 rounded-md flex items-center justify-center transition-colors",
+                                  dialog.unread_count > 0
+                                    ? "text-muted-foreground hover:bg-primary/10"
+                                    : "opacity-40 cursor-not-allowed"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (dialog.unread_count > 0) {
+                                    markChatAsRead(dialog.user_id, e);
+                                  }
+                                }}
+                              >
+                                <Check className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </SwipeableDialogCard>
                     ))}
                   </div>
