@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +13,11 @@ import { EmailInboxView } from "@/components/admin/email";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import {
   Sheet,
   SheetContent,
@@ -41,6 +47,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableDialogCard";
+import { formatContactName } from "@/lib/nameUtils";
 import { 
   Search, 
   MessageSquare, 
@@ -506,6 +513,15 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
 
   const selectedDialog = filteredDialogs.find(d => d.user_id === selectedUserId) || dialogs.find(d => d.user_id === selectedUserId);
   const clearFilters = () => setAdvancedFilters(initialFilters);
+
+  // Virtualization
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: filteredDialogs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 64,
+    overscan: 5,
+  });
   const selectAllChats = () => setSelectedChats(new Set(filteredDialogs.map(d => d.user_id)));
 
   return (
@@ -519,13 +535,18 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
             />
           </div>
         ) : (
-          <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
-            {/* Dialog List - Light Glass Panel */}
-            <div className={cn(
-              "flex flex-col w-full md:w-[260px] shrink-0 min-w-0",
-              "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
-              selectedUserId ? "hidden md:flex" : "flex"
-            )}>
+          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 gap-3">
+            {/* Dialog List - Resizable Panel */}
+            <ResizablePanel 
+              defaultSize={25} 
+              minSize={15} 
+              maxSize={40}
+              className={cn(
+                "flex flex-col min-w-0",
+                "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
+                selectedUserId ? "hidden md:flex" : "flex"
+              )}
+            >
               {/* Header */}
               <div className="p-1.5 space-y-1.5 border-b border-border/10">
                 {selectionMode ? (
@@ -688,8 +709,11 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                 </div>
               </div>
 
-              {/* Dialog List */}
-              <ScrollArea className="flex-1">
+              {/* Dialog List - Virtualized */}
+              <div 
+                ref={parentRef} 
+                className="flex-1 min-h-0 overflow-y-auto"
+              >
                 {isLoading ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -703,133 +727,151 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                     </p>
                   </div>
                 ) : (
-                  <div className="p-1.5 min-w-0">
-                    {filteredDialogs.map((dialog) => (
-                      <SwipeableDialogCard
-                        key={dialog.user_id}
-                        disabled={selectionMode}
-                        onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
-                        onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
-                        onClick={() => handleSelectDialog(dialog.user_id)}
-className={cn(
-                "group relative grid grid-cols-[auto_1fr_24px] items-start gap-1.5 p-1.5 cursor-pointer rounded-lg border transition-colors duration-200",
-                selectedUserId === dialog.user_id 
-                  ? "bg-primary/10 border-primary" 
-                  : "border-transparent hover:bg-muted/40"
-              )}
-                      >
-                        {selectionMode && (
-                          <Checkbox
-                            checked={selectedChats.has(dialog.user_id)}
-                            onCheckedChange={() => toggleChatSelection(dialog.user_id, { stopPropagation: () => {} } as any)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-1.5"
-                          />
-                        )}
-                        <div className="relative shrink-0">
-                          <Avatar className="h-8 w-8 ring-1 ring-border/20">
-                            <AvatarImage src={dialog.profile?.avatar_url || undefined} />
-                            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
-                              {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
-                            </AvatarFallback>
-                          </Avatar>
-                          {dialog.unread_count > 0 && (
-                            <div className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold shadow-lg">
-                              {dialog.unread_count > 99 ? "99+" : dialog.unread_count}
+                  <div
+                    className="relative p-1.5"
+                    style={{ height: `${virtualizer.getTotalSize()}px` }}
+                  >
+                    {virtualizer.getVirtualItems().map((virtualRow) => {
+                      const dialog = filteredDialogs[virtualRow.index];
+                      return (
+                        <div
+                          key={dialog.user_id}
+                          className="absolute top-0 left-0 w-full px-1.5"
+                          style={{
+                            height: `${virtualRow.size}px`,
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <SwipeableDialogCard
+                            disabled={selectionMode}
+                            onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
+                            onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
+                            onClick={() => handleSelectDialog(dialog.user_id)}
+                            className={cn(
+                              "group relative grid grid-cols-[auto_1fr_24px] items-start gap-1.5 p-1.5 cursor-pointer rounded-lg border transition-colors duration-200",
+                              selectedUserId === dialog.user_id 
+                                ? "bg-primary/10 border-primary" 
+                                : "border-transparent hover:bg-muted/40"
+                            )}
+                          >
+                            {selectionMode && (
+                              <Checkbox
+                                checked={selectedChats.has(dialog.user_id)}
+                                onCheckedChange={() => toggleChatSelection(dialog.user_id, { stopPropagation: () => {} } as any)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-1.5"
+                              />
+                            )}
+                            <div className="relative shrink-0">
+                              <Avatar className="h-8 w-8 ring-1 ring-border/20">
+                                <AvatarImage src={dialog.profile?.avatar_url || undefined} />
+                                <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
+                                  {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
+                                </AvatarFallback>
+                              </Avatar>
+                              {dialog.unread_count > 0 && (
+                                <div className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold shadow-lg">
+                                  {dialog.unread_count > 99 ? "99+" : dialog.unread_count}
+                                </div>
+                              )}
                             </div>
-                          )}
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <div className="flex items-center justify-between gap-2 min-w-0">
+                                <span className="text-xs font-semibold truncate min-w-0">
+                                  {dialog.profile?.full_name 
+                                    ? formatContactName({ full_name: dialog.profile.full_name }) 
+                                    : dialog.profile?.email || "Неизвестный"}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground shrink-0">
+                                  {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
+                                </span>
+                              </div>
+                              <p className={cn(
+                                "text-xs line-clamp-2 break-words mt-0.5 min-w-0",
+                                dialog.unread_count > 0 
+                                  ? "text-foreground font-medium" 
+                                  : "text-muted-foreground"
+                              )}>
+                                {dialog.last_message}
+                              </p>
+                            </div>
+
+                            {/* Quick Actions - vertical stack, hover-only */}
+                            {!selectionMode && (
+                              <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+                                {/* ⭐ Favorite */}
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
+                                    dialog.is_favorite && "text-yellow-500"
+                                  )}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    togglePrefMutation.mutate({
+                                      contactUserId: dialog.user_id,
+                                      field: "is_favorite",
+                                      value: !dialog.is_favorite
+                                    });
+                                  }}
+                                >
+                                  <Star className={cn("h-3.5 w-3.5", dialog.is_favorite && "fill-yellow-500")} />
+                                </button>
+
+                                {/* 📌 Pin */}
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
+                                    dialog.is_pinned && "text-primary"
+                                  )}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    togglePrefMutation.mutate({
+                                      contactUserId: dialog.user_id,
+                                      field: "is_pinned",
+                                      value: !dialog.is_pinned
+                                    });
+                                  }}
+                                >
+                                  <Pin className={cn("h-3.5 w-3.5", dialog.is_pinned && "fill-primary")} />
+                                </button>
+
+                                {/* ✓ Mark as Read */}
+                                <button
+                                  type="button"
+                                  disabled={dialog.unread_count === 0}
+                                  className={cn(
+                                    "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
+                                    dialog.unread_count > 0
+                                      ? "hover:bg-primary/15"
+                                      : "opacity-40 cursor-not-allowed"
+                                  )}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (dialog.unread_count > 0) {
+                                      markChatAsRead(dialog.user_id, e);
+                                    }
+                                  }}
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </SwipeableDialogCard>
                         </div>
-                        <div className="flex-1 min-w-0 overflow-hidden">
-                          <div className="flex items-center justify-between gap-2 min-w-0">
-                  <span className="text-xs font-semibold truncate min-w-0">
-                    {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
-                  </span>
-                            <span className="text-[10px] text-muted-foreground shrink-0">
-                              {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
-                            </span>
-                          </div>
-                          <p className={cn(
-                            "text-xs line-clamp-2 break-words mt-0.5 min-w-0",
-                            dialog.unread_count > 0 
-                              ? "text-foreground font-medium" 
-                              : "text-muted-foreground"
-                          )}>
-                            {dialog.last_message}
-                  </p>
-                </div>
-
-                {/* Quick Actions - vertical stack, hover-only */}
-                {!selectionMode && (
-                  <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
-                    {/* ⭐ Favorite */}
-                    <button
-                      type="button"
-                      className={cn(
-                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
-                        dialog.is_favorite && "text-yellow-500"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        togglePrefMutation.mutate({
-                          contactUserId: dialog.user_id,
-                          field: "is_favorite",
-                          value: !dialog.is_favorite
-                        });
-                      }}
-                    >
-                      <Star className={cn("h-3.5 w-3.5", dialog.is_favorite && "fill-yellow-500")} />
-                    </button>
-
-                    {/* 📌 Pin */}
-                    <button
-                      type="button"
-                      className={cn(
-                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
-                        dialog.is_pinned && "text-primary"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        togglePrefMutation.mutate({
-                          contactUserId: dialog.user_id,
-                          field: "is_pinned",
-                          value: !dialog.is_pinned
-                        });
-                      }}
-                    >
-                      <Pin className={cn("h-3.5 w-3.5", dialog.is_pinned && "fill-primary")} />
-                    </button>
-
-                    {/* ✓ Mark as Read */}
-                    <button
-                      type="button"
-                      disabled={dialog.unread_count === 0}
-                      className={cn(
-                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
-                        dialog.unread_count > 0
-                          ? "hover:bg-primary/15"
-                          : "opacity-40 cursor-not-allowed"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (dialog.unread_count > 0) {
-                          markChatAsRead(dialog.user_id, e);
-                        }
-                      }}
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                    </button>
+                      );
+                    })}
                   </div>
                 )}
-              </SwipeableDialogCard>
-                    ))}
-                  </div>
-                )}
-              </ScrollArea>
-            </div>
+              </div>
+            </ResizablePanel>
 
-            {/* Chat View - Glass Panel */}
-            <div className={cn(
-              "flex-1 min-w-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden",
+            <ResizableHandle withHandle className="mx-1 hidden md:flex" />
+
+            {/* Chat View - Resizable Panel */}
+            <ResizablePanel defaultSize={75} minSize={50} className={cn(
+              "min-w-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden",
               !selectedUserId && "hidden md:flex items-center justify-center"
             )}>
               {selectedUserId ? (
@@ -927,8 +969,8 @@ className={cn(
                   <p className="text-sm text-muted-foreground/70 mt-1">для просмотра сообщений</p>
                 </div>
               )}
-            </div>
-          </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         )}
       </div>
       
