@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
-import { useSidebarModules } from "@/hooks/useSidebarModules";
+// Note: useSidebarModules removed - modules now appear inside page tabs, not sidebar dropdown
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -21,12 +21,9 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, ChevronDown, Library } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive } from "lucide-react";
 
-// Icon mapping for dynamic modules
-const SECTION_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  Activity, BookOpen, Wallet, Sparkles, Cpu, GraduationCap, Briefcase, Calculator, ClipboardCheck, Library, Package,
-};
+// Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
 
 interface MainMenuItem {
   key: string; // For matching with module sections
@@ -123,9 +120,7 @@ export function AppSidebar() {
   } = usePermissions();
   const collapsed = state === "collapsed";
 
-  // Fetch dynamic modules grouped by section
-  const { modulesBySection, isLoading: modulesLoading } = useSidebarModules();
-
+  // Note: Modules are now displayed inside page tabs, not in sidebar dropdown
   // Fetch profile data including avatar_url from Telegram
   const { data: profile } = useQuery({
     queryKey: ["sidebar-profile", user?.id],
@@ -188,62 +183,14 @@ export function AppSidebar() {
   const showAdminLink = isAdmin() || hasAdminAccess();
   const { firstName, lastName } = getNameParts();
 
-  // Render menu item with optional submenu
-  const renderMenuItem = (item: MainMenuItem, sectionModules: typeof modulesBySection[string]) => {
-    const hasModules = sectionModules && sectionModules.length > 0;
-    const isParentActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
-    const isModuleActive = hasModules && sectionModules.some(m => location.pathname.includes(`/library/${m.slug}`));
+  // Render menu item - NO dynamic modules in dropdown, just static links
+  const renderMenuItem = (item: MainMenuItem) => {
+    const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
 
-    // If item has submenu with modules, render as collapsible
-    if (item.hasSubmenu && hasModules && !collapsed) {
-      return (
-        <Collapsible key={item.key} defaultOpen={isParentActive || isModuleActive}>
-          <SidebarMenuItem>
-            <CollapsibleTrigger asChild>
-              <SidebarMenuButton 
-                className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent w-full"
-                isActive={isParentActive}
-              >
-                <item.icon className="h-5 w-5 shrink-0" />
-                <span className="flex-1 text-left">{item.title}</span>
-                <ChevronDown className="h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-180" />
-              </SidebarMenuButton>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="ml-4 mt-1 space-y-0.5 border-l border-sidebar-border/30 pl-3">
-                {/* Main section link */}
-                <NavLink 
-                  to={item.url} 
-                  end 
-                  className="flex items-center gap-2 px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-lg transition-all"
-                  activeClassName="text-sidebar-foreground bg-sidebar-accent/50"
-                >
-                  <Library className="h-3.5 w-3.5" />
-                  Все
-                </NavLink>
-                {/* Module links */}
-                {sectionModules.map((module) => (
-                  <NavLink
-                    key={module.id}
-                    to={`/library/${module.slug}`}
-                    className="flex items-center gap-2 px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-lg transition-all truncate"
-                    activeClassName="text-sidebar-foreground bg-sidebar-accent/50"
-                  >
-                    <Package className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{module.title}</span>
-                  </NavLink>
-                ))}
-              </div>
-            </CollapsibleContent>
-          </SidebarMenuItem>
-        </Collapsible>
-      );
-    }
-
-    // Regular menu item without submenu
+    // Regular menu item - no submenu with dynamic modules
     return (
       <SidebarMenuItem key={item.key}>
-        <SidebarMenuButton asChild isActive={isParentActive} tooltip={collapsed ? item.title : undefined}>
+        <SidebarMenuButton asChild isActive={isActive} tooltip={collapsed ? item.title : undefined}>
           <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
             <item.icon className="h-5 w-5 shrink-0" />
             {!collapsed && <span>{item.title}</span>}
@@ -279,7 +226,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainMenuItems.map(item => renderMenuItem(item, modulesBySection[item.key]))}
+              {mainMenuItems.map(item => renderMenuItem(item))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -309,7 +256,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {legacyMenuItems.map(item => renderMenuItem(item, modulesBySection[item.key]))}
+              {legacyMenuItems.map(item => renderMenuItem(item))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

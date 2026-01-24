@@ -10,6 +10,7 @@ import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
+import { ModuleCard } from "@/components/training/ModuleCard";
 import { 
   ShoppingBag, 
   BookOpen, 
@@ -19,7 +20,8 @@ import {
   Sparkles,
   Star,
   Clock,
-  Users
+  Users,
+  FolderOpen
 } from "lucide-react";
 
 import productClubImage from "@/assets/product-club.png";
@@ -364,7 +366,16 @@ export default function Learning() {
     return product;
   }), [modules, businessTrainingAccess]);
 
+  // Filter modules by menu_section_key for each tab
+  const libraryModules = modules.filter(m => 
+    m.menu_section_key === "products-library" && m.is_active
+  );
+  const allProductsModules = modules.filter(m => 
+    m.menu_section_key === "products" && m.is_active
+  );
+
   const purchasedProducts = enrichedProducts.filter(p => p.isPurchased && p.courseSlug);
+  const libraryItemsCount = purchasedProducts.length + libraryModules.length;
 
   return (
     <DashboardLayout>
@@ -383,9 +394,9 @@ export default function Learning() {
             <TabsTrigger value="library" className="flex items-center gap-2">
               <BookOpen className="h-4 w-4" />
               Моя библиотека
-              {purchasedProducts.length > 0 && (
+              {libraryItemsCount > 0 && (
                 <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-xs">
-                  {purchasedProducts.length}
+                  {libraryItemsCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -402,17 +413,21 @@ export default function Learning() {
                   onSwitchToLibrary={() => setActiveTab("library")}
                 />
               ))}
+              {/* Dynamic modules assigned to "products" section */}
+              {allProductsModules.map((module) => (
+                <ModuleCard key={module.id} module={module} />
+              ))}
             </div>
           </TabsContent>
 
           {/* Library Tab */}
           <TabsContent value="library" className="mt-6">
-            {purchasedProducts.length === 0 ? (
+            {libraryItemsCount === 0 ? (
               <GlassCard className="text-center py-16">
-                <BookOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+                <FolderOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
                 <h3 className="text-xl font-semibold mb-2">Библиотека пуста</h3>
                 <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                  У вас пока нет приобретённых курсов. Откройте каталог, чтобы выбрать подходящее обучение.
+                  У вас пока нет приобретённых курсов или модулей. Откройте каталог, чтобы выбрать подходящее обучение.
                 </p>
                 <Button onClick={() => setActiveTab("store")}>
                   <ShoppingBag className="h-4 w-4 mr-2" />
@@ -421,6 +436,7 @@ export default function Learning() {
               </GlassCard>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                {/* Static purchased products */}
                 {purchasedProducts.map((product) => (
                   <ProductCard
                     key={product.id}
@@ -428,6 +444,10 @@ export default function Learning() {
                     variant="library"
                     onSwitchToLibrary={() => {}}
                   />
+                ))}
+                {/* Dynamic modules assigned to "products-library" section */}
+                {libraryModules.map((module) => (
+                  <ModuleCard key={module.id} module={module} />
                 ))}
               </div>
             )}
