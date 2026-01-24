@@ -736,12 +736,12 @@ export function InboxTabContent() {
                         onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
-                      className={cn(
-                        "group flex items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
-                        selectedUserId === dialog.user_id 
-                          ? "bg-primary/10 border-primary" 
-                          : "border-transparent hover:bg-muted/40"
-                      )}
+className={cn(
+                "group relative grid grid-cols-[auto_1fr_40px] items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
+                selectedUserId === dialog.user_id 
+                  ? "bg-primary/10 border-primary" 
+                  : "border-transparent hover:bg-muted/40"
+              )}
                       >
                         {selectionMode && (
                           <Checkbox
@@ -766,17 +766,9 @@ export function InboxTabContent() {
                         </div>
                         <div className="flex-1 min-w-0 overflow-hidden">
                           <div className="flex items-center justify-between gap-2 min-w-0">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              {dialog.is_pinned && (
-                                <Pin className="h-3 w-3 text-primary shrink-0" />
-                              )}
-                              <span className="font-semibold truncate min-w-0">
-                                {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
-                              </span>
-                              {dialog.is_favorite && (
-                                <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500 shrink-0" />
-                              )}
-                            </div>
+                  <span className="font-semibold truncate min-w-0">
+                    {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
+                  </span>
                             <span className="text-[11px] text-muted-foreground shrink-0">
                               {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                             </span>
@@ -788,9 +780,72 @@ export function InboxTabContent() {
                               : "text-muted-foreground"
                           )}>
                             {dialog.last_message}
-                          </p>
-                        </div>
-                      </SwipeableDialogCard>
+                  </p>
+                </div>
+
+                {/* Quick Actions - vertical stack, hover-only */}
+                {!selectionMode && (
+                  <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+                    {/* ⭐ Favorite */}
+                    <button
+                      type="button"
+                      className={cn(
+                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
+                        dialog.is_favorite && "text-yellow-500"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePrefMutation.mutate({
+                          contactUserId: dialog.user_id,
+                          field: "is_favorite",
+                          value: !dialog.is_favorite
+                        });
+                      }}
+                    >
+                      <Star className={cn("h-3.5 w-3.5", dialog.is_favorite && "fill-yellow-500")} />
+                    </button>
+
+                    {/* 📌 Pin */}
+                    <button
+                      type="button"
+                      className={cn(
+                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15",
+                        dialog.is_pinned && "text-primary"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePrefMutation.mutate({
+                          contactUserId: dialog.user_id,
+                          field: "is_pinned",
+                          value: !dialog.is_pinned
+                        });
+                      }}
+                    >
+                      <Pin className={cn("h-3.5 w-3.5", dialog.is_pinned && "fill-primary")} />
+                    </button>
+
+                    {/* ✓ Mark as Read */}
+                    <button
+                      type="button"
+                      disabled={dialog.unread_count === 0}
+                      className={cn(
+                        "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
+                        dialog.unread_count > 0
+                          ? "hover:bg-primary/15"
+                          : "opacity-40 cursor-not-allowed"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (dialog.unread_count > 0) {
+                          markChatAsRead(dialog.user_id, e);
+                        }
+                      }}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </SwipeableDialogCard>
                     ))}
                   </div>
                 )}
