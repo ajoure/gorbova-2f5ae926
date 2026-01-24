@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableDialogCard";
 import { 
   Search, 
   MessageSquare, 
@@ -392,8 +393,8 @@ export function InboxTabContent() {
     },
   });
 
-  const markChatAsRead = (userId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const markChatAsRead = (userId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     markAsRead.mutate(userId);
     toast.success("Отмечено как прочитанное");
   };
@@ -700,7 +701,7 @@ export function InboxTabContent() {
                       onClick={() => setFilter(tab.value as any)}
                     >
                       {tab.label}
-                      {tab.count && tab.count > 0 && (
+                      {tab.count !== undefined && tab.count > 0 && (
                         <span className="ml-1.5 text-[10px] opacity-80">
                           {tab.count}
                         </span>
@@ -727,16 +728,19 @@ export function InboxTabContent() {
                 ) : (
                   <div className="p-1.5 min-w-0">
                     {filteredDialogs.map((dialog) => (
-                      <div
+                      <SwipeableDialogCard
                         key={dialog.user_id}
+                        disabled={selectionMode}
+                        onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
+                        onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
+                        onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-16 cursor-pointer rounded-xl transition-all duration-200 mb-0.5 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 pr-16 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           "hover:bg-card/80",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" 
                             : ""
                         )}
-                        onClick={() => handleSelectDialog(dialog.user_id)}
                       >
                         {selectionMode && (
                           <Checkbox
@@ -855,7 +859,7 @@ export function InboxTabContent() {
                             )}
                           </div>
                         )}
-                      </div>
+                      </SwipeableDialogCard>
                     ))}
                   </div>
                 )}

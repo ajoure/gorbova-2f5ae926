@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { format } from "date-fns";
+import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -927,7 +927,33 @@ export function ContactTelegramChat({
             </div>
           ) : (
             <div className="space-y-3 pr-4 px-1">
-              {chatItems.map(renderChatItem)}
+              {chatItems.map((item, index) => {
+                const currentDate = new Date(item.created_at);
+                const prevItem = index > 0 ? chatItems[index - 1] : null;
+                const prevDate = prevItem ? new Date(prevItem.created_at) : null;
+                const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
+                
+                const getDateLabel = (date: Date) => {
+                  if (isToday(date)) return "Сегодня";
+                  if (isYesterday(date)) return "Вчера";
+                  return format(date, "dd.MM.yyyy", { locale: ru });
+                };
+                
+                return (
+                  <div key={item.id}>
+                    {showDateSeparator && (
+                      <div className="flex items-center justify-center my-4">
+                        <div className="flex-1 border-t border-border/30" />
+                        <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
+                          {getDateLabel(currentDate)}
+                        </span>
+                        <div className="flex-1 border-t border-border/30" />
+                      </div>
+                    )}
+                    {renderChatItem(item)}
+                  </div>
+                );
+              })}
               <div ref={bottomRef} />
             </div>
           )}
