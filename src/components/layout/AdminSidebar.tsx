@@ -238,14 +238,11 @@ export function AdminSidebar() {
               <Settings className="w-5 h-5 text-white" />
             </div>
             {!collapsed && (
-              <div className="flex-1">
-                <h1 className="font-bold text-lg text-sidebar-foreground">
-                  Админ-панель
-                </h1>
-                <p className="text-xs text-sidebar-foreground/60">
-                  Управление
-                </p>
-              </div>
+            <div className="flex-1">
+              <span className="font-medium text-sm text-sidebar-foreground">
+                Панель управления
+              </span>
+            </div>
             )}
             {!collapsed && isSuperAdmin && (
               <Button

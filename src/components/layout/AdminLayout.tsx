@@ -87,8 +87,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             }}
           >
             <div className="flex items-center min-w-0">
-              <SidebarTrigger className="mr-3 md:mr-4 shrink-0" />
-              <h2 className="text-base md:text-lg font-semibold truncate">Админ-панель</h2>
+              <SidebarTrigger className="shrink-0" />
             </div>
             {/* Contextual help link */}
             <TooltipProvider>
