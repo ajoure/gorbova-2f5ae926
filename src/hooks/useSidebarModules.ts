@@ -44,19 +44,8 @@ export function useSidebarModules() {
 
       if (modulesError) throw modulesError;
 
-      // Fetch menu sections to map child keys to parent keys
-      const { data: menuSections } = await supabase
-        .from("user_menu_sections")
-        .select("key, parent_key")
-        .eq("is_active", true);
-
-      // Create child → parent mapping
-      const childToParentMap = new Map<string, string>();
-      menuSections?.forEach(section => {
-        if (section.parent_key) {
-          childToParentMap.set(section.key, section.parent_key);
-        }
-      });
+      // Note: We group by exact menu_section_key (no mapping)
+      // Modules appear inside page tabs, not in sidebar dropdown
 
       // If user is logged in, check access
       let accessibleModuleIds = new Set<string>();
@@ -97,33 +86,27 @@ export function useSidebarModules() {
         has_access: !user || accessibleModuleIds.has(m.id),
       })) || [];
 
-      return { modules, childToParentMap };
+      return modules;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const modules = data?.modules || [];
-  const childToParentMap = data?.childToParentMap || new Map<string, string>();
+  const modules = data || [];
 
-  // Group modules by section, mapping child keys to parent keys
+  // Group modules by exact section key (no parent mapping)
+  // Modules are displayed inside page tabs, not in sidebar dropdown
   const modulesBySection = useMemo<ModulesBySection>(() => {
     if (!modules.length) return {};
 
     return modules.reduce((acc, module) => {
-      let key = module.menu_section_key || "products";
-      
-      // Map child key (e.g., "products-library") to parent key ("products")
-      if (childToParentMap.has(key)) {
-        key = childToParentMap.get(key)!;
-      }
-      
+      const key = module.menu_section_key || "products";
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(module);
       return acc;
     }, {} as ModulesBySection);
-  }, [modules, childToParentMap]);
+  }, [modules]);
 
   return {
     modules,
