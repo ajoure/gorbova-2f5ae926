@@ -70,6 +70,7 @@ import {
   Mail,
   CheckSquare,
   RotateCcw,
+  LifeBuoy,
 } from "lucide-react";
 import { format, formatDistanceToNow, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -547,9 +548,26 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   });
   const selectAllChats = () => setSelectedChats(new Set(filteredDialogs.map(d => d.user_id)));
 
+  // Channel indicator config
+  const channelConfig = {
+    telegram: { icon: MessageSquare, label: "Telegram", color: "text-blue-500" },
+    email: { icon: Mail, label: "Email", color: "text-amber-500" },
+    support: { icon: LifeBuoy, label: "Техподдержка", color: "text-orange-500" },
+  };
+  const currentChannelConfig = channelConfig[channel];
+  const ChannelIcon = currentChannelConfig.icon;
+
   return (
     <TooltipProvider>
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
+        
+        {/* Channel Indicator Header */}
+        <div className="flex items-center gap-2 px-1 pb-2 shrink-0">
+          <div className={cn("p-1.5 rounded-lg bg-card/60 border border-border/20", currentChannelConfig.color)}>
+            <ChannelIcon className="h-4 w-4" />
+          </div>
+          <span className="text-sm font-medium">{currentChannelConfig.label}</span>
+        </div>
 
         {channel === "support" ? (
           <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
