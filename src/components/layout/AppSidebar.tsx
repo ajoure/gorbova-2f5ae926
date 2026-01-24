@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useSidebarModules } from "@/hooks/useSidebarModules";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -15,46 +16,78 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive } from "lucide-react";
+import { 
+  Collapsible, 
+  CollapsibleContent, 
+  CollapsibleTrigger 
+} from "@/components/ui/collapsible";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, ChevronDown, Library } from "lucide-react";
 
-const mainMenuItems = [{
+// Icon mapping for dynamic modules
+const SECTION_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  Activity, BookOpen, Wallet, Sparkles, Cpu, GraduationCap, Briefcase, Calculator, ClipboardCheck, Library, Package,
+};
+
+interface MainMenuItem {
+  key: string; // For matching with module sections
+  title: string;
+  url: string;
+  icon: React.ComponentType<{ className?: string }>;
+  hasSubmenu?: boolean;
+}
+
+const mainMenuItems: MainMenuItem[] = [{
+  key: "dashboard",
   title: "Пульс",
   url: "/dashboard",
   icon: Activity
 }, {
+  key: "knowledge",
   title: "База знаний",
   url: "/knowledge",
-  icon: BookOpen
+  icon: BookOpen,
+  hasSubmenu: true
 }, {
+  key: "money",
   title: "Деньги",
   url: "/money",
   icon: Wallet
 }, {
+  key: "self-development",
   title: "Саморазвитие",
   url: "/self-development",
   icon: Sparkles
 }, {
+  key: "ai",
   title: "Нейросеть",
   url: "/ai",
   icon: Cpu
 }, {
+  key: "products",
   title: "Обучение",
   url: "/products",
-  icon: GraduationCap
+  icon: GraduationCap,
+  hasSubmenu: true
 }];
 
-const legacyMenuItems = [{
+const legacyMenuItems: MainMenuItem[] = [{
+  key: "business",
   title: "Бизнес",
   url: "/business",
-  icon: Briefcase
+  icon: Briefcase,
+  hasSubmenu: true
 }, {
+  key: "accountant",
   title: "Бухгалтер",
   url: "/accountant",
-  icon: Calculator
+  icon: Calculator,
+  hasSubmenu: true
 }, {
+  key: "audits",
   title: "Проверки",
   url: "/audits",
-  icon: ClipboardCheck
+  icon: ClipboardCheck,
+  hasSubmenu: true
 }];
 
 const leaderToolsItems = [{
@@ -89,6 +122,9 @@ export function AppSidebar() {
     isAdmin,
   } = usePermissions();
   const collapsed = state === "collapsed";
+
+  // Fetch dynamic modules grouped by section
+  const { modulesBySection, isLoading: modulesLoading } = useSidebarModules();
 
   // Fetch profile data including avatar_url from Telegram
   const { data: profile } = useQuery({
@@ -152,6 +188,71 @@ export function AppSidebar() {
   const showAdminLink = isAdmin() || hasAdminAccess();
   const { firstName, lastName } = getNameParts();
 
+  // Render menu item with optional submenu
+  const renderMenuItem = (item: MainMenuItem, sectionModules: typeof modulesBySection[string]) => {
+    const hasModules = sectionModules && sectionModules.length > 0;
+    const isParentActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
+    const isModuleActive = hasModules && sectionModules.some(m => location.pathname.includes(`/library/${m.slug}`));
+
+    // If item has submenu with modules, render as collapsible
+    if (item.hasSubmenu && hasModules && !collapsed) {
+      return (
+        <Collapsible key={item.key} defaultOpen={isParentActive || isModuleActive}>
+          <SidebarMenuItem>
+            <CollapsibleTrigger asChild>
+              <SidebarMenuButton 
+                className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent w-full"
+                isActive={isParentActive}
+              >
+                <item.icon className="h-5 w-5 shrink-0" />
+                <span className="flex-1 text-left">{item.title}</span>
+                <ChevronDown className="h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </SidebarMenuButton>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-sidebar-border/30 pl-3">
+                {/* Main section link */}
+                <NavLink 
+                  to={item.url} 
+                  end 
+                  className="flex items-center gap-2 px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-lg transition-all"
+                  activeClassName="text-sidebar-foreground bg-sidebar-accent/50"
+                >
+                  <Library className="h-3.5 w-3.5" />
+                  Все
+                </NavLink>
+                {/* Module links */}
+                {sectionModules.map((module) => (
+                  <NavLink
+                    key={module.id}
+                    to={`/library/${module.slug}`}
+                    className="flex items-center gap-2 px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-lg transition-all truncate"
+                    activeClassName="text-sidebar-foreground bg-sidebar-accent/50"
+                  >
+                    <Package className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{module.title}</span>
+                  </NavLink>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </SidebarMenuItem>
+        </Collapsible>
+      );
+    }
+
+    // Regular menu item without submenu
+    return (
+      <SidebarMenuItem key={item.key}>
+        <SidebarMenuButton asChild isActive={isParentActive} tooltip={collapsed ? item.title : undefined}>
+          <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
+            <item.icon className="h-5 w-5 shrink-0" />
+            {!collapsed && <span>{item.title}</span>}
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  };
+
   return <Sidebar collapsible="icon" className="border-r-0" style={{
     background: "var(--gradient-sidebar)"
   }}>
@@ -178,14 +279,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainMenuItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
-                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>)}
+              {mainMenuItems.map(item => renderMenuItem(item, modulesBySection[item.key]))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -215,14 +309,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {legacyMenuItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
-                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>)}
+              {legacyMenuItems.map(item => renderMenuItem(item, modulesBySection[item.key]))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
