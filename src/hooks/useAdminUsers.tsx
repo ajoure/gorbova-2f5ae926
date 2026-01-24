@@ -351,6 +351,39 @@ export function useAdminUsers() {
     }
   };
 
+  const changeUserEmail = async (userId: string, newEmail: string): Promise<boolean> => {
+    try {
+      const response = await invokeUsersAdminActions({
+        action: "change_email",
+        targetUserId: userId,
+        newEmail,
+      });
+
+      if (response.error) {
+        if (response.error instanceof Error && response.error.message === "NOT_AUTHENTICATED") {
+          toast.error("Сессия истекла — войдите снова");
+          return false;
+        }
+        console.error("Change email error:", response.error);
+        toast.error("Ошибка смены email");
+        return false;
+      }
+
+      if (response.data?.error) {
+        toast.error(response.data.error);
+        return false;
+      }
+
+      toast.success(`Email изменён на ${newEmail}`);
+      await fetchUsers();
+      return true;
+    } catch (error) {
+      console.error("Change email error:", error);
+      toast.error("Ошибка смены email");
+      return false;
+    }
+  };
+
   return {
     users,
     loading,
@@ -364,5 +397,6 @@ export function useAdminUsers() {
     forceLogout,
     startImpersonation,
     stopImpersonation,
+    changeUserEmail,
   };
 }
