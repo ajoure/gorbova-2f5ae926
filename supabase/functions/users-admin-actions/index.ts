@@ -6,9 +6,10 @@ const corsHeaders = {
 };
 
 interface AdminActionRequest {
-  action: "block" | "unblock" | "delete" | "restore" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop" | "invite";
+  action: "block" | "unblock" | "delete" | "restore" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop" | "invite" | "change_email";
   targetUserId?: string;
   email?: string;
+  newEmail?: string;
   roleCode?: string;
 }
 
@@ -75,7 +76,7 @@ serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    const { action, targetUserId, email }: AdminActionRequest = await req.json();
+    const { action, targetUserId, email, newEmail }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
 
     // Helper function to check permission
@@ -601,6 +602,91 @@ serve(async (req: Request): Promise<Response> => {
 
         await logAction("users.invite", inviteData.user?.id || null, { email: inviteEmail, roleCode });
         return new Response(JSON.stringify({ success: true, userId: inviteData.user?.id }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "change_email": {
+        if (!targetUserId || !newEmail) {
+          return new Response(JSON.stringify({ error: "targetUserId and newEmail required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Check permission - require users.edit
+        if (!(await hasPermission("users.edit"))) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Prevent changing super_admin email unless actor is super_admin
+        if (await isTargetSuperAdmin(targetUserId) && !(await isActorSuperAdmin())) {
+          return new Response(JSON.stringify({ error: "Cannot modify super admin" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get current user info for audit log
+        const { data: currentUser, error: currentUserError } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+        if (currentUserError || !currentUser?.user) {
+          console.error("Get user error:", currentUserError);
+          return new Response(JSON.stringify({ error: "User not found" }), {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const oldEmail = currentUser.user.email;
+
+        // Validate new email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(newEmail)) {
+          return new Response(JSON.stringify({ error: "Invalid email format" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Update email in auth.users via Admin API
+        // email_confirm: true means no verification email needed (admin verified)
+        const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
+          targetUserId,
+          { email: newEmail, email_confirm: true }
+        );
+
+        if (authError) {
+          console.error("Update auth email error:", authError);
+          return new Response(JSON.stringify({ error: authError.message || "Failed to update email" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Sync profiles.email
+        const { error: profileError } = await supabaseAdmin
+          .from("profiles")
+          .update({ email: newEmail })
+          .eq("user_id", targetUserId);
+
+        if (profileError) {
+          console.error("Update profile email error:", profileError);
+          // Don't fail - auth email was already updated
+        }
+
+        await logAction("users.change_email", targetUserId, { 
+          old_email: oldEmail, 
+          new_email: newEmail 
+        });
+
+        return new Response(JSON.stringify({ 
+          success: true, 
+          oldEmail, 
+          newEmail 
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
