@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { EmailInboxView } from "@/components/admin/email";
+import { SupportTabContent } from "@/components/admin/communication/SupportTabContent";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -159,14 +160,35 @@ const initialFilters: Filters = {
 };
 
 interface InboxTabContentProps {
-  defaultChannel?: "telegram" | "email";
+  defaultChannel?: "telegram" | "email" | "support";
 }
+
+const PANEL_SIZE_KEY = "communication-panel-sizes";
 
 export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContentProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [channel, setChannel] = useState<"telegram" | "email">(defaultChannel);
+  const [channel, setChannel] = useState<"telegram" | "email" | "support">(defaultChannel);
+  
+  // Load saved panel size from localStorage
+  const [savedPanelSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(PANEL_SIZE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.left || 25;
+      }
+    } catch {}
+    return 25;
+  });
+  
+  // Save panel size to localStorage
+  const handlePanelResize = (sizes: number[]) => {
+    try {
+      localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify({ left: sizes[0] }));
+    } catch {}
+  };
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [contactSheetUserId, setContactSheetUserId] = useState<string | null>(null);
@@ -529,17 +551,21 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     <TooltipProvider>
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
 
-        {channel === "email" ? (
+        {channel === "support" ? (
+          <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
+            <SupportTabContent />
+          </div>
+        ) : channel === "email" ? (
           <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
             <EmailInboxView 
               onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
             />
           </div>
         ) : (
-          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 gap-3">
+          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 gap-3" onLayout={handlePanelResize}>
             {/* Dialog List - Resizable Panel */}
             <ResizablePanel 
-              defaultSize={25} 
+              defaultSize={savedPanelSize} 
               minSize={15} 
               maxSize={40}
               className={cn(
