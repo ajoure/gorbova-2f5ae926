@@ -6,7 +6,9 @@ import { useState, useEffect } from "react";
  */
 export function useVisibilityPolling(interval: number): number | false {
   const [isVisible, setIsVisible] = useState(
-    typeof document !== "undefined" ? !document.hidden : true
+    typeof document !== "undefined" && typeof document.hidden !== "undefined" 
+      ? !document.hidden 
+      : true
   );
 
   useEffect(() => {
