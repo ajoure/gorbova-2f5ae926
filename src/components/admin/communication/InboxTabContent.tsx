@@ -548,26 +548,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   });
   const selectAllChats = () => setSelectedChats(new Set(filteredDialogs.map(d => d.user_id)));
 
-  // Channel indicator config
-  const channelConfig = {
-    telegram: { icon: MessageSquare, label: "Telegram", color: "text-blue-500" },
-    email: { icon: Mail, label: "Email", color: "text-amber-500" },
-    support: { icon: LifeBuoy, label: "Техподдержка", color: "text-orange-500" },
-  };
-  const currentChannelConfig = channelConfig[channel];
-  const ChannelIcon = currentChannelConfig.icon;
-
   return (
     <TooltipProvider>
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
-        
-        {/* Channel Indicator Header */}
-        <div className="flex items-center gap-2 px-1 pb-2 shrink-0">
-          <div className={cn("p-1.5 rounded-lg bg-card/60 border border-border/20", currentChannelConfig.color)}>
-            <ChannelIcon className="h-4 w-4" />
-          </div>
-          <span className="text-sm font-medium">{currentChannelConfig.label}</span>
-        </div>
 
         {channel === "support" ? (
           <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
@@ -643,7 +626,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                       <div className="p-1.5 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5">
                         <MessageSquare className="h-3.5 w-3.5 text-primary" />
                       </div>
-                      <h2 className="text-xs font-semibold">Чаты</h2>
+                      <h2 className="text-xs font-semibold">Telegram</h2>
                       {totalUnread > 0 && (
                         <Badge className="bg-primary text-primary-foreground text-[10px] h-4 min-w-4 px-1 rounded-full">
                           {totalUnread}

@@ -13,7 +13,6 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -116,31 +115,51 @@ export function SupportTabContent() {
   return (
     <div className="h-full flex">
       {/* Left panel - ticket list */}
-      <div className="w-80 lg:w-96 border-r flex flex-col">
-        <div className="p-4 border-b">
-          <div className="relative mb-4">
+      <div className="w-80 lg:w-96 flex flex-col bg-card/40 backdrop-blur-md border-r border-border/20">
+        <div className="p-3 space-y-3 border-b border-border/10">
+          {/* Header */}
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-500/5">
+              <MessageSquare className="h-3.5 w-3.5 text-orange-500" />
+            </div>
+            <h2 className="text-xs font-semibold">Техподдержка</h2>
+          </div>
+          
+          {/* Search */}
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Поиск..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="pl-9 h-10 bg-card/80 border-border/30 rounded-xl focus:border-primary/50 focus:ring-primary/20"
             />
           </div>
-          <Tabs value={statusFilter} onValueChange={setStatusFilter}>
-            <TabsList className="w-full">
-              <TabsTrigger value="open" className="flex-1">
-                Открытые
-              </TabsTrigger>
-              <TabsTrigger value="closed" className="flex-1">
-                Закрытые
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          
+          {/* Filter tabs - pill style like Telegram */}
+          <div className="flex items-center gap-1 p-0.5 bg-muted/50 rounded-full">
+            {[
+              { value: "open", label: "Открытые" },
+              { value: "closed", label: "Закрытые" }
+            ].map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+                className={cn(
+                  "flex-1 px-3 h-7 text-xs font-medium rounded-full transition-all",
+                  statusFilter === tab.value 
+                    ? "bg-primary text-primary-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <ScrollArea className="flex-1">
-          <div className="p-2 space-y-2">
+          <div className="p-2 space-y-1">
             {ticketsLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
