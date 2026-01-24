@@ -206,20 +206,33 @@ export function useCreateTicket() {
 
   return useMutation({
     mutationFn: async (data: CreateTicketData) => {
+      // Check if user is authenticated
+      if (!user?.id) {
+        throw new Error("Необходимо авторизоваться для создания обращения");
+      }
+
       // Get profile_id first
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("id")
-        .eq("user_id", user!.id)
+        .eq("user_id", user.id)
         .single();
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error("Profile fetch error:", profileError);
+        throw new Error("Профиль не найден. Попробуйте перезайти в систему.");
+      }
 
+      if (!profile?.id) {
+        throw new Error("Профиль не найден. Попробуйте перезайти в систему.");
+      }
+
+      // Create ticket with explicit user_id for RLS
       const { data: ticket, error } = await supabase
         .from("support_tickets")
         .insert({
           profile_id: profile.id,
-          user_id: user!.id,
+          user_id: user.id, // Required for RLS policy
           subject: data.subject,
           description: data.description,
           category: data.category || "general",
@@ -227,15 +240,23 @@ export function useCreateTicket() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Ticket creation error:", error);
+        throw error;
+      }
 
       // Create initial message with description
-      await supabase.from("ticket_messages").insert({
+      const { error: messageError } = await supabase.from("ticket_messages").insert({
         ticket_id: ticket.id,
-        author_id: user!.id,
+        author_id: user.id,
         author_type: "user",
         message: data.description,
       });
+
+      if (messageError) {
+        console.error("Message creation error:", messageError);
+        // Ticket already created, just log the error
+      }
 
       return ticket;
     },
@@ -246,11 +267,11 @@ export function useCreateTicket() {
         description: "Мы ответим вам в ближайшее время",
       });
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       console.error("Error creating ticket:", error);
       toast({
         title: "Ошибка",
-        description: "Не удалось создать обращение",
+        description: error.message || "Не удалось создать обращение",
         variant: "destructive",
       });
     },

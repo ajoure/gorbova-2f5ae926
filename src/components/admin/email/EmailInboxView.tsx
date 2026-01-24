@@ -243,18 +243,21 @@ export function EmailInboxView({ onContactClick }: EmailInboxViewProps) {
             />
           </div>
 
-          {/* Filter tabs */}
-          <div className="flex gap-1">
+          {/* Filter tabs - pill style */}
+          <div className="flex items-center gap-1 p-0.5 bg-muted/50 rounded-full">
             {(["all", "unread", "starred"] as const).map((f) => (
-              <Button
+              <button
                 key={f}
-                variant={filter === f ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 text-xs"
                 onClick={() => setFilter(f)}
+                className={cn(
+                  "flex-1 px-3 h-7 text-xs font-medium rounded-full transition-all",
+                  filter === f 
+                    ? "bg-primary text-primary-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
               >
                 {f === "all" ? "Все" : f === "unread" ? "Непрочитанные" : "Избранные"}
-              </Button>
+              </button>
             ))}
           </div>
         </div>

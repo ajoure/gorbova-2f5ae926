@@ -1,7 +1,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
-import { MessageSquare, Star } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Star } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { TicketStatusBadge } from "./TicketStatusBadge";
 import { cn } from "@/lib/utils";
 import type { SupportTicket } from "@/hooks/useTickets";
@@ -15,56 +15,77 @@ interface TicketCardProps {
 
 export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketCardProps) {
   const hasUnread = ticket.has_unread_user || ticket.has_unread_admin;
+  
+  // Generate initials from profile name or email
+  const initials = ticket.profiles?.full_name
+    ?.split(' ')
+    .map(n => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || ticket.profiles?.email?.[0]?.toUpperCase() || '?';
 
   return (
-    <Card
-      className={cn(
-        "cursor-pointer transition-colors hover:bg-accent/50",
-        isSelected && "border-primary bg-accent",
-        hasUnread && "border-l-4 border-l-primary"
-      )}
+    <div
       onClick={onClick}
+      className={cn(
+        "group relative flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-all",
+        "hover:bg-accent/50",
+        isSelected && "bg-primary/10 ring-1 ring-inset ring-primary/30",
+        hasUnread && "bg-primary/5"
+      )}
     >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs text-muted-foreground font-mono">
-                {ticket.ticket_number}
-              </span>
-              {ticket.is_starred && (
-                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-              )}
-            </div>
-            <h4 className={cn(
-              "text-sm truncate",
-              hasUnread ? "font-semibold" : "font-medium"
-            )}>
-              {ticket.subject}
-            </h4>
-            {showProfile && ticket.profiles && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {ticket.profiles.full_name || ticket.profiles.email}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {formatDistanceToNow(new Date(ticket.updated_at), {
-                addSuffix: true,
-                locale: ru,
-              })}
-            </span>
-            <TicketStatusBadge status={ticket.status} />
-          </div>
-        </div>
-        {hasUnread && (
-          <div className="flex items-center gap-1 mt-2 text-xs text-primary">
-            <MessageSquare className="h-3 w-3" />
-            <span>Новое сообщение</span>
-          </div>
+      {/* Avatar */}
+      <Avatar className="h-10 w-10 shrink-0">
+        {ticket.profiles?.avatar_url && (
+          <AvatarImage src={ticket.profiles.avatar_url} />
         )}
-      </CardContent>
-    </Card>
+        <AvatarFallback className={cn(
+          "text-xs font-medium",
+          hasUnread ? "bg-primary/20 text-primary" : "bg-muted"
+        )}>
+          {initials}
+        </AvatarFallback>
+      </Avatar>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className={cn(
+            "text-sm truncate",
+            hasUnread ? "font-semibold" : "font-medium"
+          )}>
+            {showProfile 
+              ? (ticket.profiles?.full_name || ticket.profiles?.email || "Неизвестный") 
+              : ticket.subject}
+          </span>
+          <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+            {formatDistanceToNow(new Date(ticket.updated_at), { locale: ru, addSuffix: false })}
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-xs text-muted-foreground font-mono">
+            {ticket.ticket_number}
+          </span>
+          {ticket.is_starred && (
+            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground truncate mt-0.5">
+          {ticket.subject}
+        </p>
+      </div>
+
+      {/* Status Badge */}
+      <div className="shrink-0 self-center">
+        <TicketStatusBadge status={ticket.status} />
+      </div>
+      
+      {/* Unread indicator dot */}
+      {hasUnread && (
+        <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary" />
+      )}
+    </div>
   );
 }
