@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -162,6 +163,7 @@ const getHealthStatus = (source: NewsSource) => {
 
 const AdminEditorial = () => {
   const queryClient = useQueryClient();
+  const visibilityInterval = useVisibilityPolling(30000);
   const [activeTab, setActiveTab] = useState("drafts");
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -285,7 +287,7 @@ const AdminEditorial = () => {
       if (error) throw error;
       return data as ScrapeLog | null;
     },
-    refetchInterval: 30000, // Poll every 30 seconds for updates
+    refetchInterval: visibilityInterval, // Pause when tab hidden
   });
 
   // Fetch channel settings for style profile
