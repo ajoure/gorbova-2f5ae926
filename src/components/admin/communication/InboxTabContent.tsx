@@ -737,7 +737,7 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-28 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/20 ring-2 ring-primary/50 ring-inset" 
                             : "hover:bg-card/80"
@@ -792,7 +792,7 @@ export function InboxTabContent() {
                         </div>
                         {/* Quick Actions - ABSOLUTE positioned (stable layout) */}
                         {!selectionMode && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2 z-50 pointer-events-auto">
+                          <div className="flex-none self-center ml-2">
                             {/* Desktop: 3 buttons - always visible */}
                             <div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-200 bg-card shadow-md rounded-lg p-1 border border-border/40">
                               <Tooltip>
