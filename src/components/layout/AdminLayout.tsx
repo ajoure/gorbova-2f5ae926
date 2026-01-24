@@ -11,6 +11,30 @@ interface AdminLayoutProps {
   children: ReactNode;
 }
 
+// Map admin routes to page titles
+const routeToTitle: Record<string, string> = {
+  '/admin/communication': 'Контакт-центр',
+  '/admin/contacts': 'Контакты',
+  '/admin/deals': 'Сделки',
+  '/admin/orders': 'Заказы',
+  '/admin/orders-v2': 'Заказы',
+  '/admin/payments': 'Платежи',
+  '/admin/products': 'Продукты',
+  '/admin/products-v2': 'Продукты',
+  '/admin/subscriptions-v2': 'Подписки',
+  '/admin/users': 'Пользователи',
+  '/admin/roles': 'Роли',
+  '/admin/integrations': 'Интеграции',
+  '/admin/audit': 'Аудит',
+  '/admin/duplicates': 'Дубликаты',
+  '/admin/entitlements': 'Доступы',
+  '/admin/telegram/bots': 'Telegram боты',
+  '/admin/telegram/clubs': 'Telegram клубы',
+  '/admin/email': 'Email',
+  '/admin/content': 'Контент',
+  '/admin/fields': 'Поля',
+};
+
 // Map admin routes to help section anchors
 const routeToHelpAnchor: Record<string, string> = {
   '/admin/users': 'admin-impersonate',
@@ -44,6 +68,20 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasAdminAccess, loading } = usePermissions();
+
+  // Get the page title for the current route
+  const pageTitle = useMemo(() => {
+    const path = location.pathname;
+    if (routeToTitle[path]) {
+      return routeToTitle[path];
+    }
+    for (const [route, title] of Object.entries(routeToTitle)) {
+      if (path.startsWith(route)) {
+        return title;
+      }
+    }
+    return null;
+  }, [location.pathname]);
 
   // Get the help anchor for the current route
   const helpAnchor = useMemo(() => {
@@ -86,8 +124,13 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               minHeight: 'calc(3.5rem + env(safe-area-inset-top, 0px))'
             }}
           >
-            <div className="flex items-center min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
               <SidebarTrigger className="shrink-0" />
+              {pageTitle && (
+                <h1 className="text-sm font-semibold text-foreground truncate">
+                  {pageTitle}
+                </h1>
+              )}
             </div>
             {/* Contextual help link */}
             <TooltipProvider>

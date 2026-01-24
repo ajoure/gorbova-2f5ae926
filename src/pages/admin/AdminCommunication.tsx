@@ -58,18 +58,8 @@ export default function AdminCommunication() {
   return (
     <AdminLayout>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
-        {/* Compact Header */}
-        <div className="px-4 md:px-6 pt-2 md:pt-3 pb-3 shrink-0">
-          {/* Subtitle only - no H1 duplicate */}
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary via-primary/80 to-accent flex items-center justify-center shadow-sm">
-              <MessageCircle className="h-3.5 w-3.5 text-primary-foreground" />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Почта, техподдержка, рассылки и настройки
-            </p>
-          </div>
-
+        {/* Glass Pill Tabs - directly after topbar */}
+        <div className="px-4 md:px-6 pt-2 pb-2 shrink-0">
           {/* Glass Pill Tabs */}
           <div className="inline-flex p-1.5 rounded-full bg-background/60 backdrop-blur-xl border border-border/50 shadow-lg">
             {tabs.map((tab) => {

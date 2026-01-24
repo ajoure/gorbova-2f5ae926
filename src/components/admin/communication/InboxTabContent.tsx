@@ -501,9 +501,9 @@ export function InboxTabContent() {
 
   return (
     <TooltipProvider>
-      <div className="h-full min-h-0 flex flex-col overflow-hidden p-4">
+      <div className="h-full min-h-0 flex flex-col overflow-hidden p-3">
         {/* Glass Channel Tabs */}
-        <div className="mb-4 shrink-0">
+        <div className="mb-2 shrink-0">
           <div className="inline-flex p-1 rounded-full bg-card/60 backdrop-blur-xl border border-border/30 shadow-lg">
             <button
               onClick={() => setChannel("telegram")}
@@ -544,15 +544,15 @@ export function InboxTabContent() {
             />
           </div>
         ) : (
-          <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
+          <div className="flex flex-1 gap-4 min-h-0 w-full min-w-0">
             {/* Dialog List - Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[380px] shrink-0 min-w-0",
+              "flex flex-col w-full md:w-[340px] shrink-0 min-w-0",
               "bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
               {/* Header */}
-              <div className="p-3 space-y-3 border-b border-border/20">
+              <div className="p-2 space-y-2 border-b border-border/20">
                 {selectionMode ? (
                   /* Selection Mode Header */
                   <div className="flex items-center justify-between bg-primary/5 rounded-xl p-2">
