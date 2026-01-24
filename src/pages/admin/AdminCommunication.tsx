@@ -58,21 +58,16 @@ export default function AdminCommunication() {
   return (
     <AdminLayout>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
-        {/* Glass Header */}
-        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-4 shrink-0">
-          {/* Title */}
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-primary via-primary/80 to-accent flex items-center justify-center shadow-lg shadow-primary/25">
-              <MessageCircle className="h-5 w-5 text-primary-foreground" />
+        {/* Compact Header */}
+        <div className="px-4 md:px-6 pt-2 md:pt-3 pb-3 shrink-0">
+          {/* Subtitle only - no H1 duplicate */}
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary via-primary/80 to-accent flex items-center justify-center shadow-sm">
+              <MessageCircle className="h-3.5 w-3.5 text-primary-foreground" />
             </div>
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
-                Контакт-центр
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Почта, техподдержка, рассылки и настройки
-              </p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Почта, техподдержка, рассылки и настройки
+            </p>
           </div>
 
           {/* Glass Pill Tabs */}
