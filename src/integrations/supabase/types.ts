@@ -7880,6 +7880,7 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
       }
+      trigger_card_verification: { Args: never; Returns: undefined }
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number
