@@ -48,6 +48,7 @@ import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 
 import AdminPaymentsPage from "./pages/admin/AdminPayments";
+import AdminPaymentsHub from "./pages/admin/AdminPaymentsHub";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
 import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
 import MnsResponseService from "./pages/audits/MnsResponseService";
@@ -205,9 +206,7 @@ const App = () => (
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
-              <Route path="/admin/installments" element={<ProtectedRoute><AdminInstallments /></ProtectedRoute>} />
               <Route path="/admin/consents" element={<ProtectedRoute><AdminLayout><AdminConsents /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/preregistrations" element={<ProtectedRoute><AdminPreregistrations /></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/executors" element={<ProtectedRoute><AdminExecutors /></ProtectedRoute>} />
               <Route path="/admin/document-templates" element={<ProtectedRoute><AdminDocumentTemplates /></ProtectedRoute>} />
@@ -216,8 +215,14 @@ const App = () => (
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
-              <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
-              <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentDiagnostics /></ProtectedRoute>} />
+              {/* Payments Hub routes */}
+              <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/installments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/preorders" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              {/* Legacy redirects */}
+              <Route path="/admin/installments" element={<Navigate to="/admin/payments/installments" replace />} />
+              <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
               <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />
