@@ -214,6 +214,11 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
 
       // 2. Update subscription dates if they changed
       if (subscription) {
+        // PATCH-1: Verify subscription.id exists before updating
+        if (!subscription.id) {
+          throw new Error("Подписка не найдена — невозможно обновить");
+        }
+
         const subscriptionUpdate: any = {
           auto_renew: formData.auto_renew,
         };
@@ -231,6 +236,12 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         }
         if (formData.access_end_at) {
           subscriptionUpdate.access_end_at = formData.access_end_at.toISOString();
+          
+          // PATCH-1: For club products with auto_renew, ensure next_charge_at = access_end_at
+          const isClubProduct = formData.product_id === "11c9f1b8-0355-4753-bd74-40b42aa53616";
+          if (isClubProduct && formData.auto_renew) {
+            subscriptionUpdate.next_charge_at = formData.access_end_at.toISOString();
+          }
         }
         if (formData.next_charge_at) {
           subscriptionUpdate.next_charge_at = formData.next_charge_at.toISOString();
@@ -252,10 +263,20 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
           subscriptionUpdate.cancel_reason = null;
         }
         
-        await supabase
+        // PATCH-1: Update by subscription.id (not order_id) with error checking
+        const { error: subError, data: updatedRows } = await supabase
           .from("subscriptions_v2")
           .update(subscriptionUpdate)
-          .eq("order_id", deal.id);
+          .eq("id", subscription.id)
+          .select("id");
+
+        if (subError) {
+          throw new Error(`Ошибка обновления подписки: ${subError.message}`);
+        }
+
+        if (!updatedRows || updatedRows.length === 0) {
+          throw new Error("Подписка не обновлена (0 строк). Проверьте права доступа.");
+        }
       }
 
       // 3. Update entitlements based on status and dates
@@ -327,10 +348,15 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     },
     onSuccess: () => {
       toast.success("Сделка обновлена");
+      // PATCH-1: Extended invalidation to refresh all related UI components
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
       queryClient.invalidateQueries({ queryKey: ["deal-payments"] });
       queryClient.invalidateQueries({ queryKey: ["deal-subscription"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-subscription-edit"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-auto-renewals"] });
       queryClient.invalidateQueries({ queryKey: ["admin-entitlements"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-detail"] });
       onOpenChange(false);
       onSuccess?.();
     },

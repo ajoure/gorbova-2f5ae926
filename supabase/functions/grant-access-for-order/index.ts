@@ -70,7 +70,9 @@ Deno.serve(async (req) => {
     const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
     
     // Calculate access period - use custom days if provided, otherwise from tariff
+    // PATCH-3: For club products, use calendar month (+1 month) instead of fixed days
     const now = new Date();
+    const isClubProduct = productId === "11c9f1b8-0355-4753-bd74-40b42aa53616";
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     
     // Check for existing active subscription for this product to extend from
@@ -96,7 +98,31 @@ Deno.serve(async (req) => {
       }
     }
     
-    const accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    // PATCH-3: Calculate access_end_at - calendar month for club, days for others
+    let accessEndAt: Date;
+    if (isClubProduct && !customAccessDays) {
+      // Calendar month: 22.01 → 22.02 → 22.03 (TZ-safe using UTC)
+      accessEndAt = new Date(Date.UTC(
+        accessStartAt.getUTCFullYear(),
+        accessStartAt.getUTCMonth() + 1,  // +1 calendar month
+        accessStartAt.getUTCDate(),
+        12, 0, 0  // Normalize to noon UTC to avoid DST issues
+      ));
+      
+      // Handle edge case: 31 Jan → 28/29 Feb (clamp to last day of month)
+      if (accessEndAt.getUTCDate() !== accessStartAt.getUTCDate()) {
+        accessEndAt = new Date(Date.UTC(
+          accessStartAt.getUTCFullYear(),
+          accessStartAt.getUTCMonth() + 2,
+          0,  // Last day of previous month
+          12, 0, 0
+        ));
+      }
+      console.log(`[grant-access-for-order] Club product: calendar month ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
+    } else {
+      // For non-club or custom days: use duration in days
+      accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    }
 
     const results: any = {
       orderId,
