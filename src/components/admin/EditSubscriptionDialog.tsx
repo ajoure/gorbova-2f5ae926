@@ -88,6 +88,7 @@ export function EditSubscriptionDialog({
     comment: "",
     telegram_club_id: "",
   });
+  const [nextChargeAt, setNextChargeAt] = useState<Date | undefined>();
   const [isTelegramLoading, setIsTelegramLoading] = useState(false);
   const [isGCLoading, setIsGCLoading] = useState(false);
 
@@ -216,8 +217,17 @@ export function EditSubscriptionDialog({
         from: new Date(subscription.access_start_at),
         to: subscription.access_end_at ? new Date(subscription.access_end_at) : undefined,
       });
+      // Initialize next_charge_at
+      setNextChargeAt(subscription.next_charge_at ? new Date(subscription.next_charge_at) : undefined);
     }
   }, [subscription]);
+  
+  // Auto-sync: when access_end_at changes, align next_charge_at (if auto_renew is on)
+  useEffect(() => {
+    if (subscription?.auto_renew && dateRange?.to) {
+      setNextChargeAt(dateRange.to);
+    }
+  }, [dateRange?.to, subscription?.auto_renew]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -231,6 +241,7 @@ export function EditSubscriptionDialog({
           tariff_id: formData.tariff_id || null,
           access_start_at: dateRange?.from?.toISOString(),
           access_end_at: dateRange?.to?.toISOString() || null,
+          next_charge_at: nextChargeAt?.toISOString() || null, // FIX: save next_charge_at
           meta: {
             ...(subscription.meta as object || {}),
             offer_id: formData.offer_id || undefined,
@@ -668,6 +679,41 @@ export function EditSubscriptionDialog({
               </PopoverContent>
             </Popover>
           </div>
+
+          {/* Next Charge Date - only show if auto_renew is enabled */}
+          {subscription?.auto_renew && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                Следующее списание
+                <span className="text-xs text-muted-foreground">(авто-синхр. с датой доступа)</span>
+              </Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full h-11 justify-start text-left font-normal bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors",
+                      !nextChargeAt && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {nextChargeAt ? format(nextChargeAt, "dd.MM.yyyy") : "Не установлено"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    initialFocus
+                    mode="single"
+                    selected={nextChargeAt}
+                    onSelect={setNextChargeAt}
+                    locale={ru}
+                    className="p-3 pointer-events-auto"
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
 
           <Separator className="my-4" />
 
