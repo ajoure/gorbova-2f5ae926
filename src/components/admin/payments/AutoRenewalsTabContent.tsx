@@ -1,21 +1,44 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail } from "lucide-react";
-import { format, isToday, isPast, isBefore, addDays, subDays } from "date-fns";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical } from "lucide-react";
+import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { NotificationStatusIndicators, NotificationLegend, type NotificationLog } from "./NotificationStatusIndicators";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+// Timezone for all date calculations
+const MINSK_TZ = 'Europe/Minsk';
 
 type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts';
 
@@ -38,6 +61,99 @@ const RELEVANT_TG_EVENT_TYPES = [
   'subscription_no_card_warning',
 ];
 
+// Column configuration
+const DEFAULT_COLUMNS: ColumnConfig[] = [
+  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
+  { key: "contact", label: "Контакт", visible: true, width: 160, order: 1 },
+  { key: "product", label: "Продукт", visible: true, width: 130, order: 2 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 3 },
+  { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 4 },
+  { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 5 },
+  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 6 },
+  { key: "card", label: "Карта", visible: true, width: 50, order: 7 },
+  { key: "pm", label: "PM", visible: true, width: 80, order: 8 },
+  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 9 },
+  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 10 },
+  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 11 },
+];
+
+const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
+
+// Sortable resizable header component
+interface SortableResizableHeaderProps {
+  column: ColumnConfig;
+  onResize: (key: string, width: number) => void;
+  children: React.ReactNode;
+}
+
+function SortableResizableHeader({ column, onResize, children }: SortableResizableHeaderProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.key });
+  
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = column.width;
+    
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(50, startWidth + delta);
+      onResize(column.key, newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    width: column.width,
+    minWidth: 50,
+    position: 'relative' as const,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  
+  // Non-draggable columns
+  if (column.key === 'checkbox') {
+    return (
+      <TableHead style={{ width: column.width, minWidth: 40 }}>
+        {children}
+      </TableHead>
+    );
+  }
+  
+  return (
+    <TableHead ref={setNodeRef} style={style}>
+      <div className="flex items-center gap-1">
+        <div 
+          {...attributes} 
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-0.5 hover:bg-muted rounded opacity-50 hover:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical className="w-3 h-3" />
+        </div>
+        <div className="flex-1 truncate">{children}</div>
+      </div>
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors"
+        onMouseDown={handleMouseDown}
+      />
+    </TableHead>
+  );
+}
+
 interface AutoRenewal {
   id: string;
   user_id: string;
@@ -57,6 +173,56 @@ interface AutoRenewal {
   pm_status: string | null;
   pm_last4: string | null;
   pm_brand: string | null;
+  order_final_price: number | null;
+  order_currency: string | null;
+}
+
+// Helper to get charge amount with priority
+function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: string } {
+  // 1. Meta override (highest priority)
+  const metaAmount = renewal.meta?.recurring_amount;
+  if (metaAmount && Number(metaAmount) > 0) {
+    return { 
+      amount: Number(metaAmount), 
+      currency: renewal.meta?.recurring_currency || 'BYN' 
+    };
+  }
+  // 2. Order price
+  if (renewal.order_final_price && Number(renewal.order_final_price) > 0) {
+    return { 
+      amount: Number(renewal.order_final_price), 
+      currency: renewal.order_currency || 'BYN' 
+    };
+  }
+  // 3. No data
+  return { amount: 0, currency: 'BYN' };
+}
+
+// Format amount with 2 decimals + currency code
+function formatAmount(amount: number, currency: string = 'BYN'): string {
+  if (amount <= 0) return '—';
+  return `${amount.toFixed(2)} ${currency}`;
+}
+
+// Check if date is today in Minsk timezone
+function isTodayMinsk(date: Date): boolean {
+  const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
+  const dateMinsk = toZonedTime(date, MINSK_TZ);
+  return (
+    dateMinsk.getFullYear() === nowMinsk.getFullYear() &&
+    dateMinsk.getMonth() === nowMinsk.getMonth() &&
+    dateMinsk.getDate() === nowMinsk.getDate()
+  );
+}
+
+// Check if date is past in Minsk timezone
+function isPastMinsk(date: Date): boolean {
+  const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
+  const dateMinsk = toZonedTime(date, MINSK_TZ);
+  // Compare start of day
+  const todayStart = startOfDay(nowMinsk);
+  const dateStart = startOfDay(dateMinsk);
+  return dateStart < todayStart;
 }
 
 export function AutoRenewalsTabContent() {
@@ -64,6 +230,56 @@ export function AutoRenewalsTabContent() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
+  
+  // Selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  
+  // Column state with localStorage persistence
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return DEFAULT_COLUMNS.map(dc => {
+          const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
+          return savedCol ? { ...dc, ...savedCol } : dc;
+        });
+      } catch { return DEFAULT_COLUMNS; }
+    }
+    return DEFAULT_COLUMNS;
+  });
+  
+  // Save to localStorage on change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(columns));
+  }, [columns]);
+  
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  
+  // Sorted visible columns
+  const sortedColumns = useMemo(() => 
+    [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
+    [columns]
+  );
+  
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    
+    const oldIndex = columns.findIndex(c => c.key === active.id);
+    const newIndex = columns.findIndex(c => c.key === over.id);
+    
+    const reordered = arrayMove(columns, oldIndex, newIndex).map((col, i) => ({ ...col, order: i }));
+    setColumns(reordered);
+  };
+  
+  const handleResize = (key: string, width: number) => {
+    setColumns(prev => prev.map(c => c.key === key ? { ...c, width } : c));
+  };
 
   // Main query for subscriptions
   const { data: renewals, isLoading, refetch } = useQuery({
@@ -86,7 +302,8 @@ export function AutoRenewalsTabContent() {
             name,
             products_v2 (name)
           ),
-          payment_methods (status, last4, brand)
+          payment_methods (status, last4, brand),
+          orders_v2 (final_price, currency)
         `)
         .eq('auto_renew', true)
         .in('status', ['active', 'trial', 'past_due'])
@@ -109,6 +326,7 @@ export function AutoRenewalsTabContent() {
         const product = tariff?.products_v2 as any;
         const pm = sub.payment_methods as any;
         const profile = profileMap.get(sub.user_id);
+        const order = sub.orders_v2 as any;
 
         return {
           id: sub.id,
@@ -129,6 +347,8 @@ export function AutoRenewalsTabContent() {
           pm_status: pm?.status || null,
           pm_last4: pm?.last4 || null,
           pm_brand: pm?.brand || null,
+          order_final_price: order?.final_price || null,
+          order_currency: order?.currency || null,
         };
       });
     },
@@ -220,19 +440,23 @@ export function AutoRenewalsTabContent() {
     
     let result = renewals;
     
-    // Apply filter
-    const now = new Date();
-    const weekFromNow = addDays(now, 7);
+    // Apply filter - using Minsk timezone
+    const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
+    const weekFromNow = addDays(nowMinsk, 7);
     
     switch (filter) {
       case 'due_today':
-        result = result.filter(r => r.next_charge_at && isToday(new Date(r.next_charge_at)));
+        result = result.filter(r => r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)));
         break;
       case 'due_week':
-        result = result.filter(r => r.next_charge_at && isBefore(new Date(r.next_charge_at), weekFromNow));
+        result = result.filter(r => {
+          if (!r.next_charge_at) return false;
+          const dateMinsk = toZonedTime(new Date(r.next_charge_at), MINSK_TZ);
+          return isBefore(dateMinsk, weekFromNow);
+        });
         break;
       case 'overdue':
-        result = result.filter(r => r.next_charge_at && isPast(new Date(r.next_charge_at)));
+        result = result.filter(r => r.next_charge_at && isPastMinsk(new Date(r.next_charge_at)));
         break;
       case 'no_card':
         result = result.filter(r => !r.payment_method_id);
@@ -261,13 +485,22 @@ export function AutoRenewalsTabContent() {
     return result;
   }, [renewals, filter, searchQuery]);
 
+  // Stats with amounts
   const stats = useMemo(() => {
     if (!renewals) return null;
+    
+    const dueTodayList = renewals.filter(r => r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)));
+    const overdueList = renewals.filter(r => r.next_charge_at && isPastMinsk(new Date(r.next_charge_at)));
+    const noCardList = renewals.filter(r => !r.payment_method_id);
+    
+    const sumAmount = (list: AutoRenewal[]) => 
+      list.reduce((sum, r) => sum + getChargeAmount(r).amount, 0);
+    
     return {
-      total: renewals.length,
-      dueToday: renewals.filter(r => r.next_charge_at && isToday(new Date(r.next_charge_at))).length,
-      overdue: renewals.filter(r => r.next_charge_at && isPast(new Date(r.next_charge_at))).length,
-      noCard: renewals.filter(r => !r.payment_method_id).length,
+      total: { count: renewals.length, sum: sumAmount(renewals) },
+      dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
+      overdue: { count: overdueList.length, sum: sumAmount(overdueList) },
+      noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
     };
   }, [renewals]);
 
@@ -275,8 +508,8 @@ export function AutoRenewalsTabContent() {
     if (!renewal.next_charge_at) return { label: 'Нет даты', variant: 'secondary' as const };
     
     const date = new Date(renewal.next_charge_at);
-    if (isToday(date)) return { label: 'Сегодня', variant: 'default' as const, className: 'bg-blue-500' };
-    if (isPast(date)) return { label: 'Просрочено', variant: 'destructive' as const };
+    if (isTodayMinsk(date)) return { label: 'Сегодня', variant: 'default' as const, className: 'bg-blue-500' };
+    if (isPastMinsk(date)) return { label: 'Просрочено', variant: 'destructive' as const };
     return { label: format(date, 'dd.MM.yy', { locale: ru }), variant: 'outline' as const };
   };
 
@@ -306,33 +539,194 @@ export function AutoRenewalsTabContent() {
       error: meta.last_charge_attempt_error,
     };
   };
+  
+  // Selection handlers
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredRenewals.length && filteredRenewals.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredRenewals.map(r => r.id)));
+    }
+  };
+
+  const toggleItem = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  
+  // Render cell content based on column key
+  const renderCell = (columnKey: string, renewal: AutoRenewal) => {
+    const chargeStatus = getChargeStatus(renewal);
+    const lastAttempt = getLastAttempt(renewal.meta);
+    const charge = getChargeAmount(renewal);
+    
+    switch (columnKey) {
+      case 'checkbox':
+        return (
+          <Checkbox 
+            checked={selectedIds.has(renewal.id)}
+            onCheckedChange={() => toggleItem(renewal.id)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        );
+      case 'contact':
+        return (
+          <div className="flex flex-col">
+            <span className="font-medium text-sm truncate max-w-[150px]">
+              {renewal.contact_name || 'Без имени'}
+            </span>
+            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+              {renewal.contact_email}
+            </span>
+          </div>
+        );
+      case 'product':
+        return (
+          <div className="flex flex-col">
+            <span className="text-sm truncate max-w-[120px]">
+              {renewal.product_name || '—'}
+            </span>
+            {renewal.tariff_name && (
+              <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                {renewal.tariff_name}
+              </span>
+            )}
+          </div>
+        );
+      case 'amount':
+        return (
+          <span className="text-sm font-mono">
+            {formatAmount(charge.amount, charge.currency)}
+          </span>
+        );
+      case 'next_charge':
+        return (
+          <Badge 
+            variant={chargeStatus.variant} 
+            className={cn('text-xs', chargeStatus.className)}
+          >
+            {chargeStatus.label}
+          </Badge>
+        );
+      case 'access_end':
+        return (
+          <span className="text-xs text-muted-foreground">
+            {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
+          </span>
+        );
+      case 'attempts':
+        return (
+          <Badge 
+            variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
+            className="text-xs"
+          >
+            {renewal.charge_attempts}/3
+          </Badge>
+        );
+      case 'card':
+        return renewal.payment_method_id ? (
+          <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
+        ) : (
+          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
+        );
+      case 'pm':
+        return renewal.pm_status ? (
+          <Badge 
+            variant={renewal.pm_status === 'active' ? 'default' : 'secondary'}
+            className={cn(
+              'text-[10px]',
+              renewal.pm_status === 'active' && 'bg-green-600'
+            )}
+          >
+            {renewal.pm_last4 && `•${renewal.pm_last4} `}
+            {renewal.pm_status}
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+      case 'last_attempt':
+        return lastAttempt ? (
+          <div className="flex items-center gap-1">
+            {lastAttempt.success ? (
+              <CheckCircle className="h-3 w-3 text-green-600" />
+            ) : (
+              <AlertTriangle className="h-3 w-3 text-red-600" />
+            )}
+            <span className={cn(
+              'text-[10px] truncate max-w-[80px]',
+              lastAttempt.success ? 'text-green-600' : 'text-red-600'
+            )}>
+              {lastAttempt.success ? 'OK' : lastAttempt.error?.slice(0, 20)}
+            </span>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+      case 'tg_status':
+        return (
+          <NotificationStatusIndicators
+            subscriptionId={renewal.id}
+            channel="telegram"
+            logs={tgLogs || []}
+            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+          />
+        );
+      case 'email_status':
+        return (
+          <NotificationStatusIndicators
+            subscriptionId={renewal.id}
+            channel="email"
+            logs={emailLogs || []}
+            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        {/* Stats */}
+        {/* Stats with amounts */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-3">
-              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-2xl font-bold">{stats.total.count}</div>
               <div className="text-xs text-muted-foreground">Всего подписок</div>
+              <div className="text-sm text-muted-foreground mt-1">
+                на сумму <span className="font-medium">{stats.total.sum.toFixed(2)} BYN</span>
+              </div>
             </Card>
             <Card className="p-3">
-              <div className="text-2xl font-bold text-blue-600">{stats.dueToday}</div>
+              <div className="text-2xl font-bold text-blue-600">{stats.dueToday.count}</div>
               <div className="text-xs text-muted-foreground">К списанию сегодня</div>
+              <div className="text-sm text-muted-foreground mt-1">
+                на сумму <span className="font-medium text-blue-600">{stats.dueToday.sum.toFixed(2)} BYN</span>
+              </div>
             </Card>
             <Card className="p-3">
-              <div className="text-2xl font-bold text-red-600">{stats.overdue}</div>
+              <div className="text-2xl font-bold text-red-600">{stats.overdue.count}</div>
               <div className="text-xs text-muted-foreground">Просрочено</div>
+              <div className="text-sm text-muted-foreground mt-1">
+                на сумму <span className="font-medium text-red-600">{stats.overdue.sum.toFixed(2)} BYN</span>
+              </div>
             </Card>
             <Card className="p-3">
-              <div className="text-2xl font-bold text-amber-600">{stats.noCard}</div>
+              <div className="text-2xl font-bold text-amber-600">{stats.noCard.count}</div>
               <div className="text-xs text-muted-foreground">Без карты</div>
+              <div className="text-sm text-muted-foreground mt-1">
+                на сумму <span className="font-medium text-amber-600">{stats.noCard.sum.toFixed(2)} BYN</span>
+              </div>
             </Card>
           </div>
         )}
 
-        {/* Filters */}
+        {/* Filters + Column Settings */}
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -362,12 +756,21 @@ export function AutoRenewalsTabContent() {
             <RefreshCw className="h-4 w-4 mr-1" />
             Обновить
           </Button>
+          
+          <ColumnSettings 
+            columns={columns} 
+            onChange={setColumns}
+            onReset={() => {
+              setColumns(DEFAULT_COLUMNS);
+              localStorage.removeItem(STORAGE_KEY);
+            }}
+          />
         </div>
 
         {/* Legend for notification indicators */}
         <NotificationLegend />
 
-        {/* Table */}
+        {/* Table with DnD */}
         <Card>
           <CardContent className="p-0">
             {isLoading ? (
@@ -381,146 +784,60 @@ export function AutoRenewalsTabContent() {
                 Нет подписок с автопродлением
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Контакт</TableHead>
-                    <TableHead>Продукт</TableHead>
-                    <TableHead>К списанию</TableHead>
-                    <TableHead>Доступ до</TableHead>
-                    <TableHead className="text-center">Попытки</TableHead>
-                    <TableHead className="text-center">Карта</TableHead>
-                    <TableHead>PM</TableHead>
-                    <TableHead>Last Attempt</TableHead>
-                    <TableHead className="text-center">
-                      <div className="flex flex-col items-center">
-                        <Send className="h-3.5 w-3.5 mb-0.5" />
-                        <span className="text-[9px]">TG 7/3/1</span>
-                      </div>
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <div className="flex flex-col items-center">
-                        <Mail className="h-3.5 w-3.5 mb-0.5" />
-                        <span className="text-[9px]">Email 7/3/1</span>
-                      </div>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRenewals.slice(0, 100).map((renewal) => {
-                    const chargeStatus = getChargeStatus(renewal);
-                    const lastAttempt = getLastAttempt(renewal.meta);
-                    
-                    return (
-                      <TableRow 
-                        key={renewal.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
-                      >
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm truncate max-w-[150px]">
-                              {renewal.contact_name || 'Без имени'}
-                            </span>
-                            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
-                              {renewal.contact_email}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="text-sm truncate max-w-[120px]">
-                              {renewal.product_name || '—'}
-                            </span>
-                            {renewal.tariff_name && (
-                              <span className="text-xs text-muted-foreground truncate max-w-[120px]">
-                                {renewal.tariff_name}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge 
-                            variant={chargeStatus.variant} 
-                            className={cn('text-xs', chargeStatus.className)}
-                          >
-                            {chargeStatus.label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge 
-                            variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
-                            className="text-xs"
-                          >
-                            {renewal.charge_attempts}/3
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {renewal.payment_method_id ? (
-                            <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {renewal.pm_status ? (
-                            <Badge 
-                              variant={renewal.pm_status === 'active' ? 'default' : 'secondary'}
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={sortedColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {sortedColumns.map(col => (
+                          <SortableResizableHeader key={col.key} column={col} onResize={handleResize}>
+                            {col.key === 'checkbox' ? (
+                              <Checkbox 
+                                checked={selectedIds.size === filteredRenewals.length && filteredRenewals.length > 0}
+                                onCheckedChange={toggleSelectAll}
+                              />
+                            ) : col.key === 'tg_status' ? (
+                              <div className="flex flex-col items-center">
+                                <Send className="h-3.5 w-3.5 mb-0.5" />
+                                <span className="text-[9px]">TG 7/3/1</span>
+                              </div>
+                            ) : col.key === 'email_status' ? (
+                              <div className="flex flex-col items-center">
+                                <Mail className="h-3.5 w-3.5 mb-0.5" />
+                                <span className="text-[9px]">Email 7/3/1</span>
+                              </div>
+                            ) : col.label}
+                          </SortableResizableHeader>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRenewals.slice(0, 100).map((renewal) => (
+                        <TableRow 
+                          key={renewal.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+                          data-state={selectedIds.has(renewal.id) ? 'selected' : undefined}
+                        >
+                          {sortedColumns.map(col => (
+                            <TableCell 
+                              key={col.key} 
+                              style={{ width: col.width }}
                               className={cn(
-                                'text-[10px]',
-                                renewal.pm_status === 'active' && 'bg-green-600'
+                                col.key === 'checkbox' && 'text-center',
+                                col.key === 'card' && 'text-center',
+                                col.key === 'attempts' && 'text-center',
                               )}
                             >
-                              {renewal.pm_last4 && `•${renewal.pm_last4} `}
-                              {renewal.pm_status}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {lastAttempt ? (
-                            <div className="flex items-center gap-1">
-                              {lastAttempt.success ? (
-                                <CheckCircle className="h-3 w-3 text-green-600" />
-                              ) : (
-                                <AlertTriangle className="h-3 w-3 text-red-600" />
-                              )}
-                              <span className={cn(
-                                'text-[10px] truncate max-w-[80px]',
-                                lastAttempt.success ? 'text-green-600' : 'text-red-600'
-                              )}>
-                                {lastAttempt.success ? 'OK' : lastAttempt.error?.slice(0, 20)}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <NotificationStatusIndicators
-                            subscriptionId={renewal.id}
-                            channel="telegram"
-                            logs={tgLogs || []}
-                            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <NotificationStatusIndicators
-                            subscriptionId={renewal.id}
-                            channel="email"
-                            logs={emailLogs || []}
-                            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                              {renderCell(col.key, renewal)}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </SortableContext>
+              </DndContext>
             )}
           </CardContent>
         </Card>
