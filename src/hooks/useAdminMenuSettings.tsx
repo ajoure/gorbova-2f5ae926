@@ -115,16 +115,17 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 8, permission: "roles.view" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 9 },
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 10, permission: "news.view" },
-      { id: "telegram-diagnostics", label: "Telegram диагностика", path: "/admin/telegram-diagnostics", icon: "BarChart3", order: 11 },
+      // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
   },
 ];
 
 // IDs consolidated into Payments Hub - auto-removed from saved settings
 const DEPRECATED_ITEM_IDS = new Set([
-  "installments",        // → /admin/payments/installments
-  "preregistrations",    // → /admin/payments/preorders
-  "payment-diagnostics", // → /admin/payments/diagnostics
+  "installments",           // → /admin/payments/installments
+  "preregistrations",       // → /admin/payments/preorders
+  "payment-diagnostics",    // → /admin/payments/diagnostics
+  "telegram-diagnostics",   // Scope creep - removed, consolidated into AutoRenewals
 ]);
 
 // Remove duplicate items across all groups (keeps first occurrence)
