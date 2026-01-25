@@ -14,12 +14,25 @@ export interface PreregistrationConfig {
   charge_window_end?: number;           // День месяца конца окна списания (1-28)
 }
 
-// Subscription/recurring settings
+// Subscription/recurring settings (extended for grace period + auto-renewal config)
 export interface RecurringConfig {
+  // === Legacy fields (backward compatible) ===
   is_recurring?: boolean;               // Это подписка с автопродлением
   recurring_interval_days?: number;     // Интервал списания в днях (30 = месяц)
   charge_window_start?: number;         // День месяца начала окна списания
   charge_window_end?: number;           // День месяца конца окна списания
+  
+  // === NEW: Extended auto-renewal settings ===
+  billing_period_mode?: 'month' | 'days';        // 'month' = calendar month, 'days' = fixed days
+  billing_period_days?: number;                   // If mode='days', number of days (default 30)
+  grace_hours?: number;                           // Grace period in hours (default 72)
+  charge_attempts_per_day?: number;               // Attempts per day during grace (default 2)
+  charge_windows_utc?: string[];                  // Concrete hours in UTC, e.g. ['06:00', '18:00']
+  timezone?: string;                              // Timezone for charge windows (default 'Europe/Minsk')
+  pre_due_reminders_days?: number[];              // Days before due to send reminders [7, 3, 1]
+  post_due_reminders_policy?: 'daily' | 'none';   // Reminder policy during grace
+  notify_before_each_charge?: boolean;            // Send notification before each charge attempt
+  notify_grace_events?: boolean;                  // Send grace_started/24h/48h/expired notifications
 }
 
 export interface OfferMetaConfig {
@@ -39,13 +52,8 @@ export interface OfferMetaConfig {
   };
   // Preregistration settings
   preregistration?: PreregistrationConfig;
-  // Recurring/subscription settings
+  // Recurring/subscription settings (auto-renewal config)
   recurring?: RecurringConfig;
-  // Legacy fields (for backwards compatibility)
-  is_recurring?: boolean;
-  recurring_interval_days?: number;
-  charge_window_start?: number;
-  charge_window_end?: number;
 }
 
 export interface TariffOffer {

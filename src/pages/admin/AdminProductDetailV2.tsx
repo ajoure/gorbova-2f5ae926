@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw
 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
@@ -329,7 +329,7 @@ export default function AdminProductDetailV2() {
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
     
-    // Build meta object with preregistration settings if applicable
+    // Build meta object with preregistration and recurring settings if applicable
     let metaToSave: OfferMetaConfig = { ...offerForm.meta };
     
     if (isPreregistration) {
@@ -344,6 +344,15 @@ export default function AdminProductDetailV2() {
     } else {
       // Remove preregistration if switching to different type
       delete metaToSave.preregistration;
+    }
+    
+    // Preserve/clear recurring settings based on subscription toggle
+    // PATCH: recurring config is edited directly in meta.recurring via UI, keep as-is
+    // If subscription is disabled, remove recurring config
+    const isSubscription = offerForm.offer_type === "trial" || isPreregistration || 
+      (isInstallment || offerForm.requires_card_tokenization);
+    if (!isSubscription) {
+      delete metaToSave.recurring;
     }
     
     const data: TariffOfferInsert = {
@@ -1044,20 +1053,217 @@ export default function AdminProductDetailV2() {
 
                 {/* Subscription toggle - only for full payment */}
                 {offerForm.payment_method === "full_payment" && (
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <Switch
-                        checked={offerForm.requires_card_tokenization}
-                        onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
-                      />
-                      <Label>Подписка (автопродление)</Label>
+                  <>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          checked={offerForm.requires_card_tokenization}
+                          onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                        />
+                        <Label>Подписка (автопродление)</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {offerForm.requires_card_tokenization 
+                          ? "Карта будет сохранена для автоматического продления" 
+                          : "Разовый платёж без сохранения карты"}
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {offerForm.requires_card_tokenization 
-                        ? "Карта будет сохранена для автоматического продления" 
-                        : "Разовый платёж без сохранения карты"}
-                    </p>
-                  </div>
+                    
+                    {/* Auto-renewal settings - ONLY for subscriptions */}
+                    {offerForm.requires_card_tokenization && (
+                      <Collapsible 
+                        open={showAdvancedSettings}
+                        onOpenChange={setShowAdvancedSettings}
+                        className="mt-4 border-t pt-4"
+                      >
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" size="sm" className="w-full justify-between text-blue-600 hover:text-blue-700">
+                          <span className="flex items-center gap-2">
+                            <RefreshCw className="h-4 w-4" />
+                            Настройки автопродления
+                          </span>
+                          <ChevronDown className={cn("h-4 w-4 transition-transform", showAdvancedSettings && "rotate-180")} />
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-4 space-y-4">
+                        <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
+                          
+                          {/* Billing period */}
+                          <div className="space-y-2">
+                            <Label className="text-sm">Период списания</Label>
+                            <RadioGroup
+                              value={offerForm.meta?.recurring?.billing_period_mode || 'month'}
+                              onValueChange={(v) => setOfferForm({
+                                ...offerForm,
+                                meta: {
+                                  ...offerForm.meta,
+                                  recurring: {
+                                    ...offerForm.meta?.recurring,
+                                    billing_period_mode: v as 'month' | 'days',
+                                  }
+                                }
+                              })}
+                              className="flex gap-4"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="month" id="billing-month" />
+                                <Label htmlFor="billing-month" className="font-normal text-sm">1 календарный месяц</Label>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="days" id="billing-days" />
+                                <Label htmlFor="billing-days" className="font-normal text-sm">X дней</Label>
+                              </div>
+                            </RadioGroup>
+                            {offerForm.meta?.recurring?.billing_period_mode === 'days' && (
+                              <Input
+                                type="number"
+                                min={1}
+                                max={90}
+                                value={offerForm.meta?.recurring?.billing_period_days || 30}
+                                onChange={(e) => setOfferForm({
+                                  ...offerForm,
+                                  meta: {
+                                    ...offerForm.meta,
+                                    recurring: {
+                                      ...offerForm.meta?.recurring,
+                                      billing_period_days: parseInt(e.target.value) || 30,
+                                    }
+                                  }
+                                })}
+                                className="w-24"
+                              />
+                            )}
+                          </div>
+                          
+                          {/* Grace period and attempts */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-sm">Grace период (часов)</Label>
+                              <Input
+                                type="number"
+                                min={24}
+                                max={168}
+                                value={offerForm.meta?.recurring?.grace_hours || 72}
+                                onChange={(e) => setOfferForm({
+                                  ...offerForm,
+                                  meta: {
+                                    ...offerForm.meta,
+                                    recurring: {
+                                      ...offerForm.meta?.recurring,
+                                      grace_hours: parseInt(e.target.value) || 72,
+                                    }
+                                  }
+                                })}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Время для возврата по старой цене
+                              </p>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-sm">Попыток в сутки</Label>
+                              <Select
+                                value={String(offerForm.meta?.recurring?.charge_attempts_per_day || 2)}
+                                onValueChange={(v) => setOfferForm({
+                                  ...offerForm,
+                                  meta: {
+                                    ...offerForm.meta,
+                                    recurring: {
+                                      ...offerForm.meta?.recurring,
+                                      charge_attempts_per_day: parseInt(v),
+                                    }
+                                  }
+                                })}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="1">1 раз</SelectItem>
+                                  <SelectItem value="2">2 раза (утро/вечер)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          
+                          {/* Pre-due reminders */}
+                          <div className="space-y-2">
+                            <Label className="text-sm">Напоминания до списания (дней)</Label>
+                            <div className="flex gap-3">
+                              {[7, 3, 1].map(day => {
+                                const currentDays = offerForm.meta?.recurring?.pre_due_reminders_days || [7, 3, 1];
+                                const isChecked = currentDays.includes(day);
+                                return (
+                                  <label key={day} className="flex items-center gap-1.5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        const newDays = e.target.checked
+                                          ? [...currentDays, day].sort((a, b) => b - a)
+                                          : currentDays.filter(d => d !== day);
+                                        setOfferForm({
+                                          ...offerForm,
+                                          meta: {
+                                            ...offerForm.meta,
+                                            recurring: {
+                                              ...offerForm.meta?.recurring,
+                                              pre_due_reminders_days: newDays,
+                                            }
+                                          }
+                                        });
+                                      }}
+                                      className="rounded border-gray-300"
+                                    />
+                                    <span className="text-sm">{day} {day === 1 ? 'день' : 'дней'}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          
+                          {/* Notification toggles */}
+                          <div className="space-y-3 pt-2 border-t border-blue-200 dark:border-blue-700">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm font-normal">Уведомлять перед списанием</Label>
+                              <Switch
+                                checked={offerForm.meta?.recurring?.notify_before_each_charge ?? true}
+                                onCheckedChange={(checked) => setOfferForm({
+                                  ...offerForm,
+                                  meta: {
+                                    ...offerForm.meta,
+                                    recurring: {
+                                      ...offerForm.meta?.recurring,
+                                      notify_before_each_charge: checked,
+                                    }
+                                  }
+                                })}
+                              />
+                            </div>
+                            
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm font-normal">Уведомления в grace (0/24/48/72ч)</Label>
+                              <Switch
+                                checked={offerForm.meta?.recurring?.notify_grace_events ?? true}
+                                onCheckedChange={(checked) => setOfferForm({
+                                  ...offerForm,
+                                  meta: {
+                                    ...offerForm.meta,
+                                    recurring: {
+                                      ...offerForm.meta?.recurring,
+                                      notify_grace_events: checked,
+                                    }
+                                  }
+                                })}
+                              />
+                            </div>
+                          </div>
+                          
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+                  </>
                 )}
               </div>
             )}

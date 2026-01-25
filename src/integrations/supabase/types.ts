@@ -1883,6 +1883,41 @@ export type Database = {
           },
         ]
       }
+      grace_notification_events: {
+        Row: {
+          channel: string
+          event_type: string
+          id: string
+          meta: Json | null
+          sent_at: string
+          subscription_id: string
+        }
+        Insert: {
+          channel?: string
+          event_type: string
+          id?: string
+          meta?: Json | null
+          sent_at?: string
+          subscription_id: string
+        }
+        Update: {
+          channel?: string
+          event_type?: string
+          id?: string
+          meta?: Json | null
+          sent_at?: string
+          subscription_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grace_notification_events_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       habit_challenges: {
         Row: {
           color: string | null
@@ -4820,6 +4855,7 @@ export type Database = {
           reentry_penalty_waived: boolean
           reentry_penalty_waived_at: string | null
           reentry_penalty_waived_by: string | null
+          reentry_pricing_applies_from: string | null
           sentiment_history: Json | null
           source: string | null
           status: string
@@ -4875,6 +4911,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          reentry_pricing_applies_from?: string | null
           sentiment_history?: Json | null
           source?: string | null
           status?: string
@@ -4930,6 +4967,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          reentry_pricing_applies_from?: string | null
           sentiment_history?: Json | null
           source?: string | null
           status?: string
@@ -5351,6 +5389,9 @@ export type Database = {
           charge_attempts: number | null
           created_at: string
           flow_id: string | null
+          grace_period_ends_at: string | null
+          grace_period_started_at: string | null
+          grace_period_status: string | null
           id: string
           is_trial: boolean
           keep_access_until_trial_end: boolean | null
@@ -5382,6 +5423,9 @@ export type Database = {
           charge_attempts?: number | null
           created_at?: string
           flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
           id?: string
           is_trial?: boolean
           keep_access_until_trial_end?: boolean | null
@@ -5413,6 +5457,9 @@ export type Database = {
           charge_attempts?: number | null
           created_at?: string
           flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
           id?: string
           is_trial?: boolean
           keep_access_until_trial_end?: boolean | null
