@@ -7848,6 +7848,7 @@ export type Database = {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string
       }
+      get_order_expected_paid: { Args: { p_order_id: string }; Returns: number }
       get_payments_stats:
         | { Args: { from_date: string; to_date: string }; Returns: Json }
         | {

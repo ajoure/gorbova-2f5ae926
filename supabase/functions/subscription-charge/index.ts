@@ -1045,19 +1045,15 @@ async function chargeSubscription(
         })
         .eq('id', id);
 
-      // PATCH 1: Sync orders_v2 with payments (idempotent, with guards)
+      // PATCH 1-3: Sync orders_v2 with payments (idempotent, with guards and error handling)
       if (order_id) {
-        // Query ALL succeeded payments for this order (amount > 0 only)
-        const { data: succeededPayments, error: paymentsQueryError } = await supabase
-          .from('payments_v2')
-          .select('amount')
-          .eq('order_id', order_id)
-          .eq('status', 'succeeded')
-          .gt('amount', 0);
+        // PATCH-2: Use RPC for reliable SQL SUM (instead of JS reduce)
+        const { data: expectedPaidResult, error: rpcError } = await supabase
+          .rpc('get_order_expected_paid', { p_order_id: order_id });
 
-        if (paymentsQueryError) {
-          // Log query failure (silent failure is dangerous)
-          console.error('Failed to query succeeded payments for order sync:', paymentsQueryError);
+        if (rpcError) {
+          // Log RPC failure (SYSTEM ACTOR)
+          console.error('Failed to get expected paid amount via RPC:', rpcError);
           await supabase.from('audit_logs').insert({
             action: 'subscription.order_sync_payments_query_failed',
             actor_type: 'system',
@@ -1068,65 +1064,84 @@ async function chargeSubscription(
               subscription_id: id,
               order_id,
               payment_id: payment.id,
-              error: paymentsQueryError.message,
-              error_code: paymentsQueryError.code,
+              error: rpcError.message,
+              error_code: rpcError.code,
+              method: 'rpc_get_order_expected_paid',
             }
           });
-        } else if (succeededPayments) {
-          // Calculate expected paid amount (idempotent: SUM, not += amount)
-          const expectedPaidAmount = succeededPayments.reduce(
-            (sum: number, p: { amount: number | null }) => sum + Number(p.amount || 0),
-            0
-          );
+          // Don't proceed with unsafe update - continue to next subscription
+        } else {
+          const expectedPaidAmount = Number(expectedPaidResult || 0);
 
-          // Get current order state
-          const { data: currentOrder } = await supabase
+          // PATCH-1: Get current order state WITH error handling
+          const { data: currentOrder, error: currentOrderError } = await supabase
             .from('orders_v2')
             .select('meta, status, paid_amount')
             .eq('id', order_id)
             .single();
 
-          // Guard: do NOT update refunded/canceled orders
-          const protectedStatuses = ['refunded', 'canceled', 'cancelled'];
-          const isProtected = currentOrder?.status && protectedStatuses.includes(currentOrder.status);
-
-          if (!isProtected) {
-            const { error: orderUpdateError } = await supabase
-              .from('orders_v2')
-              .update({
-                status: expectedPaidAmount > 0 ? 'paid' : (currentOrder?.status || 'pending'),
-                paid_amount: expectedPaidAmount,
-                meta: {
-                  ...(currentOrder?.meta || {}),
-                  last_renewal_at: chargeAttemptAt,
-                  last_renewal_payment_id: payment.id,
-                  last_renewal_amount: amount,
-                  last_renewal_bepaid_uid: chargeResult.transaction.uid ?? null,
-                }
-              })
-              .eq('id', order_id);
-
-            if (orderUpdateError) {
-              console.error('Failed to sync order status:', orderUpdateError);
-              await supabase.from('audit_logs').insert({
-                action: 'subscription.order_sync_failed',
-                actor_type: 'system',
-                actor_user_id: null,
-                actor_label: 'subscription-charge',
-                target_user_id: user_id,
-                meta: {
-                  subscription_id: id,
-                  order_id,
-                  payment_id: payment.id,
-                  expected_paid_amount: expectedPaidAmount,
-                  previous_status: currentOrder?.status,
-                  previous_paid_amount: currentOrder?.paid_amount,
-                  error: orderUpdateError.message,
-                }
-              });
-            }
+          // PATCH-1: Handle order query failure
+          if (currentOrderError) {
+            console.error('Failed to fetch current order for sync:', currentOrderError);
+            await supabase.from('audit_logs').insert({
+              action: 'subscription.order_sync_order_query_failed',
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'subscription-charge',
+              target_user_id: user_id,
+              meta: {
+                subscription_id: id,
+                order_id,
+                payment_id: payment.id,
+                expected_paid_amount: expectedPaidAmount,
+                error: currentOrderError.message,
+                error_code: currentOrderError.code,
+              }
+            });
+            // Don't proceed with update - unsafe without knowing current state
           } else {
-            console.log(`Skipping order sync: order ${order_id} has protected status ${currentOrder?.status}`);
+            // PATCH-3: Guard - do NOT update protected statuses (unified list)
+            const protectedStatuses = ['refunded', 'canceled', 'cancelled'];
+            const isProtected = currentOrder?.status && protectedStatuses.includes(currentOrder.status);
+
+            if (!isProtected) {
+              const { error: orderUpdateError } = await supabase
+                .from('orders_v2')
+                .update({
+                  status: expectedPaidAmount > 0 ? 'paid' : (currentOrder?.status || 'pending'),
+                  paid_amount: expectedPaidAmount,
+                  meta: {
+                    ...(currentOrder?.meta || {}),
+                    last_renewal_at: chargeAttemptAt,
+                    last_renewal_payment_id: payment.id,
+                    last_renewal_amount: amount,
+                    last_renewal_bepaid_uid: chargeResult.transaction.uid ?? null,
+                  }
+                })
+                .eq('id', order_id);
+
+              if (orderUpdateError) {
+                console.error('Failed to sync order status:', orderUpdateError);
+                await supabase.from('audit_logs').insert({
+                  action: 'subscription.order_sync_failed',
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'subscription-charge',
+                  target_user_id: user_id,
+                  meta: {
+                    subscription_id: id,
+                    order_id,
+                    payment_id: payment.id,
+                    expected_paid_amount: expectedPaidAmount,
+                    previous_status: currentOrder?.status,
+                    previous_paid_amount: currentOrder?.paid_amount,
+                    error: orderUpdateError.message,
+                  }
+                });
+              }
+            } else {
+              console.log(`Skipping order sync: order ${order_id} has protected status ${currentOrder?.status}`);
+            }
           }
         }
       }
