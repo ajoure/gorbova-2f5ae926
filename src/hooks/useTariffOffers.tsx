@@ -182,6 +182,15 @@ export function useUpdateTariffOffer() {
     mutationFn: async ({ id, ...offer }: TariffOfferUpdate) => {
       // Cast meta to any to satisfy Supabase's Json type
       const updateData = { ...offer, meta: offer.meta as any };
+      
+      // DIAG: Log what we're saving
+      console.log('[useUpdateTariffOffer] Saving offer:', id, {
+        requires_card_tokenization: offer.requires_card_tokenization,
+        has_meta: !!offer.meta,
+        has_recurring: !!(offer.meta as any)?.recurring,
+        recurring_keys: Object.keys((offer.meta as any)?.recurring || {}),
+      });
+      
       const { data, error } = await supabase
         .from("tariff_offers")
         .update(updateData)
@@ -189,6 +198,10 @@ export function useUpdateTariffOffer() {
         .select()
         .single();
       if (error) throw error;
+      
+      // DIAG: Log result
+      console.log('[useUpdateTariffOffer] Result meta:', data?.meta);
+      
       return data;
     },
     onSuccess: () => {
