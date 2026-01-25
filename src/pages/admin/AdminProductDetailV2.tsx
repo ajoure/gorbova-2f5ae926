@@ -413,6 +413,15 @@ export default function AdminProductDetailV2() {
       // Meta field for welcome message + preregistration settings
       meta: Object.keys(metaToSave).length > 0 ? metaToSave : null,
     };
+    // DIAG: Log what we're sending to the mutation
+    console.log('[handleSaveOffer] Prepared data:', {
+      requires_card_tokenization: data.requires_card_tokenization,
+      has_meta: !!data.meta,
+      meta_keys: Object.keys(data.meta || {}),
+      has_recurring: !!(data.meta as any)?.recurring,
+      recurring_config: (data.meta as any)?.recurring,
+    });
+    
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
     } else {

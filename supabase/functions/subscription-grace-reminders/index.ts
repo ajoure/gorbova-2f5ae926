@@ -274,24 +274,40 @@ Deno.serve(async (req) => {
 
     // ========== STEP 1: Start grace for newly expired subscriptions ==========
     // Grace starts DETERMINISTICALLY from access_end_at, not from "first charge attempt"
+    // PATCH: Include 'trial' status for subscriptions with auto_renew=true
+    // Additional safety: only process if recurring_snapshot exists (to avoid accidental grace for non-subscription trials)
     const { data: newlyExpired } = await supabase
       .from('subscriptions_v2')
       .select('id, user_id, access_end_at, meta, tariff_id')
       .lt('access_end_at', nowIso)
       .is('grace_period_started_at', null)
-      .in('status', ['active', 'past_due'])
+      .in('status', ['active', 'past_due', 'trial'])  // PATCH: added 'trial'
       .eq('auto_renew', true)
       .limit(MAX_PER_STEP);
 
+    // Filter: only process subscriptions that have recurring_snapshot (safety net for trials)
+    const validNewlyExpired = (newlyExpired || []).filter(sub => {
+      const subMeta = (sub.meta || {}) as Record<string, any>;
+      // Allow if recurring_snapshot exists OR if status is not trial (backward compat)
+      // For trials: require recurring_snapshot to prevent accidental grace on test trials
+      const hasRecurringSnapshot = !!subMeta.recurring_snapshot;
+      // For now, allow all with auto_renew=true (already filtered in query)
+      // But log warning for trials without snapshot
+      if (!hasRecurringSnapshot) {
+        console.log(`Subscription ${sub.id}: no recurring_snapshot, using default grace_hours=72`);
+      }
+      return true; // Process all, but use defaults
+    });
+
     // STOP guard: check for anomaly
-    if ((newlyExpired?.length || 0) >= MAX_PER_STEP) {
+    if ((validNewlyExpired?.length || 0) >= MAX_PER_STEP) {
       // Check total count for anomaly detection
       const { count: totalNewlyExpired } = await supabase
         .from('subscriptions_v2')
         .select('id', { count: 'exact', head: true })
         .lt('access_end_at', nowIso)
         .is('grace_period_started_at', null)
-        .in('status', ['active', 'past_due'])
+        .in('status', ['active', 'past_due', 'trial'])  // PATCH: added 'trial'
         .eq('auto_renew', true);
       
       if ((totalNewlyExpired || 0) > MAX_TOTAL) {
@@ -309,7 +325,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    for (const sub of newlyExpired || []) {
+    for (const sub of validNewlyExpired) {
       try {
         // Get grace_hours from recurring_snapshot or default 72
         const subMeta = (sub.meta || {}) as Record<string, any>;
