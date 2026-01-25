@@ -53,13 +53,15 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
   { value: 'due_today', label: 'К списанию сегодня', icon: Clock },
   { value: 'due_week', label: 'К списанию за неделю' },
   { value: 'overdue', label: 'Просрочено', icon: AlertTriangle },
+  { value: 'in_grace', label: 'В grace (72ч)', icon: Clock },
+  { value: 'expired_reentry', label: 'Удалённые', icon: XCircle },
   { value: 'no_charge_date', label: 'Нет даты списания', icon: AlertTriangle },
   { value: 'no_card', label: 'Без карты', icon: CreditCard },
   { value: 'no_token', label: 'Без токена' },
@@ -73,6 +75,11 @@ const RELEVANT_TG_EVENT_TYPES = [
   'subscription_reminder_3d',
   'subscription_reminder_1d',
   'subscription_no_card_warning',
+  // Grace period events
+  'grace_started',
+  'grace_24h_left',
+  'grace_48h_left',
+  'grace_expired',
 ];
 
 // Column configuration
@@ -83,12 +90,13 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "amount", label: "Сумма", visible: true, width: 90, order: 3 },
   { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 4 },
   { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 5 },
-  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 6 },
-  { key: "card", label: "Карта", visible: true, width: 50, order: 7 },
-  { key: "pm", label: "PM", visible: true, width: 80, order: 8 },
-  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 9 },
-  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 10 },
-  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 11 },
+  { key: "grace_remaining", label: "Grace", visible: true, width: 80, order: 6 },
+  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 7 },
+  { key: "card", label: "Карта", visible: true, width: 50, order: 8 },
+  { key: "pm", label: "PM", visible: true, width: 80, order: 9 },
+  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 10 },
+  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 11 },
+  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 12 },
 ];
 
 const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
@@ -245,6 +253,10 @@ interface AutoRenewal {
   is_staff: boolean;
   is_comped: boolean;
   pricing_source: 'meta' | 'order' | 'tariff_fallback';
+  // PATCH: Grace period fields
+  grace_period_status: string | null;
+  grace_period_started_at: string | null;
+  grace_period_ends_at: string | null;
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -397,6 +409,9 @@ export function AutoRenewalsTabContent() {
           meta,
           is_trial,
           tariff_id,
+          grace_period_status,
+          grace_period_started_at,
+          grace_period_ends_at,
           tariffs (
             name,
             original_price,
@@ -490,6 +505,10 @@ export function AutoRenewalsTabContent() {
           is_staff: isStaff,
           is_comped: isComped,
           pricing_source: pricingSource,
+          // PATCH: Grace period fields
+          grace_period_status: (sub as any).grace_period_status || null,
+          grace_period_started_at: (sub as any).grace_period_started_at || null,
+          grace_period_ends_at: (sub as any).grace_period_ends_at || null,
         };
       // PATCH-2: Filter out non-subscription (one-time) products
       }).filter(sub => sub.is_subscription);
@@ -615,6 +634,12 @@ export function AutoRenewalsTabContent() {
         break;
       case 'max_attempts':
         result = result.filter(r => r.charge_attempts >= 3);
+        break;
+      case 'in_grace':
+        result = result.filter(r => r.grace_period_status === 'in_grace');
+        break;
+      case 'expired_reentry':
+        result = result.filter(r => r.grace_period_status === 'expired_reentry');
         break;
     }
     
