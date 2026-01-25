@@ -393,14 +393,15 @@ const handler = async (req: Request): Promise<Response> => {
 
     const { to, subject, html, text, account_id, product_id, context }: EmailRequest = await req.json();
 
-    // FIX-1: Log the received context for debugging - single source of truth
+    // PATCH-6: Log the received context for debugging - single source of truth
     const ctx = context ?? null;
-    console.log('[send-email] received context:', JSON.stringify(ctx ? {
-      user_id: ctx.user_id,
-      profile_id: ctx.profile_id,
-      subscription_id: ctx.subscription_id,
-      event_type: ctx.event_type,
-    } : null));
+    console.log('[send-email] Received full context:', JSON.stringify(ctx));
+    console.log('[send-email] Key context fields:', JSON.stringify({
+      user_id: ctx?.user_id ?? 'NULL',
+      profile_id: ctx?.profile_id ?? 'NULL',
+      subscription_id: ctx?.subscription_id ?? 'NULL',
+      event_type: ctx?.event_type ?? 'NULL',
+    }));
 
     console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}`);
 
@@ -415,9 +416,23 @@ const handler = async (req: Request): Promise<Response> => {
 
     const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
 
-    // FIX-1: Log to email_logs using ctx (single source of truth for context)
+    // PATCH-6: Log to email_logs using ctx - ENSURE subscription_id and event_type are NOT NULL
     try {
-      await supabase.from('email_logs').insert({
+      const emailLogMeta = {
+        ...(ctx?.meta || {}),
+        event_type: ctx?.event_type || null,
+        subscription_id: ctx?.subscription_id || null,
+        smtp_host: sendResult.smtpHost,
+        smtp_port: sendResult.smtpPort,
+        account_id: account.id,
+      };
+      
+      console.log('[send-email] Writing email_log with meta:', JSON.stringify({
+        subscription_id: emailLogMeta.subscription_id,
+        event_type: emailLogMeta.event_type,
+      }));
+      
+      const { error: logError } = await supabase.from('email_logs').insert({
         user_id: ctx?.user_id || null,
         profile_id: ctx?.profile_id || null,
         direction: 'outgoing',
@@ -429,15 +444,14 @@ const handler = async (req: Request): Promise<Response> => {
         provider: 'yandex_smtp',
         provider_message_id: sendResult.queueId || null,
         status: 'sent',
-        meta: {
-          ...(ctx?.meta || {}),
-          event_type: ctx?.event_type || null,
-          subscription_id: ctx?.subscription_id || null,
-          smtp_host: sendResult.smtpHost,
-          smtp_port: sendResult.smtpPort,
-          account_id: account.id,
-        },
+        meta: emailLogMeta,
       });
+      
+      if (logError) {
+        console.error('[send-email] Failed to log email:', logError);
+      } else {
+        console.log('[send-email] Email logged successfully with subscription_id:', emailLogMeta.subscription_id);
+      }
     } catch (logErr) {
       console.error('Failed to log email to email_logs:', logErr);
       // Don't fail the request if logging fails

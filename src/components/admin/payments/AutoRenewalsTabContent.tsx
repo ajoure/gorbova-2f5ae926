@@ -45,13 +45,22 @@ import { CSS } from "@dnd-kit/utilities";
 // Timezone for all date calculations
 const MINSK_TZ = 'Europe/Minsk';
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts';
+// PATCH-6: Staff emails - excluded from metrics, reminders, and access changes
+const STAFF_EMAILS = [
+  'a.bruylo@ajoure.by',
+  'nrokhmistrov@gmail.com',
+  'ceo@ajoure.by',
+  'irenessa@yandex.ru',
+];
+
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
   { value: 'due_today', label: 'К списанию сегодня', icon: Clock },
   { value: 'due_week', label: 'К списанию за неделю' },
   { value: 'overdue', label: 'Просрочено', icon: AlertTriangle },
+  { value: 'no_charge_date', label: 'Нет даты списания', icon: AlertTriangle },
   { value: 'no_card', label: 'Без карты', icon: CreditCard },
   { value: 'no_token', label: 'Без токена' },
   { value: 'pm_inactive', label: 'PM неактивен' },
@@ -232,16 +241,31 @@ interface AutoRenewal {
   is_trial: boolean;
   tariff_original_price: number | null;
   tariff_trial_price: number | null;
+  // PATCH-6: Staff/comped detection
+  is_staff: boolean;
+  is_comped: boolean;
+  pricing_source: 'meta' | 'order' | 'tariff_fallback';
 }
 
-// Helper to get charge amount with priority (PATCH-3: Trial handling)
-function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: string } {
+// Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
+function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: string; source: string } {
+  // PATCH-6: Staff subscriptions always show 0 BYN
+  if (renewal.is_staff) {
+    return { amount: 0, currency: 'BYN', source: 'staff_comped' };
+  }
+  
+  // PATCH-6: Comped subscriptions (last price = 0)
+  if (renewal.is_comped) {
+    return { amount: 0, currency: 'BYN', source: 'comped' };
+  }
+  
   // 1. Meta override (highest priority - manually set)
   const metaAmount = renewal.meta?.recurring_amount;
   if (metaAmount && Number(metaAmount) > 0) {
     return { 
       amount: Number(metaAmount), 
-      currency: renewal.meta?.recurring_currency || 'BYN' 
+      currency: renewal.meta?.recurring_currency || 'BYN',
+      source: 'meta'
     };
   }
   
@@ -249,25 +273,26 @@ function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: stri
   if (renewal.is_trial || renewal.status === 'trial') {
     const originalPrice = renewal.tariff_original_price;
     if (originalPrice && Number(originalPrice) > 0) {
-      return { amount: Number(originalPrice), currency: 'BYN' };
+      return { amount: Number(originalPrice), currency: 'BYN', source: 'tariff_trial' };
     }
   }
   
-  // 3. Regular order price
+  // 3. Regular order price (last factual price from order)
   if (renewal.order_final_price && Number(renewal.order_final_price) > 0) {
     return { 
       amount: Number(renewal.order_final_price), 
-      currency: renewal.order_currency || 'BYN' 
+      currency: renewal.order_currency || 'BYN',
+      source: 'order'
     };
   }
   
-  // 4. Fallback to tariff.original_price
+  // 4. Fallback to tariff.original_price (log this case)
   const originalPrice = renewal.tariff_original_price;
   if (originalPrice && Number(originalPrice) > 0) {
-    return { amount: Number(originalPrice), currency: 'BYN' };
+    return { amount: Number(originalPrice), currency: 'BYN', source: 'tariff_fallback' };
   }
   
-  return { amount: 0, currency: 'BYN' };
+  return { amount: 0, currency: 'BYN', source: 'unknown' };
 }
 
 // Format amount with 2 decimals + currency code
@@ -417,6 +442,23 @@ export function AutoRenewalsTabContent() {
           tariffOffers.some((o: any) => o?.requires_card_tokenization === true) ||
           product?.category === 'subscription';
 
+        // PATCH-6: Detect staff by email
+        const email = profile?.email?.toLowerCase() || '';
+        const isStaff = STAFF_EMAILS.includes(email);
+        
+        // PATCH-6: Detect comped (last factual price = 0)
+        const orderPrice = order?.final_price;
+        const isComped = !isStaff && orderPrice !== null && Number(orderPrice) === 0;
+        
+        // PATCH-6: Determine pricing source
+        const metaObj = sub.meta as Record<string, unknown> | null;
+        let pricingSource: 'meta' | 'order' | 'tariff_fallback' = 'tariff_fallback';
+        if (metaObj?.recurring_amount && Number(metaObj.recurring_amount) > 0) {
+          pricingSource = 'meta';
+        } else if (order?.final_price && Number(order.final_price) > 0) {
+          pricingSource = 'order';
+        }
+
         return {
           id: sub.id,
           user_id: sub.user_id,
@@ -444,6 +486,10 @@ export function AutoRenewalsTabContent() {
           is_trial: sub.is_trial || sub.status === 'trial',
           tariff_original_price: tariff?.original_price || null,
           tariff_trial_price: tariff?.trial_price || null,
+          // PATCH-6: Staff/comped detection
+          is_staff: isStaff,
+          is_comped: isComped,
+          pricing_source: pricingSource,
         };
       // PATCH-2: Filter out non-subscription (one-time) products
       }).filter(sub => sub.is_subscription);
@@ -554,6 +600,10 @@ export function AutoRenewalsTabContent() {
       case 'overdue':
         result = result.filter(r => r.next_charge_at && isPastMinsk(new Date(r.next_charge_at)));
         break;
+      // PATCH-6: New filter for NULL next_charge_at
+      case 'no_charge_date':
+        result = result.filter(r => !r.next_charge_at);
+        break;
       case 'no_card':
         result = result.filter(r => !r.payment_method_id);
         break;
@@ -610,13 +660,19 @@ export function AutoRenewalsTabContent() {
     getFieldValue,
   });
 
-  // Stats with amounts
+  // Stats with amounts - PATCH-6: Exclude staff and NULL next_charge_at from due/overdue metrics
   const stats = useMemo(() => {
     if (!renewals) return null;
     
-    const dueTodayList = renewals.filter(r => r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)));
-    const overdueList = renewals.filter(r => r.next_charge_at && isPastMinsk(new Date(r.next_charge_at)));
+    // PATCH-6: For due/overdue metrics, exclude staff and NULL next_charge_at
+    const eligibleForMetrics = renewals.filter(r => r.next_charge_at && !r.is_staff);
+    
+    const dueTodayList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)));
+    const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
     const noCardList = renewals.filter(r => !r.payment_method_id);
+    
+    // PATCH-6: Count subscriptions with NULL next_charge_at
+    const noChargeDateList = renewals.filter(r => !r.next_charge_at);
     
     const sumAmount = (list: AutoRenewal[]) => 
       list.reduce((sum, r) => sum + getChargeAmount(r).amount, 0);
@@ -626,6 +682,7 @@ export function AutoRenewalsTabContent() {
       dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
       overdue: { count: overdueList.length, sum: sumAmount(overdueList) },
       noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
+      noChargeDate: { count: noChargeDateList.length, sum: 0 }, // No sum for NULL dates
     };
   }, [renewals]);
 
@@ -819,9 +876,23 @@ export function AutoRenewalsTabContent() {
       case 'contact':
         return (
           <div className="flex flex-col">
-            <span className="font-medium text-sm truncate max-w-[150px]">
-              {renewal.contact_name || 'Без имени'}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-sm truncate max-w-[130px]">
+                {renewal.contact_name || 'Без имени'}
+              </span>
+              {/* PATCH-6: Staff badge */}
+              {renewal.is_staff && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-purple-100 text-purple-700">
+                  Staff
+                </Badge>
+              )}
+              {/* PATCH-6: Comped badge (if not staff) */}
+              {!renewal.is_staff && renewal.is_comped && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
+                  Comped
+                </Badge>
+              )}
+            </div>
             <span className="text-xs text-muted-foreground truncate max-w-[150px]">
               {renewal.contact_email}
             </span>
@@ -910,6 +981,10 @@ export function AutoRenewalsTabContent() {
           <span className="text-xs text-muted-foreground">—</span>
         );
       case 'tg_status':
+        // PATCH-6: Don't show indicators for NULL next_charge_at
+        if (!renewal.next_charge_at) {
+          return <span className="text-muted-foreground text-xs">—</span>;
+        }
         return (
           <NotificationStatusIndicators
             subscriptionId={renewal.id}
@@ -919,6 +994,10 @@ export function AutoRenewalsTabContent() {
           />
         );
       case 'email_status':
+        // PATCH-6: Don't show indicators for NULL next_charge_at
+        if (!renewal.next_charge_at) {
+          return <span className="text-muted-foreground text-xs">—</span>;
+        }
         return (
           <NotificationStatusIndicators
             subscriptionId={renewal.id}
