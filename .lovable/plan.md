@@ -1,74 +1,107 @@
 
+# PATCH: Исправление парсера bePaid Excel
 
-# PATCH: Исправление ошибок сборки
+## Выявленная проблема
 
-## Выявленные проблемы
+Файл bePaid содержит **2 листа:**
 
-### 1. Неправильный путь импорта
-**Файл:** `src/components/admin/payments/ReconcileFileDialog.tsx`
-**Строка 14:**
-```tsx
-// НЕПРАВИЛЬНО:
-import { useAuth } from "@/context/AuthContext";
+| Лист | Название | Содержимое | Есть UID? |
+|------|----------|------------|-----------|
+| 1 | Cards | Сводная статистика | **НЕТ** |
+| 2 | (без названия или другое) | 640 детальных транзакций | **ДА** |
 
-// ПРАВИЛЬНО:
-import { useAuth } from "@/contexts/AuthContext";
+**Текущий парсер (строки 86-92):**
+```javascript
+const sheetsToProcess = sheetNames.filter(n => 
+  n.toLowerCase().includes('card') || 
+  n.toLowerCase().includes('erip') ||
+  sheetNames.length === 1
+);
 ```
 
-### 2. Несуществующее поле `profile`
-**Файл:** `src/components/admin/payments/ReconcileFileDialog.tsx`
-**Строка 161:**
-```tsx
-// НЕПРАВИЛЬНО:
-const { user, profile } = useAuth();
+Проблема: парсер находит лист "Cards" (сводку), не находит там UID, и возвращает 0 транзакций. Второй лист с данными не обрабатывается.
 
-// ПРАВИЛЬНО (согласно AuthContext.tsx):
-const { user, role } = useAuth();
-```
+---
 
-**Также строки 173-176:**
-```tsx
-// НЕПРАВИЛЬНО:
-const whoami = useMemo(() => ({
-  email: user?.email || profile?.email || 'unknown',
-  uid: user?.id || 'unknown',
-  roles: profile?.role || 'user',
-}), [user, profile]);
+## Решение
 
-// ПРАВИЛЬНО:
-const whoami = useMemo(() => ({
-  email: user?.email || 'unknown',
-  uid: user?.id || 'unknown',
-  roles: role || 'user',
-}), [user, role]);
+**Новая логика парсера:**
+1. Обработать **ВСЕ листы** в файле
+2. На каждом листе искать заголовок с "UID"
+3. Если UID найден — парсить транзакции
+4. Если не найден — пропустить лист и перейти к следующему
+5. Объединить транзакции со всех листов
+
+**Код исправления (строки 84-113):**
+
+```typescript
+// Process ALL sheets, not just "Cards"/"ERIP"
+for (const sheetName of sheetNames) {
+  const sheet = workbook.Sheets[sheetName];
+  const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+  
+  // Skip empty sheets
+  if (!jsonData || jsonData.length < 2) continue;
+  
+  // Find header row with UID column (check first 15 rows)
+  let headerRowIdx = -1;
+  let headers: string[] = [];
+  
+  for (let i = 0; i < Math.min(15, jsonData.length); i++) {
+    const row = jsonData[i];
+    if (!row) continue;
+    
+    // Look for UID column specifically (first column or named UID)
+    const rowStr = row.map(c => String(c || '').toLowerCase().trim());
+    const hasUid = rowStr.some(h => 
+      h === 'uid' || 
+      h.includes('id транз') ||
+      h.startsWith('uid')
+    );
+    
+    if (hasUid) {
+      headerRowIdx = i;
+      headers = rowStr;
+      break;
+    }
+  }
+  
+  // If no UID column found in this sheet, skip it
+  if (headerRowIdx === -1) {
+    console.log(`Sheet "${sheetName}": no UID column found, skipping`);
+    continue;
+  }
+  
+  console.log(`Sheet "${sheetName}": found UID at row ${headerRowIdx}, parsing...`);
+  
+  // Find column indices
+  const uidIdx = headers.findIndex(h => h === 'uid' || h.includes('id транз'));
+  // ... rest of parsing logic
+}
 ```
 
 ---
 
-## Файлы для изменения
+## Файл для изменения
 
-| Файл | Строка | Изменение |
+| Файл | Строки | Изменение |
 |------|--------|-----------|
-| `ReconcileFileDialog.tsx` | 14 | Исправить путь: `@/context/` → `@/contexts/` |
-| `ReconcileFileDialog.tsx` | 161 | Заменить `profile` на `role` |
-| `ReconcileFileDialog.tsx` | 173-176 | Обновить `whoami` — использовать `role` вместо `profile` |
+| `ReconcileFileDialog.tsx` | 84-147 | Переписать `parseExcelFile` с новой логикой |
 
 ---
 
-## Также: Проверка дизайна карточек
+## Ожидаемый результат
 
-По скриншоту видно, что карточки уже используют новый дизайн, но текст "BYN" всё ещё может обрезаться на мобильных устройствах.
-
-**Дополнительное улучшение в `PaymentsStatsPanel.tsx`:**
-- Уменьшить размер суммы на мобильных: `text-2xl md:text-3xl`
-- Добавить `min-w-0` для предотвращения overflow
+После исправления:
+1. Загрузка `1-25.xlsx` 
+2. Парсер пропускает лист "Cards" (нет UID)
+3. Парсер находит лист с транзакциями (есть UID)
+4. Toast: **"Найдено 640 транзакций"**
 
 ---
 
-## Порядок исправления
+## Дополнительные улучшения
 
-1. Исправить импорт `@/contexts/AuthContext`
-2. Заменить `profile` на `role` в destructuring
-3. Обновить `whoami` useMemo
-4. Проверить, что сборка проходит
-
+1. **Добавить логирование** какие листы обрабатываются
+2. **Вывести в UI** название обработанных листов
+3. **Валидировать UUID формат** — UID должен быть валидным UUID (8-4-4-4-12)
