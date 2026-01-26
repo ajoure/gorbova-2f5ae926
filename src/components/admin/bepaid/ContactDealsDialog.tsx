@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,6 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   cancelled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   refunded: { label: "Возврат", color: "bg-red-500/20 text-red-600", icon: XCircle },
   expired: { label: "Истёк", color: "bg-muted text-muted-foreground", icon: XCircle },
-  needs_mapping: { label: "Требует маппинга", color: "bg-purple-500/20 text-purple-600", icon: AlertTriangle },
 };
 
 interface Profile {
@@ -137,12 +136,6 @@ export default function ContactDealsDialog({
     }
   };
 
-  // PATCH 5: Filter out needs_mapping deals from display
-  const displayedDeals = useMemo(() => {
-    if (!deals) return [];
-    return deals.filter(d => d.status !== 'needs_mapping');
-  }, [deals]);
-
   if (!profile) return null;
 
   return (
@@ -180,7 +173,7 @@ export default function ContactDealsDialog({
               <div className="flex items-center justify-center py-8">
                 <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
-            ) : displayedDeals.length > 0 ? (
+            ) : deals && deals.length > 0 ? (
               <ScrollArea className="max-h-[400px]">
                 <Table>
                   <TableHeader>
@@ -195,7 +188,7 @@ export default function ContactDealsDialog({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedDeals.map((deal) => {
+                    {deals.map((deal) => {
                       const statusConfig = STATUS_CONFIG[deal.status] || STATUS_CONFIG.pending;
                       const StatusIcon = statusConfig.icon;
                       const dealPayments = payments?.filter(p => p.order_id === deal.id) || [];
@@ -295,7 +288,7 @@ export default function ContactDealsDialog({
 
           <div className="flex justify-between items-center mt-4 pt-4 border-t">
             <span className="text-sm text-muted-foreground">
-              Всего сделок: {displayedDeals.length}
+              Всего сделок: {deals?.length || 0}
             </span>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Закрыть

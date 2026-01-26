@@ -84,45 +84,6 @@ Deno.serve(async (req) => {
     const resolvedOrderId = ensureResult.orderId;
     console.log(`[grant-access-for-payment] Resolved order ${resolvedOrderId} (action: ${ensureResult.action})`);
 
-    // ============= PATCH 4: Check if resolved order needs mapping =============
-    if (resolvedOrderId) {
-      const { data: orderCheck } = await supabase
-        .from('orders_v2')
-        .select('status, meta')
-        .eq('id', resolvedOrderId)
-        .single();
-      
-      const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
-      const isNeedsMapping = orderCheck?.status === 'needs_mapping';
-      const hasMappingApplied = !!orderMeta.mapping_applied_at;
-      
-      if (isNeedsMapping && !hasMappingApplied) {
-        await supabase.from('audit_logs').insert({
-          action: 'access.grant_blocked_needs_mapping',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-payment',
-          meta: {
-            payment_id: paymentId,
-            order_id: resolvedOrderId,
-            reason: 'needs_mapping_without_applied_at',
-          },
-        });
-
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: 'needs_mapping_blocked',
-            message: 'Order requires manual product mapping before access can be granted.',
-            paymentId,
-            orderId: resolvedOrderId,
-          }),
-          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-    // ============= END PATCH 4 =============
-
     // Step 2: Call grant-access-for-order with the resolved orderId
     // Using internal function call to avoid HTTP overhead
     const grantResponse = await fetch(`${supabaseUrl}/functions/v1/grant-access-for-order`, {
