@@ -1,107 +1,85 @@
 
-# PATCH: Исправление парсера bePaid Excel
 
-## Выявленная проблема
+# PATCH: Исправление UI диалога сверки bePaid
 
-Файл bePaid содержит **2 листа:**
+## Выявленные проблемы (по скриншоту)
 
-| Лист | Название | Содержимое | Есть UID? |
-|------|----------|------------|-----------|
-| 1 | Cards | Сводная статистика | **НЕТ** |
-| 2 | (без названия или другое) | 640 детальных транзакций | **ДА** |
-
-**Текущий парсер (строки 86-92):**
-```javascript
-const sheetsToProcess = sheetNames.filter(n => 
-  n.toLowerCase().includes('card') || 
-  n.toLowerCase().includes('erip') ||
-  sheetNames.length === 1
-);
-```
-
-Проблема: парсер находит лист "Cards" (сводку), не находит там UID, и возвращает 0 транзакций. Второй лист с данными не обрабатывается.
+| Проблема | Текущее | Должно быть |
+|----------|---------|-------------|
+| Высота секций | `max-h-48` (192px) | `max-h-64` (256px) + ScrollArea |
+| Нет итогов | Только 4 категории | Итоговая строка с суммами |
+| Mismatch ограничен | Показывает 50 из 299 | Показывать все + пагинация |
 
 ---
 
-## Решение
+## Изменения
 
-**Новая логика парсера:**
-1. Обработать **ВСЕ листы** в файле
-2. На каждом листе искать заголовок с "UID"
-3. Если UID найден — парсить транзакции
-4. Если не найден — пропустить лист и перейти к следующему
-5. Объединить транзакции со всех листов
+### 1. Увеличить высоту раскрывающихся секций
 
-**Код исправления (строки 84-113):**
+**Строки 483, 505, 528:**
+```tsx
+// БЫЛО:
+<div className="max-h-48 overflow-auto rounded-xl ...">
 
-```typescript
-// Process ALL sheets, not just "Cards"/"ERIP"
-for (const sheetName of sheetNames) {
-  const sheet = workbook.Sheets[sheetName];
-  const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
-  
-  // Skip empty sheets
-  if (!jsonData || jsonData.length < 2) continue;
-  
-  // Find header row with UID column (check first 15 rows)
-  let headerRowIdx = -1;
-  let headers: string[] = [];
-  
-  for (let i = 0; i < Math.min(15, jsonData.length); i++) {
-    const row = jsonData[i];
-    if (!row) continue;
-    
-    // Look for UID column specifically (first column or named UID)
-    const rowStr = row.map(c => String(c || '').toLowerCase().trim());
-    const hasUid = rowStr.some(h => 
-      h === 'uid' || 
-      h.includes('id транз') ||
-      h.startsWith('uid')
-    );
-    
-    if (hasUid) {
-      headerRowIdx = i;
-      headers = rowStr;
-      break;
-    }
-  }
-  
-  // If no UID column found in this sheet, skip it
-  if (headerRowIdx === -1) {
-    console.log(`Sheet "${sheetName}": no UID column found, skipping`);
-    continue;
-  }
-  
-  console.log(`Sheet "${sheetName}": found UID at row ${headerRowIdx}, parsing...`);
-  
-  // Find column indices
-  const uidIdx = headers.findIndex(h => h === 'uid' || h.includes('id транз'));
-  // ... rest of parsing logic
-}
+// СТАНЕТ:
+<ScrollArea className="h-64">
+  <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
+    ...
+  </div>
+</ScrollArea>
+```
+
+### 2. Добавить итоговую строку в таблицу
+
+**После строки 468 (закрытие tbody):**
+```tsx
+<tfoot className="bg-muted/50 border-t-2 border-border">
+  <tr>
+    <td className="px-4 py-3 font-bold">ИТОГО после исправлений</td>
+    <td className="text-right px-4 py-3 tabular-nums font-bold">
+      {result.stats.matched + result.stats.missing_in_db + 
+       result.stats.status_mismatches + result.stats.amount_mismatches}
+    </td>
+    <td className="text-right px-4 py-3 tabular-nums font-bold text-emerald-600">
+      {(result.missing.reduce((sum, m) => sum + m.amount, 0) + 
+        result.extra.reduce((sum, e) => sum + e.amount, 0))
+        .toLocaleString('ru-RU', { minimumFractionDigits: 2 })} BYN
+    </td>
+    <td className="px-4 py-3"></td>
+  </tr>
+</tfoot>
+```
+
+### 3. Показать сумму Mismatch в таблице
+
+**Строка 454:**
+```tsx
+// БЫЛО:
+<td className="text-right px-4 py-2 tabular-nums">—</td>
+
+// СТАНЕТ (показать сумму, которая будет исправлена):
+<td className="text-right px-4 py-2 tabular-nums">
+  {result.mismatches.reduce((sum, m) => sum + Math.abs(m.file_amount - m.db_amount), 0)
+    .toLocaleString('ru-RU', { minimumFractionDigits: 2 })}
+</td>
 ```
 
 ---
 
-## Файл для изменения
+## Файлы для изменения
 
 | Файл | Строки | Изменение |
 |------|--------|-----------|
-| `ReconcileFileDialog.tsx` | 84-147 | Переписать `parseExcelFile` с новой логикой |
+| `ReconcileFileDialog.tsx` | 468-469 | Добавить tfoot с итогами |
+| `ReconcileFileDialog.tsx` | 454 | Показать сумму Mismatch |
+| `ReconcileFileDialog.tsx` | 483, 505, 528 | Заменить `max-h-48` на ScrollArea h-64 |
 
 ---
 
-## Ожидаемый результат
+## Результат
 
-После исправления:
-1. Загрузка `1-25.xlsx` 
-2. Парсер пропускает лист "Cards" (нет UID)
-3. Парсер находит лист с транзакциями (есть UID)
-4. Toast: **"Найдено 640 транзакций"**
+После исправления диалог покажет:
+- **Итоговая строка:** общее кол-во транзакций и сумма после всех исправлений
+- **Полный скрол** в раскрывающихся секциях (256px вместо 192px)
+- **Сумма разницы** в строке Mismatch
 
----
-
-## Дополнительные улучшения
-
-1. **Добавить логирование** какие листы обрабатываются
-2. **Вывести в UI** название обработанных листов
-3. **Валидировать UUID формат** — UID должен быть валидным UUID (8-4-4-4-12)
