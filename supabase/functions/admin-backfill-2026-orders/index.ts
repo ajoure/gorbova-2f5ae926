@@ -64,10 +64,10 @@ serve(async (req) => {
       });
     }
 
-    // Check super_admin permission
+    // Check superadmin permission (enum value is 'superadmin' not 'super_admin')
     const { data: isSuperAdmin } = await supabase.rpc('has_role', { 
       _user_id: user.id, 
-      _role: 'super_admin' 
+      _role: 'superadmin' 
     });
 
     if (!isSuperAdmin) {
