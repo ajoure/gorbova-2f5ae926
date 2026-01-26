@@ -1,6 +1,6 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, ClipboardList, BarChart3, RefreshCw } from "lucide-react";
+import { CreditCard, ClipboardList, BarChart3, RefreshCw, FileSpreadsheet } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Tab content components
@@ -8,12 +8,14 @@ import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabConte
 import { PreregistrationsTabContent } from "@/components/admin/payments/PreregistrationsTabContent";
 import { DiagnosticsTabContent } from "@/components/admin/payments/DiagnosticsTabContent";
 import { AutoRenewalsTabContent } from "@/components/admin/payments/AutoRenewalsTabContent";
+import { BepaidStatementTabContent } from "@/components/admin/payments/BepaidStatementTabContent";
 
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "preorders", label: "Предзаписи", icon: ClipboardList, path: "/admin/payments/preorders" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
+  { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
 ];
 
 export default function AdminPaymentsHub() {
@@ -68,6 +70,7 @@ export default function AdminPaymentsHub() {
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "preorders" && <PreregistrationsTabContent />}
           {activeTab === "diagnostics" && <DiagnosticsTabContent />}
+          {activeTab === "statement" && <BepaidStatementTabContent />}
         </div>
       </div>
     </AdminLayout>
