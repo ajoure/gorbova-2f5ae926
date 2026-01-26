@@ -223,6 +223,7 @@ const App = () => (
               <Route path="/admin/payments/preorders" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/statement" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />

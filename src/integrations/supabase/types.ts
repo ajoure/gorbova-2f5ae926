@@ -260,6 +260,210 @@ export type Database = {
           },
         ]
       }
+      bepaid_statement_rows: {
+        Row: {
+          address: string | null
+          amount: number | null
+          auth_code: string | null
+          avs_result: string | null
+          bank_code: string | null
+          bank_country: string | null
+          bank_id: string | null
+          bank_name: string | null
+          business_category: string | null
+          card_bin: string | null
+          card_bin_8: string | null
+          card_expires: string | null
+          card_holder: string | null
+          card_masked: string | null
+          city: string | null
+          commission_per_op: number | null
+          commission_percent: number | null
+          commission_total: number | null
+          conversion_rate: number | null
+          converted_amount: number | null
+          converted_commission: number | null
+          converted_currency: string | null
+          converted_payout: number | null
+          country: string | null
+          created_at_bepaid: string | null
+          currency: string | null
+          description: string | null
+          email: string | null
+          expires_at: string | null
+          first_name: string | null
+          fraud: string | null
+          gateway_id: string | null
+          id: string
+          import_batch_id: string | null
+          imported_at: string | null
+          ip: string | null
+          last_name: string | null
+          merchant_company: string | null
+          merchant_country: string | null
+          merchant_id: string | null
+          message: string | null
+          order_id_bepaid: string | null
+          paid_at: string | null
+          payment_identifier: string | null
+          payment_method: string | null
+          payout_amount: number | null
+          payout_date: string | null
+          phone: string | null
+          product_code: string | null
+          raw_data: Json | null
+          reason: string | null
+          recurring_type: string | null
+          region: string | null
+          response_code: string | null
+          rrn: string | null
+          secure_3d: string | null
+          shop_id: string | null
+          shop_name: string | null
+          status: string | null
+          token_provider: string | null
+          tracking_id: string | null
+          transaction_type: string | null
+          uid: string
+          updated_at: string | null
+          zip: string | null
+        }
+        Insert: {
+          address?: string | null
+          amount?: number | null
+          auth_code?: string | null
+          avs_result?: string | null
+          bank_code?: string | null
+          bank_country?: string | null
+          bank_id?: string | null
+          bank_name?: string | null
+          business_category?: string | null
+          card_bin?: string | null
+          card_bin_8?: string | null
+          card_expires?: string | null
+          card_holder?: string | null
+          card_masked?: string | null
+          city?: string | null
+          commission_per_op?: number | null
+          commission_percent?: number | null
+          commission_total?: number | null
+          conversion_rate?: number | null
+          converted_amount?: number | null
+          converted_commission?: number | null
+          converted_currency?: string | null
+          converted_payout?: number | null
+          country?: string | null
+          created_at_bepaid?: string | null
+          currency?: string | null
+          description?: string | null
+          email?: string | null
+          expires_at?: string | null
+          first_name?: string | null
+          fraud?: string | null
+          gateway_id?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          ip?: string | null
+          last_name?: string | null
+          merchant_company?: string | null
+          merchant_country?: string | null
+          merchant_id?: string | null
+          message?: string | null
+          order_id_bepaid?: string | null
+          paid_at?: string | null
+          payment_identifier?: string | null
+          payment_method?: string | null
+          payout_amount?: number | null
+          payout_date?: string | null
+          phone?: string | null
+          product_code?: string | null
+          raw_data?: Json | null
+          reason?: string | null
+          recurring_type?: string | null
+          region?: string | null
+          response_code?: string | null
+          rrn?: string | null
+          secure_3d?: string | null
+          shop_id?: string | null
+          shop_name?: string | null
+          status?: string | null
+          token_provider?: string | null
+          tracking_id?: string | null
+          transaction_type?: string | null
+          uid: string
+          updated_at?: string | null
+          zip?: string | null
+        }
+        Update: {
+          address?: string | null
+          amount?: number | null
+          auth_code?: string | null
+          avs_result?: string | null
+          bank_code?: string | null
+          bank_country?: string | null
+          bank_id?: string | null
+          bank_name?: string | null
+          business_category?: string | null
+          card_bin?: string | null
+          card_bin_8?: string | null
+          card_expires?: string | null
+          card_holder?: string | null
+          card_masked?: string | null
+          city?: string | null
+          commission_per_op?: number | null
+          commission_percent?: number | null
+          commission_total?: number | null
+          conversion_rate?: number | null
+          converted_amount?: number | null
+          converted_commission?: number | null
+          converted_currency?: string | null
+          converted_payout?: number | null
+          country?: string | null
+          created_at_bepaid?: string | null
+          currency?: string | null
+          description?: string | null
+          email?: string | null
+          expires_at?: string | null
+          first_name?: string | null
+          fraud?: string | null
+          gateway_id?: string | null
+          id?: string
+          import_batch_id?: string | null
+          imported_at?: string | null
+          ip?: string | null
+          last_name?: string | null
+          merchant_company?: string | null
+          merchant_country?: string | null
+          merchant_id?: string | null
+          message?: string | null
+          order_id_bepaid?: string | null
+          paid_at?: string | null
+          payment_identifier?: string | null
+          payment_method?: string | null
+          payout_amount?: number | null
+          payout_date?: string | null
+          phone?: string | null
+          product_code?: string | null
+          raw_data?: Json | null
+          reason?: string | null
+          recurring_type?: string | null
+          region?: string | null
+          response_code?: string | null
+          rrn?: string | null
+          secure_3d?: string | null
+          shop_id?: string | null
+          shop_name?: string | null
+          status?: string | null
+          token_provider?: string | null
+          tracking_id?: string | null
+          transaction_type?: string | null
+          uid?: string
+          updated_at?: string | null
+          zip?: string | null
+        }
+        Relationships: []
+      }
       bepaid_sync_logs: {
         Row: {
           already_exists: number | null
