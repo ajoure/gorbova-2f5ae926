@@ -84,6 +84,34 @@ Deno.serve(async (req) => {
     const resolvedOrderId = ensureResult.orderId;
     console.log(`[grant-access-for-payment] Resolved order ${resolvedOrderId} (action: ${ensureResult.action})`);
 
+    // ============= PATCH 7: Check if this is a "skipped due to needs_manual_mapping" =============
+    // If ensureResult.reason starts with "needs_manual_mapping", do NOT call grant-access
+    if (ensureResult.action === 'skipped' && ensureResult.reason?.startsWith('needs_manual_mapping')) {
+      await supabase.from('audit_logs').insert({
+        action: 'access.grant_skipped_needs_mapping',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-payment',
+        meta: {
+          payment_id: paymentId,
+          reason: ensureResult.reason,
+          was_orphan: ensureResult.wasOrphan,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          warning: 'needs_manual_mapping',
+          message: 'Payment requires manual product mapping before access can be granted.',
+          paymentId,
+          ensureResult,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    // ============= END PATCH 7 =============
+
     // Step 2: Call grant-access-for-order with the resolved orderId
     // Using internal function call to avoid HTTP overhead
     const grantResponse = await fetch(`${supabaseUrl}/functions/v1/grant-access-for-order`, {
