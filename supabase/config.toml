@@ -287,6 +287,3 @@ verify_jwt = false
 
 [functions.admin-backfill-recurring-snapshot]
 verify_jwt = false
-
-[functions.admin-backfill-renewal-orders]
-verify_jwt = false

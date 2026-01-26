@@ -949,30 +949,18 @@ async function chargeSubscription(
 
     const chargeAttemptAt = new Date().toISOString();
 
-    // Extract txUid and determine charge success status
-    const txUid = chargeResult?.transaction?.uid ?? null;
-    const txStatus = (chargeResult?.transaction?.status ?? '').toString().toLowerCase();
-    const chargeSucceeded = ['successful', 'succeeded', 'success', 'ok'].includes(txStatus);
-
     if (chargeResult.transaction?.status === 'successful') {
       // PATCH A: Fix status 'completed' → 'succeeded' + mandatory error handling
-      // PATCH A1: Persist meta.bepaid_uid for renewal order creation
-      const existingPaymentMeta = (payment?.meta || {}) as Record<string, any>;
-
       const { data: updatedPayment, error: updatePaymentError } = await supabase
         .from('payments_v2')
         .update({
           status: 'succeeded',  // FIXED: was 'completed' which doesn't exist in enum
           paid_at: new Date().toISOString(),
-          provider_payment_id: txUid,
+          provider_payment_id: chargeResult.transaction.uid,
           provider_response: chargeResult,
           card_last4: chargeResult.transaction.credit_card?.last_4 ?? null,
           card_brand: chargeResult.transaction.credit_card?.brand ?? null,
           receipt_url: chargeResult.transaction.receipt_url ?? null,
-          meta: {
-            ...existingPaymentMeta,
-            bepaid_uid: txUid,  // CRITICAL: persist for renewal order idempotency
-          },
         })
         .eq('id', payment.id)
         .select('id, status, paid_at, provider_payment_id')
@@ -1061,15 +1049,11 @@ async function chargeSubscription(
       // Purpose: Each successful recurring charge creates a SEPARATE order (deal) in orders_v2
       // This ensures UI shows individual deals per billing cycle, not a single trial order
       let renewalOrderId: string | null = null;
-      const bepaidUid = txUid;  // Use txUid extracted earlier from chargeResult
-      const pMeta = (payment?.meta || {}) as Record<string, any>;
+      const bepaidUid = chargeResult?.transaction?.uid ?? null;
+      const pMeta = (payment?.meta || {}) as Record<string, unknown>;
 
-      // PATCH A2: Use updatedPayment.status OR chargeSucceeded (not stale payment.status)
-      // payment.status is 'processing' (before update), updatedPayment.status is 'succeeded'
-      const paymentSucceeded = updatedPayment?.status === 'succeeded' || chargeSucceeded;
-
-      // Guard 1: Only for successful charges with positive amount AND valid bepaid_uid
-      if (amount > 0 && paymentSucceeded && bepaidUid) {
+      // Guard 1: Only for successful charges with positive amount
+      if (amount > 0 && payment?.status === 'succeeded' && bepaidUid) {
         // Guard 2: Idempotency - if already created for this payment, skip
         if (!pMeta.renewal_order_id) {
           // Guard 3: Hard idempotency by bePaid uid (avoid duplicates across retries)
@@ -1226,24 +1210,6 @@ async function chargeSubscription(
             reason: 'missing_bepaid_uid',
             amount,
             currency,
-          },
-        });
-      } else if (amount > 0 && paymentSucceeded && !bepaidUid) {
-        // PATCH A3: Log skipped renewal if success but missing bepaid_uid
-        console.warn(`Renewal order skipped for subscription ${id}: missing bepaid_uid`);
-        await supabase.from('audit_logs').insert({
-          action: 'subscription.renewal_order_skipped',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'subscription-charge',
-          target_user_id: user_id,
-          meta: {
-            subscription_id: id,
-            payment_id: payment?.id,
-            reason: 'missing_bepaid_uid_after_success',
-            amount,
-            currency,
-            tx_status: txStatus,
           },
         });
       }
