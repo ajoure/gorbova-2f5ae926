@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureOrderForPayment } from "../_shared/ensure-order-for-payment.ts";
+// PATCH 1: Removed ensureOrderForPayment import - strict contract: only orderId accepted
+// Use grant-access-for-payment facade if you have paymentId
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,39 +25,18 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // PATCH 1: Strict contract - ONLY orderId accepted
+    // paymentId is NO LONGER supported here - use grant-access-for-payment facade
     const { 
-      orderId, 
-      paymentId,  // Optional: if provided, ensure payment has valid order first
+      orderId,
       customAccessDays,
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
     } = await req.json();
 
-    // PATCH: If paymentId provided, ensure it has a valid order BEFORE granting access
-    // This prevents "access granted, deal missing" scenario
-    let resolvedOrderId = orderId;
-    
-    if (paymentId && !orderId) {
-      console.log(`[grant-access-for-order] Ensuring order for payment ${paymentId} before granting access`);
-      const ensureResult = await ensureOrderForPayment(supabase, paymentId, 'grant-access-for-order');
-      
-      if (ensureResult.action === 'error') {
-        return new Response(
-          JSON.stringify({ 
-            error: "Cannot grant access: failed to ensure order for payment",
-            details: ensureResult.reason,
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      resolvedOrderId = ensureResult.orderId;
-      console.log(`[grant-access-for-order] Resolved order ${resolvedOrderId} from payment ${paymentId} (action: ${ensureResult.action})`);
-    }
-
-    if (!resolvedOrderId) {
-      // GUARD: Block access grant without orderId
+    // PATCH 1: Strict guard - orderId is REQUIRED
+    if (!orderId) {
       // Audit log for traceability
       await supabase.from('audit_logs').insert({
         action: 'access.grant_blocked_no_order',
@@ -65,19 +45,21 @@ Deno.serve(async (req) => {
         actor_label: 'grant-access-for-order',
         meta: { 
           provided_order_id: orderId,
-          provided_payment_id: paymentId,
-          reason: 'no_valid_order_id',
+          reason: 'order_id_required_strict_contract',
+          hint: 'Use grant-access-for-payment facade if you have paymentId',
         },
       });
       
       return new Response(
         JSON.stringify({ 
           error: "orderId is required", 
-          details: "Cannot grant access without a valid order. Provide orderId or paymentId." 
+          details: "Strict contract: this function only accepts orderId. Use grant-access-for-payment facade if you have paymentId." 
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    const resolvedOrderId = orderId;
 
     // Load order with product/tariff info (using resolved order ID)
     const { data: order, error: orderError } = await supabase
