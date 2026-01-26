@@ -85,6 +85,14 @@ interface ParsedRow {
 function parseExcelDate(value: unknown): string | null {
   if (!value) return null;
   
+  // Handle Date objects (xlsx with cellDates: true returns Date objects)
+  if (value instanceof Date) {
+    if (!isNaN(value.getTime())) {
+      return value.toISOString();
+    }
+    return null;
+  }
+  
   // Excel serial date number
   if (typeof value === 'number') {
     const excelDate = XLSX.SSF.parse_date_code(value);
@@ -95,15 +103,24 @@ function parseExcelDate(value: unknown): string | null {
   
   // String date
   if (typeof value === 'string') {
-    // Try ISO format first
-    const isoDate = parseISO(value);
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    
+    // Method 1: Try native Date parsing (handles "2026-01-03 19:07:25 +0300" well)
+    const nativeDate = new Date(trimmed);
+    if (!isNaN(nativeDate.getTime())) {
+      return nativeDate.toISOString();
+    }
+    
+    // Method 2: Try ISO format
+    const isoDate = parseISO(trimmed);
     if (isValid(isoDate)) return isoDate.toISOString();
     
-    // Try common formats
+    // Method 3: Try common formats
     const formats = ['dd.MM.yyyy HH:mm:ss', 'dd.MM.yyyy HH:mm', 'dd.MM.yyyy', 'yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd'];
     for (const fmt of formats) {
       try {
-        const parsed = parse(value, fmt, new Date());
+        const parsed = parse(trimmed, fmt, new Date());
         if (isValid(parsed)) return parsed.toISOString();
       } catch {
         // continue
