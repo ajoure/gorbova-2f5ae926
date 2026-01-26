@@ -79,6 +79,91 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ============= PATCH 7: BLOCK ACCESS FOR BACKFILL ORDERS =============
+    const orderMeta = (order.meta || {}) as Record<string, any>;
+    const orderSource = orderMeta.source || '';
+    const isBackfillOrder = ['orphan_payment_fix', 'orphan_backfill'].includes(orderSource);
+    
+    if (isBackfillOrder) {
+      // SYSTEM ACTOR audit log
+      await supabase.from('audit_logs').insert({
+        action: 'access.grant_blocked_backfill_order',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-order',
+        target_user_id: order.user_id,
+        meta: {
+          order_id: orderId,
+          order_source: orderSource,
+          product_id: order.product_id,
+          reason: 'backfill_orders_cannot_grant_access',
+        },
+      });
+      
+      console.log(`[grant-access-for-order] BLOCKED: backfill order ${orderId} (source: ${orderSource})`);
+      
+      return new Response(
+        JSON.stringify({ 
+          error: "Access grant blocked for backfill order",
+          details: "Orders created by backfill (orphan_payment_fix, orphan_backfill) cannot grant access. Manual review required.",
+          order_id: orderId,
+          order_source: orderSource,
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ============= END PATCH 7 =============
+
+    // ============= PATCH 8: VALIDATE ORDER FOR ACCESS GRANT =============
+    // order.status must be 'paid' AND product_id must be NOT NULL
+    if (order.status !== 'paid') {
+      await supabase.from('audit_logs').insert({
+        action: 'access.grant_blocked_invalid_order',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-order',
+        target_user_id: order.user_id,
+        meta: {
+          order_id: orderId,
+          order_status: order.status,
+          reason: 'order_not_paid',
+        },
+      });
+      
+      return new Response(
+        JSON.stringify({ 
+          error: "Access grant blocked: order not paid",
+          details: `Order status is '${order.status}', expected 'paid'.`,
+          order_id: orderId,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!order.product_id) {
+      await supabase.from('audit_logs').insert({
+        action: 'access.grant_blocked_invalid_order',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-order',
+        target_user_id: order.user_id,
+        meta: {
+          order_id: orderId,
+          reason: 'no_product_id',
+        },
+      });
+      
+      return new Response(
+        JSON.stringify({ 
+          error: "Access grant blocked: order has no product",
+          details: "Order must have a valid product_id to grant access.",
+          order_id: orderId,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ============= END PATCH 8 =============
+
     // Check if user_id exists
     if (!order.user_id) {
       return new Response(

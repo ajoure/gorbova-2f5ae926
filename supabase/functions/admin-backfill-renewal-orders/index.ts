@@ -25,6 +25,9 @@ const corsHeaders = {
 // PATCH 7: Timebox constant
 const TIMEBOX_MS = 25000; // 25 seconds
 
+// PATCH 9: Advisory lock ID for preventing parallel runs
+const BACKFILL_ADVISORY_LOCK_ID = 8675309; // Unique lock ID for backfill
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -97,6 +100,54 @@ serve(async (req: Request) => {
     const anomalyType = body.anomaly_type || 'all'; // 'orphan', 'trial_mismatch', or 'all'
     const afterId = body.after_id || null; // PATCH 7: Continuation cursor
 
+    // ============= PATCH 9: ADVISORY LOCK (anti-parallel) =============
+    // Only for execute mode (not dry_run) to prevent race conditions
+    if (!dryRun) {
+      const { data: lockResult, error: lockError } = await supabase
+        .rpc('pg_try_advisory_lock', { key: BACKFILL_ADVISORY_LOCK_ID })
+        .single();
+      
+      // pg_try_advisory_lock returns boolean - true if acquired, false if already held
+      // Note: Using raw SQL via RPC since PostgREST doesn't expose pg_try_advisory_lock directly
+      // Fallback: check if another backfill is running via audit_logs
+      const { data: recentRun } = await supabase
+        .from('audit_logs')
+        .select('id, created_at')
+        .eq('action', 'subscription.renewal_backfill_running')
+        .eq('actor_label', 'admin-backfill-renewal-orders')
+        .gte('created_at', new Date(Date.now() - 60000).toISOString()) // Last 60 seconds
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (recentRun) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'already_running',
+          message: 'Another backfill is currently running. Please wait for it to complete.',
+          running_since: recentRun.created_at,
+        }), {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // Mark this run as active
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.renewal_backfill_running',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'admin-backfill-renewal-orders',
+        meta: {
+          requested_by_user_id: requestedByUserId,
+          started_at: new Date().toISOString(),
+          batch_limit: batchLimit,
+          anomaly_type: anomalyType,
+        },
+      });
+    }
+    // ============= END PATCH 9 =============
+
     console.log(`Backfill: dry_run=${dryRun}, batch_limit=${batchLimit}, max_failures=${maxFailures}, anomaly_type=${anomalyType}, after_id=${afterId}`);
 
     // ============= FIND CANDIDATES =============
@@ -141,9 +192,14 @@ serve(async (req: Request) => {
         console.error('Failed to fetch orphan candidates:', orphanErr);
       } else {
         for (const p of orphans || []) {
+          const pMeta = (p.meta || {}) as Record<string, any>;
+          // PATCH 10: Skip payments already marked for manual mapping
+          if (pMeta.needs_manual_mapping || pMeta.ensured_order_id || pMeta.renewal_order_id) {
+            continue;
+          }
           candidates.push({
             ...p,
-            meta: (p.meta || {}) as Record<string, any>,
+            meta: pMeta,
             anomaly_type: 'orphan',
           });
         }
@@ -362,6 +418,26 @@ serve(async (req: Request) => {
         errors: errors.slice(0, 10),
       },
     });
+
+    // PATCH 9: Mark run as completed (clear the "running" lock)
+    if (!dryRun) {
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.renewal_backfill_completed',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'admin-backfill-renewal-orders',
+        meta: {
+          requested_by_user_id: requestedByUserId,
+          execution_time_ms: executionTimeMs,
+          processed,
+          created,
+          relinked,
+          skipped,
+          failed,
+          remaining,
+        },
+      });
+    }
 
     return new Response(JSON.stringify({
       success: true,

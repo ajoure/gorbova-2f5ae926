@@ -203,6 +203,7 @@ async function recoverProductTariffForOrphan(
  * Creates an order for an orphan payment (payment.order_id IS NULL)
  * PATCH 4: Uses ensured_order_id and ensure_reason='orphan' in meta
  * PATCH 5: Recovers product/tariff without hardcoded UUIDs
+ * PATCH 6: NO PRODUCT → NO ORDER (mark for manual mapping instead)
  */
 async function createOrderForOrphanPayment(
   supabase: SupabaseClient,
@@ -245,6 +246,47 @@ async function createOrderForOrphanPayment(
     payment.currency
   );
 
+  // ============= PATCH 6: NO PRODUCT → NO ORDER =============
+  // If no product recovered, do NOT create order - mark payment for manual mapping
+  if (recovery.requiresMapping || !recovery.productId) {
+    const existingMeta = (payment.meta || {}) as Record<string, any>;
+    
+    // Update payment with needs_manual_mapping flag
+    await supabase
+      .from('payments_v2')
+      .update({
+        meta: {
+          ...existingMeta,
+          needs_manual_mapping: true,
+          mapping_reason: recovery.mappingReason || 'no_product_found',
+          mapping_marked_at: new Date().toISOString(),
+          mapping_marked_by: callerLabel,
+        },
+      })
+      .eq('id', payment.id);
+
+    // SYSTEM ACTOR audit log
+    await logAudit(supabase, 'payment.orphan_needs_mapping', payment.user_id, callerLabel, {
+      payment_id: payment.id,
+      bepaid_uid: bepaidUid,
+      amount: payment.amount,
+      currency: payment.currency,
+      mapping_reason: recovery.mappingReason || 'no_product_found',
+      has_user_id: !!payment.user_id,
+    });
+
+    console.log(`[${callerLabel}] Payment ${payment.id} needs manual mapping: ${recovery.mappingReason || 'no_product_found'}`);
+    
+    // Return skipped (soft) - no error, no order created
+    return { 
+      action: 'skipped', 
+      orderId: null, 
+      wasOrphan: true, 
+      reason: `needs_manual_mapping:${recovery.mappingReason || 'no_product_found'}` 
+    };
+  }
+  // ============= END PATCH 6 =============
+
   // Generate order number
   const { data: ordNum } = await supabase.rpc('generate_order_number');
   const orderNumber = ordNum || `ORPH-${Date.now().toString(36).toUpperCase()}`;
@@ -262,7 +304,7 @@ async function createOrderForOrphanPayment(
       final_price: payment.amount,
       paid_amount: payment.amount,
       is_trial: false,
-      // PATCH 5: Recovered fields (may be null)
+      // PATCH 5: Recovered fields (guaranteed non-null by PATCH 6 guard)
       product_id: recovery.productId,
       tariff_id: recovery.tariffId,
       offer_id: recovery.offerId,
@@ -272,10 +314,8 @@ async function createOrderForOrphanPayment(
         bepaid_uid: bepaidUid,
         created_by: callerLabel,
         created_at: new Date().toISOString(),
-        // PATCH 5: Track recovery source and mapping status
+        // PATCH 5: Track recovery source
         product_source: recovery.source,
-        requires_manual_mapping: recovery.requiresMapping || undefined,
-        mapping_reason: recovery.mappingReason || undefined,
       },
     })
     .select('id, order_number')
@@ -302,12 +342,11 @@ async function createOrderForOrphanPayment(
     order_number: newOrder.order_number,
     was_orphan: true,
     bepaid_uid: bepaidUid,
-    product_recovered: !!recovery.productId,
+    product_recovered: true,
     product_source: recovery.source,
-    requires_manual_mapping: recovery.requiresMapping,
   });
 
-  console.log(`[${callerLabel}] Created order ${newOrder.order_number} for orphan payment ${payment.id} (product: ${recovery.productId || 'NONE'}, source: ${recovery.source || 'none'})`);
+  console.log(`[${callerLabel}] Created order ${newOrder.order_number} for orphan payment ${payment.id} (product: ${recovery.productId}, source: ${recovery.source})`);
   return { action: 'created', orderId: newOrder.id, wasOrphan: true };
 }
 
