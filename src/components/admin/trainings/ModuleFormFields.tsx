@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload } from "lucide-react";
+import { Upload, Sparkles, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ContentSectionSelector } from "./ContentSectionSelector";
@@ -62,6 +62,7 @@ interface ModuleFormFieldsProps {
   showLayoutSelector?: boolean;
   showActiveSwitch?: boolean;
   compact?: boolean;
+  moduleId?: string; // For AI cover generation
 }
 
 export function ModuleFormFields({
@@ -72,9 +73,11 @@ export function ModuleFormFields({
   showLayoutSelector = true,
   showActiveSwitch = true,
   compact = false,
+  moduleId,
 }: ModuleFormFieldsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -119,6 +122,46 @@ export function ModuleFormFields({
     }
   };
 
+  const handleGenerateCover = async () => {
+    if (!formData.title) {
+      toast.error("Введите название модуля для генерации обложки");
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session?.access_token) {
+        toast.error("Необходимо авторизоваться");
+        return;
+      }
+
+      const response = await supabase.functions.invoke("generate-cover", {
+        body: {
+          title: formData.title,
+          description: formData.description,
+          moduleId: moduleId || "new",
+        },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message || "Ошибка генерации");
+      }
+
+      if (response.data?.url) {
+        onChange({ ...formData, cover_image: response.data.url });
+        toast.success("Обложка сгенерирована!");
+      } else {
+        throw new Error("Не удалось получить URL обложки");
+      }
+    } catch (error: any) {
+      console.error("Generation error:", error);
+      toast.error(`Ошибка генерации: ${error.message}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const updateField = <K extends keyof ModuleFormData>(
     field: K,
     value: ModuleFormData[K]
@@ -135,8 +178,8 @@ export function ModuleFormFields({
   };
 
   return (
-    <div className={compact ? "space-y-3" : "space-y-4"}>
-      <div className={compact ? "space-y-3" : "grid gap-4 md:grid-cols-2"}>
+    <div className={compact ? "space-y-4" : "space-y-4"}>
+      <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="module-title">Название *</Label>
           <Input
@@ -173,12 +216,12 @@ export function ModuleFormFields({
 
       <div className="space-y-2">
         <Label>Обложка</Label>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Input
             value={formData.cover_image || ""}
             onChange={(e) => updateField("cover_image", e.target.value)}
             placeholder="https://... или загрузите файл"
-            className="flex-1"
+            className="flex-1 min-w-[200px]"
           />
           <input
             ref={fileInputRef}
@@ -192,13 +235,29 @@ export function ModuleFormFields({
             variant="outline"
             size="icon"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || generating}
+            title="Загрузить файл"
           >
             {uploading ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Upload className="h-4 w-4" />
             )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGenerateCover}
+            disabled={uploading || generating || !formData.title}
+            className="gap-2"
+            title="Сгенерировать обложку с помощью AI"
+          >
+            {generating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">AI</span>
           </Button>
         </div>
         {formData.cover_image && (

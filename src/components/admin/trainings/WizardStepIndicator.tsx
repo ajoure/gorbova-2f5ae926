@@ -1,4 +1,4 @@
-import { Check, ChevronRight } from "lucide-react";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Step {
@@ -18,14 +18,14 @@ export function WizardStepIndicator({
   className,
 }: WizardStepIndicatorProps) {
   return (
-    <div className={cn("flex items-center gap-1 mb-6", className)}>
+    <div className={cn("flex items-center justify-between gap-1 mb-4", className)}>
       {steps.map((step, i) => {
         const isCompleted = i < currentStep;
         const isCurrent = i === currentStep;
         const isPending = i > currentStep;
 
         return (
-          <div key={i} className="flex items-center gap-1">
+          <div key={i} className="flex items-center flex-1 last:flex-initial">
             <div
               className={cn(
                 "flex items-center gap-1.5",
@@ -36,21 +36,21 @@ export function WizardStepIndicator({
             >
               <div
                 className={cn(
-                  "w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center text-xs md:text-sm font-medium transition-all",
+                  "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all shrink-0",
                   isCompleted && "bg-primary text-primary-foreground",
                   isCurrent && "bg-primary/20 text-primary ring-2 ring-primary/30",
                   isPending && "bg-muted text-muted-foreground"
                 )}
               >
                 {isCompleted ? (
-                  <Check className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                  <Check className="h-4 w-4" />
                 ) : (
-                  i + 1
+                  step.shortLabel || (i + 1)
                 )}
               </div>
               <span
                 className={cn(
-                  "text-xs font-medium hidden md:block",
+                  "text-xs font-medium hidden lg:block whitespace-nowrap",
                   isCompleted && "text-primary",
                   isCurrent && "text-foreground",
                   isPending && "text-muted-foreground"
@@ -58,25 +58,12 @@ export function WizardStepIndicator({
               >
                 {step.label}
               </span>
-              {/* Short label for mobile */}
-              <span
-                className={cn(
-                  "text-[10px] font-medium md:hidden",
-                  isCompleted && "text-primary",
-                  isCurrent && "text-foreground",
-                  isPending && "text-muted-foreground"
-                )}
-              >
-                {step.shortLabel || step.label}
-              </span>
             </div>
             {i < steps.length - 1 && (
-              <ChevronRight
+              <div
                 className={cn(
-                  "h-3 w-3 md:h-4 md:w-4 mx-0.5",
-                  i < currentStep
-                    ? "text-primary"
-                    : "text-muted-foreground/50"
+                  "flex-1 h-0.5 mx-2 min-w-4",
+                  i < currentStep ? "bg-primary" : "bg-muted"
                 )}
               />
             )}

@@ -14,6 +14,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAllPageSections, PageSection } from "@/hooks/usePageSections";
@@ -40,6 +50,7 @@ import {
   ChevronRight,
   Check,
   Plus,
+  Trash2,
   LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -80,8 +91,11 @@ export function ContentSectionSelector({
   const [open, setOpen] = useState(false);
   const [selectedParent, setSelectedParent] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ key: string; label: string } | null>(null);
   const [newSectionLabel, setNewSectionLabel] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Get parent sections (roots / pages)
   const parents = useMemo(() => {
@@ -191,6 +205,64 @@ export function ContentSectionSelector({
     }
   };
 
+  // Check if section can be deleted (only tabs, not pages)
+  const canDeleteSection = (section: PageSection): boolean => {
+    return section.kind === "tab";
+  };
+
+  // Delete section
+  const handleDeleteSection = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
+    try {
+      // Check if there are modules linked to this section
+      const { data: modules } = await supabase
+        .from("training_modules")
+        .select("id")
+        .eq("menu_section_key", deleteTarget.key)
+        .limit(1);
+
+      if (modules && modules.length > 0) {
+        toast.error("Нельзя удалить: есть привязанные модули. Сначала переместите их в другую секцию.");
+        return;
+      }
+
+      // Delete the section
+      const { error } = await supabase
+        .from("user_menu_sections")
+        .delete()
+        .eq("key", deleteTarget.key);
+
+      if (error) throw error;
+
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ["all-page-sections"] });
+      queryClient.invalidateQueries({ queryKey: ["page-sections-tabs"] });
+      queryClient.invalidateQueries({ queryKey: ["user-menu-sections"] });
+
+      toast.success(`Секция "${deleteTarget.label}" удалена`);
+
+      // If deleted section was selected, clear selection
+      if (value === deleteTarget.key) {
+        onChange("");
+      }
+
+      setShowDeleteDialog(false);
+      setDeleteTarget(null);
+    } catch (error: any) {
+      console.error("Error deleting section:", error);
+      toast.error(`Ошибка удаления: ${error.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const openDeleteDialog = (section: PageSection) => {
+    setDeleteTarget({ key: section.key, label: section.label });
+    setShowDeleteDialog(true);
+  };
+
   if (isLoading) {
     return (
       <div className={cn("space-y-2", className)}>
@@ -285,27 +357,45 @@ export function ContentSectionSelector({
                     {children.map((child: PageSection) => {
                       const Icon = getIcon(child.icon);
                       const isSelected = value === child.key;
+                      const canDelete = canDeleteSection(child);
 
                       return (
                         <div
                           key={child.key}
-                          onClick={() => {
-                            onChange(child.key);
-                            setOpen(false);
-                          }}
                           className={cn(
-                            "flex items-center gap-2 px-3 py-2.5 rounded-md cursor-pointer transition-colors",
+                            "flex items-center gap-2 px-3 py-2.5 rounded-md transition-colors group",
                             isSelected
                               ? "bg-primary/10 text-primary"
                               : "hover:bg-muted"
                           )}
                         >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <span className="flex-1 truncate text-sm">
-                            {child.label}
-                          </span>
-                          {isSelected && (
-                            <Check className="h-4 w-4 shrink-0" />
+                          <div
+                            className="flex items-center gap-2 flex-1 cursor-pointer"
+                            onClick={() => {
+                              onChange(child.key);
+                              setOpen(false);
+                            }}
+                          >
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="flex-1 truncate text-sm">
+                              {child.label}
+                            </span>
+                            {isSelected && (
+                              <Check className="h-4 w-4 shrink-0" />
+                            )}
+                          </div>
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteDialog(child);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           )}
                         </div>
                       );
@@ -374,6 +464,31 @@ export function ContentSectionSelector({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить вкладку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы уверены, что хотите удалить вкладку "{deleteTarget?.label}"?
+              <br />
+              <br />
+              Это действие нельзя отменить. Если к вкладке привязаны модули, удаление будет невозможно.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteSection}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Удаление..." : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
