@@ -1,186 +1,299 @@
 
-# План исправления UI платежей и расчёта комиссии
+# План рефакторинга UI страницы /admin/payments
 
-## Выявленные проблемы
+## Обзор изменений
 
-### 1. Ошибка Edge Function "Failed to send a request"
-**Причина:** В логах видно `Http: connection closed before message completed`. Это означает, что клиент закрыл соединение до получения ответа (timeout или закрытие модального окна), но синхронизация на сервере **завершилась успешно** (`21 create, 661 update, 0 delete`).
+Полная реструктуризация страницы "Платежи" с целью упрощения UI, удаления лишних функций и приведения к единому визуальному стилю.
 
-**Решение:** Добавить обработку ошибки соединения на клиенте — если получена ошибка "Failed to send", проверить логи/результаты и показать уведомление "Синхронизация могла завершиться — проверьте данные".
+## Текущий порядок блоков (БЫЛО)
+```text
+┌─────────────────────────────────────────────────────┐
+│  Вкладки: Платежи | Автопродления | Предзаписи...  │
+├─────────────────────────────────────────────────────┤
+│  [Успешные] [Все] [Ошибки]  ← Pill tabs            │
+├─────────────────────────────────────────────────────┤
+│  [Этот месяц] [Staging ⚙ Unified] [🐛] [Sync] [⬆ Импорт] [⚙] │
+├─────────────────────────────────────────────────────┤
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ │
+│  │Успешн│ │Возвр │ │Отмен │ │Ошибки│ │Комис │ │Чистая│ │
+│  │54510 │ │ 2585 │ │ 735  │ │20861 │ │ 1187 │ │50737 │ │
+│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ │
+├─────────────────────────────────────────────────────┤
+│  2026-01-01 — 2026-01-31                            │
+├─────────────────────────────────────────────────────┤
+│  ┌─ Card ────────────────────────────────────────┐  │
+│  │ Транзакции                                    │  │
+│  │ 493 из 677 транзакций ⓘ                       │  │
+│  │  [🔍 Поиск...        ] [Фильтры] [CSV]       │  │
+│  │                        [⏰ Минск] [⚙ Колонки] │  │
+│  ├───────────────────────────────────────────────┤  │
+│  │ Таблица...                                    │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+## Новый порядок блоков (СТАНЕТ)
+```text
+┌─────────────────────────────────────────────────────┐
+│  Вкладки: Платежи | Автопродления | Предзаписи...  │
+├─────────────────────────────────────────────────────┤
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ │ ← Stats наверх
+│  │Успешн│ │Возвр │ │Отмен │ │Ошибки│ │Комис │ │Чистая│ │
+│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ │
+├─────────────────────────────────────────────────────┤
+│  2026-01-01 — 2026-01-25 — 493 из 670 транзакций   │ ← Период + счётчик
+├─────────────────────────────────────────────────────┤
+│  [📅 Этот месяц] [Успешные|Все|Ошибки] [⏰ Минск] ─ [⚙] │ ← Quick filters
+├─────────────────────────────────────────────────────┤
+│  [🔍 Поиск.........................] [Фильтры N]   │ ← Search row
+├─────────────────────────────────────────────────────┤
+│  Таблица...                                         │ ← Без Card wrapper
+└─────────────────────────────────────────────────────┘
+```
 
 ---
 
-### 2. Колонка "Контакт" — убрать текст "Не связан"
-**Текущее:** `<Badge>Не связан</Badge> + <Button с UserPlus иконкой>Привязать</Button>`
-**Требуется:** Только иконка UserPlus без текста "Не связан" и "Привязать"
+## Задача A: Новый порядок блоков
 
-**Файл:** `src/components/admin/payments/PaymentsTable.tsx` (строки 511-522)
+### A1. PaymentsStatsPanel — поднять на самый верх
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Переместить `<PaymentsStatsPanel />` сразу после вкладок (перед toolbar)
+- Убрать `dateRange` prop из PaymentsStatsPanel (строка периода теперь отдельная)
+
+### A2. Добавить строку "Период + счётчик транзакций"
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Новая строка под статистикой:
 ```tsx
-// Было:
-return (
-  <div className="flex items-center gap-1">
-    <Badge variant="outline" className="text-xs text-muted-foreground">Не связан</Badge>
-    <ContactLinkActions ... />
-  </div>
-);
-
-// Станет:
-return (
-  <ContactLinkActions ... />  // Только кнопка привязки без badge
-);
+<div className="text-xs text-muted-foreground text-center py-2">
+  {dateFilter.from} — {dateFilter.to || 'сегодня'} — {filteredPayments.length} из {payments.length} транзакций
+</div>
 ```
 
-**Также в `ContactLinkActions.tsx`** (строка 243):
-```tsx
-// Было:
-{currentProfileId ? "Пересвязать" : "Привязать"}
+### A3. Создать строку "Quick Filters" (единый toolbar)
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Одна строка содержит:
+  - `DatePeriodSelector` (слева)
+  - Pill tabs: "Успешные | Все | Ошибки"
+  - `TimezoneSelector`
+  - Settings gear (справа) — новый dropdown
 
-// Станет: убрать текст, оставить только иконку
-```
+### A4. Строка поиска + кнопка "Фильтры"
+- Поле поиска растянуть почти на всю ширину
+- Кнопка "Фильтры" справа
+- Убрать отдельные кнопки CSV и Колонки
+
+### A5. Убрать Card wrapper с таблицы
+- Таблица рендерится напрямую без `<Card>`, `<CardHeader>`, `<CardTitle>`
+- Убрать заголовок "Транзакции"
 
 ---
 
-### 3. Колонка "Сделка" — убрать текст "Не связана"
-**Текущее:** `<Badge>Не связана</Badge> + <Button с Link2 иконкой>`
-**Требуется:** Только иконка Link2 без текста
+## Задача B: Строка быстрых фильтров (Quick Filters Row)
 
-**Файл:** `src/components/admin/payments/PaymentsTable.tsx` (строки 548-560)
+### B1. Единый размер/стиль контролов
+- DatePeriodSelector: `h-8 text-xs`
+- Pill tabs: `text-xs px-3 py-1.5`
+- TimezoneSelector: `h-8 text-xs` (уже есть)
+- Settings gear: `h-8 w-8`
+
+### B2. Mobile responsive
+- На мобильном: wrap в 2 строки
+- Порядок сохраняется: [Period] [Tabs] [TZ] → [⚙]
+
+---
+
+## Задача C: Удаление функций
+
+### C1. Удалить Staging/Canon toggle
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Удалить state `sourceMode` (строка 84)
+- Удалить JSX toggle block (строки 372-389)
+- Удалить useMemo `effectiveDateFilter.mode` (строка 120-121)
+- Удалить filter по `rawSource` (строки 131-136)
+- Удалить `canonCount`, `queueOnlyCount` (строки 337-338)
+- Удалить tooltip с mode info (строки 480-502)
+- Удалить badge "+X queue" (строки 498-502)
+- Всегда использовать все платежи `allPayments` напрямую
+
+### C2. Удалить DataTraceModal
+**Файлы:**
+- `src/components/admin/payments/PaymentsTabContent.tsx`:
+  - Удалить import DataTraceModal (строка 35)
+  - Удалить state `traceModalOpen` (строка 104)
+  - Удалить Bug button (строки 393-407)
+  - Удалить tooltip link "Открыть Trace" (строки 486-493)
+  - Удалить `<DataTraceModal />` render (строки 614-624)
+- `src/components/admin/payments/DataTraceModal.tsx` — **удалить файл целиком**
+
+### C3. Удалить кнопку "Импорт"
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Удалить state `importDialogOpen` (строка 97)
+- Удалить Button "Импорт" (строки 445-448)
+- Удалить import SmartImportDialog (строка 26)
+- Удалить `<SmartImportDialog />` render (строки 587-595)
+- Импорт остаётся только во вкладке "Выписка BePaid"
+
+### C4. Удалить AdminToolsMenu и все связанные диалоги
+**Файлы:**
+- `src/components/admin/payments/PaymentsTabContent.tsx`:
+  - Удалить import AdminToolsMenu (строка 34)
+  - Удалить `<AdminToolsMenu />` (строки 449-453)
+- `src/components/admin/payments/AdminToolsMenu.tsx` — **удалить файл**
+- `src/components/admin/payments/ReconcileFileDialog.tsx` — **удалить файл**
+- `src/components/admin/payments/MaterializeQueueDialog.tsx` — **удалить файл**
+- `src/components/admin/payments/FalsePaymentsFixDialog.tsx` — **удалить файл**
+
+### C5. Удалить отдельные кнопки CSV и Колонки
+**Файлы:**
+- `src/components/admin/payments/PaymentsTabContent.tsx`:
+  - Удалить Button "CSV" (строки 538-541)
+- `src/components/admin/payments/PaymentsTable.tsx`:
+  - Удалить ColumnSettings из рендера таблицы (строки 679-686)
+  - Экспортировать `columns`, `setColumns`, `resetColumns` через props для использования в Settings dropdown
+
+---
+
+## Задача D: Новое Settings Dropdown
+
+### D1. Создать новый компонент или inline dropdown
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+
 ```tsx
-// Было:
-return (
-  <div className="flex items-center gap-1">
-    <Badge variant="outline" className="text-xs text-muted-foreground">Не связана</Badge>
-    <Button variant="ghost" ...>
-      <Link2 className="h-3 w-3" />
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="ghost" size="icon" className="h-8 w-8">
+      <Settings className="h-4 w-4" />
     </Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent align="end" className="w-56">
+    <DropdownMenuItem onClick={handleExport}>
+      <Download className="h-4 w-4 mr-2" />
+      Экспорт CSV
+    </DropdownMenuItem>
+    <DropdownMenuSeparator />
+    {/* Колонки — inline или popover submenu */}
+    <DropdownMenuLabel className="text-xs">Колонки</DropdownMenuLabel>
+    {/* Column toggles here or trigger column settings popover */}
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+### D2. Интеграция ColumnSettings
+- Либо встроить column toggles прямо в dropdown
+- Либо сделать submenu/nested popover
+- Функционал: переключение видимости колонок, drag-n-drop порядка
+
+---
+
+## Задача E: Удалить "Транзакции" как заголовок
+
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+- Удалить `<CardTitle>Транзакции</CardTitle>` (строка 472)
+- Удалить `<CardDescription>` с "X из Y транзакций" (строки 473-503)
+- Эти данные теперь в строке периода (задача A2)
+
+---
+
+## Задача F: Поиск + Фильтры (выравнивание)
+
+### F1. Расширить поле поиска
+```tsx
+<div className="flex items-center gap-2">
+  <div className="relative flex-1">
+    <Search className="absolute left-3 top-1/2 ..." />
+    <Input className="pl-10 h-9 text-sm" placeholder="Поиск..." />
   </div>
-);
-
-// Станет:
-return (
-  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => openLinkDeal(payment)}>
-    <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+  <Button variant="outline" className="h-9 gap-2">
+    <Filter className="h-4 w-4" />
+    Фильтры
+    {activeFiltersCount > 0 && <Badge>{activeFiltersCount}</Badge>}
   </Button>
-);
+</div>
 ```
+
+### F2. Унификация высоты контролов
+- Все кнопки и инпуты: `h-8` или `h-9`
+- Все шрифты: `text-xs` или `text-sm`
 
 ---
 
-### 4. Тип и статус отмен/возвратов — сделать бледно-красным
-**Текущее:** 
-- Возврат: фиолетовый (`bg-purple-100 text-purple-700`)
-- Отмена: серый (`bg-gray-100 text-gray-700`)
-- Статус "Отменён": серый (`bg-gray-500/20`)
+## Задача G: Стиль/дизайн (единая система)
 
-**Требуется:** Бледно-красный для визуального предупреждения
+### G1. Pill tabs
+- Уже есть в строках 343-366
+- Перенести в Quick Filters row
 
-**Файл:** `src/components/admin/payments/PaymentsTable.tsx`
+### G2. Stats cards
+- Уже стеклянные (glassmorphism)
+- Оставить без изменений
 
-Изменения в `renderCell` → `case 'type'` (строки 409-423):
-```tsx
-// Возврат:
-badgeClassName = 'bg-rose-100/60 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400';
-
-// Отмена:
-badgeClassName = 'bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400';
-```
-
-Изменения в `getStatusBadge` (строки 319-337):
-```tsx
-// Отмены:
-canceled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
-cancelled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
-voided: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
-
-// Возвраты:
-refunded: { variant: "secondary", label: "Возврат", className: "bg-rose-100/60 text-rose-600" },
-```
+### G3. Toolbar стиль
+- Единый bg: `bg-background/30 backdrop-blur-sm border border-border/20`
+- Одинаковые радиусы: `rounded-lg`
 
 ---
 
-### 5. Комиссии показывать из базы bePaid (реальные, не 2%)
-**Текущее:** В `PaymentsStatsPanel.tsx` комиссия = `successfulAmount * 0.0204` (оценка 2.04%)
-**Реальность:** В базе `meta->>'commission_total'` уже есть реальные комиссии = **1250.92 BYN** (а не 1088.55)
+## Задача H: Мелкие улучшения (опционально)
 
-**Решение 1: Добавить commission в UnifiedPayment**
+### H1. Tabular-nums для сумм
+- Уже реализовано в StatCard
+- Добавить в таблицу для колонки "Сумма"
 
-**Файл:** `src/hooks/useUnifiedPayments.tsx`
-1. Добавить в интерфейс `UnifiedPayment`:
-```tsx
-commission_total: number | null; // Реальная комиссия из bePaid
-```
-
-2. В `transformedPayments` (строка 300+) извлекать из meta:
-```tsx
-const meta = (p.meta || {}) as any;
-...
-commission_total: meta?.commission_total ? Number(meta.commission_total) : null,
-```
-
-**Решение 2: Использовать реальные данные в статистике**
-
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
-```tsx
-// Было (строки 139-166):
-const fee = 0;
-...
-const estimatedFees = totalFees === 0 && successfulAmount > 0 
-  ? successfulAmount * 0.0204 
-  : totalFees;
-
-// Станет:
-// Суммировать реальные комиссии из payment.commission_total
-for (const p of payments) {
-  const category = classifyPayment(p.status_normalized, p.transaction_type, p.amount);
-  const absAmount = Math.abs(p.amount || 0);
-  const realFee = (p as any).commission_total || 0;  // Реальная комиссия
-  
-  if (category === 'successful') {
-    successfulCount++;
-    successfulAmount += absAmount;
-    totalFees += realFee;  // Суммируем реальные комиссии
-  }
-  ...
-}
-
-// Убираем fallback на 2%:
-const estimatedFees = totalFees; // Используем только реальные
-```
+### H2. Sticky stats (опционально, не в этом спринте)
+- Можно добавить `sticky top-0` для stats при скролле
+- Оставить как future improvement
 
 ---
 
-## Порядок изменений
+## Список изменяемых файлов
 
-1. **PaymentsTable.tsx** — Убрать "Не связан" и "Не связана", заменить на иконки
-2. **ContactLinkActions.tsx** — Убрать текст "Привязать", оставить только иконку
-3. **PaymentsTable.tsx** — Цвета возврата/отмены → бледно-красный
-4. **useUnifiedPayments.tsx** — Добавить `commission_total` в интерфейс и трансформацию
-5. **PaymentsStatsPanel.tsx** — Использовать реальные комиссии вместо 2%
+| Файл | Действие |
+|------|----------|
+| `src/components/admin/payments/PaymentsTabContent.tsx` | Рефакторинг: удаления + перестановка + новый dropdown |
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Мелкие правки: убрать dateRange |
+| `src/components/admin/payments/PaymentsTable.tsx` | Убрать ColumnSettings из рендера, экспортировать state |
+| `src/components/admin/payments/DataTraceModal.tsx` | **УДАЛИТЬ** |
+| `src/components/admin/payments/AdminToolsMenu.tsx` | **УДАЛИТЬ** |
+| `src/components/admin/payments/ReconcileFileDialog.tsx` | **УДАЛИТЬ** |
+| `src/components/admin/payments/MaterializeQueueDialog.tsx` | **УДАЛИТЬ** |
+| `src/components/admin/payments/FalsePaymentsFixDialog.tsx` | **УДАЛИТЬ** |
 
 ---
 
 ## Технические детали
 
-### Реальные данные комиссий
-| Источник | Сумма комиссии |
-|----------|----------------|
-| bepaid_statement_rows.commission_total | 1250.92 BYN |
-| payments_v2.meta->>'commission_total' | 1250.92 BYN |
-| Текущий UI (2% оценка) | 1088.55 BYN |
-| **Разница** | **+162.37 BYN (15%)** |
+### Удаление sourceMode
+После удаления `sourceMode` всегда используем полный список платежей:
+```tsx
+// Было:
+const payments = sourceMode === 'canon' 
+  ? allPayments.filter(p => p.rawSource === 'payments_v2')
+  : allPayments;
 
-### Палитра для негативных транзакций
-- **Ошибки/Failed:** `bg-red-500` (яркий красный) — критично
-- **Возвраты/Refund:** `bg-rose-100/60 text-rose-600` (бледно-красный) — важно
-- **Отмены/Cancelled:** `bg-rose-100/40 text-rose-500` (ещё более бледный) — информативно
-- **Успешные:** `bg-green-500` — позитивно
+// Станет:
+const payments = allPayments;
+```
+
+### Column state lift-up
+Перенести управление колонками из PaymentsTable в PaymentsTabContent:
+```tsx
+// В PaymentsTabContent:
+const [columns, setColumns] = useState<ColumnConfig[]>(DEFAULT_COLUMNS);
+const resetColumns = () => setColumns(DEFAULT_COLUMNS);
+
+// Передать в PaymentsTable:
+<PaymentsTable columns={columns} onColumnsChange={setColumns} />
+```
+
+Затем использовать в Settings dropdown для экспорта CSV и настройки колонок.
 
 ---
 
 ## DoD (Definition of Done)
 
-- [ ] Колонка "Контакт": только иконка привязки без "Не связан"
-- [ ] Колонка "Сделка": только иконка Link2 без "Не связана"
-- [ ] Тип и статус возвратов/отмен — бледно-красные тона
-- [ ] Комиссия в статистике = реальная сумма из bePaid (1250.92 BYN)
-- [ ] Ошибка Edge Function обрабатывается gracefully
+- [ ] Новый порядок: вкладки → статистика → период+счётчик → quick filters → поиск/фильтры → таблица
+- [ ] Удалены: Staging/Canon toggle, Bug/DataTrace, кнопка Импорт, меню инструментов, заголовок "Транзакции"
+- [ ] Шестерёнка в quick filters содержит "Экспорт CSV" и "Колонки"
+- [ ] Отдельных кнопок CSV/Колонки нет
+- [ ] Единый стиль шрифтов/высот контролов (text-xs, h-8)
+- [ ] Mobile: wrap в 2 строки без налезаний
