@@ -22,7 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
-import PaymentsStatsPanel from "./PaymentsStatsPanel";
+import PaymentsStatsPanel, { StatsFilterType } from "./PaymentsStatsPanel";
 import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
@@ -87,6 +87,9 @@ export function PaymentsTabContent() {
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
   
+  // Stats panel filter (clickable cards)
+  const [statsFilter, setStatsFilter] = useState<StatsFilterType>(null);
+  
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
@@ -132,26 +135,50 @@ export function PaymentsTabContent() {
     return allPayments;
   }, [allPayments, sourceMode]);
 
-  // Apply filters to payments
-  const filteredPayments = useMemo(() => {
-    const normalizeType = (raw: string | null | undefined) => {
-      const v = (raw || '').toLowerCase().trim();
-      if (!v) return 'payment';
-      if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(v)) return 'refund';
-      if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
-      if (['subscription', 'подписка'].includes(v)) return 'subscription';
-      if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
-      if (['void', 'canceled', 'cancelled', 'отмена', 'cancellation', 'authorization_void'].includes(v)) return 'void';
-      if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
-      return v;
-    };
-    
-    const isCancelledTransaction = (p: UnifiedPayment) => {
-      const txType = normalizeType(p.transaction_type);
-      return txType === 'void';
-    };
+  // Helper to normalize transaction type
+  const normalizeType = (raw: string | null | undefined) => {
+    const v = (raw || '').toLowerCase().trim();
+    if (!v) return 'payment';
+    if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(v)) return 'refund';
+    if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
+    if (['subscription', 'подписка'].includes(v)) return 'subscription';
+    if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
+    if (['void', 'canceled', 'cancelled', 'отмена', 'cancellation', 'authorization_void'].includes(v)) return 'void';
+    if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
+    return v;
+  };
+  
+  const isCancelledTransaction = (p: UnifiedPayment) => {
+    const txType = normalizeType(p.transaction_type);
+    return txType === 'void';
+  };
 
+  // Apply filters to payments (including stats filter)
+  const filteredPayments = useMemo(() => {
     return payments.filter(p => {
+      // Stats panel filter (from clickable cards)
+      if (statsFilter) {
+        const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
+        const isRefund = normalizeType(p.transaction_type) === 'refund' || ['refund', 'refunded'].includes(p.status_normalized) || p.amount < 0;
+        const isCancelled = isCancelledTransaction(p);
+        const isFailed = ['failed', 'declined', 'expired', 'error', 'incomplete'].includes(p.status_normalized) && !isCancelled;
+        
+        switch (statsFilter) {
+          case 'successful':
+            if (!isSuccessful || isRefund || isCancelled) return false;
+            break;
+          case 'refunded':
+            if (!isRefund) return false;
+            break;
+          case 'cancelled':
+            if (!isCancelled) return false;
+            break;
+          case 'failed':
+            if (!isFailed) return false;
+            break;
+        }
+      }
+
       // Search filter
       if (filters.search) {
         const search = filters.search.toLowerCase();
@@ -168,8 +195,8 @@ export function PaymentsTabContent() {
         if (!matchSearch) return false;
       }
 
-      // Status filter
-      if (filters.status !== "all") {
+      // Status filter (only if stats filter is not active)
+      if (!statsFilter && filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
           const isRefundStatus = ['refund', 'refunded'].includes(p.status_normalized);
@@ -227,7 +254,7 @@ export function PaymentsTabContent() {
 
       return true;
     });
-  }, [payments, filters]);
+  }, [payments, filters, statsFilter]);
 
   // Open sync dialog
   const handleBepaidSync = () => {
@@ -432,6 +459,8 @@ export function PaymentsTabContent() {
         payments={payments} 
         isLoading={isLoading}
         dateRange={dateFilter}
+        activeFilter={statsFilter}
+        onFilterChange={setStatsFilter}
       />
       
       {/* Main content */}

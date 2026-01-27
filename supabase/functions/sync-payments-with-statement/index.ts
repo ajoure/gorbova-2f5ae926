@@ -443,12 +443,13 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to load statement: ${stmtError.message}`);
     }
 
-    // 2. Load payments_v2 for period
+    // 2. Load payments_v2 for period - check ALL origins to detect duplicates
     const { data: payments, error: pmtError } = await supabaseAdmin
       .from('payments_v2')
       .select('*, profiles:profile_id(id, full_name, email)')
       .eq('provider', 'bepaid')
-      .eq('origin', 'bepaid') // Only bePaid origin, not imports
+      // Include ALL origins to properly detect existing records
+      .in('origin', ['bepaid', 'statement_sync', 'import'])
       .gte('paid_at', `${from_date}T00:00:00`)
       .lte('paid_at', `${to_date}T23:59:59`);
 
@@ -768,49 +769,103 @@ Deno.serve(async (req) => {
             // Normalize paid_at to UTC ISO string
             const paid_at_utc = stmt.paid_at ? new Date(stmt.paid_at).toISOString() : null;
             
-            // Use UPSERT to handle duplicates gracefully
-            const { error: upsertError } = await supabaseAdmin.from('payments_v2').upsert({
-              provider: 'bepaid',
-              provider_payment_id: change.uid,
-              origin: 'statement_sync',
-              amount: Math.abs(stmt.amount),
-              currency: stmt.currency || 'BYN',
-              status: normalizeStatus(stmt.status),
-              transaction_type: normalizeTransactionType(stmt.transaction_type),
-              paid_at: paid_at_utc,
-              card_last4,
-              card_brand,
-              card_holder: stmt.card_holder,
-              profile_id: linkedProfile?.profile_id || null,
-              user_id: linkedProfile?.user_id || null,
-              meta: {
-                commission_total: stmt.commission_total,
-                payout_amount: stmt.payout_amount,
-                customer_email: stmt.email,
-                customer_phone: stmt.phone,
-                synced_from_statement: true,
-                synced_at: new Date().toISOString(),
-                synced_by: user.id,
-                is_erip: isErip,
-                auto_linked: !!linkedProfile,
-              },
-            }, {
-              onConflict: 'provider,provider_payment_id',
-              ignoreDuplicates: false, // Update on conflict
-            });
+            // CRITICAL: Check if UID already exists (any origin) - partial index workaround
+            // PostgreSQL partial unique indexes don't work with Supabase upsert()
+            const { data: existing } = await supabaseAdmin
+              .from('payments_v2')
+              .select('id, origin, profile_id')
+              .eq('provider', 'bepaid')
+              .eq('provider_payment_id', change.uid)
+              .maybeSingle();
             
-            if (upsertError) {
-              console.error(`[sync-statement] Error upserting payment ${change.uid}:`, upsertError);
-              stats.errors++;
-              // Track error details for UI
-              if (!stats.error_details) stats.error_details = [];
-              stats.error_details.push({
-                uid: change.uid,
-                action: 'create',
-                error: upsertError.message || String(upsertError),
-              });
+            if (existing) {
+              // Record already exists - UPDATE instead of INSERT
+              console.log(`[sync-statement] UID ${change.uid} exists (origin=${existing.origin}), updating...`);
+              
+              const { error: updateError } = await supabaseAdmin
+                .from('payments_v2')
+                .update({
+                  amount: Math.abs(stmt.amount),
+                  currency: stmt.currency || 'BYN',
+                  status: normalizeStatus(stmt.status),
+                  transaction_type: normalizeTransactionType(stmt.transaction_type),
+                  paid_at: paid_at_utc,
+                  card_last4,
+                  card_brand,
+                  card_holder: stmt.card_holder,
+                  // Only update profile if not already linked
+                  ...(linkedProfile && !existing.profile_id ? {
+                    profile_id: linkedProfile.profile_id,
+                    user_id: linkedProfile.user_id,
+                  } : {}),
+                  meta: {
+                    commission_total: stmt.commission_total,
+                    payout_amount: stmt.payout_amount,
+                    customer_email: stmt.email,
+                    customer_phone: stmt.phone,
+                    synced_from_statement: true,
+                    synced_at: new Date().toISOString(),
+                    synced_by: user.id,
+                    is_erip: isErip,
+                    auto_linked: !!linkedProfile,
+                    merged_from_create: true,
+                  },
+                })
+                .eq('id', existing.id);
+              
+              if (updateError) {
+                console.error(`[sync-statement] Error updating existing payment ${change.uid}:`, updateError);
+                stats.errors++;
+                if (!stats.error_details) stats.error_details = [];
+                stats.error_details.push({
+                  uid: change.uid,
+                  action: 'create->update',
+                  error: updateError.message || String(updateError),
+                });
+              } else {
+                stats.applied++;
+              }
             } else {
-              stats.applied++;
+              // New record - INSERT
+              const { error: insertError } = await supabaseAdmin.from('payments_v2').insert({
+                provider: 'bepaid',
+                provider_payment_id: change.uid,
+                origin: 'statement_sync',
+                amount: Math.abs(stmt.amount),
+                currency: stmt.currency || 'BYN',
+                status: normalizeStatus(stmt.status),
+                transaction_type: normalizeTransactionType(stmt.transaction_type),
+                paid_at: paid_at_utc,
+                card_last4,
+                card_brand,
+                card_holder: stmt.card_holder,
+                profile_id: linkedProfile?.profile_id || null,
+                user_id: linkedProfile?.user_id || null,
+                meta: {
+                  commission_total: stmt.commission_total,
+                  payout_amount: stmt.payout_amount,
+                  customer_email: stmt.email,
+                  customer_phone: stmt.phone,
+                  synced_from_statement: true,
+                  synced_at: new Date().toISOString(),
+                  synced_by: user.id,
+                  is_erip: isErip,
+                  auto_linked: !!linkedProfile,
+                },
+              });
+              
+              if (insertError) {
+                console.error(`[sync-statement] Error inserting payment ${change.uid}:`, insertError);
+                stats.errors++;
+                if (!stats.error_details) stats.error_details = [];
+                stats.error_details.push({
+                  uid: change.uid,
+                  action: 'create',
+                  error: insertError.message || String(insertError),
+                });
+              } else {
+                stats.applied++;
+              }
             }
           }
           
