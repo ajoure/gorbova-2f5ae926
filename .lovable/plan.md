@@ -1,289 +1,133 @@
 
-# План: Комплексное исправление мастера контента и навигации
+# План: Исправление размещения модулей и AI генерации обложки
 
-## Обнаруженные проблемы (по коду)
+## Выявленные проблемы
 
-### 1. Неправильные маршруты "Назад" (вызывают 404)
+### Проблема 1: Модули появляются на /library вместо /knowledge
 
-**Файл:** `src/pages/admin/AdminLessonBlockEditor.tsx` (строка 82, 109)
-```tsx
-// ТЕКУЩИЙ КОД (неправильно):
-navigate(`/admin/training-lessons/${moduleId}`)
+**Скриншоты показывают:**
+- На `/library` (image-694): модули "База знаний" и "новый модуль" отображаются как карточки
+- На `/knowledge` (image-696): те же модули появляются как маленькие карточки вверху вкладки "Видеоответы"
+- Модули созданы с `menu_section_key: knowledge-videos`
 
-// НУЖНО:
-navigate(`/admin/training-modules/${moduleId}/lessons`)
+**Причина:**
+В файле `src/pages/Library.tsx` строка 22:
+```typescript
+const accessibleModules = modules.filter(m => m.is_active);
+```
+Этот код не фильтрует по `menu_section_key` — показывает ВСЕ модули на странице /library
+
+**Ожидаемое поведение:**
+- Модули с `menu_section_key` начинающимся на `knowledge-*` должны отображаться ТОЛЬКО в `/knowledge`
+- `/library` должна показывать только модули с `menu_section_key: products-library` или `products`
+
+### Проблема 2: AI генерация обложки не работает (404)
+
+**Результат теста:**
+```
+supabase--curl_edge_functions: status code 404, body 404 Not Found
 ```
 
-**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx` (строки 352, 359)
-```tsx
-// handleEditLesson - правильно: /admin/training-lessons/${moduleId}/edit/${lessonId}
+**Причина:**
+Функция `generate-cover` существует в коде (файл `supabase/functions/generate-cover/index.ts`), конфиг есть в `config.toml` (строка 297-298), но функция **не развёрнута** на сервере.
 
-// handleAddAnotherLesson - НЕПРАВИЛЬНО:
-navigate(`/admin/training-lessons/${createdModuleId}`)
-// НУЖНО:
-navigate(`/admin/training-modules/${createdModuleId}/lessons`)
-```
-
-### 2. "Назад к приложению" ведёт на лендинг вместо кабинета
-
-**Файл:** `src/components/layout/AdminSidebar.tsx` (строка 310)
-```tsx
-// ТЕКУЩИЙ КОД:
-<NavLink to="/" ...>
-
-// НУЖНО:
-<NavLink to="/dashboard" ...>
-```
-
-### 3. "Админ-панель" вместо "Панель управления" в меню пользователя
-
-**Файл:** `src/components/layout/AppSidebar.tsx` (строки 271-274)
-```tsx
-// ТЕКУЩИЙ КОД:
-tooltip={collapsed ? "Админ-панель" : undefined}
-{!collapsed && <span>Админ-панель</span>}
-
-// НУЖНО:
-tooltip={collapsed ? "Панель управления" : undefined}
-{!collapsed && <span>Панель управления</span>}
-```
-
-### 4. Форма урока содержит лишние поля (video_url, content, audio_url)
-
-**Файл:** `src/pages/admin/AdminTrainingLessons.tsx` (строки 88-220)
-- Компонент `LessonFormContent` содержит:
-  - Тип контента (content_type) — не нужен
-  - URL видео (video_url) — не нужен (контент в блоках)
-  - URL аудио (audio_url) — не нужен
-  - HTML контент (content) — не нужен
-  - Длительность — можно оставить
-
-**Решение:** Упростить `LessonFormContent` до:
-- Название, Slug, Описание, Активен
-
-### 5. Генерация обложки не работает (функция не развёрнута)
-
-**Файл:** `supabase/functions/generate-cover/index.ts`
-- Код есть и правильный
-- Конфиг в `config.toml` есть (строка 297-298)
-- Логов нет → функция не развёрнута
-
-**Решение:** Развернуть функцию принудительно
-
-### 6. DomainHomePage не редиректит залогиненного пользователя
-
-**Файл:** `src/components/layout/DomainRouter.tsx` (строки 43-46)
-```tsx
-// ТЕКУЩИЙ КОД:
-if (isMainDomain) {
-  return <Landing />;  // ← Всегда лендинг, даже если залогинен!
-}
-
-// НУЖНО:
-// Добавить проверку авторизации и редирект на /dashboard
-```
+**Секрет `LOVABLE_API_KEY`** присутствует — это подтверждено.
 
 ---
 
-## План изменений
+## План исправлений
 
-### Этап 1: Исправить все маршруты "Назад"
+### Этап 1: Фильтрация модулей на /library
 
-**Файл:** `src/pages/admin/AdminLessonBlockEditor.tsx`
-- Строка 82: `navigate(/admin/training-modules/${moduleId}/lessons)`
-- Строка 109: `navigate(/admin/training-modules/${moduleId}/lessons)`
+**Файл:** `src/pages/Library.tsx`
 
-**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
-- Строка 359: `navigate(/admin/training-modules/${createdModuleId}/lessons)`
+Изменения:
+1. Фильтровать модули только по `menu_section_key`, которые относятся к "products" секции
+2. Исключить модули с key начинающимся на `knowledge-`
 
-### Этап 2: Исправить "Назад к приложению"
+```typescript
+// БЫЛО:
+const accessibleModules = modules.filter(m => m.is_active);
 
-**Файл:** `src/components/layout/AdminSidebar.tsx`
-- Строка 310: Изменить `to="/"` на `to="/dashboard"`
-
-### Этап 3: Переименовать "Админ-панель" → "Панель управления"
-
-**Файл:** `src/components/layout/AppSidebar.tsx`
-- Строка 271: tooltip → "Панель управления"
-- Строка 274: `<span>Панель управления</span>`
-- Строка 266: Группа label → "Управление" (вместо "Администрирование")
-
-### Этап 4: Упростить форму урока
-
-**Файл:** `src/pages/admin/AdminTrainingLessons.tsx`
-
-Заменить `LessonFormContent` на упрощённую версию:
-```tsx
-const LessonFormContent = memo(function LessonFormContent({ 
-  formData, 
-  onFormDataChange,
-  editingLesson 
-}: LessonFormContentProps) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="lesson-title">Название *</Label>
-          <Input
-            id="lesson-title"
-            value={formData.title}
-            onChange={(e) => {
-              const newTitle = e.target.value;
-              onFormDataChange(prev => ({
-                ...prev,
-                title: newTitle,
-                slug: editingLesson ? prev.slug : generateSlug(newTitle),
-              }));
-            }}
-            placeholder="Введение в тему"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="lesson-slug">URL-slug *</Label>
-          <Input
-            id="lesson-slug"
-            value={formData.slug}
-            onChange={(e) => onFormDataChange(prev => ({ ...prev, slug: e.target.value }))}
-            placeholder="vvedenie-v-temu"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="lesson-description">Краткое описание</Label>
-        <Textarea
-          id="lesson-description"
-          value={formData.description}
-          onChange={(e) => onFormDataChange(prev => ({ ...prev, description: e.target.value }))}
-          placeholder="О чём этот урок..."
-          rows={2}
-        />
-      </div>
-
-      <Alert className="border-primary/30 bg-primary/5">
-        <Blocks className="h-4 w-4 text-primary" />
-        <AlertDescription className="ml-2">
-          Видео, текст и другой контент добавляются через кнопку «Контент» после создания урока
-        </AlertDescription>
-      </Alert>
-
-      <div className="flex items-center space-x-2">
-        <Switch
-          id="lesson-is_active"
-          checked={formData.is_active}
-          onCheckedChange={(checked) => onFormDataChange(prev => ({ ...prev, is_active: checked }))}
-        />
-        <Label htmlFor="lesson-is_active">Активен</Label>
-      </div>
-    </div>
-  );
+// СТАНЕТ:
+const accessibleModules = modules.filter(m => {
+  if (!m.is_active) return false;
+  const key = m.menu_section_key || "";
+  // Показывать только модули для products секции, исключая knowledge-*
+  return !key.startsWith("knowledge-") && !key.startsWith("training-");
 });
 ```
 
-Также обновить `formData` state:
-```tsx
-const [formData, setFormData] = useState<TrainingLessonFormData>({
-  module_id: moduleId || "",
-  title: "",
-  slug: "",
-  description: "",
-  content: "",
-  content_type: "mixed",  // Всегда mixed
-  video_url: "",
-  audio_url: "",
-  duration_minutes: undefined,
-  is_active: true,
+Альтернативный вариант (более точный):
+```typescript
+const libraryModules = modules.filter(m => {
+  if (!m.is_active) return false;
+  const key = m.menu_section_key || "products-library";
+  // Только products-library или products
+  return key === "products-library" || key === "products" || key.startsWith("products-");
 });
 ```
 
-### Этап 5: Добавить редирект на /dashboard для залогиненных
+### Этап 2: Развёртывание функции generate-cover
 
-**Файл:** `src/components/layout/DomainRouter.tsx`
+**Действие:** Принудительно развернуть edge function `generate-cover`
 
-```tsx
-import { useAuth } from "@/contexts/AuthContext";
-import { Navigate } from "react-router-dom";
+После развёртывания проверить:
+1. Вызов через curl: `/generate-cover` с body `{ "title": "Test" }`
+2. Проверить логи функции на наличие ответа от AI
 
-export function DomainHomePage() {
-  const { user, loading } = useAuth();
-  const hostname = window.location.hostname;
-  
-  const isMainDomain = hostname === "localhost" || 
-                       hostname === "127.0.0.1" ||
-                       hostname === "club.gorbova.by" ||
-                       hostname === "gorbova.by" ||
-                       hostname.includes(".lovable.app") ||
-                       hostname.includes(".lovableproject.com");
-  
-  // ... остальные проверки доменов ...
+### Этап 3: Улучшение UI генерации обложки
 
-  // Main domain: если залогинен → кабинет, иначе → лендинг
-  if (isMainDomain) {
-    if (loading) {
-      return <Loader2 className="..." />;
-    }
-    if (user) {
-      return <Navigate to="/dashboard" replace />;
-    }
-    return <Landing />;
-  }
-  
-  // ... остальной код ...
-}
-```
+**Файл:** `src/components/admin/trainings/ModuleFormFields.tsx`
 
-### Этап 6: Развернуть edge function generate-cover
+Текущий код выглядит правильно (строки 125-163), но нужно улучшить обработку ошибок:
 
-Принудительно развернуть функцию через deploy tool.
+1. Показывать конкретную ошибку если функция недоступна
+2. Добавить retry логику
+3. Показать прогресс генерации (AI может занять 10-20 секунд)
 
 ---
 
 ## Файлы для изменения
 
-| Файл | Изменения |
-|------|-----------|
-| `src/pages/admin/AdminLessonBlockEditor.tsx` | Исправить маршруты "Назад" (2 места) |
-| `src/components/admin/trainings/ContentCreationWizard.tsx` | Исправить маршрут handleAddAnotherLesson |
-| `src/components/layout/AdminSidebar.tsx` | "Назад к приложению" → `/dashboard` |
-| `src/components/layout/AppSidebar.tsx` | "Админ-панель" → "Панель управления" |
-| `src/pages/admin/AdminTrainingLessons.tsx` | Упростить форму урока (убрать video_url, content, audio_url) |
-| `src/components/layout/DomainRouter.tsx` | Редирект залогиненных на /dashboard |
-
----
-
-## Результат после выполнения
-
-1. **Нет 404** — кнопка "Назад" из редактора контента ведёт на список уроков модуля
-2. **"Назад к приложению"** ведёт в личный кабинет (`/dashboard`), а не на лендинг
-3. **Нет ощущения "выброса"** — перезагрузка "/" при авторизации ведёт в кабинет
-4. **"Панель управления"** — единое название в меню
-5. **Простая форма урока** — только название, slug, описание (без дублирования редактора блоков)
-6. **AI-обложка работает** — функция развёрнута и доступна
+| Файл | Действие |
+|------|----------|
+| `src/pages/Library.tsx` | Добавить фильтрацию по `menu_section_key` |
+| `supabase/functions/generate-cover/index.ts` | Развернуть функцию (deploy) |
 
 ---
 
 ## Технические детали
 
-### Проверка уникальности slug
-Уже реализована в `ContentCreationWizard.tsx` через `ensureUniqueSlug()` — добавляет суффикс `-2`, `-3` если slug занят.
+### Логика фильтрации menu_section_key
 
-### LOVABLE_API_KEY
-Секрет уже настроен в проекте — функция должна работать после развёртывания.
+Текущие значения в базе:
+- `knowledge-videos` — для вкладки "Видеоответы" в /knowledge
+- `knowledge-questions` — для вкладки "Вопросы" в /knowledge
+- `knowledge-laws` — для вкладки "Законодательство" в /knowledge
+- `products-library` — для страницы /library (по умолчанию)
 
-### React Query invalidation
-При создании модулей/вкладок нужно инвалидировать:
-- `["page-sections-tabs", pageKey]`
-- `["sidebar-modules", userId]`
+Правило:
+- `/knowledge` показывает модули где `menu_section_key` начинается с `knowledge-`
+- `/library` показывает модули где `menu_section_key` начинается с `products-` или пустой/null
 
-Это уже частично реализовано, но может потребовать дополнительных проверок в ContentSectionSelector.
+### Модель AI для обложек
+
+Используется `google/gemini-2.5-flash-image` через Lovable AI Gateway.
+Промпт генерирует минималистичную обложку без текста.
 
 ---
 
-## Порядок реализации
+## Проверка готовности
 
-1. Исправить маршруты (AdminLessonBlockEditor, ContentCreationWizard)
-2. Исправить "Назад к приложению" (AdminSidebar)
-3. Переименовать "Админ-панель" (AppSidebar)
-4. Упростить форму урока (AdminTrainingLessons)
-5. Добавить редирект для залогиненных (DomainRouter)
-6. Развернуть edge function generate-cover
+После реализации:
+1. Открыть `/library` — должны быть только модули для библиотеки (если есть)
+2. Открыть `/knowledge` → вкладка "Видеоответы" — должны быть модули "База знаний" и "новый модуль"
+3. Нажать кнопку AI в редактировании модуля — должна сгенерироваться обложка
+
+---
+
+## Результат
+
+1. **Модули отображаются в правильных местах** — knowledge-модули только в /knowledge, products-модули только в /library
+2. **AI генерация обложки работает** — функция развёрнута и доступна
