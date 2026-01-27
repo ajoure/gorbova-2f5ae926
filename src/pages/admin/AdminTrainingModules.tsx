@@ -55,6 +55,7 @@ import {
   FileSpreadsheet,
   MoreVertical,
   Settings,
+  Wand2,
 } from "lucide-react";
 import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
 import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
@@ -63,6 +64,7 @@ import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
+import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -315,6 +317,7 @@ export default function AdminTrainingModules() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   
   // E1/E2/E3: View settings with localStorage persistence
@@ -496,7 +499,11 @@ export default function AdminTrainingModules() {
               <Download className="mr-1.5 h-4 w-4" />
               GetCourse
             </Button>
-            <Button size="sm" onClick={openCreateDialog}>
+            <Button variant="default" size="sm" onClick={() => setIsWizardOpen(true)}>
+              <Wand2 className="mr-1.5 h-4 w-4" />
+              Мастер
+            </Button>
+            <Button variant="outline" size="sm" onClick={openCreateDialog}>
               <Plus className="mr-1.5 h-4 w-4" />
               Добавить
             </Button>
@@ -511,6 +518,10 @@ export default function AdminTrainingModules() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
+                <DropdownMenuItem onClick={() => setIsWizardOpen(true)}>
+                  <Wand2 className="h-4 w-4 mr-2" />
+                  Мастер добавления
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={openCreateDialog}>
                   <Plus className="h-4 w-4 mr-2" />
                   Добавить модуль
@@ -680,6 +691,13 @@ export default function AdminTrainingModules() {
         <ExcelTrainingImportDialog
           open={isExcelImportOpen}
           onOpenChange={setIsExcelImportOpen}
+        />
+
+        {/* Content Creation Wizard */}
+        <ContentCreationWizard
+          open={isWizardOpen}
+          onOpenChange={setIsWizardOpen}
+          onComplete={() => refetch()}
         />
       </div>
     </AdminLayout>
