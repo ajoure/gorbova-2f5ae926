@@ -30,9 +30,12 @@ const contentTypeConfig = {
 
 // Маппинг секций меню для динамических хлебных крошек
 const menuSectionMap: Record<string, { path: string; label: string }> = {
-  'knowledge-videos': { path: '/library', label: 'База знаний' },
-  'knowledge-questions': { path: '/library', label: 'База знаний' },
-  'products-library': { path: '/library', label: 'Библиотека' },
+  'knowledge': { path: '/knowledge', label: 'База знаний' },
+  'knowledge-videos': { path: '/knowledge', label: 'База знаний' },
+  'knowledge-questions': { path: '/knowledge', label: 'База знаний' },
+  'knowledge-qa': { path: '/knowledge', label: 'База знаний' },
+  'knowledge-webinars': { path: '/knowledge', label: 'База знаний' },
+  'products-library': { path: '/products?tab=library', label: 'Моя библиотека' },
   'products': { path: '/products', label: 'Продукты' },
   'trainings': { path: '/library', label: 'Тренинги' },
   'courses': { path: '/library', label: 'Курсы' },

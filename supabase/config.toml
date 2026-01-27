@@ -293,3 +293,6 @@ verify_jwt = false
 
 [functions.admin-backfill-2026-orders]
 verify_jwt = false
+
+[functions.generate-cover]
+verify_jwt = false
