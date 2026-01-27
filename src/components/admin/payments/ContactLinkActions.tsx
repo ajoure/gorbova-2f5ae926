@@ -234,13 +234,13 @@ export default function ContactLinkActions({
   return (
     <>
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={() => setOpen(true)}
-        className="gap-1.5 text-xs h-8"
+        className="h-6 w-6 p-0"
+        title={currentProfileId ? "Пересвязать контакт" : "Привязать контакт"}
       >
-        <UserPlus className="h-3 w-3" />
-        {currentProfileId ? "Пересвязать" : "Привязать"}
+        <UserPlus className="h-4 w-4 text-muted-foreground hover:text-foreground" />
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>

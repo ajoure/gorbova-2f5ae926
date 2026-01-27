@@ -325,11 +325,11 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       failed: { variant: "destructive", label: "Ошибка", className: "bg-red-500 hover:bg-red-600" },
       declined: { variant: "destructive", label: "Отклонено", className: "bg-red-500 hover:bg-red-600" },
       error: { variant: "destructive", label: "Ошибка", className: "bg-red-500 hover:bg-red-600" },
-      canceled: { variant: "secondary", label: "Отменён", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
-      cancelled: { variant: "secondary", label: "Отменён", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
+      canceled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400" },
+      cancelled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400" },
       expired: { variant: "secondary", label: "Истёк", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
-      voided: { variant: "secondary", label: "Аннулирован", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
-      refunded: { variant: "secondary", label: "Возврат", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
+      voided: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400" },
+      refunded: { variant: "secondary", label: "Возврат", className: "bg-rose-100/60 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400" },
       unknown: { variant: "outline", label: "Неизвестно", className: "border-gray-400 text-gray-500" },
     };
     const config = variants[status] || { variant: "outline" as const, label: status, className: "" };
@@ -409,7 +409,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         if (isRefund) {
           label = 'Возврат';
           badgeVariant = 'secondary';
-          badgeClassName = 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400';
+          badgeClassName = 'bg-rose-100/60 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400';
         } else if (isFailed) {
           label = 'Ошибка';
           badgeVariant = 'destructive';
@@ -420,7 +420,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         } else if (isVoided) {
           label = 'Отмена';
           badgeVariant = 'secondary';
-          badgeClassName = 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400';
+          badgeClassName = 'bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400';
         } else if (isSubscription) {
           label = 'Подписка';
           badgeClassName = 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400';
@@ -509,16 +509,13 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           );
         }
         return (
-          <div className="flex items-center gap-1">
-            <Badge variant="outline" className="text-xs text-muted-foreground">Не связан</Badge>
-            <ContactLinkActions
-              paymentId={payment.id}
-              orderId={payment.order_id}
-              currentProfileId={payment.profile_id}
-              onLinked={onRefetch}
-              isQueueItem={payment.rawSource === 'queue'}
-            />
-          </div>
+          <ContactLinkActions
+            paymentId={payment.id}
+            orderId={payment.order_id}
+            currentProfileId={payment.profile_id}
+            onLinked={onRefetch}
+            isQueueItem={payment.rawSource === 'queue'}
+          />
         );
         
       case 'deal':
@@ -546,17 +543,14 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           );
         }
         return (
-          <div className="flex items-center gap-1">
-            <Badge variant="outline" className="text-xs text-muted-foreground">Не связана</Badge>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-5 w-5 p-0" 
-              onClick={() => openLinkDeal(payment)}
-            >
-              <Link2 className="h-3 w-3" />
-            </Button>
-          </div>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 w-6 p-0" 
+            onClick={() => openLinkDeal(payment)}
+          >
+            <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+          </Button>
         );
         
       case 'product':
