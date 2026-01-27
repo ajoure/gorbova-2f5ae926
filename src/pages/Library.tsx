@@ -19,7 +19,13 @@ export default function Library() {
   const { modules, loading } = useTrainingModules();
   const navigate = useNavigate();
 
-  const accessibleModules = modules.filter(m => m.is_active);
+  // Filter to show only products/library modules, exclude knowledge-* and training-*
+  const accessibleModules = modules.filter(m => {
+    if (!m.is_active) return false;
+    const key = m.menu_section_key || "";
+    // Exclude modules meant for /knowledge or /training sections
+    return !key.startsWith("knowledge-") && !key.startsWith("training-");
+  });
 
   const handleModuleClick = (module: typeof modules[0]) => {
     // Всегда позволяем переход, доступ проверяется на странице модуля
