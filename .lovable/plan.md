@@ -1,233 +1,186 @@
 
-# План исправления: Синхронизация, фильтры и дизайн платежей
+# План исправления UI платежей и расчёта комиссии
 
 ## Выявленные проблемы
 
-### 1. Ошибка "no unique or exclusion constraint matching the ON CONFLICT specification" (224 ошибки)
-**Причина:** В таблице `payments_v2` есть три **partial unique index** с условием `WHERE provider_payment_id IS NOT NULL`:
-- `uq_payments_v2_provider_payment`
-- `idx_payments_v2_unique_provider_payment_id`
-- `idx_payments_v2_provider_uid`
+### 1. Ошибка Edge Function "Failed to send a request"
+**Причина:** В логах видно `Http: connection closed before message completed`. Это означает, что клиент закрыл соединение до получения ответа (timeout или закрытие модального окна), но синхронизация на сервере **завершилась успешно** (`21 create, 661 update, 0 delete`).
 
-PostgreSQL не позволяет использовать `onConflict` с partial indexes напрямую в Supabase JS SDK. Нужно использовать `.insert()` с обработкой ошибки дубликата, либо проверять существование записи перед вставкой.
-
-**Решение:**
-1. Перед INSERT проверить существование записи по `provider_payment_id`
-2. Если существует — выполнить UPDATE вместо INSERT
-3. Убрать `upsert()` и использовать явную логику INSERT/UPDATE
+**Решение:** Добавить обработку ошибки соединения на клиенте — если получена ошибка "Failed to send", проверить логи/результаты и показать уведомление "Синхронизация могла завершиться — проверьте данные".
 
 ---
 
-### 2. Контакты не привязываются к новым платежам (203 записи без profile_id)
-**Причина:** Карты новых плательщиков (например, 8263) **не зарегистрированы** ни в `card_profile_links`, ни в `payment_methods`. Функция `findProfileByCard` возвращает `null`.
+### 2. Колонка "Контакт" — убрать текст "Не связан"
+**Текущее:** `<Badge>Не связан</Badge> + <Button с UserPlus иконкой>Привязать</Button>`
+**Требуется:** Только иконка UserPlus без текста "Не связан" и "Привязать"
 
-**Текущие данные:**
-- card_last4 = 8263: 0 записей в card_profile_links
-- card_last4 = 8263: 0 записей в payment_methods
+**Файл:** `src/components/admin/payments/PaymentsTable.tsx` (строки 511-522)
+```tsx
+// Было:
+return (
+  <div className="flex items-center gap-1">
+    <Badge variant="outline" className="text-xs text-muted-foreground">Не связан</Badge>
+    <ContactLinkActions ... />
+  </div>
+);
 
-**Решение:** Это **ожидаемое поведение** — автосвязывание работает только для уже известных карт. Чтобы связать новую карту:
-1. Вручную привязать карту к контакту через UI "Привязать контакт"
-2. После этого будущие платежи с этой картой будут автоматически связаны
+// Станет:
+return (
+  <ContactLinkActions ... />  // Только кнопка привязки без badge
+);
+```
 
-Однако можно улучшить UX: показывать badge "Неизвестная карта" и quick-action для привязки.
+**Также в `ContactLinkActions.tsx`** (строка 243):
+```tsx
+// Было:
+{currentProfileId ? "Пересвязать" : "Привязать"}
 
----
-
-### 3. Счётчик не совпадает: 661 vs 682 (21 отсутствует)
-**Данные БД:**
-- payments_v2 (origin=bepaid): 486
-- payments_v2 (origin=statement_sync): 203
-- **Итого:** 689 (больше чем 682 в выписке!)
-
-**Проблема:** 7 дубликатов были созданы — те же UID существуют и в `bepaid`, и в `statement_sync`. А 21 ошибка = попытка создать дубликаты.
-
-**Решение:** Логика sync должна проверять все origins при определении "create vs update":
-```typescript
-// Вместо: .eq('origin', 'bepaid')
-// Использовать: .in('origin', ['bepaid', 'statement_sync', 'import'])
+// Станет: убрать текст, оставить только иконку
 ```
 
 ---
 
-### 4. Таймзона отображается неправильно (Минск показывает Варшаву)
-**Проверка:** 
-- paid_at в БД: `2026-01-26 20:35:34+00` (UTC)
-- Минск (UTC+3): должно быть `23:35:34`
-- Варшава (UTC+1 зимой): должно быть `21:35:34`
+### 3. Колонка "Сделка" — убрать текст "Не связана"
+**Текущее:** `<Badge>Не связана</Badge> + <Button с Link2 иконкой>`
+**Требуется:** Только иконка Link2 без текста
 
-**Возможные причины:**
-1. Неправильный label в COMMON_TIMEZONES — **проверено, labels корректны**
-2. localStorage хранит старое значение — **возможно**
-3. Баг в селекторе — отображает один label, но передаёт другой value
+**Файл:** `src/components/admin/payments/PaymentsTable.tsx` (строки 548-560)
+```tsx
+// Было:
+return (
+  <div className="flex items-center gap-1">
+    <Badge variant="outline" className="text-xs text-muted-foreground">Не связана</Badge>
+    <Button variant="ghost" ...>
+      <Link2 className="h-3 w-3" />
+    </Button>
+  </div>
+);
 
-**Решение:** Добавить отладку и проверить что `selectedTimezone` действительно соответствует выбранной таймзоне. Возможно, нужно сбросить localStorage.
+// Станет:
+return (
+  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => openLinkDeal(payment)}>
+    <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+  </Button>
+);
+```
 
 ---
 
-### 5. Не работают клики на плашки статистики как фильтры
-**Сравнение:**
-- `BepaidStatementSummary` — карточки кликабельны, устанавливают `typeFilter`
-- `PaymentsStatsPanel` — карточки **статичные**, не поддерживают клики
+### 4. Тип и статус отмен/возвратов — сделать бледно-красным
+**Текущее:** 
+- Возврат: фиолетовый (`bg-purple-100 text-purple-700`)
+- Отмена: серый (`bg-gray-100 text-gray-700`)
+- Статус "Отменён": серый (`bg-gray-500/20`)
 
-**Решение:** Добавить в `PaymentsStatsPanel`:
-1. Props `activeFilter` и `onFilterChange`
-2. Обработчик кликов на каждую карточку
-3. Визуальное выделение активной карточки (ring)
-4. Интеграция фильтра в `PaymentsTabContent`
+**Требуется:** Бледно-красный для визуального предупреждения
+
+**Файл:** `src/components/admin/payments/PaymentsTable.tsx`
+
+Изменения в `renderCell` → `case 'type'` (строки 409-423):
+```tsx
+// Возврат:
+badgeClassName = 'bg-rose-100/60 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400';
+
+// Отмена:
+badgeClassName = 'bg-rose-100/40 text-rose-500 dark:bg-rose-900/20 dark:text-rose-400';
+```
+
+Изменения в `getStatusBadge` (строки 319-337):
+```tsx
+// Отмены:
+canceled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
+cancelled: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
+voided: { variant: "secondary", label: "Отмена", className: "bg-rose-100/40 text-rose-500" },
+
+// Возвраты:
+refunded: { variant: "secondary", label: "Возврат", className: "bg-rose-100/60 text-rose-600" },
+```
 
 ---
 
-### 6. Чёрный дизайн плашек — нужно сделать стеклянными/прозрачными
-**Текущий стиль в PaymentsStatsPanel:**
-```
-bg-gradient-to-br from-slate-800/80 via-slate-800/60 to-slate-900/70
+### 5. Комиссии показывать из базы bePaid (реальные, не 2%)
+**Текущее:** В `PaymentsStatsPanel.tsx` комиссия = `successfulAmount * 0.0204` (оценка 2.04%)
+**Реальность:** В базе `meta->>'commission_total'` уже есть реальные комиссии = **1250.92 BYN** (а не 1088.55)
+
+**Решение 1: Добавить commission в UnifiedPayment**
+
+**Файл:** `src/hooks/useUnifiedPayments.tsx`
+1. Добавить в интерфейс `UnifiedPayment`:
+```tsx
+commission_total: number | null; // Реальная комиссия из bePaid
 ```
 
-**Новый стиль (стеклянный/прозрачный):**
-```
-bg-gradient-to-br from-slate-500/10 to-slate-600/5 
-border-slate-500/20
-backdrop-blur-xl
+2. В `transformedPayments` (строка 300+) извлекать из meta:
+```tsx
+const meta = (p.meta || {}) as any;
+...
+commission_total: meta?.commission_total ? Number(meta.commission_total) : null,
 ```
 
-Аналогично стилю в `BepaidStatementSummary`.
+**Решение 2: Использовать реальные данные в статистике**
+
+**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
+```tsx
+// Было (строки 139-166):
+const fee = 0;
+...
+const estimatedFees = totalFees === 0 && successfulAmount > 0 
+  ? successfulAmount * 0.0204 
+  : totalFees;
+
+// Станет:
+// Суммировать реальные комиссии из payment.commission_total
+for (const p of payments) {
+  const category = classifyPayment(p.status_normalized, p.transaction_type, p.amount);
+  const absAmount = Math.abs(p.amount || 0);
+  const realFee = (p as any).commission_total || 0;  // Реальная комиссия
+  
+  if (category === 'successful') {
+    successfulCount++;
+    successfulAmount += absAmount;
+    totalFees += realFee;  // Суммируем реальные комиссии
+  }
+  ...
+}
+
+// Убираем fallback на 2%:
+const estimatedFees = totalFees; // Используем только реальные
+```
 
 ---
 
 ## Порядок изменений
 
-### 1. Edge Function: Исправить логику INSERT vs UPDATE
-**Файл:** `supabase/functions/sync-payments-with-statement/index.ts`
-
-```typescript
-// Заменить upsert() на явную проверку + insert/update
-
-// При action='create':
-// 1. Сначала проверить существование по UID в ЛЮБОМ origin
-const { data: existing } = await supabaseAdmin
-  .from('payments_v2')
-  .select('id, origin')
-  .eq('provider', 'bepaid')
-  .eq('provider_payment_id', change.uid)
-  .maybeSingle();
-
-if (existing) {
-  // Запись уже существует — выполнить UPDATE
-  const { error: updateError } = await supabaseAdmin
-    .from('payments_v2')
-    .update({ ... })
-    .eq('id', existing.id);
-  stats.applied++;
-  continue;
-}
-
-// 2. Иначе INSERT
-const { error: insertError } = await supabaseAdmin
-  .from('payments_v2')
-  .insert({ ... });
-```
-
-### 2. Edge Function: Расширить поиск для определения create vs update
-**Файл:** `supabase/functions/sync-payments-with-statement/index.ts` (строки 447-458)
-
-```typescript
-// Загружать ВСЕ payments по UID, не только origin='bepaid'
-const { data: payments } = await supabaseAdmin
-  .from('payments_v2')
-  .select('*, profiles:profile_id(id, full_name, email)')
-  .eq('provider', 'bepaid')
-  // Убрать: .eq('origin', 'bepaid')
-  .gte('paid_at', `${from_date}T00:00:00`)
-  .lte('paid_at', `${to_date}T23:59:59`);
-```
-
-### 3. UI: Добавить кликабельные фильтры в PaymentsStatsPanel
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
-
-1. Добавить новые props:
-```typescript
-interface PaymentsStatsPanelProps {
-  // ... existing
-  activeFilter?: 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
-  onFilterChange?: (filter: 'successful' | 'refunded' | 'cancelled' | 'failed' | null) => void;
-}
-```
-
-2. Сделать StatCard кликабельным:
-```typescript
-function StatCard({ ..., onClick, isActive, isClickable = true }: StatCardProps) {
-  return (
-    <div 
-      onClick={onClick}
-      className={cn(
-        "...",
-        isClickable && "cursor-pointer hover:scale-[1.02]",
-        isActive && "ring-2 ring-primary"
-      )}
-    >
-```
-
-3. Интегрировать в PaymentsTabContent с новым состоянием `statsFilter`.
-
-### 4. UI: Обновить дизайн карточек на стеклянный
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
-
-Заменить тёмный gradient на светлый стеклянный:
-```typescript
-// Было:
-"bg-gradient-to-br from-slate-800/80 via-slate-800/60 to-slate-900/70"
-
-// Станет:
-"bg-gradient-to-br from-slate-500/10 to-slate-600/5 backdrop-blur-xl border-slate-500/20"
-```
-
-Аналогично цветам в BepaidStatementSummary.
-
-### 5. UI: Исправить TimezonеSelector (проверка)
-**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
-
-Добавить отладочный console.log:
-```typescript
-const handleTimezoneChange = (tz: string) => {
-  console.log('[TZ] Changing timezone to:', tz);
-  setSelectedTimezone(tz);
-  persistTimezone(tz);
-};
-```
-
-Если проблема в localStorage, предложить кнопку "Сбросить настройки".
+1. **PaymentsTable.tsx** — Убрать "Не связан" и "Не связана", заменить на иконки
+2. **ContactLinkActions.tsx** — Убрать текст "Привязать", оставить только иконку
+3. **PaymentsTable.tsx** — Цвета возврата/отмены → бледно-красный
+4. **useUnifiedPayments.tsx** — Добавить `commission_total` в интерфейс и трансформацию
+5. **PaymentsStatsPanel.tsx** — Использовать реальные комиссии вместо 2%
 
 ---
 
 ## Технические детали
 
-### Partial Unique Index в PostgreSQL
+### Реальные данные комиссий
+| Источник | Сумма комиссии |
+|----------|----------------|
+| bepaid_statement_rows.commission_total | 1250.92 BYN |
+| payments_v2.meta->>'commission_total' | 1250.92 BYN |
+| Текущий UI (2% оценка) | 1088.55 BYN |
+| **Разница** | **+162.37 BYN (15%)** |
 
-Индекс `uq_payments_v2_provider_payment`:
-```sql
-CREATE UNIQUE INDEX ... ON payments_v2 (provider, provider_payment_id) 
-WHERE provider_payment_id IS NOT NULL
-```
-
-Supabase JS `.upsert({ ... }, { onConflict: 'provider,provider_payment_id' })` ожидает **constraint**, а не partial index. Поэтому возникает ошибка.
-
-### Статистика транзакций
-
-| Источник | Количество |
-|----------|-----------|
-| bepaid_statement_rows | 682 |
-| payments_v2 (origin=bepaid) | 486 |
-| payments_v2 (origin=statement_sync) | 203 |
-| payments_v2 (ВСЕГО) | 689 |
-| Дубликаты (UID в обоих origins) | ~7 |
+### Палитра для негативных транзакций
+- **Ошибки/Failed:** `bg-red-500` (яркий красный) — критично
+- **Возвраты/Refund:** `bg-rose-100/60 text-rose-600` (бледно-красный) — важно
+- **Отмены/Cancelled:** `bg-rose-100/40 text-rose-500` (ещё более бледный) — информативно
+- **Успешные:** `bg-green-500` — позитивно
 
 ---
 
 ## DoD (Definition of Done)
 
-- [ ] Ошибки "ON CONFLICT" устранены (0 ошибок при синхронизации)
-- [ ] Количество транзакций совпадает с выпиской (682)
-- [ ] Клики на карточки статистики работают как фильтры
-- [ ] Дизайн карточек — стеклянный/прозрачный (не чёрный)
-- [ ] Таймзона отображается корректно (Минск = UTC+3)
-- [ ] Автосвязывание работает для известных карт
+- [ ] Колонка "Контакт": только иконка привязки без "Не связан"
+- [ ] Колонка "Сделка": только иконка Link2 без "Не связана"
+- [ ] Тип и статус возвратов/отмен — бледно-красные тона
+- [ ] Комиссия в статистике = реальная сумма из bePaid (1250.92 BYN)
+- [ ] Ошибка Edge Function обрабатывается gracefully
