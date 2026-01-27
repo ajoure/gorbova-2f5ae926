@@ -137,13 +137,14 @@ export default function PaymentsStatsPanel({
     for (const p of payments) {
       const category = classifyPayment(p.status_normalized, p.transaction_type, p.amount);
       const absAmount = Math.abs(p.amount || 0);
-      const fee = 0;
+      // Extract real commission from meta (synced from bePaid statement)
+      const realFee = (p as any).commission_total || 0;
       
       switch (category) {
         case 'successful':
           successfulCount++;
           successfulAmount += absAmount;
-          totalFees += fee;
+          totalFees += realFee;
           break;
         case 'refunded':
           refundedCount++;
@@ -160,10 +161,8 @@ export default function PaymentsStatsPanel({
       }
     }
 
-    // If no fees from meta, estimate at ~2.04% (bePaid standard rate)
-    const estimatedFees = totalFees === 0 && successfulAmount > 0 
-      ? successfulAmount * 0.0204 
-      : totalFees;
+    // Use real fees from bePaid statement (no fallback to estimated %)
+    const estimatedFees = totalFees;
     
     const feePercent = successfulAmount > 0 
       ? (estimatedFees / successfulAmount) * 100 

@@ -71,6 +71,9 @@ export interface UnifiedPayment {
   
   // Raw provider response for payment method detection
   provider_response?: any;
+  
+  // Real commission from bePaid statement
+  commission_total: number | null;
 }
 
 export interface PaymentsStats {
@@ -297,6 +300,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // Check if there's a conflict (override differs from original)
         const hasStatusConflict = statusOverride && statusOverride !== dbStatus;
         
+        // Extract commission_total from meta (synced from bePaid statement)
+        const meta = (p.meta || {}) as any;
+        const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
+        
         return {
           id: p.id,
           uid: pUid || p.id,
@@ -336,6 +343,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           provider,
           tracking_id: null,
           provider_response: providerResponse,
+          commission_total,
         };
       });
       
@@ -436,6 +444,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             provider: q.provider || 'bepaid',
             tracking_id: q.tracking_id,
             provider_response: null, // Queue items don't have full provider response
+            commission_total: null, // Queue items don't have commission data
           };
         });
       
