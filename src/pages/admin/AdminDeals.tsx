@@ -41,7 +41,9 @@ import {
   AlertTriangle,
   Sparkles,
   Trash2,
+  Link2,
 } from "lucide-react";
+import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
@@ -720,10 +722,22 @@ export default function AdminDeals() {
                     }}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedDealIds.has(deal.id)}
-                        onCheckedChange={() => toggleSelection(deal.id, true)}
-                      />
+                      <div className="flex items-center gap-1">
+                        <Checkbox
+                          checked={selectedDealIds.has(deal.id)}
+                          onCheckedChange={() => toggleSelection(deal.id, true)}
+                        />
+                        <button
+                          className="p-1 hover:bg-muted rounded opacity-50 hover:opacity-100 transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(getDealUrl(deal.id), "Ссылка скопирована");
+                          }}
+                          title="Скопировать ссылку"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 text-sm">

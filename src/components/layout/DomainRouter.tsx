@@ -9,6 +9,7 @@ import Consultation from "@/pages/Consultation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
+import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
 
 export function DomainHomePage() {
   const { user, loading: authLoading } = useAuth();
@@ -64,6 +65,12 @@ export function DomainHomePage() {
       );
     }
     if (user) {
+      // Проверяем сохранённый маршрут
+      const lastRoute = getLastRoute();
+      if (lastRoute && lastRoute !== '/dashboard' && lastRoute !== '/') {
+        clearLastRoute(); // Очищаем чтобы не зациклиться
+        return <Navigate to={lastRoute} replace />;
+      }
       return <Navigate to="/dashboard" replace />;
     }
     return <Landing />;
