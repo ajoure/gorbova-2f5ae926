@@ -8,7 +8,7 @@ type GlassCardProps = HTMLAttributes<HTMLDivElement> & {
 };
 
 export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
-  function GlassCard(
+  function GlassCardComponent(
     { children, className, hover = false, onClick, style, ...props },
     ref
   ) {
@@ -36,3 +36,5 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
     );
   }
 );
+
+GlassCard.displayName = "GlassCard";
