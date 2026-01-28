@@ -84,8 +84,8 @@ export function LessonCard({
           </div>
         </div>
 
-        {/* Episode number badge */}
-        {episodeNumber && (
+        {/* Episode number badge - показываем только если явно задан и больше 0 */}
+        {episodeNumber && episodeNumber > 0 && (
           <div className="absolute top-3 left-3">
             <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm">
               Выпуск #{episodeNumber}

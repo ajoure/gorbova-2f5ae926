@@ -129,7 +129,7 @@ export default function LibraryLesson() {
   return (
     <DashboardLayout>
       <div className="container mx-auto px-4 py-6 max-w-4xl">
-        {/* Breadcrumb - динамический на основе menu_section_key */}
+        {/* Breadcrumb - динамический на основе menu_section_key, скрываем контейнер-модули */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6 flex-wrap">
           <Link 
             to={getMenuSectionPath(module.menu_section_key)} 
@@ -137,10 +137,15 @@ export default function LibraryLesson() {
           >
             {getMenuSectionLabel(module.menu_section_key)}
           </Link>
-          <ChevronRight className="h-4 w-4" />
-          <Link to={`/library/${moduleSlug}`} className="hover:text-foreground transition-colors">
-            {module.title}
-          </Link>
+          {/* Показываем модуль только если он НЕ контейнер */}
+          {!module.is_container && (
+            <>
+              <ChevronRight className="h-4 w-4" />
+              <Link to={`/library/${moduleSlug}`} className="hover:text-foreground transition-colors">
+                {module.title}
+              </Link>
+            </>
+          )}
           <ChevronRight className="h-4 w-4" />
           <span className="text-foreground">{currentLesson.title}</span>
         </div>
@@ -174,7 +179,14 @@ export default function LibraryLesson() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate(`/library/${moduleSlug}`)}
+            onClick={() => {
+              // Для контейнер-модулей возвращаемся в секцию, а не на страницу модуля
+              if (module.is_container) {
+                navigate(getMenuSectionPath(module.menu_section_key));
+              } else {
+                navigate(`/library/${moduleSlug}`);
+              }
+            }}
             className="shrink-0"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -337,11 +349,18 @@ export default function LibraryLesson() {
           ) : (
             <Button
               variant="default"
-              onClick={() => navigate(`/library/${moduleSlug}`)}
+              onClick={() => {
+                // Для контейнер-модулей возвращаемся в секцию
+                if (module.is_container) {
+                  navigate(getMenuSectionPath(module.menu_section_key));
+                } else {
+                  navigate(`/library/${moduleSlug}`);
+                }
+              }}
               className="flex-1 max-w-xs justify-center"
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              Завершить модуль
+              Завершить
             </Button>
           )}
         </div>
