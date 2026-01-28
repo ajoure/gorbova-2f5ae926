@@ -11,6 +11,7 @@ import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X } from "luci
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import logoImage from "@/assets/logo.png";
+import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
 
 const CURRENT_POLICY_VERSION = "v2026-01-07";
 
@@ -128,9 +129,25 @@ export default function Auth() {
   useEffect(() => {
     // Only redirect if user is logged in AND not in password update mode
     if (user && mode !== "update_password") {
-      navigate(redirectTo);
+      // Сначала проверяем redirectTo из URL
+      const urlRedirect = searchParams.get("redirectTo");
+      if (urlRedirect) {
+        navigate(urlRedirect);
+        return;
+      }
+      
+      // Затем проверяем сохранённый маршрут
+      const lastRoute = getLastRoute();
+      if (lastRoute && lastRoute !== '/dashboard' && lastRoute !== '/') {
+        clearLastRoute();
+        navigate(lastRoute);
+        return;
+      }
+      
+      // По умолчанию — на дашборд
+      navigate('/dashboard');
     }
-  }, [user, mode, navigate, redirectTo]);
+  }, [user, mode, navigate, searchParams]);
 
   const getFieldError = (field: string) => {
     return fieldErrors.find(e => e.field === field)?.message;

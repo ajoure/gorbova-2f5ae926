@@ -54,27 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
-    // FIRST check for existing session (to restore immediately on page load)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!isMounted) return;
-      
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        fetchUserRole(session.user.id).then((r) => {
-          if (isMounted) setRole(r);
-        });
-      }
-      setLoading(false);
-    });
-
-    // THEN set up auth state listener for future changes
+    // 1. СНАЧАЛА подписываемся на изменения (рекомендация Supabase)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (!isMounted) return;
-        
-        // Skip INITIAL_SESSION event since we already handled it above
-        if (event === 'INITIAL_SESSION') return;
         
         setSession(session);
         setUser(session?.user ?? null);
@@ -94,6 +77,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     );
+
+    // 2. ПОТОМ проверяем текущую сессию
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        fetchUserRole(session.user.id).then((r) => {
+          if (isMounted) setRole(r);
+        });
+      }
+      setLoading(false);
+    });
 
     return () => {
       isMounted = false;

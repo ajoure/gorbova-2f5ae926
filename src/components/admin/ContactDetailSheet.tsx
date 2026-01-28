@@ -93,7 +93,9 @@ import {
   Sparkles,
   Ghost,
   RefreshCw,
+  Link2,
 } from "lucide-react";
+import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -1297,6 +1299,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 {returnTo === "deals" ? "К сделкам" : "Назад"}
               </Button>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => copyToClipboard(getContactUrl(contact.id), "Ссылка на контакт скопирована")}
+              title="Скопировать ссылку на контакт"
+            >
+              <Link2 className="w-3 h-3 mr-1" />
+              Ссылка
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
               <Pencil className="w-3 h-3 mr-1" />
               Редактировать

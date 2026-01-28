@@ -51,6 +51,7 @@ import {
   Search,
   Link2,
 } from "lucide-react";
+import { copyToClipboard as copyToClipboardUtil, getDealUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
@@ -480,6 +481,15 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           
           {/* Action buttons */}
           <div className="flex items-center gap-2 mt-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => copyToClipboardUtil(getDealUrl(deal.id), "Ссылка на сделку скопирована")}
+              title="Скопировать ссылку на сделку"
+            >
+              <Link2 className="w-3 h-3 mr-1" />
+              Ссылка
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
               <Pencil className="w-3 h-3 mr-1" />
               Редактировать

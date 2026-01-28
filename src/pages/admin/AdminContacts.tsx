@@ -59,7 +59,9 @@ import {
   UserCheck,
   UserX,
   GripVertical,
+  Link2,
 } from "lucide-react";
+import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 
@@ -1288,10 +1290,28 @@ export default function AdminContacts() {
                     }}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedContactIds.has(contact.id)}
-                        onCheckedChange={() => toggleSelection(contact.id, true)}
-                      />
+                      <div className="flex items-center gap-1">
+                        <Checkbox
+                          checked={selectedContactIds.has(contact.id)}
+                          onCheckedChange={() => toggleSelection(contact.id, true)}
+                        />
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                className="p-1 hover:bg-muted rounded opacity-50 hover:opacity-100 transition-opacity"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyToClipboard(getContactUrl(contact.id), "Ссылка скопирована");
+                                }}
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Скопировать ссылку</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
                     </TableCell>
                     
                     {/* Render cells based on sorted column order */}
