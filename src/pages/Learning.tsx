@@ -55,8 +55,8 @@ const products: Product[] = [
     price: "от 100 BYN/мес",
     image: productClubImage,
     isPurchased: true,
-    purchaseLink: "/",
-    courseSlug: "club",
+    purchaseLink: "https://club.gorbova.by",
+    courseSlug: "knowledge", // Клуб ведёт в базу знаний
     lessonCount: 24,
     completedCount: 18,
     duration: "Подписка",
@@ -162,7 +162,12 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
   };
 
   const handleOpenCourse = () => {
-    navigate(`/library/${product.courseSlug || product.id}`);
+    // Для клуба ведём прямо в базу знаний, а не в /library
+    if (product.courseSlug === "knowledge") {
+      navigate("/knowledge");
+    } else {
+      navigate(`/library/${product.courseSlug || product.id}`);
+    }
   };
 
   return (

@@ -14,13 +14,12 @@ import { LessonCard } from "@/components/training/LessonCard";
 import { 
   Search, 
   MessageCircleQuestion, 
-  Video, 
+  Video,
   Scale, 
   Play, 
   Clock, 
   Filter,
   Calendar,
-  ExternalLink,
   BookOpen,
   Folder,
   LucideIcon,
@@ -89,15 +88,7 @@ const mockQuestions = [
   }
 ];
 
-// Mock данные для видеовыпусков
-const mockEpisodes = [
-  { id: "42", title: "Выпуск #42", date: "15 янв 2025", questionsCount: 5 },
-  { id: "41", title: "Выпуск #41", date: "10 янв 2025", questionsCount: 4 },
-  { id: "40", title: "Выпуск #40", date: "05 янв 2025", questionsCount: 6 },
-  { id: "39", title: "Выпуск #39", date: "28 дек 2024", questionsCount: 3 },
-  { id: "38", title: "Выпуск #38", date: "20 дек 2024", questionsCount: 5 },
-  { id: "37", title: "Выпуск #37", date: "15 дек 2024", questionsCount: 4 },
-];
+// Mock данные для видеовыпусков удалены - используем только реальные данные из БД
 
 // Questions tab content component
 function QuestionsContent({ searchQuery }: { searchQuery: string }) {
@@ -156,40 +147,7 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
   );
 }
 
-// Videos tab content component
-function VideosContent() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {mockEpisodes.map((episode) => (
-        <GlassCard key={episode.id} hover className="cursor-pointer group">
-          <div className="aspect-video bg-gradient-to-br from-primary/20 to-primary/5 rounded-xl mb-4 flex items-center justify-center relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
-            <div className="relative z-10 h-14 w-14 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-              <Play className="h-6 w-6 text-primary-foreground ml-1" />
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-foreground">{episode.title}</h3>
-              <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5" />
-                {episode.date}
-              </span>
-              <span className="flex items-center gap-1">
-                <MessageCircleQuestion className="h-3.5 w-3.5" />
-                {episode.questionsCount} вопросов
-              </span>
-            </div>
-          </div>
-        </GlassCard>
-      ))}
-    </div>
-  );
-}
+// VideosContent удалён - видеовыпуски теперь отображаются через LessonCard из БД
 
 // Legislation tab content component
 function LegislationContent() {
@@ -206,10 +164,9 @@ function LegislationContent() {
   );
 }
 
-// Map of tab keys to mock content components
+// Map of tab keys to content components (mock данные удалены, кроме questions и laws)
 const MOCK_CONTENT_MAP: Record<string, React.ComponentType<{ searchQuery?: string }>> = {
   "knowledge-questions": QuestionsContent,
-  "knowledge-videos": VideosContent,
   "knowledge-laws": LegislationContent,
 };
 
@@ -333,12 +290,12 @@ const Knowledge = () => {
                 {/* Standalone Lessons from container modules */}
                 {standaloneLessons.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {standaloneLessons.map((lesson, index) => (
+                    {standaloneLessons.map((lesson) => (
                       <LessonCard 
                         key={lesson.id} 
                         lesson={lesson} 
                         moduleSlug={containerModuleSlug}
-                        episodeNumber={standaloneLessons.length - index}
+                        // episodeNumber убран - будет отображаться только если задан в настройках урока
                       />
                     ))}
                   </div>
