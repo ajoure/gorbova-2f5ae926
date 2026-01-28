@@ -1,55 +1,108 @@
 
-# План исправления: Разлогинивание на мобильном Safari + Синхронизация FAQ
+# План: Сохранение сессии и последней страницы + Копирование ссылок
 
-## Часть 1: Исправление разлогинивания в мобильном Safari
+## Часть 1: Надёжное восстановление сессии в мобильном Safari
 
-### Причина
-При каждом моём ответе Lovable перезагружает превью (hot reload). На мобильном Safari восстановление сессии Supabase занимает дольше времени из-за:
-- Более строгих ограничений на localStorage
-- Медленного cold start JavaScript
-- Агрессивного управления памятью iOS
-
-Текущая задержка 500ms в ProtectedRoute недостаточна для мобильных устройств.
+### Проблема
+Текущий механизм с фиксированной задержкой (1200ms) ненадёжен:
+- iOS агрессивно выгружает вкладки из памяти
+- При возврате в Safari страница перезагружается «холодно»
+- Supabase не успевает восстановить сессию из localStorage
 
 ### Решение
-Увеличить задержку инициализации и добавить проверку сессии через getSession:
+Заменить фиксированную задержку на **активное ожидание сессии**:
+1. AuthContext: инициализировать `onAuthStateChange` ДО вызова `getSession` (рекомендация Supabase)
+2. ProtectedRoute: ждать не фиксированное время, а пока `loading === false` И прошла минимальная задержка
+3. Добавить повторную проверку `getSession` если сессия не найдена после таймаута
 
+### Изменения в AuthContext.tsx
+
+```typescript
+useEffect(() => {
+  let isMounted = true;
+
+  // 1. СНАЧАЛА подписываемся на изменения (рекомендация Supabase)
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    (event, session) => {
+      if (!isMounted) return;
+      
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        setTimeout(() => {
+          if (isMounted) {
+            fetchUserRole(session.user.id).then((r) => {
+              if (isMounted) setRole(r);
+            });
+          }
+        }, 0);
+      } else {
+        setRole("user");
+      }
+      setLoading(false);
+    }
+  );
+
+  // 2. ПОТОМ проверяем текущую сессию
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!isMounted) return;
+    
+    if (session) {
+      setSession(session);
+      setUser(session.user);
+      fetchUserRole(session.user.id).then((r) => {
+        if (isMounted) setRole(r);
+      });
+    }
+    setLoading(false);
+  });
+
+  return () => {
+    isMounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
 ```
-Файл: src/components/layout/ProtectedRoute.tsx
 
-Изменения:
-1. Увеличить задержку с 500ms до 1000ms для мобильных устройств
-2. Добавить проверку: если loading=false, но сессия ещё не проверена — ждём дольше
-3. Использовать navigator.userAgent для определения мобильного Safari
-```
+### Изменения в ProtectedRoute.tsx
 
-### Код
 ```typescript
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const location = useLocation();
   
   const [isInitializing, setIsInitializing] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
   
   useEffect(() => {
-    // Определяем мобильный Safari
     const isMobileSafari = /iPhone|iPad|iPod/.test(navigator.userAgent) && 
                            /Safari/.test(navigator.userAgent) &&
                            !/Chrome/.test(navigator.userAgent);
     
-    // Для мобильного Safari даём больше времени на восстановление сессии
-    const delay = isMobileSafari ? 1200 : 500;
+    // Базовая задержка: 1500ms для мобильного Safari, 600ms для остальных
+    const delay = isMobileSafari ? 1500 : 600;
     
     const timer = setTimeout(() => setIsInitializing(false), delay);
     return () => clearTimeout(timer);
   }, []);
 
+  // Повторная проверка сессии если пользователь не найден после инициализации
+  useEffect(() => {
+    if (!loading && !isInitializing && !user && retryCount < 2) {
+      // Попробуем ещё раз получить сессию
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          // Сессия найдена — перезагрузим страницу для корректной инициализации
+          window.location.reload();
+        }
+      });
+      setRetryCount(prev => prev + 1);
+    }
+  }, [loading, isInitializing, user, retryCount]);
+
   if (loading || isInitializing) {
-    return (
-      <div className="min-h-screen flex items-center justify-center ...">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <Loader />;
   }
 
   if (!user) {
@@ -63,61 +116,233 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
 ---
 
-## Часть 2: Синхронизация Documentation.tsx с Help.tsx
+## Часть 2: Сохранение и восстановление последней страницы
 
-### Проблема
-- `/help` (Help.tsx) — обновлён мной (1290 строк, полное руководство по тренингам)
-- `/docs` (Documentation.tsx) — старая версия (438 строк)
-- Ссылка "FAQ" в мобильном меню ведёт на `/docs`
+### Механизм
+1. **Сохранение**: при каждом переходе на защищённую страницу записываем URL в localStorage
+2. **Восстановление**: при запуске приложения (после успешной авторизации) проверяем сохранённый URL и редиректим
 
-### Решение
-Перенести весь обновлённый контент из Help.tsx в Documentation.tsx, сохранив структуру с Tabs и GlassCard.
-
-### Ключевые разделы для добавления в Documentation.tsx
-
-**Для пользователей (sections):**
-1. Обновить "Подписка и оплата" — добавить информацию о календарном месяце
-2. Добавить раздел "База знаний"
-
-**Для администраторов (adminSections):**
-1. "Управление тренингами" — общая структура
-2. "Мастер создания контента" — 5-шаговый wizard
-3. "Редактор уроков" — блочный редактор
-4. "Блоки: Текст и структура" — заголовки, аккордеоны, выноски
-5. "Блоки: Медиа-контент" — видео, аудио, галереи
-6. "Блоки: Интерактив" — кнопки, embed, timeline
-7. "Блоки: Тесты" — 7 типов вопросов
-8. "Доступ к контенту" — привязка к тарифам
-9. "AI-генерация обложек" — Lovable AI
-
-### Структура обновлённого Documentation.tsx
+### Новый хук: useLastRoute.ts
 
 ```typescript
-const sections = [
-  { id: "getting-started", title: "Начало работы", ... },
-  { id: "knowledge-base", title: "База знаний", ... },  // НОВЫЙ
-  { id: "tools", title: "Инструменты", ... },
-  { id: "subscription", title: "Подписка и оплата", ... },  // ОБНОВИТЬ
-  { id: "telegram", title: "Telegram-клуб", ... },
-];
+// src/hooks/useLastRoute.ts
 
-const adminSections = [
-  { id: "admin-users", ... },
-  { id: "admin-telegram", ... },
-  { id: "admin-roles", ... },
-  { id: "admin-integrations", ... },
-  // НОВЫЕ РАЗДЕЛЫ:
-  { id: "trainings", title: "Управление тренингами", icon: GraduationCap, ... },
-  { id: "trainings-wizard", title: "Мастер создания контента", icon: Wand2, ... },
-  { id: "lesson-editor", title: "Редактор уроков", icon: Blocks, ... },
-  { id: "blocks-text", title: "Блоки: Текст и структура", icon: Type, ... },
-  { id: "blocks-media", title: "Блоки: Медиа-контент", icon: Image, ... },
-  { id: "blocks-interactive", title: "Блоки: Интерактив", icon: Layers, ... },
-  { id: "blocks-quiz", title: "Блоки: Тесты и проверки", icon: CheckSquare, ... },
-  { id: "trainings-access", title: "Доступ к контенту", icon: Lock, ... },
-  { id: "trainings-ai", title: "AI-генерация обложек", icon: Sparkles, ... },
-];
+const STORAGE_KEY = 'last_protected_route';
+
+// Страницы, которые не нужно запоминать
+const EXCLUDED_PATHS = ['/', '/auth', '/help', '/docs'];
+
+export function saveLastRoute(pathname: string, search: string) {
+  if (EXCLUDED_PATHS.some(p => pathname === p || pathname.startsWith('/auth'))) {
+    return;
+  }
+  const fullPath = pathname + search;
+  localStorage.setItem(STORAGE_KEY, fullPath);
+}
+
+export function getLastRoute(): string | null {
+  return localStorage.getItem(STORAGE_KEY);
+}
+
+export function clearLastRoute() {
+  localStorage.removeItem(STORAGE_KEY);
+}
 ```
+
+### Интеграция в ProtectedRoute
+
+```typescript
+import { saveLastRoute } from "@/hooks/useLastRoute";
+
+export function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  
+  // Сохраняем текущий маршрут при каждом изменении (если авторизован)
+  useEffect(() => {
+    if (user && !loading) {
+      saveLastRoute(location.pathname, location.search);
+    }
+  }, [user, loading, location.pathname, location.search]);
+  
+  // ... остальная логика
+}
+```
+
+### Восстановление в DomainRouter.tsx
+
+```typescript
+import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
+
+export function DomainHomePage() {
+  const { user, loading: authLoading } = useAuth();
+  // ...
+  
+  if (isMainDomain) {
+    if (authLoading || isInitializing) {
+      return <Loader />;
+    }
+    
+    if (user) {
+      // Проверяем сохранённый маршрут
+      const lastRoute = getLastRoute();
+      if (lastRoute && lastRoute !== '/dashboard') {
+        clearLastRoute(); // Очищаем чтобы не зациклиться
+        return <Navigate to={lastRoute} replace />;
+      }
+      return <Navigate to="/dashboard" replace />;
+    }
+    return <Landing />;
+  }
+  // ...
+}
+```
+
+### Восстановление после логина в Auth.tsx
+
+```typescript
+import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
+
+// В useEffect после успешной авторизации:
+useEffect(() => {
+  if (user && mode !== "update_password") {
+    // Сначала проверяем redirectTo из URL
+    const urlRedirect = searchParams.get("redirectTo");
+    if (urlRedirect) {
+      navigate(urlRedirect);
+      return;
+    }
+    
+    // Затем проверяем сохранённый маршрут
+    const lastRoute = getLastRoute();
+    if (lastRoute) {
+      clearLastRoute();
+      navigate(lastRoute);
+      return;
+    }
+    
+    // По умолчанию — на дашборд
+    navigate('/dashboard');
+  }
+}, [user, mode, navigate, searchParams]);
+```
+
+---
+
+## Часть 3: Копирование ссылок на контакты и сделки
+
+### UI решение
+Добавить кнопку «Скопировать ссылку» в двух местах:
+1. **Внутри карточки** (ContactDetailSheet / DealDetailSheet) — основное место
+2. **В строке таблицы** — быстрый доступ через иконку
+
+### Утилита для копирования
+
+```typescript
+// src/utils/clipboardUtils.ts
+
+import { toast } from "sonner";
+
+export async function copyToClipboard(text: string, successMessage = "Ссылка скопирована") {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(successMessage);
+    return true;
+  } catch (err) {
+    // Fallback для старых браузеров
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand("copy");
+      toast.success(successMessage);
+      return true;
+    } catch {
+      toast.error("Не удалось скопировать");
+      return false;
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  }
+}
+
+export function getContactUrl(contactId: string) {
+  return `${window.location.origin}/admin/contacts?contact=${contactId}`;
+}
+
+export function getDealUrl(dealId: string) {
+  return `${window.location.origin}/admin/deals?deal=${dealId}`;
+}
+```
+
+### Изменения в ContactDetailSheet.tsx
+
+Добавить кнопку в header карточки:
+
+```tsx
+import { Copy, Link } from "lucide-react";
+import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
+
+// В header секции:
+<Button
+  variant="ghost"
+  size="icon"
+  onClick={() => copyToClipboard(getContactUrl(contact.id), "Ссылка на контакт скопирована")}
+  title="Скопировать ссылку"
+>
+  <Link className="h-4 w-4" />
+</Button>
+```
+
+### Изменения в DealDetailSheet.tsx
+
+Аналогично:
+
+```tsx
+import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
+
+<Button
+  variant="ghost"
+  size="icon"
+  onClick={() => copyToClipboard(getDealUrl(deal.id), "Ссылка на сделку скопирована")}
+  title="Скопировать ссылку"
+>
+  <Link className="h-4 w-4" />
+</Button>
+```
+
+### Изменения в AdminContacts.tsx (таблица)
+
+Добавить иконку копирования в строку:
+
+```tsx
+// В TableRow, после других действий:
+<TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7"
+        onClick={(e) => {
+          e.stopPropagation();
+          copyToClipboard(getContactUrl(contact.id), "Ссылка скопирована");
+        }}
+      >
+        <Link className="h-3.5 w-3.5" />
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>Скопировать ссылку</TooltipContent>
+  </Tooltip>
+</TooltipProvider>
+```
+
+### Изменения в AdminDeals.tsx (таблица)
+
+Аналогично для сделок.
 
 ---
 
@@ -125,13 +350,51 @@ const adminSections = [
 
 | Файл | Изменения |
 |------|-----------|
-| `src/components/layout/ProtectedRoute.tsx` | Увеличить задержку для мобильного Safari до 1200ms |
-| `src/pages/Documentation.tsx` | Добавить все новые разделы по тренингам из Help.tsx |
+| `src/contexts/AuthContext.tsx` | Переупорядочить `onAuthStateChange` и `getSession` |
+| `src/components/layout/ProtectedRoute.tsx` | Увеличить задержку, добавить retry-логику, сохранять маршрут |
+| `src/components/layout/DomainRouter.tsx` | Восстанавливать последний маршрут при редиректе на dashboard |
+| `src/pages/Auth.tsx` | Восстанавливать последний маршрут после логина |
+| `src/hooks/useLastRoute.ts` | **НОВЫЙ** — хук для сохранения/восстановления маршрута |
+| `src/utils/clipboardUtils.ts` | **НОВЫЙ** — утилиты копирования и генерации URL |
+| `src/components/admin/ContactDetailSheet.tsx` | Добавить кнопку копирования ссылки |
+| `src/components/admin/DealDetailSheet.tsx` | Добавить кнопку копирования ссылки |
+| `src/pages/admin/AdminContacts.tsx` | Добавить иконку копирования в таблицу |
+| `src/pages/admin/AdminDeals.tsx` | Добавить иконку копирования в таблицу |
 
 ---
 
 ## Результат
 
-1. **Разлогинивание на мобильном Safari** — исправлено увеличенной задержкой
-2. **FAQ (/docs)** — полностью обновлён с новым контентом по тренингам
-3. **Единая документация** — /docs и /help показывают актуальную информацию
+1. **Сессия** — более надёжное восстановление с retry-логикой
+2. **Последняя страница** — сохраняется в localStorage и восстанавливается при запуске
+3. **Копирование ссылок** — доступно и в карточке, и в списке
+
+---
+
+## Технические детали
+
+### Логика восстановления маршрута
+
+```
+Запуск приложения
+       ↓
+  Пользователь авторизован?
+       ↓ Да
+  Есть redirectTo в URL?
+       ↓ Нет
+  Есть сохранённый маршрут?
+       ↓ Да
+  Редирект на сохранённый маршрут
+```
+
+### Исключения из сохранения
+
+- `/` — главная страница
+- `/auth` — страница авторизации
+- `/help`, `/docs` — публичные страницы
+
+### Совместимость
+
+- Работает в Safari, Chrome, Firefox
+- Fallback для `navigator.clipboard` в старых браузерах
+- PWA: сохранённый маршрут работает при запуске из иконки
