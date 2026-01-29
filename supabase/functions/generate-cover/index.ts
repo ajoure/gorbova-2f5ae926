@@ -64,22 +64,25 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Generate prompt - thematic imagery based on content
-    const prompt = `Create a thematic cover image that visually represents the topic of an educational lesson.
+    // Generate prompt - thematic imagery based on content, NO TEXT
+    const prompt = `Create a professional cover image for an educational video lesson about accounting and law.
 
-Title: "${title}"
-${description ? `Topics covered: ${description}` : ""}
+Topics: "${title}"
+${description ? `Details: ${description}` : ""}
 
-Requirements:
-- Create meaningful visual representation of the lesson topics
-- Include relevant business/accounting themed imagery (documents, charts, calculators, coins, buildings, computers, legal documents, etc.)
-- Professional illustration style with clean, modern aesthetic
-- Bright but professional color palette with subtle gradients
-- 1200x630 pixels (16:9 aspect ratio)
-- NO text, NO letters, NO words on the image
+CRITICAL REQUIREMENTS:
+- NO TEXT whatsoever - absolutely no letters, numbers, words, or any written content on the image
+- NO logos, NO watermarks, NO captions, NO titles
+- Only meaningful visual imagery that represents the topic
+- Use symbolic icons and illustrations: documents, calculators, coins, charts, scales of justice, buildings, computers, folders, contracts, stamps, office desk items
+- Professional business illustration style
+- Clean, modern aesthetic with soft gradients
+- Light, professional color palette (blues, teals, soft purples, whites)
+- 16:9 aspect ratio (1200x630 pixels)
+- High quality, sharp imagery
 - Ultra high resolution
 
-The image should help the viewer understand what topics this lesson covers by looking at the visual elements.`;
+The image should convey the topic through visual symbols only, without any text.`;
 
     console.log("Generating cover with prompt:", prompt.slice(0, 100) + "...");
 

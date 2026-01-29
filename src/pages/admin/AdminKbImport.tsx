@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { format } from "date-fns";
 import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
 import { parseCSVContent } from "@/lib/csv-parser";
@@ -891,7 +892,9 @@ export default function AdminKbImport() {
           sort_order: 0,
           content: {
             url: episode.kinescopeUrl,
-            title: episode.answerDate,
+            title: episode.answerDate 
+              ? format(new Date(episode.answerDate), "dd.MM.yyyy") 
+              : null,
             provider: "kinescope",
           },
         });

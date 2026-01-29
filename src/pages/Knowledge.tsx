@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { usePageSections } from "@/hooks/usePageSections";
 import { useSidebarModules } from "@/hooks/useSidebarModules";
 import { useContainerLessons } from "@/hooks/useContainerLessons";
-import { useKbQuestions, formatTimecode, buildKinescopeUrlWithTimecode } from "@/hooks/useKbQuestions";
+import { useKbQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { ModuleCard } from "@/components/training/ModuleCard";
 import { LessonCard } from "@/components/training/LessonCard";
 import { 
@@ -25,11 +26,9 @@ import {
   BookOpen,
   Folder,
   ChevronDown,
-  ExternalLink,
   type LucideIcon,
 } from "lucide-react";
 import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 
 // Icon mapping for dynamic icons
 const ICONS: Record<string, LucideIcon> = {
@@ -49,6 +48,7 @@ const getIcon = (iconName: string): LucideIcon => {
 function QuestionsContent({ searchQuery }: { searchQuery: string }) {
   const { data: questions, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {
@@ -57,6 +57,18 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
       else next.add(id);
       return next;
     });
+  };
+
+  // Navigate to video lesson with timecode
+  const handleWatchVideo = (question: typeof questions[0]) => {
+    const moduleSlug = question.lesson?.module?.slug;
+    const lessonSlug = question.lesson?.slug;
+    
+    if (moduleSlug && lessonSlug) {
+      navigate(`/library/${moduleSlug}/${lessonSlug}`, { 
+        state: { seekTo: question.timecode_seconds } 
+      });
+    }
   };
 
   if (isLoading) {
@@ -85,9 +97,9 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
       {questions.map((question) => {
         const isExpanded = expandedIds.has(question.id);
         const formattedDate = question.answer_date
-          ? format(new Date(question.answer_date), "d MMM yyyy", { locale: ru })
+          ? format(new Date(question.answer_date), "dd.MM.yyyy")
           : null;
-        const videoUrl = buildKinescopeUrlWithTimecode(question.kinescope_url, question.timecode_seconds);
+        const hasInternalLink = question.lesson?.slug && question.lesson?.module?.slug;
 
         return (
           <GlassCard key={question.id} className="space-y-3">
@@ -118,16 +130,14 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
             
             {/* Footer */}
             <div className="flex items-center justify-between pt-3 border-t border-border/30">
-              <a 
-                href={videoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+              <button 
+                onClick={() => handleWatchVideo(question)}
+                disabled={!hasInternalLink}
+                className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="h-4 w-4" />
                 Смотреть видеоответ
-                <ExternalLink className="h-3 w-3" />
-              </a>
+              </button>
               <div className="flex items-center gap-3">
                 {formattedDate && (
                   <span className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
