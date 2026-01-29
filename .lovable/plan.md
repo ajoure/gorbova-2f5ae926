@@ -1,41 +1,139 @@
-ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV
-- Ничего не ломать и не трогать лишнее. Только add-only/точечные правки по этому ТЗ.
-- Любые изменения маршрутизации — только для указанного кейса клуба.
-- Никаких редиректов на /auth для кейса “гость попал на /products”.
-- STOP: если затрагиваются другие продукты/маршруты, остановиться и описать риск.
-- DoD обязателен: скрин/видео пруфы из админки 1@ajoure.by + diff-summary (список файлов/изменений).
+Ок — вношу изменения прямо в твой план, без нового.
 
-ЦЕЛЬ
-Сделать поведение клуба «Буква Закона» таким же, как у остальных внешних продуктов:
-- кнопка «На сайт» должна открывать публичный лендинг https://club.gorbova.by/ (а не внутренний кабинет /products).
-- если гость случайно попал на https://club.gorbova.by/products — его должно вернуть на лендинг https://club.gorbova.by/ (НЕ на /auth и НЕ на #pricing).
+⸻
 
-ФАКТ ПРОБЛЕМЫ
-Сейчас при клике «На сайт» у клуба происходит переход на https://club.gorbova.by/products (это внутренний маршрут кабинета), из-за чего:
-- выглядит как “открылось то же самое внутри”
-- гостям ломает путь покупки/ознакомления
+План: Исправление кнопки “На сайт” для клуба (обновлённый)
 
-ПРАВКИ
-1) Везде, где формируется ссылка «На сайт» для продукта “Клуб «Буква Закона»”, заменить:
-   - было: https://club.gorbova.by/products (или любой URL с /products)
-   - стало: https://club.gorbova.by/ (корень, публичный лендинг)
+Проблема
 
-2) Добавить гостевой guard:
-   - если location.pathname === "/products" и user отсутствует
-   - то navigate("/") / redirect на https://club.gorbova.by/
-   - важно: без /auth, без #pricing, без изменения других защищённых маршрутов
+Кнопка “На сайт” у продукта “Клуб «Буква Закона»” открывает новую вкладку того же домена (https://club.gorbova.by) с target="_blank". Поскольку это тот же SPA:
+	•	новая вкладка сохраняет/наследует SPA-состояние (и/или last route),
+	•	пользователь снова попадает в /products и видит “то же самое” вместо лендинга.
 
-ГДЕ ИСКАТЬ
-- src/pages/Learning.tsx (карточки/список продуктов и кнопка «На сайт»)
-- src/pages/Products.tsx (если там тоже есть карточка клуба)
-- src/components/layout/ProtectedRoute.tsx (guard/redirect)
+Важно: формулировку про session storage лучше не фиксировать как факт (это может быть и router-state/redirect logic). Нам важно поведение: _blank + SPA = уносит в /products.
 
-DoD (ОБЯЗАТЕЛЬНО)
-1) Гость:
-   - открыть https://club.gorbova.by/ → виден лендинг
-   - открыть https://club.gorbova.by/products → редирект на https://club.gorbova.by/ (лендинг)
-2) Из раздела «Обучение → Все продукты»:
-   - «На сайт» у клуба ведёт на https://club.gorbova.by/ (не на /products)
-3) Авторизованный пользователь:
-   - https://club.gorbova.by/products открывается как кабинет (как раньше)
-4) Пруфы: скрин/видео из учётки 1@ajoure.by + diff-summary (перечень файлов и что поменяли).
+⸻
+
+Уже исправлено (предыдущий коммит)
+
+Guest guard в ProtectedRoute.tsx:
+
+if (!user && location.pathname === "/products") {
+  return <Navigate to="/" replace />;
+}
+
+Это работает корректно.
+
+⸻
+
+Требуемые правки
+
+Общая правка (обязательная)
+
+Не хардкодить URL дважды — завести константу в обоих местах:
+
+const CLUB_LANDING_URL = "https://club.gorbova.by/";
+
+И не использовать product.isClub, если такого поля нет. Клуб должен определяться детерминированно (строго):
+	•	product.slug === "<club_slug>" или
+	•	product.id === "<club_id>" или
+	•	product.purchaseLink === "https://club.gorbova.by" (если это уникально для клуба)
+
+⸻
+
+Файл 1: src/pages/Learning.tsx
+
+Строки 157-163 — функция handleGoToSite:
+
+// БЫЛО:
+const handleGoToSite = () => {
+  if (product.purchaseLink.startsWith("http")) {
+    window.open(product.purchaseLink, "_blank");
+  } else {
+    navigate(product.purchaseLink);
+  }
+};
+
+// СТАНЕТ:
+const CLUB_LANDING_URL = "https://club.gorbova.by/";
+
+const handleGoToSite = () => {
+  const isClub = product.slug === "<club_slug>"; // или product.id === "<club_id>"
+
+  if (isClub) {
+    // Клуб: полный переход на лендинг (не SPA-навигация, не _blank, same-tab)
+    window.location.assign(CLUB_LANDING_URL);
+    return;
+  }
+
+  if (product.purchaseLink.startsWith("http")) {
+    window.open(product.purchaseLink, "_blank");
+  } else {
+    navigate(product.purchaseLink);
+  }
+};
+
+
+⸻
+
+Файл 2: src/pages/Products.tsx
+
+Строки 31-37 — функция handleClick:
+
+// БЫЛО:
+const handleClick = () => {
+  if (isExternal) {
+    window.open(link, "_blank");
+  } else {
+    navigate(link);
+  }
+};
+
+// СТАНЕТ:
+const CLUB_LANDING_URL = "https://club.gorbova.by/";
+
+const handleClick = () => {
+  const isClub = product.slug === "<club_slug>"; // или product.id === "<club_id>"
+
+  if (isClub) {
+    // Клуб: полный переход на лендинг (не SPA-навигация, same-tab)
+    window.location.assign(CLUB_LANDING_URL);
+    return;
+  }
+
+  if (isExternal) {
+    window.open(link, "_blank");
+  } else {
+    navigate(link);
+  }
+};
+
+
+⸻
+
+Техническое обоснование
+
+Метод	Что делает	Подходит для клуба?
+window.open(url, "_blank")	Новая вкладка, SPA остаётся SPA	❌ Нет
+navigate() / <Link>	SPA-навигация внутри роутера	❌ Нет
+window.location.assign(url)	Полный переход, сбрасывает SPA (same-tab)	✅ Да
+<a href target="_self">	Полный переход	✅ Да
+
+
+⸻
+
+DoD (Верификация)
+	1.	Гость в инкогнито:
+	•	Открыть https://club.gorbova.by/products → редирект на / (лендинг)
+	2.	Из кабинета (авторизованный):
+	•	“Обучение → Все продукты” → “На сайт” у клуба → открывается https://club.gorbova.by/
+	•	НЕ остаётся на /products
+	•	НЕ открывается новая вкладка
+	3.	Регрессия:
+	•	Для остальных продуктов (“Ценный бухгалтер”, “Бухгалтерия как бизнес”) поведение не меняется (как было: external в _blank или как настроено сейчас)
+	4.	Скриншоты/пруф:
+	•	До: клик по “На сайт” → в адресной строке /products
+	•	После: https://club.gorbova.by/ (лендинг)
+	5.	Diff-summary:
+	•	src/pages/Learning.tsx — добавлен isClub (детерминированно) + window.location.assign(CLUB_LANDING_URL)
+	•	src/pages/Products.tsx — добавлен isClub (детерминированно) + window.location.assign(CLUB_LANDING_URL)
