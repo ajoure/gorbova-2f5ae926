@@ -61,6 +61,12 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!user) {
+    // Guest guard for /products: redirect to landing (not /auth)
+    // This ensures guests landing on protected /products route go to public landing
+    if (location.pathname === "/products") {
+      return <Navigate to="/" replace />;
+    }
+    
     // Encode the full path including search params
     const redirectTo = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/auth?redirectTo=${redirectTo}`} replace />;
