@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Play, Clock, Calendar, Lock, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 
 export interface LessonCardData {
   id: string;
@@ -49,7 +48,7 @@ export function LessonCard({
   // Prefer published_at over created_at for display
   const displayDate = lesson.published_at || lesson.created_at;
   const formattedDate = displayDate
-    ? format(new Date(displayDate), "d MMM yyyy", { locale: ru })
+    ? format(new Date(displayDate), "dd.MM.yyyy")
     : null;
 
   return (
