@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
@@ -7,12 +6,8 @@ import Landing from "@/pages/Landing";
 import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
 import { Loader2 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
-import { Navigate } from "react-router-dom";
-import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
 
 export function DomainHomePage() {
-  const { user, loading: authLoading } = useAuth();
   const hostname = window.location.hostname;
   const domain = getCurrentDomain();
   
@@ -40,41 +35,14 @@ export function DomainHomePage() {
     return <Consultation />;
   }
   
-  // Fetch product data for the current domain
-  const { data: productData, isLoading, error } = usePublicProduct(
-    isMainDomain ? null : domain
-  );
-
-  // Дополнительная задержка для HMR — даём время Supabase восстановить сессию
-  const [isInitializing, setIsInitializing] = useState(true);
-  
-  useEffect(() => {
-    // Ждём 500ms перед тем как считать, что пользователь точно не авторизован
-    const timer = setTimeout(() => setIsInitializing(false), 500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Main domain or development: redirect logged-in users to dashboard
+  // Main domain: show landing for ALL users (guests and authenticated)
+  // Authenticated users see "Open Dashboard" button in header
   if (isMainDomain) {
-    // Показываем loader пока loading ИЛИ пока идёт инициализация
-    if (authLoading || isInitializing) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-background">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      );
-    }
-    if (user) {
-      // Проверяем сохранённый маршрут
-      const lastRoute = getLastRoute();
-      if (lastRoute && lastRoute !== '/dashboard' && lastRoute !== '/') {
-        clearLastRoute(); // Очищаем чтобы не зациклиться
-        return <Navigate to={lastRoute} replace />;
-      }
-      return <Navigate to="/dashboard" replace />;
-    }
     return <Landing />;
   }
+
+  // Fetch product data for the current domain (only for product subdomains)
+  const { data: productData, isLoading, error } = usePublicProduct(domain);
 
   // Loading state for product domains
   if (isLoading) {
