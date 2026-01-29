@@ -7,13 +7,12 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { parseTimecode } from "@/hooks/useKbQuestions";
+import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
 import * as XLSX from "xlsx";
 import {
@@ -29,10 +28,25 @@ import {
   HelpCircle,
   Sparkles,
   RotateCcw,
+  Download,
+  AlertTriangle,
 } from "lucide-react";
 
 // Container module ID for knowledge-videos (from page_sections)
 const CONTAINER_MODULE_SLUG = "container-knowledge-videos";
+
+// Max episode number to accept (filter out Excel serial numbers like 45302)
+const MAX_EPISODE_NUMBER = 200;
+
+// Validation error types
+type ValidationErrorType = "empty_title" | "no_episode" | "no_kinescope" | "no_date" | "bad_timecode";
+
+interface ValidationError {
+  row: number;
+  type: ValidationErrorType;
+  message: string;
+  values: Record<string, any>;
+}
 
 interface ParsedRow {
   answerDate: string;
@@ -43,10 +57,11 @@ interface ParsedRow {
   tags: string[];
   getcourseUrl: string;
   kinescopeUrl: string;
-  timecode: string;
+  timecode: string | number;
   timecodeSeconds: number | null;
   year: number;
-  errors: string[];
+  errors: ValidationError[];
+  rowIndex: number;
 }
 
 interface GroupedEpisode {
@@ -55,7 +70,8 @@ interface GroupedEpisode {
   kinescopeUrl: string;
   questions: ParsedRow[];
   description: string;
-  errors: string[];
+  errors: ValidationError[];
+  warnings: string[];
 }
 
 interface ImportState {
@@ -64,7 +80,7 @@ interface ImportState {
   parsed: boolean;
   parsedRows: ParsedRow[];
   episodes: GroupedEpisode[];
-  validationErrors: string[];
+  validationErrors: ValidationError[];
   importing: boolean;
   importProgress: number;
   importLog: string[];
@@ -72,6 +88,15 @@ interface ImportState {
   usePredefinedSummaries: boolean;
   testEpisodeNumber: number | null;
 }
+
+// Error type labels for UI
+const ERROR_TYPE_LABELS: Record<ValidationErrorType, string> = {
+  empty_title: "Пустая суть вопроса",
+  no_episode: "Не распознан номер выпуска",
+  no_kinescope: "Нет ссылки Kinescope",
+  no_date: "Нет даты ответа",
+  bad_timecode: "Некорректный таймкод",
+};
 
 export default function AdminKbImport() {
   const [state, setState] = useState<ImportState>({
@@ -91,10 +116,25 @@ export default function AdminKbImport() {
 
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set());
 
-  // Parse episode number from "Выпуск №74" format
-  const parseEpisodeNumber = (value: string): number => {
-    const match = value.match(/(\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
+  // PATCH-5: Strict episode number parsing
+  const parseEpisodeNumber = (value: string | number): number => {
+    const str = String(value ?? "").trim();
+    if (!str) return 0;
+
+    // Format "Выпуск №74" or "Выпуск 74"
+    const m = str.match(/выпуск\s*№?\s*(\d+)/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
+    }
+
+    // Pure number 1-200
+    if (/^\d+$/.test(str)) {
+      const n = parseInt(str, 10);
+      return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
+    }
+
+    return 0;
   };
 
   // Parse tags from "#налог#ИП" format
@@ -106,18 +146,39 @@ export default function AdminKbImport() {
       .filter(Boolean);
   };
 
-  // Parse date from "08.01.24" or "08.01.2024" format
-  const parseDate = (value: string): string => {
-    if (!value) return "";
-    
-    // Handle DD.MM.YY or DD.MM.YYYY
-    const match = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
-    if (match) {
-      const [, day, month, year] = match;
-      const fullYear = year.length === 2 ? `20${year}` : year;
-      return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  // PATCH-3: Parse date from DD.MM.YY, DD.MM.YYYY, ISO, or Excel serial
+  const parseDate = (value: string | number | Date | null | undefined): string => {
+    if (value === null || value === undefined || value === "") return "";
+
+    // Date object (if XLSX returns Date)
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return value.toISOString().slice(0, 10);
     }
-    return value;
+
+    // Excel serial (number or 5-digit string)
+    const asString = String(value).trim();
+    if (typeof value === "number" || /^\d{5}$/.test(asString)) {
+      const serial = typeof value === "number" ? value : parseInt(asString, 10);
+      if (!Number.isFinite(serial) || serial <= 0) return "";
+
+      // 1899-12-30 (Excel 1900 system with leap bug compensation)
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const date = new Date(excelEpoch.getTime() + serial * 86400000);
+      return date.toISOString().slice(0, 10);
+    }
+
+    // DD.MM.YY / DD.MM.YYYY
+    const m = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+    if (m) {
+      const [, d, mo, y] = m;
+      const yyyy = y.length === 2 ? `20${y}` : y;
+      return `${yyyy}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+
+    // ISO format
+    if (/^\d{4}-\d{2}-\d{2}/.test(asString)) return asString.slice(0, 10);
+
+    return "";
   };
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -128,18 +189,20 @@ export default function AdminKbImport() {
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
 
       const parsed: ParsedRow[] = [];
-      const errors: string[] = [];
+      const allErrors: ValidationError[] = [];
 
       rows.forEach((row, idx) => {
-        const rowErrors: string[] = [];
-        
-        const answerDate = parseDate(String(row["Дата ответа"] || ""));
-        const episodeRaw = String(row["Номер выпуска"] || "");
+        const rowIndex = idx + 2; // Excel rows start at 1, header is row 1
+        const rowErrors: ValidationError[] = [];
+
+        const answerDateRaw = row["Дата ответа"];
+        const answerDate = parseDate(answerDateRaw);
+        const episodeRaw = row["Номер выпуска"] ?? "";
         const episodeNumber = parseEpisodeNumber(episodeRaw);
         const questionNumber = row["Номер вопроса"] ? parseInt(String(row["Номер вопроса"]), 10) : null;
         const fullQuestion = String(row["Вопрос ученика (копируем из анкеты)"] || "").trim();
@@ -147,16 +210,54 @@ export default function AdminKbImport() {
         const tagsRaw = String(row["Теги (для поиска, ставим самостоятельно)"] || "");
         const getcourseUrl = String(row["Ссылка на видео в геткурсе"] || "").trim();
         const kinescopeUrl = String(row["Ссылка на видео в кинескопе"] || "").trim();
-        const timecodeRaw = String(row["Тайминг (час:мин:сек начала видео с этим вопросом)"] || "").trim();
+        const timecodeRaw = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
         const year = parseInt(String(row[""] || row["Год"] || "2024"), 10) || 2024;
 
-        // Validation
-        if (!title) rowErrors.push(`Строка ${idx + 2}: пустая "Суть вопроса"`);
-        if (!episodeNumber) rowErrors.push(`Строка ${idx + 2}: не удалось распознать номер выпуска`);
-        if (!kinescopeUrl) rowErrors.push(`Строка ${idx + 2}: отсутствует ссылка Kinescope`);
-        if (!answerDate) rowErrors.push(`Строка ${idx + 2}: отсутствует дата ответа`);
-
+        // PATCH-2: Parse timecode (supports Excel numeric time)
         const timecodeSeconds = parseTimecode(timecodeRaw);
+
+        // Collect values for error export
+        const errorValues = {
+          answerDate: String(answerDateRaw ?? ""),
+          episodeNumber: String(episodeRaw ?? ""),
+          title: title.slice(0, 50),
+          kinescopeUrl: kinescopeUrl.slice(0, 50),
+          timecode: String(timecodeRaw ?? ""),
+        };
+
+        // Validation with typed errors
+        if (!title) {
+          rowErrors.push({
+            row: rowIndex,
+            type: "empty_title",
+            message: `Строка ${rowIndex}: пустая "Суть вопроса"`,
+            values: errorValues,
+          });
+        }
+        if (!episodeNumber) {
+          rowErrors.push({
+            row: rowIndex,
+            type: "no_episode",
+            message: `Строка ${rowIndex}: не распознан номер выпуска "${episodeRaw}"`,
+            values: errorValues,
+          });
+        }
+        if (!kinescopeUrl) {
+          rowErrors.push({
+            row: rowIndex,
+            type: "no_kinescope",
+            message: `Строка ${rowIndex}: отсутствует ссылка Kinescope`,
+            values: errorValues,
+          });
+        }
+        if (!answerDate) {
+          rowErrors.push({
+            row: rowIndex,
+            type: "no_date",
+            message: `Строка ${rowIndex}: не распознана дата "${answerDateRaw}"`,
+            values: errorValues,
+          });
+        }
 
         parsed.push({
           answerDate,
@@ -171,29 +272,47 @@ export default function AdminKbImport() {
           timecodeSeconds,
           year,
           errors: rowErrors,
+          rowIndex,
         });
 
-        errors.push(...rowErrors);
+        allErrors.push(...rowErrors);
       });
 
-      // Group by episode (using kinescope_url as unique key)
-      const episodeMap = new Map<string, GroupedEpisode>();
-      
+      // PATCH-4: Group by episode_number (not URL)
+      const episodeMap = new Map<number, GroupedEpisode>();
+
       parsed.forEach((row) => {
-        const key = row.kinescopeUrl || `episode-${row.episodeNumber}`;
-        
-        if (!episodeMap.has(key)) {
-          episodeMap.set(key, {
+        if (!row.episodeNumber) return;
+
+        if (!episodeMap.has(row.episodeNumber)) {
+          episodeMap.set(row.episodeNumber, {
             episodeNumber: row.episodeNumber,
             answerDate: row.answerDate,
-            kinescopeUrl: row.kinescopeUrl,
+            kinescopeUrl: row.kinescopeUrl || "",
             questions: [],
             description: "",
             errors: [],
+            warnings: [],
           });
         }
-        
-        episodeMap.get(key)!.questions.push(row);
+
+        const ep = episodeMap.get(row.episodeNumber)!;
+        ep.questions.push(row);
+
+        // URL normalization & collision warning
+        const url = String(row.kinescopeUrl || "").trim();
+        if (url) {
+          if (!ep.kinescopeUrl) {
+            ep.kinescopeUrl = url;
+          } else if (ep.kinescopeUrl !== url) {
+            ep.warnings.push(`Коллизия Kinescope URL: "${ep.kinescopeUrl}" vs "${url}"`);
+          }
+        }
+
+        // Use first valid date
+        if (!ep.answerDate && row.answerDate) {
+          ep.answerDate = row.answerDate;
+        }
       });
 
       // Sort episodes and compute descriptions
@@ -214,7 +333,7 @@ export default function AdminKbImport() {
         parsed: true,
         parsedRows: parsed,
         episodes,
-        validationErrors: errors,
+        validationErrors: allErrors,
       }));
     } catch (err) {
       console.error("Parse error:", err);
@@ -223,6 +342,65 @@ export default function AdminKbImport() {
     }
   }, []);
 
+  // PATCH-6: Download errors as CSV
+  const downloadErrorsCsv = useCallback(() => {
+    const header = ["row", "type", "message", "values_json"];
+    const lines = state.validationErrors.map((e) =>
+      [e.row, e.type, `"${e.message.replace(/"/g, '""')}"`, `"${JSON.stringify(e.values).replace(/"/g, '""')}"`].join(",")
+    );
+    const csv = [header.join(","), ...lines].join("\n");
+
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kb-import-errors.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [state.validationErrors]);
+
+  // PATCH-6: Group errors by type
+  const errorGroups = useMemo(() => {
+    const groups: Record<ValidationErrorType, ValidationError[]> = {
+      empty_title: [],
+      no_episode: [],
+      no_kinescope: [],
+      no_date: [],
+      bad_timecode: [],
+    };
+    state.validationErrors.forEach((err) => {
+      if (groups[err.type]) {
+        groups[err.type].push(err);
+      }
+    });
+    return groups;
+  }, [state.validationErrors]);
+
+  // PATCH-7: Get critical errors for a specific episode
+  const getCriticalErrorsForEpisode = useCallback((ep: GroupedEpisode): string[] => {
+    const critical: string[] = [];
+    if (!ep.kinescopeUrl) critical.push("Нет ссылки Kinescope");
+    if (!ep.answerDate) critical.push("Нет даты выпуска");
+
+    const emptyTitles = ep.questions.filter((q) => !q.title).length;
+    if (emptyTitles > 0) critical.push(`${emptyTitles} вопросов без заголовка`);
+
+    return critical;
+  }, []);
+
+  // PATCH-7: Check if test episode has critical errors
+  const testEpisodeCriticalErrors = useMemo(() => {
+    if (!state.testEpisodeNumber) return [];
+
+    const episode = state.episodes.find((e) => e.episodeNumber === state.testEpisodeNumber);
+    if (!episode) return ["Выпуск не найден в файле"];
+
+    return getCriticalErrorsForEpisode(episode);
+  }, [state.testEpisodeNumber, state.episodes, getCriticalErrorsForEpisode]);
+
+  // PATCH-7: Check if any validation errors exist (for Bulk Run block)
+  const hasAnyValidationErrors = state.validationErrors.length > 0;
+
   // Get container module ID
   const getContainerModuleId = async (): Promise<string | null> => {
     const { data, error } = await supabase
@@ -230,7 +408,7 @@ export default function AdminKbImport() {
       .select("id")
       .eq("slug", CONTAINER_MODULE_SLUG)
       .single();
-    
+
     if (error || !data) {
       console.error("Container module not found:", error);
       return null;
@@ -239,7 +417,10 @@ export default function AdminKbImport() {
   };
 
   // Import single episode
-  const importEpisode = async (episode: GroupedEpisode, moduleId: string): Promise<{ success: boolean; lessonId?: string; error?: string }> => {
+  const importEpisode = async (
+    episode: GroupedEpisode,
+    moduleId: string
+  ): Promise<{ success: boolean; lessonId?: string; error?: string }> => {
     const slug = `episode-${episode.episodeNumber}`;
     const title = `Выпуск №${episode.episodeNumber}`;
     const description = state.usePredefinedSummaries
@@ -263,7 +444,7 @@ export default function AdminKbImport() {
           .update({
             title,
             description,
-            published_at: episode.answerDate,
+            published_at: episode.answerDate || null,
             updated_at: new Date().toISOString(),
           })
           .eq("id", existing.id);
@@ -282,7 +463,7 @@ export default function AdminKbImport() {
             content_type: "video",
             is_active: true,
             sort_order: episode.episodeNumber,
-            published_at: episode.answerDate,
+            published_at: episode.answerDate || null,
           })
           .select("id")
           .single();
@@ -291,42 +472,40 @@ export default function AdminKbImport() {
         lessonId = newLesson.id;
 
         // Create video block
-        const { error: blockError } = await supabase
-          .from("lesson_blocks")
-          .insert({
-            lesson_id: lessonId,
-            block_type: "video",
-            sort_order: 0,
-            content: {
-              url: episode.kinescopeUrl,
-              title: episode.answerDate,
-              provider: "kinescope",
-            },
-          });
+        const { error: blockError } = await supabase.from("lesson_blocks").insert({
+          lesson_id: lessonId,
+          block_type: "video",
+          sort_order: 0,
+          content: {
+            url: episode.kinescopeUrl,
+            title: episode.answerDate,
+            provider: "kinescope",
+          },
+        });
 
         if (blockError) console.warn("Block creation failed:", blockError);
       }
 
       // 2. Upsert questions
       for (const q of episode.questions) {
-        const { error: qError } = await supabase
-          .from("kb_questions")
-          .upsert(
-            {
-              lesson_id: lessonId,
-              episode_number: episode.episodeNumber,
-              question_number: q.questionNumber,
-              title: q.title,
-              full_question: q.fullQuestion || null,
-              tags: q.tags.length > 0 ? q.tags : null,
-              kinescope_url: q.kinescopeUrl,
-              timecode_seconds: q.timecodeSeconds,
-              answer_date: q.answerDate,
-            },
-            {
-              onConflict: "lesson_id,question_number",
-            }
-          );
+        if (!q.title) continue; // Skip questions without title
+
+        const { error: qError } = await supabase.from("kb_questions").upsert(
+          {
+            lesson_id: lessonId,
+            episode_number: episode.episodeNumber,
+            question_number: q.questionNumber,
+            title: q.title,
+            full_question: q.fullQuestion || null,
+            tags: q.tags.length > 0 ? q.tags : null,
+            kinescope_url: q.kinescopeUrl,
+            timecode_seconds: q.timecodeSeconds,
+            answer_date: q.answerDate || episode.answerDate,
+          },
+          {
+            onConflict: "lesson_id,question_number",
+          }
+        );
 
         if (qError) console.warn("Question upsert error:", qError);
       }
@@ -347,6 +526,13 @@ export default function AdminKbImport() {
     const episode = state.episodes.find((e) => e.episodeNumber === state.testEpisodeNumber);
     if (!episode) {
       toast.error(`Выпуск №${state.testEpisodeNumber} не найден в файле`);
+      return;
+    }
+
+    // PATCH-7: Block if critical errors
+    const criticalErrors = getCriticalErrorsForEpisode(episode);
+    if (criticalErrors.length > 0) {
+      toast.error(`Невозможно импортировать: ${criticalErrors.join(", ")}`);
       return;
     }
 
@@ -371,7 +557,7 @@ export default function AdminKbImport() {
         importLog: [
           ...s.importLog,
           `✅ Выпуск №${episode.episodeNumber} импортирован`,
-          `   Создано/обновлено вопросов: ${episode.questions.length}`,
+          `   Создано/обновлено вопросов: ${episode.questions.filter((q) => q.title).length}`,
         ],
       }));
       toast.success(`Выпуск №${episode.episodeNumber} успешно импортирован`);
@@ -387,6 +573,12 @@ export default function AdminKbImport() {
 
   // Bulk Run: import all episodes in batches
   const handleBulkRun = async () => {
+    // PATCH-7: Block if any validation errors
+    if (hasAnyValidationErrors) {
+      toast.error("Исправьте ошибки валидации перед массовым импортом");
+      return;
+    }
+
     setState((s) => ({ ...s, importing: true, importLog: [], importProgress: 0 }));
 
     const moduleId = await getContainerModuleId();
@@ -411,7 +603,7 @@ export default function AdminKbImport() {
       if (result.success) {
         setState((s) => ({
           ...s,
-          importLog: [...s.importLog, `  ✅ Готово (${episode.questions.length} вопросов)`],
+          importLog: [...s.importLog, `  ✅ Готово (${episode.questions.filter((q) => q.title).length} вопросов)`],
         }));
       } else {
         errors++;
@@ -443,7 +635,7 @@ export default function AdminKbImport() {
         `=== ИТОГО ===`,
         `Обработано выпусков: ${processed}`,
         `Ошибок: ${errors}`,
-        `Всего вопросов: ${state.parsedRows.length}`,
+        `Всего вопросов: ${state.parsedRows.filter((r) => r.title).length}`,
       ],
     }));
 
@@ -489,7 +681,7 @@ export default function AdminKbImport() {
     const totalEpisodes = state.episodes.length;
     const withErrors = state.episodes.filter((e) => e.errors.length > 0).length;
     const predefinedCount = state.episodes.filter((e) => EPISODE_SUMMARIES[e.episodeNumber]).length;
-    
+
     return { totalQuestions, totalEpisodes, withErrors, predefinedCount };
   }, [state.episodes, state.parsedRows]);
 
@@ -579,6 +771,18 @@ export default function AdminKbImport() {
                       }
                     />
                   </div>
+
+                  {/* PATCH-7: Show critical errors for selected test episode */}
+                  {state.testEpisodeNumber && testEpisodeCriticalErrors.length > 0 && (
+                    <Alert variant="destructive" className="text-xs">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        {testEpisodeCriticalErrors.map((e, i) => (
+                          <div key={i}>• {e}</div>
+                        ))}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -593,11 +797,12 @@ export default function AdminKbImport() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {/* PATCH-7: Test Run disabled if critical errors */}
                   <Button
                     variant="outline"
                     className="w-full"
                     onClick={handleTestRun}
-                    disabled={state.importing || !state.testEpisodeNumber}
+                    disabled={state.importing || !state.testEpisodeNumber || testEpisodeCriticalErrors.length > 0}
                   >
                     {state.importing ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -607,11 +812,12 @@ export default function AdminKbImport() {
                     Test Run (1 выпуск)
                   </Button>
 
+                  {/* PATCH-7: Bulk Run disabled if any validation errors */}
                   <Button
                     variant="default"
                     className="w-full"
                     onClick={handleBulkRun}
-                    disabled={state.importing || state.episodes.length === 0}
+                    disabled={state.importing || state.episodes.length === 0 || hasAnyValidationErrors}
                   >
                     {state.importing ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -620,6 +826,12 @@ export default function AdminKbImport() {
                     )}
                     Bulk Run ({stats.totalEpisodes} выпусков)
                   </Button>
+
+                  {hasAnyValidationErrors && (
+                    <p className="text-xs text-destructive text-center">
+                      Bulk Run заблокирован: {state.validationErrors.length} ошибок
+                    </p>
+                  )}
 
                   <Button variant="ghost" className="w-full" onClick={handleReset}>
                     <RotateCcw className="h-4 w-4 mr-2" />
@@ -662,24 +874,32 @@ export default function AdminKbImport() {
               </div>
             )}
 
-            {/* Validation Errors */}
+            {/* PATCH-6: Validation Errors with grouping and CSV export */}
             {state.validationErrors.length > 0 && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Ошибки валидации ({state.validationErrors.length})</AlertTitle>
+                <AlertTitle className="flex items-center justify-between">
+                  <span>Ошибки валидации ({state.validationErrors.length})</span>
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={downloadErrorsCsv}>
+                    <Download className="h-3 w-3 mr-1" />
+                    CSV
+                  </Button>
+                </AlertTitle>
                 <AlertDescription>
-                  <ScrollArea className="h-32 mt-2">
-                    {state.validationErrors.slice(0, 20).map((e, i) => (
-                      <div key={i} className="text-xs">
-                        {e}
-                      </div>
-                    ))}
-                    {state.validationErrors.length > 20 && (
-                      <div className="text-xs text-muted-foreground mt-2">
-                        И ещё {state.validationErrors.length - 20} ошибок...
-                      </div>
-                    )}
-                  </ScrollArea>
+                  <div className="mt-2 space-y-1">
+                    {(Object.keys(errorGroups) as ValidationErrorType[]).map((type) => {
+                      const count = errorGroups[type].length;
+                      if (count === 0) return null;
+                      return (
+                        <div key={type} className="text-xs flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px]">
+                            {count}
+                          </Badge>
+                          <span>{ERROR_TYPE_LABELS[type]}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </AlertDescription>
               </Alert>
             )}
@@ -721,9 +941,7 @@ export default function AdminKbImport() {
                     <Video className="h-5 w-5" />
                     Предпросмотр выпусков
                   </CardTitle>
-                  <CardDescription>
-                    Нажмите на выпуск для просмотра вопросов
-                  </CardDescription>
+                  <CardDescription>Нажмите на выпуск для просмотра вопросов</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ScrollArea className="h-96">
@@ -757,6 +975,11 @@ export default function AdminKbImport() {
                                       {episode.errors.length} ош.
                                     </Badge>
                                   )}
+                                  {episode.warnings.length > 0 && (
+                                    <Badge variant="outline" className="text-xs text-yellow-600">
+                                      ⚠️
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="text-xs text-muted-foreground truncate mt-1">
                                   {episode.answerDate} • {episode.description.slice(0, 80)}...
@@ -769,9 +992,12 @@ export default function AdminKbImport() {
                               {episode.questions.map((q, i) => (
                                 <div key={i} className="text-sm flex items-start gap-2">
                                   <Badge variant="outline" className="shrink-0 text-xs">
-                                    {q.timecode || "—"}
+                                    {/* PATCH-2: Show formatted timecode, not raw value */}
+                                    {q.timecodeSeconds !== null ? formatTimecode(q.timecodeSeconds) : "—"}
                                   </Badge>
-                                  <span className="text-muted-foreground">{q.title}</span>
+                                  <span className={q.title ? "text-muted-foreground" : "text-destructive italic"}>
+                                    {q.title || "(пустой заголовок)"}
+                                  </span>
                                 </div>
                               ))}
                             </div>
