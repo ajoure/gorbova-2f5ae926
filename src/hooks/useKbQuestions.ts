@@ -130,51 +130,65 @@ export function formatTimecode(seconds: number | null): string {
 }
 
 /**
- * Parse timecode string to seconds
- * Supports formats: "14:20", "1:01:36", "01:14:20"
+ * Parse timecode to seconds
+ * Supports formats:
+ * - String: "14:20", "1:01:36", "01:14:20"
+ * - Number (Excel time): 0.11319 (fraction of day), 2.0638 (decimal hours)
  */
-export function parseTimecode(timecode: string | undefined | null): number | null {
-  if (!timecode || typeof timecode !== "string") return null;
-  
-  const cleaned = timecode.trim();
-  if (!cleaned) return null;
-  
-  const parts = cleaned.split(":").map((p) => parseInt(p, 10));
-  
-  if (parts.some(isNaN)) return null;
-  
-  if (parts.length === 3) {
-    // hh:mm:ss
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  } else if (parts.length === 2) {
-    // mm:ss
-    return parts[0] * 60 + parts[1];
+export function parseTimecode(
+  timecode: string | number | undefined | null
+): number | null {
+  if (timecode === null || timecode === undefined) return null;
+
+  // Excel numeric formats
+  if (typeof timecode === "number") {
+    if (!Number.isFinite(timecode) || timecode <= 0) return null;
+
+    // fraction of day (Excel time) - 0.5 = 12:00:00
+    if (timecode < 1) return Math.round(timecode * 86400);
+
+    // decimal hours (rare but seen in preview) - 2.0638 ≈ 02:03:49
+    if (timecode <= 24) return Math.round(timecode * 3600);
+
+    // fallback: assume already seconds
+    return Math.round(timecode);
   }
-  
+
+  const cleaned = String(timecode).trim();
+  if (!cleaned) return null;
+
+  const parts = cleaned.split(":").map((p) => parseInt(p, 10));
+  if (parts.some((n) => Number.isNaN(n))) return null;
+
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+
   return null;
 }
 
 /**
- * Build Kinescope URL with timecode
+ * Build Kinescope URL with timecode (share-link format, NOT embed)
+ * Result: https://kinescope.io/<VIDEO_ID>?t=<seconds>
  */
 export function buildKinescopeUrlWithTimecode(
   baseUrl: string | null | undefined,
   timecodeSeconds: number | null
 ): string {
   if (!baseUrl) return "#";
-  
-  // Convert to embed URL if needed
-  let embedUrl = baseUrl;
-  if (!baseUrl.includes("/embed/")) {
-    const videoId = baseUrl.split("/").pop();
-    embedUrl = `https://kinescope.io/embed/${videoId}`;
-  }
-  
-  // Add timecode parameter
+
+  let url = String(baseUrl).trim();
+  if (!url) return "#";
+
+  // normalize: remove /embed/ if ever present
+  url = url.replace("kinescope.io/embed/", "kinescope.io/");
+
+  // remove existing t= parameter
+  url = url.replace(/[?&]t=\d+/g, "");
+
   if (timecodeSeconds && timecodeSeconds > 0) {
-    const separator = embedUrl.includes("?") ? "&" : "?";
-    return `${embedUrl}${separator}t=${timecodeSeconds}`;
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}t=${Math.floor(timecodeSeconds)}`;
   }
-  
-  return embedUrl;
+
+  return url;
 }

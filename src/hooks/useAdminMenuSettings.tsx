@@ -29,6 +29,7 @@ import {
   Library,
   Target,
   BarChart3,
+  Upload,
   LucideIcon,
 } from "lucide-react";
 
@@ -80,6 +81,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Library,
   Target,
   BarChart3,
+  Upload,
 };
 
 // Default menu configuration - Reorganized structure
@@ -110,11 +112,12 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 3, permission: "entitlements.view" },
       { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 4, permission: "roles.view" },
       { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 5, permission: "content.view" },
-      { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
-      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 7, permission: "roles.view" },
-      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 8, permission: "roles.view" },
-      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 9 },
-      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 10, permission: "news.view" },
+      { id: "kb-import", label: "Импорт КБ", path: "/admin/kb-import", icon: "Upload", order: 6, permission: "content.view" },
+      { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 7, permission: "users.view" },
+      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 8, permission: "roles.view" },
+      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 9, permission: "roles.view" },
+      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 10 },
+      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 11, permission: "news.view" },
       // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
   },
