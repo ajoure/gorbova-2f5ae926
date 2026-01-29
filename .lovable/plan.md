@@ -1,139 +1,104 @@
-Ок — вношу изменения прямо в твой план, без нового.
 
-⸻
+# План: Клуб открывается внутри ЛК (как курс и бизнес-тренинг)
 
-План: Исправление кнопки “На сайт” для клуба (обновлённый)
+## Суть проблемы
 
-Проблема
+Сейчас кнопка "На сайт" у клуба делает `window.location.assign("https://club.gorbova.by/")` — это **выбрасывает** авторизованного пользователя из личного кабинета на внешний сайт.
 
-Кнопка “На сайт” у продукта “Клуб «Буква Закона»” открывает новую вкладку того же домена (https://club.gorbova.by) с target="_blank". Поскольку это тот же SPA:
-	•	новая вкладка сохраняет/наследует SPA-состояние (и/или last route),
-	•	пользователь снова попадает в /products и видит “то же самое” вместо лендинга.
+При этом "Ценный бухгалтер" и "Бухгалтерия как бизнес" открываются **внутри** ЛК через SPA-навигацию (`navigate("/course-accountant")`, `navigate("/business-training")`).
 
-Важно: формулировку про session storage лучше не фиксировать как факт (это может быть и router-state/redirect logic). Нам важно поведение: _blank + SPA = уносит в /products.
+**Результат**: авторизованные клиенты не могут увидеть тарифы клуба и купить подписку, оставаясь в ЛК.
 
-⸻
+## Что нужно сделать
 
-Уже исправлено (предыдущий коммит)
+Сделать поведение клуба **таким же**, как у курса и бизнес-тренинга:
+- Авторизованный пользователь → SPA-навигация на `/club` → видит лендинг клуба **внутри** ЛК
+- Гость → переход на внешний сайт `https://club.gorbova.by/`
 
-Guest guard в ProtectedRoute.tsx:
+## Правки
 
-if (!user && location.pathname === "/products") {
-  return <Navigate to="/" replace />;
-}
+### 1. Добавить маршрут `/club` в App.tsx
 
-Это работает корректно.
+Добавить публичный маршрут (как `/business-training`):
 
-⸻
+```
+/club → <Landing /> (страница лендинга клуба)
+```
 
-Требуемые правки
+### 2. Изменить логику кнопки "На сайт" для клуба
 
-Общая правка (обязательная)
+**Файл: `src/pages/Learning.tsx`**
 
-Не хардкодить URL дважды — завести константу в обоих местах:
-
-const CLUB_LANDING_URL = "https://club.gorbova.by/";
-
-И не использовать product.isClub, если такого поля нет. Клуб должен определяться детерминированно (строго):
-	•	product.slug === "<club_slug>" или
-	•	product.id === "<club_id>" или
-	•	product.purchaseLink === "https://club.gorbova.by" (если это уникально для клуба)
-
-⸻
-
-Файл 1: src/pages/Learning.tsx
-
-Строки 157-163 — функция handleGoToSite:
-
+```tsx
 // БЫЛО:
 const handleGoToSite = () => {
-  if (product.purchaseLink.startsWith("http")) {
-    window.open(product.purchaseLink, "_blank");
-  } else {
-    navigate(product.purchaseLink);
+  if (product.isClub) {
+    window.location.assign("https://club.gorbova.by/");
+    return;
   }
+  // ...
 };
 
 // СТАНЕТ:
-const CLUB_LANDING_URL = "https://club.gorbova.by/";
-
 const handleGoToSite = () => {
-  const isClub = product.slug === "<club_slug>"; // или product.id === "<club_id>"
-
-  if (isClub) {
-    // Клуб: полный переход на лендинг (не SPA-навигация, не _blank, same-tab)
-    window.location.assign(CLUB_LANDING_URL);
+  if (product.isClub) {
+    // Авторизован → SPA внутри ЛК
+    // Гость → внешний сайт
+    if (user) {
+      navigate("/club");
+    } else {
+      window.location.assign("https://club.gorbova.by/");
+    }
     return;
   }
-
-  if (product.purchaseLink.startsWith("http")) {
-    window.open(product.purchaseLink, "_blank");
-  } else {
-    navigate(product.purchaseLink);
-  }
+  // ...
 };
+```
 
+**Файл: `src/pages/Products.tsx`**
 
-⸻
+Аналогичная логика: добавить проверку `user` из `useAuth()`.
 
-Файл 2: src/pages/Products.tsx
+### 3. Обновить purchaseLink клуба (опционально)
 
-Строки 31-37 — функция handleClick:
+В массиве `products` изменить:
 
+```tsx
 // БЫЛО:
-const handleClick = () => {
-  if (isExternal) {
-    window.open(link, "_blank");
-  } else {
-    navigate(link);
-  }
-};
+purchaseLink: "https://club.gorbova.by",
 
 // СТАНЕТ:
-const CLUB_LANDING_URL = "https://club.gorbova.by/";
+purchaseLink: "/club",
+```
 
-const handleClick = () => {
-  const isClub = product.slug === "<club_slug>"; // или product.id === "<club_id>"
+## Что остаётся без изменений
 
-  if (isClub) {
-    // Клуб: полный переход на лендинг (не SPA-навигация, same-tab)
-    window.location.assign(CLUB_LANDING_URL);
-    return;
-  }
+- `Landing.tsx` — уже содержит лендинг клуба с тарифами
+- Guest guard в `ProtectedRoute.tsx` — работает для `/products`
+- `DomainRouter` — `/` отдаёт `Landing` для всех
 
-  if (isExternal) {
-    window.open(link, "_blank");
-  } else {
-    navigate(link);
-  }
-};
+## Ожидаемое поведение
 
+| Сценарий | Действие | Результат |
+|----------|----------|-----------|
+| Авторизован, в ЛК | Клик "На сайт" у клуба | SPA → `/club` → лендинг с тарифами внутри ЛК |
+| Гость | Клик "На сайт" у клуба | Внешний переход на `https://club.gorbova.by/` |
+| Авторизован, внешний сайт | Открыл `club.gorbova.by` | Видит лендинг, кнопка "Открыть кабинет" |
 
-⸻
+## Файлы для изменения
 
-Техническое обоснование
+1. `src/App.tsx` — добавить маршрут `/club`
+2. `src/pages/Learning.tsx` — изменить `handleGoToSite` для клуба
+3. `src/pages/Products.tsx` — изменить `handleClick` для клуба
 
-Метод	Что делает	Подходит для клуба?
-window.open(url, "_blank")	Новая вкладка, SPA остаётся SPA	❌ Нет
-navigate() / <Link>	SPA-навигация внутри роутера	❌ Нет
-window.location.assign(url)	Полный переход, сбрасывает SPA (same-tab)	✅ Да
-<a href target="_self">	Полный переход	✅ Да
+## DoD (обязательно)
 
-
-⸻
-
-DoD (Верификация)
-	1.	Гость в инкогнито:
-	•	Открыть https://club.gorbova.by/products → редирект на / (лендинг)
-	2.	Из кабинета (авторизованный):
-	•	“Обучение → Все продукты” → “На сайт” у клуба → открывается https://club.gorbova.by/
-	•	НЕ остаётся на /products
-	•	НЕ открывается новая вкладка
-	3.	Регрессия:
-	•	Для остальных продуктов (“Ценный бухгалтер”, “Бухгалтерия как бизнес”) поведение не меняется (как было: external в _blank или как настроено сейчас)
-	4.	Скриншоты/пруф:
-	•	До: клик по “На сайт” → в адресной строке /products
-	•	После: https://club.gorbova.by/ (лендинг)
-	5.	Diff-summary:
-	•	src/pages/Learning.tsx — добавлен isClub (детерминированно) + window.location.assign(CLUB_LANDING_URL)
-	•	src/pages/Products.tsx — добавлен isClub (детерминированно) + window.location.assign(CLUB_LANDING_URL)
+1. Авторизованный пользователь:
+   - "Обучение → Все продукты" → "На сайт" у клуба → открывается `/club` (лендинг внутри ЛК)
+   - Видит тарифы, может купить
+2. Гость:
+   - "На сайт" у клуба → переход на `https://club.gorbova.by/`
+3. Скриншоты:
+   - URL `/club` в адресной строке
+   - Лендинг с тарифами виден
+4. Diff-summary: список файлов
