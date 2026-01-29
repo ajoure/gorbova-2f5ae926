@@ -1,14 +1,16 @@
 /**
- * Secure Excel Parser using ExcelJS
+ * Secure Excel Parser using ExcelJS (Lazy Loaded)
  * 
  * Replaces the vulnerable xlsx (SheetJS) package with ExcelJS to fix:
  * - GHSA-4r6h-8v6p-xvw6 (Prototype Pollution)
  * - GHSA-5pgg-2g8v-p4x9 (ReDoS)
  * 
+ * ExcelJS is dynamically imported to reduce initial bundle size on mobile.
  * Note: Legacy .xls format is NOT supported - users must re-save as .xlsx
  */
 
-import ExcelJS from 'exceljs';
+// Type-only import for TypeScript - no runtime overhead
+import type ExcelJS from 'exceljs';
 
 export interface ParsedWorkbook {
   sheetNames: string[];
@@ -35,6 +37,14 @@ export interface ExcelParseOptions {
    * Row index (1-based) where headers are located. Default is 1.
    */
   headerRow?: number;
+}
+
+/**
+ * Dynamically load ExcelJS module
+ */
+async function getExcelJS(): Promise<typeof ExcelJS> {
+  const module = await import('exceljs');
+  return module.default;
 }
 
 /**
@@ -106,6 +116,9 @@ export async function parseExcelFile(
     );
   }
 
+  // Lazy load ExcelJS
+  const ExcelJS = await getExcelJS();
+  
   const buffer = await file.arrayBuffer();
   const workbook = new ExcelJS.Workbook();
 
@@ -241,7 +254,9 @@ export async function createExcelWorkbook(
     rows: (string | number | Date | null | undefined)[][];
   }>
 ): Promise<ExcelJS.Buffer> {
-  const workbook = new ExcelJS.Workbook();
+  // Lazy load ExcelJS
+  const ExcelJSModule = await getExcelJS();
+  const workbook = new ExcelJSModule.Workbook();
 
   for (const sheet of sheets) {
     const worksheet = workbook.addWorksheet(sheet.name);
@@ -287,6 +302,8 @@ export async function readExcel(
     rawRows: unknown[][];
   }>;
 }> {
+  // Lazy load ExcelJS
+  const ExcelJS = await getExcelJS();
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
 
