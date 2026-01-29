@@ -8,6 +8,8 @@ interface VideoBlockProps {
   content: VideoContent;
   onChange: (content: VideoContent) => void;
   isEditing?: boolean;
+  /** Active timecode in seconds for seeking (optional) */
+  activeTimecode?: number | null;
 }
 
 function detectVideoProvider(url: string): VideoContent['provider'] {
@@ -17,28 +19,40 @@ function detectVideoProvider(url: string): VideoContent['provider'] {
   return 'other';
 }
 
-function getEmbedUrl(url: string, provider: VideoContent['provider']): string {
+function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?: number | null): string {
   if (!url) return '';
   
   switch (provider) {
     case 'youtube': {
       const videoId = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^?&]+)/)?.[1];
-      return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+      let embedUrl = videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+      if (timecode && timecode > 0) {
+        embedUrl += `?start=${Math.floor(timecode)}`;
+      }
+      return embedUrl;
     }
     case 'vimeo': {
       const videoId = url.match(/vimeo\.com\/(\d+)/)?.[1];
-      return videoId ? `https://player.vimeo.com/video/${videoId}` : url;
+      let embedUrl = videoId ? `https://player.vimeo.com/video/${videoId}` : url;
+      if (timecode && timecode > 0) {
+        embedUrl += `#t=${Math.floor(timecode)}s`;
+      }
+      return embedUrl;
     }
     case 'kinescope': {
       const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
-      return videoId ? `https://kinescope.io/embed/${videoId}` : url;
+      let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
+      if (timecode && timecode > 0) {
+        embedUrl += `?t=${Math.floor(timecode)}`;
+      }
+      return embedUrl;
     }
     default:
       return url;
   }
 }
 
-export function VideoBlock({ content, onChange, isEditing = true }: VideoBlockProps) {
+export function VideoBlock({ content, onChange, isEditing = true, activeTimecode }: VideoBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
   
@@ -51,7 +65,8 @@ export function VideoBlock({ content, onChange, isEditing = true }: VideoBlockPr
     onChange({ ...content, title: localTitle });
   };
 
-  const embedUrl = getEmbedUrl(content.url || "", content.provider);
+  // Use activeTimecode when provided for viewing mode, otherwise no timecode
+  const embedUrl = getEmbedUrl(content.url || "", content.provider, isEditing ? undefined : activeTimecode);
 
   if (!isEditing) {
     if (!content.url) {

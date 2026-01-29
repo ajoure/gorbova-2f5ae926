@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
-// XLSX is imported dynamically to reduce bundle size
+import { parseCSVContent } from "@/lib/csv-parser";
 import {
   Upload,
   FileSpreadsheet,
@@ -31,6 +31,70 @@ import {
   Download,
   AlertTriangle,
 } from "lucide-react";
+
+// CSV Header mapping: normalize Russian headers to internal field names
+const CSV_COLUMN_MAP: Record<string, string> = {
+  "дата ответа": "answerDate",
+  "номер выпуска": "episodeNumber",
+  "номер вопроса": "questionNumber",
+  "вопрос ученика": "fullQuestion",
+  "суть вопроса": "title",
+  "теги": "tags",
+  "ссылка на видео в геткурсе": "getcourseUrl",
+  "ссылка на видео в кинескопе": "kinescopeUrl",
+  "тайминг": "timecode",
+  "год": "year",
+};
+
+/**
+ * Normalize row keys using CSV_COLUMN_MAP (partial match)
+ */
+function normalizeRowKeys(row: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = key.toLowerCase().trim();
+    
+    // Try partial match from CSV_COLUMN_MAP
+    let matched = false;
+    for (const [pattern, field] of Object.entries(CSV_COLUMN_MAP)) {
+      if (normalizedKey.includes(pattern)) {
+        result[field] = value;
+        matched = true;
+        break;
+      }
+    }
+    
+    // Keep original key as fallback
+    if (!matched) {
+      result[key] = value;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Read file with auto-detection of Windows-1251 encoding
+ */
+async function readFileWithEncoding(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  
+  // Try UTF-8 first
+  let text = new TextDecoder("utf-8").decode(buffer);
+  
+  // Check for encoding artifacts (replacement character or high bytes)
+  const hasBadChars = text.includes("�") || /[\ufffd]/.test(text);
+  const firstLine = text.split("\n")[0] || "";
+  const hasGarbage = /[\x80-\xff]{3,}/.test(firstLine) && !/[а-яА-ЯёЁ]/.test(firstLine);
+  
+  if (hasBadChars || hasGarbage) {
+    // Retry with Windows-1251 (common for Russian Excel exports)
+    text = new TextDecoder("windows-1251").decode(buffer);
+  }
+  
+  return text;
+}
 
 // Container module ID for knowledge-videos (from page_sections)
 const CONTAINER_MODULE_SLUG = "container-knowledge-videos";
@@ -188,34 +252,54 @@ export default function AdminKbImport() {
     setState((s) => ({ ...s, file, parsing: true, parsed: false, parsedRows: [], episodes: [], validationErrors: [] }));
 
     try {
-      // Dynamic import of xlsx to reduce bundle size
-      const XLSX = await import("xlsx");
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      let rows: Record<string, any>[];
+
+      // Detect file format by extension
+      const isCSV = file.name.toLowerCase().endsWith(".csv");
+
+      if (isCSV) {
+        // CSV: read with encoding detection (Windows-1251 support)
+        const text = await readFileWithEncoding(file);
+        const { rows: csvRows, errors: csvErrors } = parseCSVContent(text);
+        
+        if (csvErrors.length > 0) {
+          console.warn("CSV parse warnings:", csvErrors);
+        }
+        
+        // Normalize CSV headers to internal field names
+        rows = csvRows.map(normalizeRowKeys);
+      } else {
+        // XLSX: dynamic import to reduce bundle size
+        const XLSX = await import("xlsx");
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      }
 
       const parsed: ParsedRow[] = [];
       const allErrors: ValidationError[] = [];
 
       rows.forEach((row, idx) => {
-        const rowIndex = idx + 2; // Excel rows start at 1, header is row 1
+        const rowIndex = idx + 2; // Excel/CSV rows start at 1, header is row 1
         const rowErrors: ValidationError[] = [];
 
-        const answerDateRaw = row["Дата ответа"];
+        // Use normalized keys for CSV, original keys for XLSX
+        const answerDateRaw = row.answerDate ?? row["Дата ответа"];
         const answerDate = parseDate(answerDateRaw);
-        const episodeRaw = row["Номер выпуска"] ?? "";
+        const episodeRaw = row.episodeNumber ?? row["Номер выпуска"] ?? "";
         const episodeNumber = parseEpisodeNumber(episodeRaw);
-        const questionNumber = row["Номер вопроса"] ? parseInt(String(row["Номер вопроса"]), 10) : null;
-        const fullQuestion = String(row["Вопрос ученика (копируем из анкеты)"] || "").trim();
-        const title = String(row["Суть вопроса (из описания в канале, если есть; задача на Горбовой, если нет)"] || "").trim();
-        const tagsRaw = String(row["Теги (для поиска, ставим самостоятельно)"] || "");
-        const getcourseUrl = String(row["Ссылка на видео в геткурсе"] || "").trim();
-        const kinescopeUrl = String(row["Ссылка на видео в кинескопе"] || "").trim();
-        const timecodeRaw = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
-        const year = parseInt(String(row[""] || row["Год"] || "2024"), 10) || 2024;
+        const questionNumber = row.questionNumber ?? row["Номер вопроса"];
+        const questionNum = questionNumber ? parseInt(String(questionNumber), 10) : null;
+        const fullQuestion = String(row.fullQuestion ?? row["Вопрос ученика (копируем из анкеты)"] ?? "").trim();
+        const title = String(row.title ?? row["Суть вопроса (из описания в канале, если есть; задача на Горбовой, если нет)"] ?? "").trim();
+        const tagsRaw = String(row.tags ?? row["Теги (для поиска, ставим самостоятельно)"] ?? "");
+        const getcourseUrl = String(row.getcourseUrl ?? row["Ссылка на видео в геткурсе"] ?? "").trim();
+        const kinescopeUrl = String(row.kinescopeUrl ?? row["Ссылка на видео в кинескопе"] ?? "").trim();
+        const timecodeRaw = row.timecode ?? row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
+        const year = parseInt(String(row.year ?? row["Год"] ?? row[""] ?? "2024"), 10) || 2024;
 
-        // PATCH-2: Parse timecode (supports Excel numeric time)
+        // PATCH-2: Parse timecode (supports Excel numeric time and HH:MM:SS strings)
         const timecodeSeconds = parseTimecode(timecodeRaw);
 
         // Collect values for error export
@@ -264,7 +348,7 @@ export default function AdminKbImport() {
         parsed.push({
           answerDate,
           episodeNumber,
-          questionNumber: questionNumber || idx + 1,
+          questionNumber: questionNum || idx + 1,
           fullQuestion,
           title,
           tags: parseTags(tagsRaw),
@@ -693,7 +777,7 @@ export default function AdminKbImport() {
         <div>
           <h1 className="text-2xl font-bold">Импорт видеоответов</h1>
           <p className="text-muted-foreground">
-            Массовый импорт выпусков и вопросов из Excel файла в Базу знаний
+            Массовый импорт выпусков и вопросов из Excel или CSV файла в Базу знаний
           </p>
         </div>
 
