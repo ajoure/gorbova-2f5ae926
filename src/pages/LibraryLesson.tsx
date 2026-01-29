@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -58,6 +59,9 @@ const getMenuSectionLabel = (key: string | null): string =>
 export default function LibraryLesson() {
   const { moduleSlug, lessonSlug } = useParams<{ moduleSlug: string; lessonSlug: string }>();
   const navigate = useNavigate();
+  
+  // State for internal timecode seeking (instead of opening external links)
+  const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
 
   // Fetch module info
   const { data: module, isLoading: moduleLoading } = useQuery({
@@ -204,7 +208,12 @@ export default function LibraryLesson() {
         {blocks.length > 0 ? (
           <Card className="mb-6">
             <CardContent className="py-6">
-              <LessonBlockRenderer blocks={blocks} lessonId={currentLesson?.id} />
+              <LessonBlockRenderer 
+                key={`blocks-${activeTimecode ?? 0}`} 
+                blocks={blocks} 
+                lessonId={currentLesson?.id} 
+                activeTimecode={activeTimecode}
+              />
             </CardContent>
           </Card>
         ) : (
@@ -338,10 +347,13 @@ export default function LibraryLesson() {
                         variant="ghost"
                         size="sm"
                         className="h-8 px-2"
-                        onClick={() => q.timecode_seconds && window.open(
-                          `${q.kinescope_url}?t=${q.timecode_seconds}`,
-                          '_blank'
-                        )}
+                        onClick={() => {
+                          if (q.timecode_seconds) {
+                            // Internal seek: scroll to top and update timecode state
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                            setActiveTimecode(q.timecode_seconds);
+                          }
+                        }}
                       >
                         <Play className="h-3 w-3" />
                       </Button>
