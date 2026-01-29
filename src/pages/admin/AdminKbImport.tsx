@@ -37,32 +37,67 @@ import {
 const CSV_COLUMN_MAP: Record<string, string> = {
   "дата ответа": "answerDate",
   "номер выпуска": "episodeNumber",
+  "выпуск": "episodeNumber",           // NEW: short variant for БУКВА_ЗАКОНА file
   "номер вопроса": "questionNumber",
+  "вопрос участника": "fullQuestion",   // NEW: long header for БУКВА_ЗАКОНА file
   "вопрос ученика": "fullQuestion",
   "суть вопроса": "title",
   "теги": "tags",
   "ссылка на видео в геткурсе": "getcourseUrl",
   "ссылка на видео в кинескопе": "kinescopeUrl",
+  "тайминг старта": "timecode",         // NEW: variant for БУКВА_ЗАКОНА file
   "тайминг": "timecode",
-  "время (секунды)": "timecodeSeconds", // NEW: Seconds column
+  "время (секунды)": "timecodeSeconds",
   "год": "year",
 };
 
-// Expected column order for CSV (used with fixed column positions)
-// Based on user's CSV structure
+// Expected column order for XLSX (used with fixed column positions)
+// Updated for БУКВА_ЗАКОНА file structure (8 columns)
 const COLUMN_ORDER = [
   "answerDate",      // 0: Дата ответа
-  "episodeNumber",   // 1: Номер выпуска
-  "questionNumber",  // 2: Номер вопроса
-  "fullQuestion",    // 3: Вопрос ученика
+  "episodeNumber",   // 1: Выпуск
+  "questionNumber",  // 2: Вопрос
+  "fullQuestion",    // 3: Вопрос участника Клуба
   "title",           // 4: Суть вопроса
-  "tags",            // 5: Теги
-  "getcourseUrl",    // 6: Ссылка на видео в геткурсе
-  "kinescopeUrl",    // 7: Ссылка на видео в кинескопе
-  "timecode",        // 8: Тайминг
-  "timecodeSeconds", // 9: Время (секунды) - NEW
-  "year",            // 10: Год
+  "kinescopeUrl",    // 5: Ссылка на видео в кинескопе
+  "timecode",        // 6: Тайминг старта ответа
+  "timecodeSeconds", // 7: Время (секунды)
 ];
+
+/**
+ * Extract timecode seconds from Kinescope URL (?t=1234)
+ */
+function extractTimecodeFromUrl(url: string | null | undefined): number | null {
+  if (!url) return null;
+  const match = String(url).match(/[?&]t=(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Parse full description from "Описание выпуска (подробно): ..."
+ */
+function parseFullDescription(text: string | null | undefined): string {
+  if (!text) return "";
+  const match = String(text).match(/Описание выпуска \(подробно\):\s*(.+)/i);
+  return match ? match[1].trim() : String(text).trim();
+}
+
+/**
+ * Parse short description from "Кратко: ..."
+ */
+function parseShortDescription(text: string | null | undefined): string {
+  if (!text) return "";
+  const match = String(text).match(/Кратко:\s*(.+)/i);
+  return match ? match[1].trim() : String(text).trim();
+}
+
+/**
+ * Check if row is episode description (not a question)
+ * Episode description rows have empty questionNumber
+ */
+function isEpisodeDescriptionRow(questionNumber: any): boolean {
+  return !questionNumber || String(questionNumber).trim() === "";
+}
 
 // Windows-1251 → Unicode mapping for bytes 0x80-0xFF (Russian Cyrillic)
 const WIN1251_MAP: Record<number, string> = {
@@ -296,6 +331,8 @@ interface GroupedEpisode {
   kinescopeUrl: string;
   questions: ParsedRow[];
   description: string;
+  fullDescription: string;   // NEW: Full description from "Описание выпуска (подробно): ..."
+  shortDescription: string;  // NEW: Short description from "Кратко: ..."
   errors: ValidationError[];
   warnings: string[];
 }
@@ -515,18 +552,27 @@ export default function AdminKbImport() {
         const getcourseUrl = String(row.getcourseUrl ?? row["Ссылка на видео в геткурсе"] ?? "").trim();
         const kinescopeUrl = String(row.kinescopeUrl ?? row["Ссылка на видео в кинескопе"] ?? "").trim();
         
-        // PRIORITY: Use "Время (секунды)" column if available, else parse timecode string
+        // PRIORITY: Use "Время (секунды)" column if available, extract from URL, or parse timecode string
         const secondsRaw = row.timecodeSeconds ?? row["Время (секунды)"];
         const timecodeRaw = row.timecode ?? row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
         
-        // Try seconds column first (numeric), fallback to parseTimecode
+        // Try seconds column first (numeric), then URL extraction, then parseTimecode
         let timecodeSeconds: number | null = null;
+        
+        // 1. Try seconds column first (numeric)
         if (secondsRaw !== undefined && secondsRaw !== null && secondsRaw !== "") {
           const sec = parseInt(String(secondsRaw), 10);
           if (!isNaN(sec) && sec >= 0) {
             timecodeSeconds = sec;
           }
         }
+        
+        // 2. Try extracting from Kinescope URL (?t=1234)
+        if (timecodeSeconds === null) {
+          timecodeSeconds = extractTimecodeFromUrl(kinescopeUrl);
+        }
+        
+        // 3. Fallback to parsing timecode string
         if (timecodeSeconds === null) {
           timecodeSeconds = parseTimecode(timecodeRaw);
         }
@@ -540,14 +586,19 @@ export default function AdminKbImport() {
           timecode: String(secondsRaw ?? timecodeRaw ?? ""),
         };
 
-        // Validation with typed errors
-        if (!title) {
-          rowErrors.push({
-            row: rowIndex,
-            type: "empty_title",
-            message: `Строка ${rowIndex}: пустая "Суть вопроса"`,
-            values: errorValues,
-          });
+        // Check if this is an episode description row (empty questionNumber)
+        const isDescriptionRow = isEpisodeDescriptionRow(questionNumber);
+        
+        // Validation with typed errors - skip validation for description rows
+        if (!isDescriptionRow) {
+          if (!title) {
+            rowErrors.push({
+              row: rowIndex,
+              type: "empty_title",
+              message: `Строка ${rowIndex}: пустая "Суть вопроса"`,
+              values: errorValues,
+            });
+          }
         }
         if (!episodeNumber) {
           rowErrors.push({
@@ -577,7 +628,7 @@ export default function AdminKbImport() {
         parsed.push({
           answerDate,
           episodeNumber,
-          questionNumber: questionNum || idx + 1,
+          questionNumber: questionNum || (isDescriptionRow ? null : idx + 1),
           fullQuestion,
           title,
           tags: parseTags(tagsRaw),
@@ -604,28 +655,54 @@ export default function AdminKbImport() {
       parsed.forEach((row) => {
         if (!row.episodeNumber) return;
 
+        // Check if this is an episode description row (empty questionNumber)
+        const isDescriptionRow = isEpisodeDescriptionRow(row.questionNumber);
+
         if (!episodeMap.has(row.episodeNumber)) {
           episodeMap.set(row.episodeNumber, {
             episodeNumber: row.episodeNumber,
             answerDate: row.answerDate,
-            kinescopeUrl: row.kinescopeUrl || "",
+            kinescopeUrl: "",
             questions: [],
             description: "",
+            fullDescription: "",   // NEW
+            shortDescription: "",  // NEW
             errors: [],
             warnings: [],
           });
         }
 
         const ep = episodeMap.get(row.episodeNumber)!;
+
+        if (isDescriptionRow) {
+          // This row is episode metadata, not a question
+          ep.fullDescription = parseFullDescription(row.fullQuestion);
+          ep.shortDescription = parseShortDescription(row.title);
+          
+          // URL from description row is the main video (without timecode)
+          if (row.kinescopeUrl && !ep.kinescopeUrl) {
+            ep.kinescopeUrl = row.kinescopeUrl;
+          }
+          
+          // Use date from description row if available
+          if (!ep.answerDate && row.answerDate) {
+            ep.answerDate = row.answerDate;
+          }
+          
+          // Don't add to questions
+          return;
+        }
+
+        // Regular question row
         ep.questions.push(row);
 
-        // URL normalization & collision warning
+        // URL normalization & collision warning (for questions - URLs have ?t= timecode)
         const url = String(row.kinescopeUrl || "").trim();
         if (url) {
+          // Extract base URL without timecode for episode
+          const baseUrl = url.replace(/[?&]t=\d+/g, "");
           if (!ep.kinescopeUrl) {
-            ep.kinescopeUrl = url;
-          } else if (ep.kinescopeUrl !== url) {
-            ep.warnings.push(`Коллизия Kinescope URL: "${ep.kinescopeUrl}" vs "${url}"`);
+            ep.kinescopeUrl = baseUrl;
           }
         }
 
@@ -635,15 +712,15 @@ export default function AdminKbImport() {
         }
       });
 
-      // Sort episodes and compute descriptions
+      // Sort episodes and compute descriptions (use file descriptions if available)
       const episodes = Array.from(episodeMap.values())
         .sort((a, b) => b.episodeNumber - a.episodeNumber)
         .map((ep) => ({
           ...ep,
-          description: getEpisodeSummary(
-            ep.episodeNumber,
-            ep.questions.map((q) => q.title)
-          ),
+          // Priority: EPISODE_SUMMARIES > file shortDescription > generated from titles
+          description: EPISODE_SUMMARIES[ep.episodeNumber] || 
+            ep.shortDescription || 
+            getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
           errors: ep.questions.flatMap((q) => q.errors),
         }));
 
@@ -743,9 +820,10 @@ export default function AdminKbImport() {
   ): Promise<{ success: boolean; lessonId?: string; error?: string }> => {
     const slug = `episode-${episode.episodeNumber}`;
     const title = `Выпуск №${episode.episodeNumber}`;
+    // Use file descriptions if available, prioritizing EPISODE_SUMMARIES
     const description = state.usePredefinedSummaries
-      ? EPISODE_SUMMARIES[episode.episodeNumber] || episode.description
-      : episode.description;
+      ? EPISODE_SUMMARIES[episode.episodeNumber] || episode.shortDescription || episode.description
+      : episode.shortDescription || episode.description;
 
     try {
       // 1. Check if lesson exists
@@ -756,6 +834,7 @@ export default function AdminKbImport() {
         .maybeSingle();
 
       let lessonId: string;
+      let isNewLesson = false;
 
       if (existing) {
         // Update existing lesson
@@ -772,6 +851,8 @@ export default function AdminKbImport() {
         if (error) throw error;
         lessonId = existing.id;
       } else {
+        isNewLesson = true;
+        
         // Create new lesson
         const { data: newLesson, error } = await supabase
           .from("training_lessons")
@@ -804,6 +885,44 @@ export default function AdminKbImport() {
         });
 
         if (blockError) console.warn("Block creation failed:", blockError);
+
+        // Generate AI cover for new lesson
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData?.session?.access_token;
+          
+          if (token) {
+            const coverDescription = episode.shortDescription || episode.fullDescription || description;
+            const coverResponse = await fetch(
+              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-cover`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  title: title,
+                  description: coverDescription,
+                  moduleId: lessonId,
+                }),
+              }
+            );
+            
+            if (coverResponse.ok) {
+              const coverResult = await coverResponse.json();
+              if (coverResult.url) {
+                await supabase
+                  .from("training_lessons")
+                  .update({ thumbnail_url: coverResult.url })
+                  .eq("id", lessonId);
+                console.log(`[importEpisode] AI cover generated for episode ${episode.episodeNumber}`);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Cover generation failed (non-blocking):", err);
+        }
       }
 
       // 2. Upsert questions
