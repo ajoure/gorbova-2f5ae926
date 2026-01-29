@@ -21,7 +21,7 @@ import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappi
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import * as XLSX from "xlsx";
+import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
 import { transliterateToCyrillic } from "@/utils/transliteration";
 import { cn } from "@/lib/utils";
 import { 
@@ -127,13 +127,13 @@ interface DetectedSheet {
   hasUid: boolean;
 }
 
-function detectSheetsByName(workbook: XLSX.WorkBook): DetectedSheet[] {
+async function detectSheetsByNameAsync(workbook: { sheetNames: string[]; sheets: Record<string, { rows: Record<string, unknown>[] }> }): Promise<DetectedSheet[]> {
   const detected: DetectedSheet[] = [];
   
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
-    const hasUid = rows.length > 0 && ('UID' in rows[0] || 'uid' in rows[0]);
+  for (const sheetName of workbook.sheetNames) {
+    const sheet = workbook.sheets[sheetName];
+    const rows = sheet.rows;
+    const hasUid = rows.length > 0 && ('uid' in rows[0] || 'UID' in rows[0]);
     const nameLower = sheetName.toLowerCase();
     
     let type: DetectedSheet['type'] = 'unknown';
@@ -391,11 +391,16 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
           console.log(`CSV parsed: ${parseResult.rows.length} rows from ${selectedFile.name}, delimiter: "${parseResult.delimiter}"`);
         } else {
           // Excel file processing - detect sheets by NAME, not by index
-          const buffer = await selectedFile.arrayBuffer();
-          const workbook = XLSX.read(buffer, { type: 'array' });
+          // Check for legacy .xls format
+          if (isLegacyExcelFormat(selectedFile)) {
+            toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
+            return;
+          }
+
+          const workbook = await parseExcelFile(selectedFile);
           
           // Detect all sheets and their types
-          const sheets = detectSheetsByName(workbook);
+          const sheets = await detectSheetsByNameAsync(workbook);
           setDetectedSheets(sheets);
           console.log('Detected sheets:', sheets);
           
@@ -403,8 +408,8 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
           const cardSheetInfo = sheets.find(s => s.type === 'cards');
           let cardRows: Record<string, string>[] = [];
           if (cardSheetInfo && cardSheetInfo.hasUid) {
-            const cardSheet = workbook.Sheets[cardSheetInfo.name];
-            cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
+            const cardSheet = workbook.sheets[cardSheetInfo.name];
+            cardRows = cardSheet.rows as Record<string, string>[];
             console.log(`Cards sheet "${cardSheetInfo.name}": ${cardRows.length} rows`);
           }
           
@@ -412,11 +417,11 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
           const eripSheetInfo = sheets.find(s => s.type === 'erip');
           let eripRows: Record<string, string>[] = [];
           if (eripSheetInfo && eripSheetInfo.hasUid) {
-            const eripSheet = workbook.Sheets[eripSheetInfo.name];
-            const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
+            const eripSheet = workbook.sheets[eripSheetInfo.name];
+            const rawEripRows = eripSheet.rows as Record<string, string>[];
             eripRows = rawEripRows.map(row => ({
               ...row,
-              'Способ оплаты': 'erip',
+              'способ оплаты': 'erip',
               '_source': 'erip'
             }));
             console.log(`ERIP sheet "${eripSheetInfo.name}": ${eripRows.length} rows`);
