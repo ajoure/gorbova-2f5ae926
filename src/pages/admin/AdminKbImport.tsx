@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
-import * as XLSX from "xlsx";
+import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
 import {
   Upload,
   FileSpreadsheet,
@@ -197,10 +197,16 @@ export default function AdminKbImport() {
     setState((s) => ({ ...s, file, parsing: true, parsed: false, parsedRows: [], episodes: [], validationErrors: [] }));
 
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      // Check for legacy .xls format
+      if (isLegacyExcelFormat(file)) {
+        toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
+        setState((s) => ({ ...s, parsing: false }));
+        return;
+      }
+
+      const workbook = await parseExcelFile(file);
+      const sheetName = workbook.sheetNames[0];
+      const rows = workbook.sheets[sheetName].rows as Record<string, string | number | Date | null>[];
 
       const parsed: ParsedRow[] = [];
       const allErrors: ValidationError[] = [];
