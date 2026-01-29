@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -21,6 +21,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<AppRole>("user");
   const [loading, setLoading] = useState(true);
+  
+  // Track if initial session check is complete
+  const initialCheckDone = useRef(false);
 
   const fetchUserRole = async (userId: string) => {
     try {
@@ -56,17 +59,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // 1. СНАЧАЛА подписываемся на изменения (рекомендация Supabase)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (event, newSession) => {
         if (!isMounted) return;
         
-        setSession(session);
-        setUser(session?.user ?? null);
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
         
-        if (session?.user) {
+        if (newSession?.user) {
           // Use setTimeout to avoid potential race conditions with Supabase internals
           setTimeout(() => {
             if (isMounted) {
-              fetchUserRole(session.user.id).then((r) => {
+              fetchUserRole(newSession.user.id).then((r) => {
                 if (isMounted) setRole(r);
               });
             }
@@ -74,22 +77,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           setRole("user");
         }
-        setLoading(false);
+        
+        // Only set loading=false from onAuthStateChange AFTER initial check is done
+        // This prevents premature "not authenticated" state on mobile
+        if (initialCheckDone.current) {
+          setLoading(false);
+        }
       }
     );
 
     // 2. ПОТОМ проверяем текущую сессию
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       if (!isMounted) return;
       
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        fetchUserRole(session.user.id).then((r) => {
-          if (isMounted) setRole(r);
+      initialCheckDone.current = true;
+      
+      if (currentSession) {
+        setSession(currentSession);
+        setUser(currentSession.user);
+        fetchUserRole(currentSession.user.id).then((r) => {
+          if (isMounted) {
+            setRole(r);
+            setLoading(false);
+          }
         });
+      } else {
+        // No session found - we're done loading
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
