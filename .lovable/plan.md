@@ -1,116 +1,200 @@
 
 
-# План: Исправление парсинга XLSX для нового формата файла
+# План: Исправления для импорта и отображения Базы знаний
 
-## Причина ошибки
+## Выявленные проблемы
 
-В файле `Эфиры_БУКВА_ЗАКОНА_IMPORT_v2.xlsx` заголовки колонок отличаются от ожидаемых:
+| # | Проблема | Где происходит |
+|---|----------|----------------|
+| 1 | Клик на вопрос открывает **внешний сайт Kinescope** вместо навигации внутри платформы | `Knowledge.tsx` строки 121-130 |
+| 2 | Дата в видео отображается как `2026-01-28` вместо `28.01.2026` | `VideoBlock.tsx` (поле `content.title`), `LessonCard.tsx` (формат даты) |
+| 3 | AI генерирует картинки **с текстом** (нечитаемым) | `generate-cover/index.ts` — промпт |
+| 4 | Сортировка не хронологическая (от новых к старым) | `useContainerLessons.ts`, `useKbQuestions.ts` |
+| 5 | Описание урока берётся неправильно | `AdminKbImport.tsx` — нужно использовать поля из файла |
 
-| Заголовок в файле | Ожидаемый заголовок | Статус |
-|-------------------|---------------------|--------|
-| `Выпуск` | `Номер выпуска` | ❌ Не найден |
-| `Вопрос` | `Номер вопроса` | ❌ Не найден |
-| `Вопрос участника Клуба...` | `Вопрос ученика` | ❌ Не найден |
+---
 
-**Код на строках 545-553 ищет старые заголовки:**
-```typescript
-const episodeRaw = row.episodeNumber ?? row["Номер выпуска"] ?? "";
-const questionNumber = row.questionNumber ?? row["Номер вопроса"];
-const fullQuestion = row.fullQuestion ?? row["Вопрос ученика (копируем из анкеты)"];
+## Решения
+
+### 1. Вопросы открываются внутри платформы (не Kinescope)
+
+**Файл: `src/pages/Knowledge.tsx`**
+
+Сейчас:
+```tsx
+<a 
+  href={videoUrl}
+  target="_blank"
+  rel="noopener noreferrer"
+  ...
+>
+  <Play className="h-4 w-4" />
+  Смотреть видеоответ
+  <ExternalLink className="h-3 w-3" />
+</a>
 ```
 
-Но заголовки в новом файле — `"Выпуск"`, `"Вопрос"`, `"Вопрос участника Клуба..."` — не добавлены как fallback!
+Нужно заменить на навигацию внутри платформы через `useNavigate`:
+- Получить `lesson.slug` и `lesson.module.slug` из вопроса (уже есть в запросе)
+- При клике: `navigate(`/library/${moduleSlug}/${lessonSlug}?t=${timecode}`)`
+- Убрать иконку `ExternalLink`, заменить на внутреннюю навигацию
 
-**Ключевая причина**: Функция `normalizeRowKeys()` вызывается **только для CSV**, но **не для XLSX**. XLSX парсер (`sheet_to_json`) использует оригинальные заголовки как ключи объекта.
+```tsx
+import { useNavigate } from "react-router-dom";
 
-## Решение
+// В QuestionsContent:
+const navigate = useNavigate();
 
-Добавить вызов `normalizeRowKeys()` для XLSX файлов, чтобы новые заголовки маппились на внутренние поля (`episodeNumber`, `questionNumber`, `fullQuestion`, и т.д.).
-
-## Файл для изменения
-
-`src/pages/admin/AdminKbImport.tsx`
-
-## Изменения
-
-### 1. Применить normalizeRowKeys для XLSX (строки 521-522)
-
-```typescript
-// БЫЛО:
-rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-
-// СТАНЕТ:
-const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-// Normalize XLSX headers the same way as CSV
-rows = rawRows.map(row => normalizeRowKeys(row, false));
-```
-
-### 2. Добавить маппинг для заголовка "Вопрос" (questionNumber)
-
-В `CSV_COLUMN_MAP` (строка 37-52) добавить:
-
-```typescript
-"вопрос": "questionNumber",  // NEW: short variant "Вопрос"
-```
-
-**Важно**: Это должно идти **после** `"вопрос участника": "fullQuestion"`, чтобы длинный заголовок ловился первым (partial match приоритет).
-
-### 3. Переупорядочить маппинги по приоритету partial match
-
-```typescript
-const CSV_COLUMN_MAP: Record<string, string> = {
-  "дата ответа": "answerDate",
-  "номер выпуска": "episodeNumber",
-  "выпуск": "episodeNumber",
-  "номер вопроса": "questionNumber",
-  "вопрос участника": "fullQuestion",   // ДОЛЖЕН быть перед "вопрос"
-  "вопрос ученика": "fullQuestion",
-  "вопрос": "questionNumber",            // NEW: catch-all после длинных
-  "суть вопроса": "title",
-  "теги": "tags",
-  "ссылка на видео в геткурсе": "getcourseUrl",
-  "ссылка на видео в кинескопе": "kinescopeUrl",
-  "тайминг старта": "timecode",
-  "тайминг": "timecode",
-  "время (секунды)": "timecodeSeconds",
-  "год": "year",
+// При клике на вопрос:
+const handleQuestionClick = (question: KbQuestion) => {
+  const moduleSlug = question.lesson?.module?.slug;
+  const lessonSlug = question.lesson?.slug;
+  
+  if (moduleSlug && lessonSlug) {
+    navigate(`/library/${moduleSlug}/${lessonSlug}`, { 
+      state: { seekTo: question.timecode_seconds } 
+    });
+  }
 };
 ```
 
-### 4. Исправить порядок проверки partial match (более длинные паттерны первыми)
+### 2. Формат даты `dd.MM.yyyy` вместо `YYYY-MM-DD`
 
-В функции `normalizeRowKeys()` сортировать паттерны по длине (longest first), чтобы `"вопрос участника"` ловился до `"вопрос"`:
+**Файл: `src/components/training/LessonCard.tsx`**
 
-```typescript
-// Sort patterns by length descending (longest match first)
-const sortedPatterns = Object.entries(CSV_COLUMN_MAP).sort(
-  ([a], [b]) => b.length - a.length
-);
+Изменить формат даты:
+```tsx
+// БЫЛО:
+const formattedDate = displayDate
+  ? format(new Date(displayDate), "d MMM yyyy", { locale: ru })
+  : null;
 
-for (const [pattern, field] of sortedPatterns) {
-  if (normalizedKey.includes(pattern)) {
-    result[field] = value;
-    matched = true;
-    break;
-  }
+// СТАНЕТ:
+const formattedDate = displayDate
+  ? format(new Date(displayDate), "dd.MM.yyyy")
+  : null;
+```
+
+**Файл: `src/pages/admin/AdminKbImport.tsx`**
+
+При создании video block, поле `title` сохраняет дату в правильном формате:
+```tsx
+// БЫЛО (строка 894):
+content: {
+  url: episode.kinescopeUrl,
+  title: episode.answerDate,  // ISO формат "2026-01-28"
+  provider: "kinescope",
+}
+
+// СТАНЕТ:
+content: {
+  url: episode.kinescopeUrl,
+  title: episode.answerDate 
+    ? format(new Date(episode.answerDate), "dd.MM.yyyy") 
+    : null,
+  provider: "kinescope",
 }
 ```
 
-## Ожидаемый результат
+Добавить импорт `format` из `date-fns`.
 
-После правок:
-1. ✅ XLSX файлы проходят через `normalizeRowKeys()` 
-2. ✅ Заголовок `"Выпуск"` маппится на `episodeNumber`
-3. ✅ Заголовок `"Вопрос"` маппится на `questionNumber` (короткий вариант)
-4. ✅ Заголовок `"Вопрос участника Клуба..."` маппится на `fullQuestion`
-5. ✅ Все 753 строки парсятся корректно
-6. ✅ 0 ошибок валидации "Не распознан номер выпуска"
+**Файл: `src/pages/Knowledge.tsx`**
 
-## DoD
+Изменить формат даты вопросов:
+```tsx
+// БЫЛО (строка 88):
+const formattedDate = question.answer_date
+  ? format(new Date(question.answer_date), "d MMM yyyy", { locale: ru })
+  : null;
 
-1. Загрузить файл `Эфиры_БУКВА_ЗАКОНА_IMPORT_v2.xlsx`
-2. Убедиться: **0 выпусков** → **75 выпусков**
-3. Убедиться: **753 ошибки** → **0 ошибок**
-4. Preview: раскрыть выпуск 1, проверить вопросы
-5. Test Run на 1 выпуске → проверить создание
+// СТАНЕТ:
+const formattedDate = question.answer_date
+  ? format(new Date(question.answer_date), "dd.MM.yyyy")
+  : null;
+```
+
+### 3. AI обложки без текста
+
+**Файл: `supabase/functions/generate-cover/index.ts`**
+
+Обновить промпт, убрать текст и сделать акцент на смысловых изображениях:
+```typescript
+const prompt = `Create a professional cover image for an educational video lesson about accounting and law.
+
+Topics: "${title}"
+${description ? `Details: ${description}` : ""}
+
+CRITICAL REQUIREMENTS:
+- NO TEXT whatsoever - absolutely no letters, numbers, words, or any written content on the image
+- NO logos, NO watermarks, NO captions
+- Only meaningful visual imagery that represents the topic
+- Use symbolic icons and illustrations: documents, calculators, coins, charts, scales of justice, buildings, computers, folders, contracts, stamps, etc.
+- Professional business illustration style
+- Clean, modern aesthetic with soft gradients
+- Light, professional color palette (blues, teals, soft purples, whites)
+- 16:9 aspect ratio (1200x630 pixels)
+- High quality, sharp imagery
+
+The image should convey the topic through visual symbols only, without any text.`;
+```
+
+### 4. Хронологическая сортировка (от новых к старым)
+
+**Файл: `src/hooks/useContainerLessons.ts`**
+
+Уже правильно сортирует по `published_at DESC` (строки 57-59). Проверить, что `published_at` заполняется при импорте.
+
+**Файл: `src/hooks/useKbQuestions.ts`**
+
+Уже правильно сортирует по `answer_date DESC` (строка 59). Проверить порядок в UI.
+
+**Файл: `src/pages/admin/AdminKbImport.tsx`**
+
+Сортировка эпизодов уже правильная (строка 729):
+```tsx
+.sort((a, b) => b.episodeNumber - a.episodeNumber)
+```
+
+При импорте вопросов добавить сортировку по `question_number ASC` для правильного порядка внутри эпизода.
+
+### 5. Описания уроков из файла
+
+**Файл: `src/pages/admin/AdminKbImport.tsx`**
+
+Сейчас при импорте:
+- `shortDescription` = из "Кратко: ..." (колонка "Суть вопроса")
+- `fullDescription` = из "Описание выпуска (подробно): ..." (колонка "Вопрос участника")
+
+Изменить логику использования описаний:
+```tsx
+// При создании урока:
+const description = episode.shortDescription || 
+  EPISODE_SUMMARIES[episode.episodeNumber] || 
+  getEpisodeSummary(episode.episodeNumber, episode.questions.map(q => q.title));
+
+// Для AI обложки использовать полное описание:
+const coverDescription = episode.fullDescription || episode.shortDescription || description;
+```
+
+---
+
+## Файлы для изменения
+
+| Файл | Изменения |
+|------|-----------|
+| `src/pages/Knowledge.tsx` | Заменить внешнюю ссылку на `navigate()` внутри платформы, формат даты |
+| `src/components/training/LessonCard.tsx` | Формат даты `dd.MM.yyyy` |
+| `src/pages/admin/AdminKbImport.tsx` | Формат даты в video block, импорт `format` |
+| `supabase/functions/generate-cover/index.ts` | Обновить промпт без текста |
+
+---
+
+## DoD (обязательно)
+
+1. ✅ Клик на вопрос → навигация внутри платформы (не внешний сайт)
+2. ✅ Дата отображается как `28.01.2026` (не `2026-01-28`)
+3. ✅ AI обложки без текста — только иконки и символы
+4. ✅ Сортировка: новые выпуски вверху
+5. ✅ Описания берутся из файла ("Суть вопроса" = краткое, "Вопрос участника" = полное)
+6. Скриншоты: страница вопроса внутри платформы, карточка с датой, обложка без текста
 
