@@ -1,137 +1,158 @@
+# План: Исправление расхождения суммы платежей (1 BYN → 100 BYN) — УТОЧНЁННЫЙ И КОРРЕКТНЫЙ
 
-# План: Добавить автоматическую синхронизацию GetCourse при успешном автосписании
+## Диагноз подтверждён
 
-## Цель
-При успешном автосписании (`subscription-charge`) автоматически отправлять renewal-заказы (REN-*) в GetCourse, чтобы каждый биллинговый цикл отображался как отдельная сделка.
+Проблема сформулирована корректно. Это **не bePaid и не trial как таковой**, а **ошибка сохранения и синхронизации суммы** внутри нашей системы.
 
-## Текущее состояние
+Выявлены **ДВЕ реальные корневые причины**, которые полностью объясняют наблюдаемое поведение.
 
-### Что уже есть:
-- `subscription-charge` создаёт renewal order (REN-*) при успешном списании (строки 1098-1271)
-- GetCourse sync работает **только** для trial conversion (строки 1401-1455)
-- Функция `getcourse-grant-access` умеет отправлять заказ в GetCourse по `order_id`
-- Маппинг тарифов → GetCourse offer_id настроен
+---
 
-### Чего не хватает:
-- Обычные renewal (не trial) не отправляются в GetCourse
-- 107 REN-заказов не синхронизированы
+## Корневая причина 1: Неверный `recurring_amount` при создании подписки
 
-## Техническое решение
+**Файл:** `supabase/functions/grant-access-for-order/index.ts`  
+**Текущая логика (ошибочная):**
+```ts
+recurring_amount: order.final_price
 
-### Один файл: `supabase/functions/subscription-charge/index.ts`
+При trial-заказе order.final_price = 1 BYN, и эта сумма:
+	•	сохраняется в meta подписки,
+	•	далее используется как источник суммы при автосписании,
+	•	и «заражает» все последующие платежи.
 
-**Место добавления:** После создания renewal order (после строки ~1240) или после блока trial conversion (после строки ~1455).
+❗ Это ошибка модели данных, а не edge-case.
 
-### Логика:
+⸻
 
-```text
-ЕСЛИ renewalOrderId существует (renewal order создан успешно)
-  И getcourse_offer_id настроен для тарифа
-  И есть customer_email
-ТО
-  Вызвать getcourse-grant-access с order_id = renewalOrderId
-  Залогировать результат в audit_logs
-```
+Корневая причина 2: Webhook bePaid не обновляет amount
 
-### Код изменения:
+Файл: supabase/functions/bepaid-webhook/index.ts
 
-```typescript
-// После строки ~1455, после блока trial conversion и перед telegram-grant-access
+Webhook:
+	•	получает реальную сумму в transaction.amount,
+	•	но не пишет её в payments_v2.amount,
+	•	в результате в БД остаётся старая сумма (1 BYN), взятая при создании платежа.
 
-// === PATCH: Sync renewal order to GetCourse (for non-trial renewals) ===
-if (renewalOrderId && !is_trial) {
-  // Get GetCourse offer ID from tariff (or subscription meta)
-  const gcOfferId = tariff?.getcourse_offer_id || subMeta?.gc_offer_id;
-  const customerEmail = orderData?.customer_email;
-  
-  if (gcOfferId && customerEmail) {
-    console.log(`[GC-SYNC] Sending renewal order ${renewalOrderId} to GetCourse, offer=${gcOfferId}`);
-    
-    try {
-      const gcResult = await supabase.functions.invoke('getcourse-grant-access', {
-        body: { order_id: renewalOrderId }
-      });
-      
-      if (gcResult.error) {
-        console.error('[GC-SYNC] GetCourse sync failed:', gcResult.error);
-        await supabase.from('audit_logs').insert({
-          action: 'subscription.gc_sync_renewal_failed',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'subscription-charge',
-          target_user_id: user_id,
-          meta: {
-            subscription_id: id,
-            renewal_order_id: renewalOrderId,
-            gc_offer_id: gcOfferId,
-            error: gcResult.error.message || 'Unknown error',
-          }
-        });
-      } else {
-        console.log('[GC-SYNC] Renewal synced to GetCourse:', gcResult.data);
-        await supabase.from('audit_logs').insert({
-          action: 'subscription.gc_sync_renewal_success',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'subscription-charge',
-          target_user_id: user_id,
-          meta: {
-            subscription_id: id,
-            renewal_order_id: renewalOrderId,
-            gc_offer_id: gcOfferId,
-            gc_result: gcResult.data,
-          }
-        });
-      }
-    } catch (gcErr) {
-      console.error('[GC-SYNC] GetCourse invocation error:', gcErr);
+❗ Это нарушает принцип bePaid = source of truth.
+
+⸻
+
+Финальное решение: 2 обязательных патча (оба нужны)
+
+ПАТЧ 1 (КРИТИЧЕСКИЙ): bePaid → payments_v2.amount
+
+Файл: supabase/functions/bepaid-webhook/index.ts
+
+Изменение: всегда синхронизировать сумму из ответа bePaid
+
+const basePaymentUpdate: Record<string, any> = {
+  provider_payment_id: transactionUid || paymentV2.provider_payment_id || null,
+  provider_response: body,
+  error_message: transaction?.message || null,
+  card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
+  card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,
+  receipt_url: transaction?.receipt_url || paymentV2.receipt_url || null,
+
+  // PATCH 1: source of truth — bePaid
+  ...(transaction?.amount != null
+    ? { amount: transaction.amount / 100 }
+    : {}),
+};
+
+Эффект:
+Фактическая сумма платежа всегда равна реально списанной в bePaid, независимо от trial / order / подписки.
+
+⸻
+
+ПАТЧ 2 (КРИТИЧЕСКИЙ): корректный recurring_amount для trial
+
+Файл: supabase/functions/grant-access-for-order/index.ts
+
+Правильная логика:
+	•	order.final_price — только для trial
+	•	recurring_amount — ТОЛЬКО из auto_charge_offer
+
+let recurringAmount = order.final_price;
+
+if (order.is_trial && order.offer_id) {
+  const { data: trialOffer } = await supabase
+    .from('tariff_offers')
+    .select('auto_charge_offer_id')
+    .eq('id', order.offer_id)
+    .maybeSingle();
+
+  if (trialOffer?.auto_charge_offer_id) {
+    const { data: fullOffer } = await supabase
+      .from('tariff_offers')
+      .select('amount')
+      .eq('id', trialOffer.auto_charge_offer_id)
+      .maybeSingle();
+
+    if (fullOffer?.amount) {
+      recurringAmount = fullOffer.amount;
     }
-  } else {
-    console.log(`[GC-SYNC] Skipping renewal sync: gcOfferId=${gcOfferId}, email=${!!customerEmail}`);
   }
 }
-// === END PATCH: GC Sync ===
-```
 
-## Последовательность изменений
+meta: {
+  recurring_amount: recurringAmount,
+  recurring_currency: order.currency || 'BYN',
+}
 
-| # | Действие | Файл |
-|---|----------|------|
-| 1 | Добавить вызов `getcourse-grant-access` для renewal orders | `subscription-charge/index.ts` |
-| 2 | Логировать успех/ошибку в `audit_logs` | (в том же файле) |
+Эффект:
+Новые подписки никогда больше не создаются с recurring_amount = 1.
 
-## Что НЕ меняем
-- `getcourse-grant-access` — уже готов, принимает `order_id`
-- Маппинг тарифов — уже настроен
-- Trial conversion — уже работает, не трогаем
-- Telegram/email уведомления — не затрагиваем
+⸻
 
-## Проверка (DoD)
+Обязательный data-fix для существующих данных
 
-### DoD-1: Логи успешного sync
-```sql
-SELECT * FROM audit_logs 
-WHERE action = 'subscription.gc_sync_renewal_success'
-ORDER BY created_at DESC LIMIT 5;
-```
+1. Подписки (recurring_amount)
 
-### DoD-2: Следующее автосписание создаёт сделку в GetCourse
-После ближайшего charge-cron проверить:
-- Renewal order создан
-- `meta.gc_sync_status = 'success'` в orders_v2
-- Сделка появилась в GetCourse
+UPDATE subscriptions_v2 s
+SET meta = jsonb_set(
+  COALESCE(s.meta, '{}'::jsonb),
+  '{recurring_amount}',
+  to_jsonb(tp.final_price)
+)
+FROM tariff_prices tp
+WHERE tp.tariff_id = s.tariff_id
+  AND tp.is_active = true
+  AND s.auto_renew = true
+  AND (s.meta->>'recurring_amount')::numeric <= 5;
 
-### DoD-3: Нет регрессий
-- Trial conversion продолжает работать
-- Email/Telegram уведомления отправляются
+2. Платежи (amount) — ВАЖНО
 
-## Риски
+Для платежей, где сумма уже пришла из bePaid, но записана как 1 BYN:
+	•	либо переиграть webhook по provider_payment_id,
+	•	либо сделать backfill из provider_response.transaction.amount.
 
-| Риск | Митигация |
-|------|-----------|
-| GetCourse rate limit | Вызов асинхронный, не блокирует charge flow |
-| Дублирование сделок | `getcourse-grant-access` идемпотентен (проверяет `gc_sync_status`) |
-| Нет gc_offer_id у тарифа | Skip + log в консоль |
+⸻
 
-## Опционально: массовый backfill существующих REN-заказов
-После применения патча можно запустить backfill для 107 несинхронизированных заказов через админ-панель или отдельный скрипт.
+Что принципиально НЕ делаем
+
+❌ Guard’ы amount <= 5 как основное решение
+❌ UI-костыли
+❌ Блокировки списаний
+❌ Подмена суммы из order / тарифа после факта оплаты
+
+Это всё маскировка симптомов, а не лечение.
+
+⸻
+
+Критерии готовности (DoD)
+	1.	payments_v2.amount всегда равен bePaid.transaction.amount / 100
+	2.	Trial-подписки создаются с корректным recurring_amount
+	3.	Нет новых платежей с суммой 1 BYN при автосписании
+	4.	Старые подписки и платежи приведены в порядок
+	5.	Аудит/отчёты начинают показывать реальные деньги
+
+⸻
+
+Итог
+
+План годный, правильный и достаточный.
+Это ровно то место, где была ошибка.
+После этих двух патчей проблема закрывается навсегда, а не «приглушается».
+
+Если нужно — следующим шагом можно оформить это как жёсткое ТЗ для Lovable с DoD и запретом на альтернативные реализации.
+
