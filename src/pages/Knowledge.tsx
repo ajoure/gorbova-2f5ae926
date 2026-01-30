@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { goToVideoAnswer } from "@/lib/goToVideoAnswer";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,6 +27,7 @@ import {
   BookOpen,
   Folder,
   ChevronDown,
+  Lock,
   type LucideIcon,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -173,6 +174,37 @@ function LegislationContent() {
   );
 }
 
+// Restricted access banner for users without tariff access
+function RestrictedAccessBanner({ accessibleTariffs }: { accessibleTariffs: string[] }) {
+  return (
+    <GlassCard className="border-amber-500/30 bg-amber-500/5">
+      <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+        <div className="flex-shrink-0">
+          <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center">
+            <Lock className="h-6 w-6 text-amber-600" />
+          </div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-foreground mb-1">
+            Контент доступен участникам Клуба
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            {accessibleTariffs.length > 0 
+              ? `Тарифы с доступом: ${accessibleTariffs.filter(Boolean).join(", ")}`
+              : "Оформите подписку, чтобы получить доступ к видеоответам и базе знаний"
+            }
+          </p>
+        </div>
+        <Link to="/club">
+          <Button variant="default" size="sm" className="gap-2 whitespace-nowrap">
+            Узнать о Клубе
+          </Button>
+        </Link>
+      </div>
+    </GlassCard>
+  );
+}
+
 // Map of tab keys to content components (mock данные удалены, кроме questions и laws)
 const MOCK_CONTENT_MAP: Record<string, React.ComponentType<{ searchQuery?: string }>> = {
   "knowledge-questions": QuestionsContent,
@@ -254,17 +286,27 @@ const Knowledge = () => {
           
           {/* Dynamic Tab Content */}
           {tabs.map((tab) => {
-            // Regular modules (not containers)
-            const modules = (modulesBySection[tab.key] || []).filter(
+            // All modules for this section (not containers)
+            const allModules = (modulesBySection[tab.key] || []).filter(
               (m: any) => !m.is_container
             );
+            // Only accessible modules
+            const accessibleModules = allModules.filter((m: any) => m.has_access);
+            // Restricted modules (user has no access)
+            const restrictedModules = allModules.filter((m: any) => !m.has_access);
+            
+            // Collect tariff names from restricted modules for the banner
+            // We'll need to fetch this separately - for now show generic message
+            const hasRestrictedContent = restrictedModules.length > 0;
+            
             // Standalone lessons from container modules
             const containerData = lessonsBySection[tab.key];
             const standaloneLessons = containerData?.lessons || [];
             const containerModuleSlug = containerData?.moduleSlug || "";
             
             const MockContent = MOCK_CONTENT_MAP[tab.key];
-            const hasContent = modules.length > 0 || standaloneLessons.length > 0 || MockContent;
+            const hasAccessibleContent = accessibleModules.length > 0 || standaloneLessons.length > 0 || MockContent;
+            const hasSomeContent = allModules.length > 0 || standaloneLessons.length > 0 || MockContent;
             
             return (
               <TabsContent key={tab.key} value={tab.key} className="mt-6 space-y-6">
@@ -287,10 +329,15 @@ const Knowledge = () => {
                   </div>
                 )}
 
-                {/* Regular Modules (not containers) */}
-                {modules.length > 0 && (
+                {/* Restricted access banner - show when there are modules without access */}
+                {hasRestrictedContent && !hasAccessibleContent && (
+                  <RestrictedAccessBanner accessibleTariffs={[]} />
+                )}
+
+                {/* Accessible Modules (not containers) */}
+                {accessibleModules.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {modules.map((module: any) => (
+                    {accessibleModules.map((module: any) => (
                       <ModuleCard key={module.id} module={module} />
                     ))}
                   </div>
@@ -315,8 +362,8 @@ const Knowledge = () => {
                   <MockContent searchQuery={searchQuery} />
                 )}
 
-                {/* Empty state if no content at all */}
-                {!hasContent && (
+                {/* Empty state - only if NO content exists at all (not just access issues) */}
+                {!hasSomeContent && (
                   <GlassCard className="text-center py-16">
                     <Folder className="h-16 w-16 text-muted-foreground/30 mx-auto mb-6" />
                     <h3 className="text-xl font-semibold text-foreground mb-2">
