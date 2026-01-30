@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +10,7 @@ import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
+import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
 import { Loader2 } from "lucide-react";
 
 // Critical pages - loaded immediately (first screen)
@@ -124,6 +125,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Initialize external link kill switch once at app startup
+initExternalLinkKillSwitch();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

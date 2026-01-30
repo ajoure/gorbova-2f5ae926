@@ -1,29 +1,31 @@
 /**
  * Hook for managing Kinescope IFrame API player with reliable seek+autoplay
  * Loads the Kinescope player script once and provides controlled playback
+ * 
+ * PATCH v3: Added onSeekApplied callback, improved ready handling, better error visibility
  */
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { toast } from "sonner";
+
+// Build marker for diagnostics
+const KINESCOPE_HOOK_VERSION = "v3-2026-01-30";
 
 // Global promise for script loading (singleton pattern)
 let scriptLoadPromise: Promise<void> | null = null;
 
-// Kinescope Player Factory types (from their API docs)
+// Kinescope Player types (from their API docs)
 interface KinescopePlayer {
   seekTo(seconds: number): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   mute(): Promise<void>;
   unmute(): Promise<void>;
-  setCurrentTime(seconds: number): Promise<void>;
+  setCurrentTime?(seconds: number): Promise<void>; // may not exist in all versions
   getCurrentTime(): Promise<number>;
   destroy(): void;
   on(event: string, callback: (...args: any[]) => void): void;
   off(event: string, callback: (...args: any[]) => void): void;
-}
-
-interface KinescopePlayerFactory {
-  create(containerId: string, options: { url: string; size?: { width: string; height: string } }): Promise<KinescopePlayer>;
 }
 
 declare global {
@@ -45,6 +47,7 @@ function loadKinescopeScript(): Promise<void> {
   scriptLoadPromise = new Promise((resolve, reject) => {
     // Check if already loaded
     if (window.Kinescope?.IframePlayer) {
+      console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Script already loaded`);
       resolve();
       return;
     }
@@ -56,6 +59,7 @@ function loadKinescopeScript(): Promise<void> {
       // Wait a tick for Kinescope to initialize
       setTimeout(() => {
         if (window.Kinescope?.IframePlayer) {
+          console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Script loaded successfully`);
           resolve();
         } else {
           reject(new Error("Kinescope IframePlayer not available after script load"));
@@ -72,9 +76,20 @@ function loadKinescopeScript(): Promise<void> {
 interface UseKinescopePlayerOptions {
   videoId: string;
   containerId: string;
+  /** Initial timecode for autoplay (used on first load) */
   autoplayTimecode?: number | null;
+  /** Callback when player is ready */
   onReady?: () => void;
+  /** Callback on error */
   onError?: (error: Error) => void;
+  /** Callback when seek+play was successfully applied */
+  onSeekApplied?: (seconds: number, nonce: number) => void;
+}
+
+interface PendingSeekRequest {
+  seconds: number;
+  nonce: number;
+  consumed: boolean;
 }
 
 /**
@@ -86,29 +101,102 @@ export function useKinescopePlayer({
   autoplayTimecode,
   onReady,
   onError,
+  onSeekApplied,
 }: UseKinescopePlayerOptions) {
   const playerRef = useRef<KinescopePlayer | null>(null);
-  const lastTimecodeRef = useRef<number | null>(null);
-  const isInitializedRef = useRef(false);
+  const pendingSeekRef = useRef<PendingSeekRequest | null>(null);
+  const isReadyRef = useRef(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
-  // Seek to timecode and play
-  const seekAndPlay = useCallback(async (seconds: number) => {
+  /**
+   * Apply pending seek: mute → seek → play
+   * Called when player is ready OR when new seek request arrives
+   */
+  const applyPendingSeek = useCallback(async () => {
+    const player = playerRef.current;
+    const pending = pendingSeekRef.current;
+    
+    if (!player || !pending || pending.consumed) {
+      return;
+    }
+
+    const { seconds, nonce } = pending;
+    console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Applying seek:`, { seconds, nonce });
+
+    try {
+      // Mark as consumed BEFORE async operations to prevent double-apply
+      pending.consumed = true;
+      setAutoplayBlocked(false);
+
+      // Step 1: Mute to bypass autoplay restrictions
+      await player.mute();
+      
+      // Step 2: Seek (try setCurrentTime first, fallback to seekTo)
+      if (typeof player.setCurrentTime === 'function') {
+        await player.setCurrentTime(seconds);
+      } else {
+        await player.seekTo(seconds);
+      }
+      
+      // Step 3: Play
+      await player.play();
+      
+      console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Seek+play SUCCESS:`, { seconds, nonce });
+      
+      // Step 4: Unmute after short delay
+      setTimeout(() => {
+        player.unmute().catch(() => {
+          // Ignore unmute errors
+        });
+      }, 500);
+
+      // Notify parent that seek was applied
+      onSeekApplied?.(seconds, nonce);
+      
+    } catch (err) {
+      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Seek+play FAILED:`, err);
+      
+      // Show autoplay blocked banner
+      setAutoplayBlocked(true);
+      
+      // Show toast for visibility
+      toast.warning("Автозапуск заблокирован", {
+        description: "Нажмите Play в плеере для воспроизведения"
+      });
+    }
+  }, [onSeekApplied]);
+
+  /**
+   * External method to request seek+play
+   */
+  const seekAndPlay = useCallback(async (seconds: number, nonce?: number) => {
+    const effectiveNonce = nonce ?? Date.now();
+    
+    // Set pending request
+    pendingSeekRef.current = {
+      seconds,
+      nonce: effectiveNonce,
+      consumed: false,
+    };
+
+    // If player is already ready, apply immediately
+    if (isReadyRef.current && playerRef.current) {
+      await applyPendingSeek();
+    }
+  }, [applyPendingSeek]);
+
+  /**
+   * Manual play (for user-initiated click on autoplay blocked banner)
+   */
+  const manualPlay = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
 
     try {
-      // Mute first to bypass autoplay restrictions, then seek and play
-      await player.mute();
-      await player.seekTo(seconds);
       await player.play();
-      // Unmute after a short delay (user can also unmute manually)
-      setTimeout(() => {
-        player.unmute().catch(() => {
-          // Ignore unmute errors - might be blocked by browser
-        });
-      }, 500);
+      setAutoplayBlocked(false);
     } catch (err) {
-      console.warn("[Kinescope] seekAndPlay error:", err);
+      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Manual play failed:`, err);
     }
   }, []);
 
@@ -148,20 +236,25 @@ export function useKinescopePlayer({
         }
 
         playerRef.current = player;
-        isInitializedRef.current = true;
+        isReadyRef.current = true;
+        
+        console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player ready:`, { videoId, containerId });
 
-        // If autoplay timecode was set, seek and play immediately
+        // If initial autoplay timecode was provided, set it as pending
         if (autoplayTimecode != null && autoplayTimecode > 0) {
-          lastTimecodeRef.current = autoplayTimecode;
-          // Small delay to ensure player is fully ready
-          setTimeout(() => {
-            seekAndPlay(autoplayTimecode);
-          }, 300);
+          pendingSeekRef.current = {
+            seconds: autoplayTimecode,
+            nonce: Date.now(),
+            consumed: false,
+          };
         }
+
+        // Apply any pending seek
+        await applyPendingSeek();
 
         onReady?.();
       } catch (err) {
-        console.error("[Kinescope] Player init error:", err);
+        console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player init error:`, err);
         onError?.(err as Error);
       }
     };
@@ -170,6 +263,7 @@ export function useKinescopePlayer({
 
     return () => {
       isMounted = false;
+      isReadyRef.current = false;
       if (player) {
         try {
           player.destroy();
@@ -178,22 +272,29 @@ export function useKinescopePlayer({
         }
       }
       playerRef.current = null;
-      isInitializedRef.current = false;
     };
-  }, [videoId, containerId]); // Don't include autoplayTimecode here - we handle changes separately
+  }, [videoId, containerId]); // Don't include autoplayTimecode - handled via seekAndPlay
 
-  // Handle timecode changes (after initial mount)
+  // Handle external timecode changes (after initial mount)
   useEffect(() => {
-    if (!isInitializedRef.current) return;
-    if (autoplayTimecode == null || autoplayTimecode === lastTimecodeRef.current) return;
+    if (!isReadyRef.current) return;
+    if (autoplayTimecode == null || autoplayTimecode <= 0) return;
+    
+    // Check if this is a new request (different from last consumed)
+    const pending = pendingSeekRef.current;
+    if (pending && pending.consumed && pending.seconds === autoplayTimecode) {
+      return; // Already applied this timecode
+    }
 
-    lastTimecodeRef.current = autoplayTimecode;
     seekAndPlay(autoplayTimecode);
   }, [autoplayTimecode, seekAndPlay]);
 
   return {
     player: playerRef.current,
     seekAndPlay,
+    manualPlay,
+    autoplayBlocked,
+    isReady: isReadyRef.current,
   };
 }
 
@@ -206,6 +307,7 @@ export function extractKinescopeVideoId(url: string): string | null {
   // Match patterns:
   // https://kinescope.io/embed/abc123
   // https://kinescope.io/abc123
+  // https://kinescope.io/abc123?t=100
   // kinescope.io/abc123
   const match = url.match(/kinescope\.io\/(?:embed\/)?([a-zA-Z0-9]+)/);
   return match?.[1] || null;

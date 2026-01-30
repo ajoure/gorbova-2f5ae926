@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ArrowLeft,
   ArrowRight,
@@ -19,6 +21,7 @@ import {
   Download,
   Clock,
   ChevronRight,
+  ChevronDown,
   FileText,
   Video,
   Music,
@@ -61,23 +64,44 @@ export default function LibraryLesson() {
   const navigate = useNavigate();
   const location = useLocation();
   
-  // State for internal timecode seeking (instead of opening external links)
+  // State for internal timecode seeking
   const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
   // Nonce to force autoplay when timecode changes from user action
   const [autoplayNonce, setAutoplayNonce] = useState<number>(0);
+  // Track if we've consumed the navigation state (to not re-apply on re-renders)
+  const navigationStateConsumedRef = useRef<number | null>(null);
+  // Description expand state for mobile
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   
   // Handle seekTo from navigation state (from Knowledge page questions)
+  // CRITICAL: Do NOT clear state until seek is actually applied by player
   useEffect(() => {
-    const state = location.state as { seekTo?: number } | null;
+    const state = location.state as { seekTo?: number; nonce?: number; autoplay?: boolean } | null;
     if (state?.seekTo != null && state.seekTo > 0) {
-      setActiveTimecode(state.seekTo);
-      setAutoplayNonce(Date.now());
-      // Clear the state so it doesn't re-trigger on navigation
-      window.history.replaceState({}, document.title);
-      // Scroll to top to show video
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const stateNonce = state.nonce ?? state.seekTo; // fallback to seekTo as unique identifier
+      
+      // Only process if we haven't consumed this exact state
+      if (navigationStateConsumedRef.current !== stateNonce) {
+        console.info('[LibraryLesson] Processing navigation state:', { 
+          seekTo: state.seekTo, 
+          nonce: stateNonce 
+        });
+        
+        setActiveTimecode(state.seekTo);
+        setAutoplayNonce(Date.now());
+        navigationStateConsumedRef.current = stateNonce;
+        
+        // Scroll to top to show video
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   }, [location.state]);
+
+  // Callback when seek is successfully applied by player - only then clear navigation state
+  const handleSeekApplied = useCallback((seconds: number, nonce: number) => {
+    console.info('[LibraryLesson] Seek applied, clearing navigation state:', { seconds, nonce });
+    window.history.replaceState({}, document.title);
+  }, []);
 
   // Fetch module info
   const { data: module, isLoading: moduleLoading } = useQuery({
@@ -198,8 +222,50 @@ export default function LibraryLesson() {
               )}
             </div>
             <h1 className="text-2xl font-bold">{currentLesson.title}</h1>
+            
+            {/* Description with hover/expand for full text */}
             {currentLesson.description && (
-              <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
+              <>
+                {/* Desktop: HoverCard */}
+                <div className="hidden md:block">
+                  {currentLesson.description.length > 150 ? (
+                    <HoverCard openDelay={200}>
+                      <HoverCardTrigger asChild>
+                        <p className="text-muted-foreground mt-2 line-clamp-2 cursor-help">
+                          {currentLesson.description}
+                        </p>
+                      </HoverCardTrigger>
+                      <HoverCardContent className="w-96 max-h-64 overflow-y-auto">
+                        <p className="text-sm text-foreground whitespace-pre-wrap">
+                          {currentLesson.description}
+                        </p>
+                      </HoverCardContent>
+                    </HoverCard>
+                  ) : (
+                    <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
+                  )}
+                </div>
+                
+                {/* Mobile/Tablet: Collapsible */}
+                <div className="md:hidden">
+                  {currentLesson.description.length > 100 ? (
+                    <Collapsible open={descriptionExpanded} onOpenChange={setDescriptionExpanded}>
+                      <p className={`text-muted-foreground mt-2 ${!descriptionExpanded ? 'line-clamp-2' : ''}`}>
+                        {currentLesson.description}
+                      </p>
+                      <CollapsibleTrigger 
+                        className="flex items-center gap-1 text-sm text-primary hover:text-primary/80 mt-1 py-2 min-h-[44px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ChevronDown className={`h-4 w-4 transition-transform ${descriptionExpanded ? 'rotate-180' : ''}`} />
+                        {descriptionExpanded ? "Свернуть" : "Показать полностью"}
+                      </CollapsibleTrigger>
+                    </Collapsible>
+                  ) : (
+                    <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
+                  )}
+                </div>
+              </>
             )}
           </div>
           <Button
@@ -230,6 +296,7 @@ export default function LibraryLesson() {
                 lessonId={currentLesson?.id} 
                 activeTimecode={activeTimecode}
                 autoplayNonce={autoplayNonce}
+                onSeekApplied={handleSeekApplied}
               />
             </CardContent>
           </Card>

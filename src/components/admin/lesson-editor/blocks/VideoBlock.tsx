@@ -1,8 +1,9 @@
-import { useState, useId, useEffect, useRef } from "react";
+import { useState, useId, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { VideoContent } from "@/hooks/useLessonBlocks";
-import { Video, ExternalLink, AlertCircle } from "lucide-react";
+import { Video, ExternalLink, Play } from "lucide-react";
 import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
 
 interface VideoBlockProps {
@@ -13,6 +14,8 @@ interface VideoBlockProps {
   activeTimecode?: number | null;
   /** Nonce to force autoplay when timecode changes from user action */
   autoplayNonce?: number;
+  /** Callback when seek was successfully applied */
+  onSeekApplied?: (seconds: number, nonce: number) => void;
 }
 
 function detectVideoProvider(url: string): VideoContent['provider'] {
@@ -43,7 +46,7 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
       return embedUrl;
     }
     case 'kinescope': {
-      // For Kinescope, we'll use the API player for controlled playback
+      // For Kinescope, we use the API player for controlled playback
       // This is just a fallback URL if API fails
       const videoId = extractKinescopeVideoId(url);
       let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
@@ -57,7 +60,14 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
   }
 }
 
-export function VideoBlock({ content, onChange, isEditing = true, activeTimecode, autoplayNonce }: VideoBlockProps) {
+export function VideoBlock({ 
+  content, 
+  onChange, 
+  isEditing = true, 
+  activeTimecode, 
+  autoplayNonce,
+  onSeekApplied 
+}: VideoBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
   const [useApiPlayer, setUseApiPlayer] = useState(true);
@@ -79,8 +89,14 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
   // Extract video ID for Kinescope
   const kinescopeVideoId = content.provider === 'kinescope' ? extractKinescopeVideoId(content.url || "") : null;
   
+  // Callback for when seek is applied
+  const handleSeekApplied = useCallback((seconds: number, nonce: number) => {
+    console.info('[VideoBlock] Seek applied:', { seconds, nonce });
+    onSeekApplied?.(seconds, nonce);
+  }, [onSeekApplied]);
+  
   // Use Kinescope API player for controlled playback
-  const { seekAndPlay } = useKinescopePlayer({
+  const { autoplayBlocked, manualPlay } = useKinescopePlayer({
     videoId: kinescopeVideoId || "",
     containerId,
     autoplayTimecode: activeTimecode,
@@ -91,6 +107,7 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
       setApiError(true);
       setUseApiPlayer(false);
     },
+    onSeekApplied: handleSeekApplied,
   });
 
   // Fallback embed URL for non-API mode
@@ -112,10 +129,29 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
           {content.title && (
             <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
           )}
-          <div 
-            id={containerId}
-            className="relative aspect-video rounded-lg overflow-hidden bg-black"
-          />
+          <div className="relative">
+            <div 
+              id={containerId}
+              className="aspect-video rounded-lg overflow-hidden bg-black"
+            />
+            {/* Autoplay blocked banner */}
+            {autoplayBlocked && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg">
+                <div className="text-center text-white p-4">
+                  <p className="text-sm mb-3">Автозапуск заблокирован браузером</p>
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    onClick={manualPlay}
+                    className="gap-2"
+                  >
+                    <Play className="h-5 w-5" />
+                    Нажмите Play
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
