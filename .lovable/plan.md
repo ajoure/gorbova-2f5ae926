@@ -1,246 +1,187 @@
 
+
 # План: Исправление системы доступа к обучающим модулям
 
-## Обзор проблемы
+## Диагностика (подтверждено)
 
-Система доступа к контенту не работает корректно:
-1. Пользователи с купленными тарифами (FULL/BUSINESS) не видят контент
-2. Не показывается плашка о необходимости подписки для пользователей без доступа
-3. В настройках модуля выбор тарифов отображается, но может не сохраняться/загружаться корректно
+### Корневая причина
+RLS-политика на таблице `module_access` требует permission `content.manage`, который **не существует** в базе данных. Существуют только: `content.view`, `content.edit`, `content.publish`.
 
-## Диагностика
+В результате:
+1. Запрос к `module_access` возвращает пустой массив для обычных пользователей
+2. Код интерпретирует пустой массив как "модуль публичный"
+3. Карточки модулей показываются как доступные
+4. Но RLS на `lesson_blocks` правильно блокирует контент
+5. Пользователь видит пустую страницу "Раздел пока пуст"
 
-Проверка базы данных показала, что данные корректны:
-- Модуль "Уроки без модулей" привязан к тарифам FULL и BUSINESS в таблице `module_access`
-- Есть пользователи с активными подписками на эти тарифы
-
-Проблема в коде — логика определения `has_access` содержит ошибки.
-
----
-
-## Обнаруженные баги
-
-### Баг 1: Некорректное определение доступа в `useSidebarModules.ts`
-
-**Файл:** `src/hooks/useSidebarModules.ts`, строки 75-88
-
-**Проблема:** Сложный запрос с `NOT IN` для определения "бесплатных" модулей не работает надёжно из-за конструкции с вложенным await.
-
-**Текущий код:**
-```tsx
-// Сложная конструкция с вложенным await внутри строки
-.not("id", "in", `(${Array.from(
-  new Set((await supabase.from("module_access").select("module_id")).data?.map(...))
-).join(",") || "00000000-0000-0000-0000-000000000000"})`);
-```
-
-**Решение:** Переписать логику определения доступа:
-1. Получить все записи module_access один раз
-2. Модуль "бесплатный" если у него НЕТ записей в module_access
-3. Модуль доступен если:
-   - Пользователь админ
-   - Модуль бесплатный (нет записей в module_access)
-   - tariff_id пользователя есть в module_access для этого модуля
-
-### Баг 2: Не передаются названия тарифов в плашку
-
-**Файл:** `src/pages/Knowledge.tsx`, строка 334
-
-**Проблема:** Передаётся пустой массив `accessibleTariffs={[]}`.
-
-**Решение:** Собрать названия тарифов из ограниченных модулей и передать их в плашку.
-
-### Баг 3: Плашка показывается только если ВСЁ ограничено
-
-**Файл:** `src/pages/Knowledge.tsx`, строка 333
-
-**Проблема:** Условие `hasRestrictedContent && !hasAccessibleContent` — плашка не показывается если есть хотя бы один доступный модуль.
-
-**Решение:** Показывать плашку если `hasRestrictedContent` и пользователь не админ.
-
-### Баг 4: Некорректная загрузка tariff_ids при редактировании модуля
-
-**Файл:** `src/pages/admin/AdminTrainingModules.tsx`, строки 469-471
-
-**Проблема:** Условие проверки `formData.tariff_ids?.length === 0` не срабатывает при повторном открытии диалога, так как массив не сбрасывается.
-
-**Решение:** Использовать `useEffect` для загрузки tariff_ids вместо условия в теле компонента.
+### Данные в базе (проверено)
+| Таблица | Данные |
+|---------|--------|
+| `module_access` | 2 записи: модуль "Уроки без модулей" → FULL, BUSINESS |
+| Пользователь | Юлия Рабчевская, tariff: BUSINESS (активный) |
+| `lesson_blocks` | 100 блоков для 100 уроков контейнер-модуля |
 
 ---
 
 ## План исправлений
 
-### Шаг 1: Переписать логику доступа в `useSidebarModules.ts`
+### Шаг 1: Добавить RLS политику для чтения module_access
 
-```tsx
-export function useSidebarModules() {
-  const { user } = useAuth();
-  const { isAdmin } = usePermissions();
-  const isAdminUser = isAdmin();
+Текущая RLS требует `content.manage` для чтения. Нужно добавить политику, разрешающую SELECT всем авторизованным пользователям (данные не секретные).
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["sidebar-modules", user?.id, isAdminUser],
-    queryFn: async () => {
-      // 1. Get all active modules
-      const { data: modulesData, error } = await supabase
-        .from("training_modules")
-        .select("id, title, slug, menu_section_key, icon, sort_order, is_container")
-        .eq("is_active", true)
-        .order("sort_order");
-
-      if (error) throw error;
-
-      // 2. Get ALL module_access records
-      const { data: allAccess } = await supabase
-        .from("module_access")
-        .select("module_id, tariff_id");
-
-      // Group by module_id
-      const accessByModule: Record<string, string[]> = {};
-      allAccess?.forEach(a => {
-        if (!accessByModule[a.module_id]) {
-          accessByModule[a.module_id] = [];
-        }
-        accessByModule[a.module_id].push(a.tariff_id);
-      });
-
-      // 3. Get user's active tariffs if logged in
-      let userTariffIds: string[] = [];
-      if (user) {
-        const { data: subs } = await supabase
-          .from("subscriptions_v2")
-          .select("tariff_id")
-          .eq("user_id", user.id)
-          .in("status", ["active", "trial"]);
-        userTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
-      }
-
-      // 4. Determine access for each module
-      return modulesData?.map(m => {
-        const moduleTariffs = accessByModule[m.id] || [];
-        
-        // Access logic:
-        // - Admins always have access
-        // - If no tariffs defined (empty array) → public module
-        // - Otherwise check if user has any of the required tariffs
-        const hasAccess = isAdminUser || 
-          moduleTariffs.length === 0 || 
-          moduleTariffs.some(tid => userTariffIds.includes(tid));
-
-        return { ...m, has_access: hasAccess };
-      }) || [];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // ... rest of hook
-}
+```sql
+-- Разрешить чтение module_access всем авторизованным пользователям
+CREATE POLICY "Authenticated users can read module_access"
+ON public.module_access
+FOR SELECT
+TO authenticated
+USING (true);
 ```
 
-### Шаг 2: Исправить плашку в `Knowledge.tsx`
+### Шаг 2: Создать permission content.manage
 
-```tsx
-{/* Показывать плашку если есть ограниченный контент */}
-{hasRestrictedContent && (
-  <RestrictedAccessBanner 
-    accessibleTariffs={restrictedModules
-      .flatMap((m: any) => m.accessible_tariffs || [])
-      .filter((v, i, a) => v && a.indexOf(v) === i)
-    } 
-  />
-)}
+Добавить отсутствующий permission для согласованности системы:
+
+```sql
+INSERT INTO public.permissions (code, name, category)
+VALUES ('content.manage', 'Управление контентом', 'content')
+ON CONFLICT (code) DO NOTHING;
+
+-- Привязать к ролям admin и super_admin
+INSERT INTO public.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM public.roles r, public.permissions p
+WHERE r.code IN ('admin', 'super_admin')
+  AND p.code = 'content.manage'
+ON CONFLICT DO NOTHING;
 ```
 
-### Шаг 3: Исправить загрузку tariff_ids в `AdminTrainingModules.tsx`
+### Шаг 3: Добавить политику чтения для training_modules и training_lessons
 
-Заменить проблемный код:
-```tsx
-// УДАЛИТЬ (строки 469-471):
-if (moduleAccess && editingModule && formData.tariff_ids?.length === 0 && moduleAccess.length > 0) {
-  setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
-}
+Убедиться, что все авторизованные пользователи могут читать метаданные модулей/уроков:
+
+```sql
+-- Чтение модулей для всех авторизованных
+CREATE POLICY "Authenticated users can view active modules"
+ON public.training_modules
+FOR SELECT
+TO authenticated
+USING (is_active = true);
+
+-- Чтение уроков для всех авторизованных
+CREATE POLICY "Authenticated users can view active lessons"
+ON public.training_lessons
+FOR SELECT
+TO authenticated
+USING (is_active = true);
 ```
 
-На `useEffect`:
-```tsx
-// В функцию openEditDialog добавить reset tariff_ids:
-const openEditDialog = useCallback((module: TrainingModule) => {
-  setEditingModule(module);
-  setFormData({
-    // ... other fields
-    tariff_ids: [], // Reset - будет загружено из moduleAccess
-  });
-}, []);
+### Шаг 4: Обновить useContainerLessons для проверки доступа
 
-// Добавить useEffect для синхронизации
-useEffect(() => {
-  if (moduleAccess && editingModule) {
-    setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
+Сейчас `has_access: true` захардкожен. Нужно добавить реальную проверку.
+
+**Файл:** `src/hooks/useContainerLessons.ts`
+
+```tsx
+// Получить tariff_ids для контейнер-модулей
+const { data: containerAccess } = await supabase
+  .from("module_access")
+  .select("module_id, tariff_id")
+  .in("module_id", containerIds);
+
+const accessByContainer = new Map<string, string[]>();
+containerAccess?.forEach(a => {
+  if (!accessByContainer.has(a.module_id)) {
+    accessByContainer.set(a.module_id, []);
   }
-}, [moduleAccess, editingModule?.id]);
-```
-
-### Шаг 4: Добавить accessible_tariffs в useSidebarModules
-
-Дополнить возвращаемые данные названиями тарифов:
-
-```tsx
-// В query добавить загрузку названий тарифов
-const { data: tariffsData } = await supabase
-  .from("tariffs")
-  .select("id, name");
-
-const tariffNames: Record<string, string> = {};
-tariffsData?.forEach(t => {
-  tariffNames[t.id] = t.name;
+  accessByContainer.get(a.module_id)!.push(a.tariff_id);
 });
 
-// В маппинге модулей добавить:
-return {
-  ...m,
-  has_access: hasAccess,
-  accessible_tariffs: moduleTariffs.map(tid => tariffNames[tid]).filter(Boolean),
-};
+// При маппинге уроков проверять доступ к контейнеру
+const containerTariffs = accessByContainer.get(lesson.module_id) || [];
+const hasAccess = containerTariffs.length === 0 || 
+  containerTariffs.some(tid => userTariffIds.includes(tid));
+```
+
+### Шаг 5: Исправить отображение плашки в Knowledge.tsx
+
+Передавать названия тарифов из контейнер-модулей для плашки.
+
+**Файл:** `src/pages/Knowledge.tsx`
+
+```tsx
+// Собрать тарифы из standaloneLessons (через containerData)
+const restrictedContainerTariffs = containerData?.restrictedTariffs || [];
+
+// Объединить с тарифами из модулей
+const allRestrictedTariffs = [
+  ...restrictedModules.flatMap((m) => m.accessible_tariffs || []),
+  ...restrictedContainerTariffs
+].filter((v, i, a) => v && a.indexOf(v) === i);
+
+<RestrictedAccessBanner accessibleTariffs={allRestrictedTariffs} />
 ```
 
 ---
 
-## Файлы для изменения
+## Технические детали
+
+### SQL миграция (одна транзакция)
+
+```sql
+-- 1. RLS для чтения module_access
+CREATE POLICY "Authenticated users can read module_access"
+ON public.module_access
+FOR SELECT
+TO authenticated
+USING (true);
+
+-- 2. RLS для чтения training_modules
+CREATE POLICY "Authenticated users can view active modules"
+ON public.training_modules
+FOR SELECT
+TO authenticated
+USING (is_active = true);
+
+-- 3. RLS для чтения training_lessons
+CREATE POLICY "Authenticated users can view active lessons"
+ON public.training_lessons
+FOR SELECT
+TO authenticated
+USING (is_active = true);
+
+-- 4. Добавить permission content.manage
+INSERT INTO public.permissions (code, name, category)
+VALUES ('content.manage', 'Управление контентом', 'content')
+ON CONFLICT (code) DO NOTHING;
+
+-- 5. Привязать к ролям
+INSERT INTO public.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.code IN ('admin', 'super_admin')
+  AND p.code = 'content.manage'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.role_permissions rp
+    WHERE rp.role_id = r.id AND rp.permission_id = p.id
+  );
+```
+
+### Изменения в коде
 
 | Файл | Изменение |
 |------|-----------|
-| `src/hooks/useSidebarModules.ts` | Переписать логику определения доступа, добавить accessible_tariffs |
-| `src/pages/Knowledge.tsx` | Исправить показ плашки и передачу тарифов |
-| `src/pages/admin/AdminTrainingModules.tsx` | Исправить загрузку tariff_ids при редактировании |
-
----
-
-## Техническая справка
-
-### Логика доступа (приоритет)
-
-```text
-1. Администраторы (super_admin, admin) → ПОЛНЫЙ ДОСТУП
-2. Модуль без записей в module_access → ПУБЛИЧНЫЙ (доступ всем)
-3. Модуль с записями в module_access → проверка tariff_id пользователя
-```
-
-### Структура данных
-
-```text
-training_modules ←→ module_access ←→ tariffs
-                     (m:n связь)
-
-subscriptions_v2 → tariff_id → проверка доступа
-```
+| `src/hooks/useContainerLessons.ts` | Добавить проверку доступа к контейнер-модулям |
+| `src/pages/Knowledge.tsx` | Передавать тарифы из контейнеров в плашку |
 
 ---
 
 ## Ожидаемый результат
 
 После исправлений:
-- ✅ Пользователи с FULL/BUSINESS тарифами видят контент
-- ✅ Пользователи с CHAT тарифом видят плашку с CTA
-- ✅ В плашке отображаются названия требуемых тарифов
-- ✅ Админы видят весь контент
-- ✅ Настройки доступа в карточке модуля работают корректно
+- Пользователи с FULL/BUSINESS тарифами видят видео-контент
+- Пользователи с CHAT тарифом видят плашку "Контент доступен участникам Клуба" с названиями нужных тарифов
+- Настройки доступа в админ-панели работают корректно
+- Админы сохраняют полный доступ ко всему контенту
+
