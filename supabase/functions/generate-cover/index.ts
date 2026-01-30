@@ -110,18 +110,48 @@ The image should convey the topic through visual symbols only, without any text.
     }
 
     const aiData = await aiResponse.json();
-    console.log("AI response received");
+    console.log("AI response structure:", JSON.stringify(aiData).slice(0, 800));
 
-    // Extract image from response
-    const imageData = aiData.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    // Extract image from response - check multiple possible locations
+    let imageData: string | undefined;
+    
+    // Try standard image_url format first
+    imageData = aiData.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    
+    // Try inline_data format (alternative structure)
+    if (!imageData) {
+      const inlineData = aiData.choices?.[0]?.message?.images?.[0]?.inline_data;
+      if (inlineData?.data && inlineData?.mime_type) {
+        imageData = `data:${inlineData.mime_type};base64,${inlineData.data}`;
+      }
+    }
+    
+    // Try content parts format (Gemini native)
+    if (!imageData && aiData.choices?.[0]?.message?.content) {
+      const parts = aiData.choices?.[0]?.message?.parts;
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          if (part.inline_data?.data) {
+            imageData = `data:${part.inline_data.mime_type || 'image/png'};base64,${part.inline_data.data}`;
+            break;
+          }
+        }
+      }
+    }
     
     if (!imageData) {
-      console.error("No image in AI response:", JSON.stringify(aiData).slice(0, 500));
-      return new Response(JSON.stringify({ error: "No image generated" }), { 
+      console.error("No image in AI response. Full response:", JSON.stringify(aiData));
+      return new Response(JSON.stringify({ 
+        error: "No image generated", 
+        details: "AI returned text without image. Try again or use a different title.",
+        aiResponse: aiData.choices?.[0]?.message?.content?.slice(0, 200)
+      }), { 
         status: 500, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
     }
+    
+    console.log("Image data extracted, length:", imageData.length);
 
     // Parse base64 data
     const base64Match = imageData.match(/^data:image\/(\w+);base64,(.+)$/);
