@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,6 +175,8 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     
     try {
       // Dynamic import of xlsx library to reduce bundle size
+      // iOS preview hard stop - throw before loading heavy XLSX library
+      assertExcelAllowedOrThrow();
       const XLSX = await import('xlsx');
       const buffer = await selectedFile.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });

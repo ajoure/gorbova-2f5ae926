@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -522,6 +523,8 @@ export default function AdminKbImport() {
         console.log("[AdminKbImport] First normalized row:", rows[0]);
       } else {
         // XLSX: dynamic import to reduce bundle size
+        // iOS preview hard stop - throw before loading heavy XLSX library
+        assertExcelAllowedOrThrow();
         const XLSX = await import("xlsx");
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: "array", cellDates: true });

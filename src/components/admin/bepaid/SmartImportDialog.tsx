@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 // XLSX is imported dynamically to reduce bundle size
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { transliterateToCyrillic } from "@/utils/transliteration";
 import { cn } from "@/lib/utils";
 import { 
@@ -353,6 +354,8 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
         } else {
           // Excel file processing - detect sheets by NAME, not by index
           // Dynamic import of xlsx to reduce bundle size
+          // iOS preview hard stop - throw before loading heavy XLSX library
+          assertExcelAllowedOrThrow();
           const XLSX = await import("xlsx");
           const buffer = await selectedFile.arrayBuffer();
           const workbook = XLSX.read(buffer, { type: 'array' });

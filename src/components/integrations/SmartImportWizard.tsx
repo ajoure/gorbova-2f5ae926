@@ -17,6 +17,7 @@ import {
   ChevronDown, ChevronRight, Info, Users, ShoppingCart, Filter
 } from "lucide-react";
 // XLSX is imported dynamically to reduce bundle size
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { supabase } from "@/integrations/supabase/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -179,6 +180,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   // Parse Excel file
   const parseFile = useCallback(async (file: File) => {
     // Dynamic import of xlsx to reduce bundle size
+    // iOS preview hard stop - throw before loading heavy XLSX library
+    assertExcelAllowedOrThrow();
     const XLSX = await import("xlsx");
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { type: "array" });

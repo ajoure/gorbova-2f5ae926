@@ -42,6 +42,38 @@
   </head>
 
   <body>
+    <!-- Ultra-early iOS Safari guard - runs BEFORE React loads -->
+    <script>
+      (function () {
+        try {
+          var ua = navigator.userAgent || '';
+          var isIOS = /iP(hone|ad|od)/.test(ua);
+          var isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
+
+          var inIframe = false;
+          try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
+
+          var hasPreviewFlag =
+            (window.location.search || '').indexOf('forceHideBadge') > -1 ||
+            (window.location.search || '').indexOf('lovable') > -1 ||
+            (window.location.search || '').indexOf('preview') > -1;
+
+          var isPreview = inIframe || hasPreviewFlag;
+
+          var path = window.location.pathname || '';
+          var isAdmin = path.indexOf('/admin') === 0;
+
+          if (isIOS && isSafari && isPreview && isAdmin) {
+            console.warn('[iOS Ultra-Early Guard] Blocking admin route BEFORE React:', path);
+            window.history.replaceState(null, '', '/dashboard');
+            window.location.replace('/dashboard');
+          }
+        } catch (e) {
+          // fail-open: do nothing if guard crashes
+        }
+      })();
+    </script>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
