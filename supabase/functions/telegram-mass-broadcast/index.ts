@@ -99,6 +99,7 @@ Deno.serve(async (req) => {
     let message = '';
     let includeButton = false;
     let buttonText = '';
+    let buttonUrl = ''; // Custom button URL support
     let filters: BroadcastFilters = {};
     let mediaType: string | null = null;
     let mediaBuffer: ArrayBuffer | null = null;
@@ -111,6 +112,7 @@ Deno.serve(async (req) => {
       message = formData.get('message') as string || '';
       includeButton = formData.get('include_button') === 'true';
       buttonText = formData.get('button_text') as string || '';
+      buttonUrl = formData.get('button_url') as string || '';
       
       const filtersStr = formData.get('filters') as string;
       if (filtersStr) {
@@ -129,6 +131,7 @@ Deno.serve(async (req) => {
       message = body.message || '';
       includeButton = body.include_button || false;
       buttonText = body.button_text || '';
+      buttonUrl = body.button_url || '';
       filters = body.filters || {};
     }
 
@@ -209,7 +212,8 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bots[0].bot_token_encrypted;
-    const appUrl = Deno.env.get('APP_URL') || 'https://app.example.com';
+    // Use custom button URL if provided, otherwise fall back to APP_URL
+    const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
 
     let sent = 0;
     let failed = 0;
