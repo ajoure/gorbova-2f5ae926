@@ -1,61 +1,167 @@
-# План: Глобальный iOS Safari Guard для lovable.dev + Excel-парсер — ВЫПОЛНЕНО ✅
+# План: Синхронный iOS Guard (исправление краша lovable.dev на iPhone)
 
-## Что было сделано
+## Корневая причина проблемы
 
-### 1) Глобальный guard в App.tsx — ДО Routes ✅
+**Почему текущий guard не работает:**
 
-**Файл: `src/hooks/useIOSAdminGuard.ts`** (новый)
-- Создан хук `useIOSAdminGuard` с логикой:
-  - Определение iOS Safari (`isIOSSafari()`)
-  - Определение iframe/lovable.dev preview (`isInIframe()`, `hasLovablePreviewFlag()`)
-  - Немедленный redirect с `/admin/*` на `/dashboard`
-  - Перезапись lastRoute на `/dashboard`
+Текущий `IOSAdminGuard` использует `useEffect`, который срабатывает **после первого рендера**. Это создаёт проблему:
 
-**Файл: `src/App.tsx`**
-- Добавлен импорт `IOSAdminGuard`
-- Обёртка `<IOSAdminGuard>` размещена внутри `<BrowserRouter>`, но ДО `<AuthProvider>`
-- Guard срабатывает при любом pathname change на iOS в iframe
+	1.	iOS Safari в lovable.dev открывает URL /admin/payments
+	2.	React рендерит App.tsx
+	3.	BrowserRouter видит path = /admin/payments
+	4.	React-Router СРАЗУ начинает matching маршрутов
+	5.	Находит Route для /admin/payments
+	6.	Начинает lazy() загрузку AdminPaymentsPage
+	7.	ТОЛЬКО ТЕПЕРЬ срабатывает useEffect в IOSAdminGuard
+	8.	К этому моменту уже загружаются тяжёлые чанки → iOS краш
 
-### 2) Excel-парсер ✅
+**Цепочка событий — визуально:**
 
-**Проверено:** Все XLSX импорты в проекте уже используют dynamic import:
-- `src/pages/admin/AdminKbImport.tsx` — `await import("xlsx")`
-- `src/components/integrations/GetCourseImportDialog.tsx` — `await import("xlsx")`
-- `src/components/admin/ExcelTrainingImportDialog.tsx` — `await import("xlsx")`
-- `src/components/admin/AmoCRMImportDialog.tsx` — `await import("xlsx")`
-- И другие...
+Время →
+├── BrowserRouter mount
+├── Routes matching: /admin/payments ← СРАЗУ находит маршрут
+├── lazy() import начинается ← ПРОБЛЕМА: тяжёлый код загружается
+├── useEffect guard срабатывает ← СЛИШКОМ ПОЗДНО
+└── navigate(’/dashboard’) ← Чанки уже грузятся, память израсходована
 
-**Никаких top-level import XLSX** — парсер не попадает в стартовый бандл.
+## Решение: Синхронная проверка ДО Routes
 
-### 3) BUILD_MARKER ✅
+Нужно проверить условия **синхронно в теле компонента**, ДО того как React-Router начнёт matching:
 
-**Файл: `src/lib/externalLinkKillSwitch.ts`**
-- Обновлён: `build: 2026-01-30T18:00 ios-admin-guard+excel-hard-stop-v6`
+```typescript
+// Синхронная проверка (не useEffect!)
+const shouldBlockAdmin = isIOSSafari() && isInPreview() && isAdminRoute();
 
----
+if (shouldBlockAdmin) {
+  // Перенаправляем синхронно, ДО рендера Routes
+  return <Navigate to="/dashboard" replace />;
+}
 
-## Как проверить
+Это прервёт рендер до того, как начнётся загрузка тяжёлых чанков.
 
-### A) Desktop (контроль)
-1. Открыть `/admin/kb-import`
-2. Импорт Excel работает как раньше
-3. Логин/lastRoute работает как раньше
+⸻
 
-### B) iPhone в lovable.dev (главная проверка)
-1. Открыть lovable.dev → проект
-2. Не падает/не перезагружается
-3. Если URL подтянул `/admin/*` → мгновенно переводит на `/dashboard`
-4. В консоли видно: `[iOS Admin Guard] Redirecting to /dashboard`
+Технические изменения
 
-### C) Верификация BUILD_MARKER
-- В консоли должно быть: `[App] build: 2026-01-30T18:00 ios-admin-guard+excel-hard-stop-v6`
+1. Рефакторинг useIOSAdminGuard.ts — добавить синхронную версию
 
----
+Файл: src/hooks/useIOSAdminGuard.ts
 
-## Критерии готовности
+Изменения:
+	•	Добавить экспортируемую функцию shouldBlockIOSAdmin() — чистая синхронная проверка (не хук)
+	•	Оставить существующий useIOSAdminGuard() как fallback
 
-1. ✅ lovable.dev на iPhone **перестаёт падать** при открытии проекта  
-2. ✅ `/admin/*` **никогда не рендерится** в preview на iOS (мгновенный redirect)  
-3. ✅ Excel-парсер **не загружается и не выполняется** в lovable.dev preview на iOS (lazy import)
-4. ✅ Desktop поведение не сломано: импорт Excel работает  
-5. ✅ BUILD_MARKER обновлён и виден (v6)
+/**
+ * SYNC check: returns true if we should block admin route on iOS
+ * Call this in component body (not in useEffect) for immediate redirect
+ */
+export function shouldBlockIOSAdmin(pathname: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (!isIOSSafari()) return false;
+
+  const inPreview = isInIframe() || hasLovablePreviewFlag();
+  if (!inPreview) return false;
+
+  return pathname.startsWith('/admin');
+}
+
+2. Изменить IOSAdminGuard компонент — синхронный redirect
+
+Файл: src/hooks/useIOSAdminGuard.ts
+
+Компонент IOSAdminGuard теперь будет:
+	1.	Читать location.pathname через useLocation()
+	2.	Синхронно проверять условия
+	3.	Если нужен блок — сразу возвращать <Navigate /> вместо children
+	4.	Это предотвратит рендер Routes и lazy-loading
+
+export function IOSAdminGuard({ children }: IOSAdminGuardProps): JSX.Element {
+  const location = useLocation();
+
+  // SYNC check - runs BEFORE Routes are rendered
+  if (shouldBlockIOSAdmin(location.pathname)) {
+    console.info('[iOS Admin Guard] SYNC block at:', location.pathname);
+    overwriteLastRoute('/dashboard');
+    return createElement(Navigate, { to: '/dashboard', replace: true });
+  }
+
+  return createElement(Fragment, null, children);
+}
+
+2.1. Важный фикс: Guard должен стоять ВЫШЕ <Routes />
+
+Файл: src/App.tsx (или где собирается Router)
+
+Требование:
+	•	IOSAdminGuard должен оборачивать всё дерево, содержащее <Routes />, чтобы <Navigate /> прервал рендер до матчингa маршрутов.
+
+Пример:
+
+<BrowserRouter>
+  <IOSAdminGuard>
+    <AppProviders>
+      <Routes>...</Routes>
+    </AppProviders>
+  </IOSAdminGuard>
+</BrowserRouter>
+
+DoD для этого пункта:
+	•	При открытии /admin/* на iOS в preview не появляется спиннер/скелетон админки вообще — сразу показывается /dashboard.
+
+2.2. Доп. предохранитель от “не-админ” тяжёлых страниц (если всё ещё падает)
+
+Если краш продолжается даже на /dashboard, значит тяжело не только /admin/*.
+Добавить расширенный список блокируемых путей только для lovable preview на iOS:
+
+const HEAVY_PREFIXES = ['/admin', '/admin/kb-import', '/admin/broadcasts', '/knowledge/import'];
+return HEAVY_PREFIXES.some(p => pathname.startsWith(p));
+
+(Добавлять только при подтверждённой необходимости, чтобы не блокировать лишнее.)
+
+⸻
+
+3. Обновить BUILD_MARKER
+
+Файл: src/lib/externalLinkKillSwitch.ts
+
+export const BUILD_MARKER = "build: 2026-01-30T19:30 ios-sync-guard-v7";
+
+
+⸻
+
+Почему это сработает
+
+Момент	До исправления	После исправления
+BrowserRouter mount	✅	✅
+IOSAdminGuard render	Проходит насквозь	СТОП: возвращает Navigate
+Routes matching	Начинается	НЕ происходит
+lazy() import	Загружается	НЕ загружается
+Память iOS	Переполняется	В норме
+
+
+⸻
+
+Изменяемые файлы
+
+Файл	Изменение
+src/hooks/useIOSAdminGuard.ts	Добавить синхронную проверку + синхронный Navigate в компоненте
+src/App.tsx	(проверить/зафиксить) что IOSAdminGuard стоит выше <Routes />
+src/lib/externalLinkKillSwitch.ts	Обновить BUILD_MARKER
+
+
+⸻
+
+Критерии готовности (DoD)
+	1.	На iPhone в lovable.dev редакторе вкладка не падает
+	2.	Превью сразу показывает /dashboard, а не спиннер загрузки админки
+	3.	В консоли виден лог [iOS Admin Guard] SYNC block
+	4.	BUILD_MARKER = ios-sync-guard-v7
+	5.	На десктопе поведение не изменено — админка работает
+
+⸻
+
+Риски
+	•	Риск минимален: синхронная проверка — это просто if в теле компонента
+	•	Не затрагивает никакую другую логику
+	•	Работает только на iOS Safari в iframe/preview
+
