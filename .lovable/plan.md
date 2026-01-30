@@ -1,96 +1,137 @@
 
-Цель: добиться, чтобы на iPhone (iOS Safari) внутри lovable.dev редактора больше не происходило «На странице … повторно возникла проблема», за счёт того, что превью приложения гарантированно НЕ загружает React/админку/данные вообще (всегда уходит в ultra-lite заглушку). Сейчас заглушка появляется не всегда: по скринам видно, что иногда Safari падает на самой странице lovable.dev, а иногда — превью всё-таки успевает загрузить реальное приложение (лендинг/админка), что снова разгоняет память.
+# План: Добавить автоматическую синхронизацию GetCourse при успешном автосписании
 
----
+## Цель
+При успешном автосписании (`subscription-charge`) автоматически отправлять renewal-заказы (REN-*) в GetCourse, чтобы каждый биллинговый цикл отображался как отдельная сделка.
 
-## 0) Переформулировка проблемы (фиксируем факт)
-- Опубликованный сайт на iPhone работает.
-- Падает именно связка **lovable.dev редактор + превью**.
-- Мы уже заменили превью на «заглушку» (stub) для iOS Safari, но:
-  - по вашим скринам заглушка то появляется, то нет;
-  - иногда Safari пишет «повторно возникла проблема» именно на URL lovable.dev/projects/… (то есть падает весь редактор).
+## Текущее состояние
 
-Вывод: текущий “isPreview” детектор в index.html **не всегда распознаёт, что мы в контексте lovable.dev редактора**, поэтому иногда заглушка не включается и приложение успевает начать грузиться/потреблять память.
+### Что уже есть:
+- `subscription-charge` создаёт renewal order (REN-*) при успешном списании (строки 1098-1271)
+- GetCourse sync работает **только** для trial conversion (строки 1401-1455)
+- Функция `getcourse-grant-access` умеет отправлять заказ в GetCourse по `order_id`
+- Маппинг тарифов → GetCourse offer_id настроен
 
-Do I know what the issue is?
-- Да: **недостаточно надёжное определение “preview/editor context”**. Сейчас мы полагаемся только на `inIframe` и query flags (`forceHideBadge/lovable/preview`). На мобильном lovable.dev (или в некоторых режимах) превью может открываться без iframe/без этих флагов — тогда stub не включается.
+### Чего не хватает:
+- Обычные renewal (не trial) не отправляются в GetCourse
+- 107 REN-заказов не синхронизированы
 
----
+## Техническое решение
 
-## 1) Что меняем (минимально и точечно, add-only)
-Единственный файл: `index.html`
+### Один файл: `supabase/functions/subscription-charge/index.ts`
 
-### 1.1. Усилить определение “мы внутри lovable.dev редактора”
-Добавляем ещё один сигнал:
-- `document.referrer` содержит `lovable.dev` (это ключевой маркер, когда превью открыто из редактора даже если нет iframe/флагов).
+**Место добавления:** После создания renewal order (после строки ~1240) или после блока trial conversion (после строки ~1455).
 
-Новая логика:
-- `isEditorContext = inIframe || hasPreviewFlag || referrerHasLovable`
+### Логика:
 
-Где:
-- `referrerHasLovable = (document.referrer || '').includes('lovable.dev')`
+```text
+ЕСЛИ renewalOrderId существует (renewal order создан успешно)
+  И getcourse_offer_id настроен для тарифа
+  И есть customer_email
+ТО
+  Вызвать getcourse-grant-access с order_id = renewalOrderId
+  Залогировать результат в audit_logs
+```
 
-Почему это безопасно:
-- В обычном открытии опубликованного сайта/прямой ссылки referrer чаще всего пустой или не lovable.dev — значит stub не включится.
-- Внутри lovable.dev referrer почти всегда будет `https://lovable.dev/...` (с учётом стандартной политики referrer, как минимум origin).
+### Код изменения:
 
-### 1.2. Запускать stub как можно раньше
-Чтобы максимально уменьшить шанс “успеть начать грузить приложение”:
-- перенести текущий guard-скрипт из `<body>` в `<head>` (сразу после `<meta charset>` / `<meta viewport>`, до любых потенциально тяжёлых вещей)
-- это не меняет поведение десктопа, но на iOS даст более раннюю остановку.
+```typescript
+// После строки ~1455, после блока trial conversion и перед telegram-grant-access
 
-### 1.3. Жёстко останавливать загрузку ресурсов перед подменой документа
-Перед `document.open()`:
-- вызвать `window.stop()` (в try/catch), чтобы прервать любые начавшиеся загрузки/парсинг
-- затем `document.open/write/close` как сейчас
-- затем `return;` (и/или `throw` как сейчас) — но сделаем аккуратно: `return;` после подмены документа, а `throw` оставим только как дополнительный стоп в случае, если выполнение продолжится.
+// === PATCH: Sync renewal order to GetCourse (for non-trial renewals) ===
+if (renewalOrderId && !is_trial) {
+  // Get GetCourse offer ID from tariff (or subscription meta)
+  const gcOfferId = tariff?.getcourse_offer_id || subMeta?.gc_offer_id;
+  const customerEmail = orderData?.customer_email;
+  
+  if (gcOfferId && customerEmail) {
+    console.log(`[GC-SYNC] Sending renewal order ${renewalOrderId} to GetCourse, offer=${gcOfferId}`);
+    
+    try {
+      const gcResult = await supabase.functions.invoke('getcourse-grant-access', {
+        body: { order_id: renewalOrderId }
+      });
+      
+      if (gcResult.error) {
+        console.error('[GC-SYNC] GetCourse sync failed:', gcResult.error);
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.gc_sync_renewal_failed',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'subscription-charge',
+          target_user_id: user_id,
+          meta: {
+            subscription_id: id,
+            renewal_order_id: renewalOrderId,
+            gc_offer_id: gcOfferId,
+            error: gcResult.error.message || 'Unknown error',
+          }
+        });
+      } else {
+        console.log('[GC-SYNC] Renewal synced to GetCourse:', gcResult.data);
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.gc_sync_renewal_success',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'subscription-charge',
+          target_user_id: user_id,
+          meta: {
+            subscription_id: id,
+            renewal_order_id: renewalOrderId,
+            gc_offer_id: gcOfferId,
+            gc_result: gcResult.data,
+          }
+        });
+      }
+    } catch (gcErr) {
+      console.error('[GC-SYNC] GetCourse invocation error:', gcErr);
+    }
+  } else {
+    console.log(`[GC-SYNC] Skipping renewal sync: gcOfferId=${gcOfferId}, email=${!!customerEmail}`);
+  }
+}
+// === END PATCH: GC Sync ===
+```
 
-### 1.4. Лёгкая диагностическая подпись внутри заглушки (необязательно, но помогает доказательству)
-Добавить в stub маленький текст внизу (серым, 10–11px):
-- `context: iframe=<true/false>, flag=<true/false>, ref=<true/false>`
-Это нужно, чтобы по скриншоту можно было доказать, что детектор реально сработал “через referrer” (и почему раньше не срабатывал).
+## Последовательность изменений
 
-Важно: никакой внешней отладки/консоли на iPhone не требуется — доказательство будет на самом экране.
+| # | Действие | Файл |
+|---|----------|------|
+| 1 | Добавить вызов `getcourse-grant-access` для renewal orders | `subscription-charge/index.ts` |
+| 2 | Логировать успех/ошибку в `audit_logs` | (в том же файле) |
 
----
+## Что НЕ меняем
+- `getcourse-grant-access` — уже готов, принимает `order_id`
+- Маппинг тарифов — уже настроен
+- Trial conversion — уже работает, не трогаем
+- Telegram/email уведомления — не затрагиваем
 
-## 2) Проверки / критерии готовности (DoD)
-### DoD-A (главный)
-1) На iPhone: открыть `https://lovable.dev/projects/...` (ваш проект)
-2) Переключиться на вкладку Preview
-3) Должна стабильно появляться заглушка “Мобильный режим” без падения Safari, причём **каждый раз** (10 из 10 перезагрузок страницы).
+## Проверка (DoD)
 
-### DoD-B (верификация, что это именно редакторный контекст)
-- На заглушке виден диагностический хвост (например `ref=true`), подтверждающий, что stub включился из-за lovable.dev контекста.
+### DoD-1: Логи успешного sync
+```sql
+SELECT * FROM audit_logs 
+WHERE action = 'subscription.gc_sync_renewal_success'
+ORDER BY created_at DESC LIMIT 5;
+```
 
-### DoD-C (десктоп не сломан)
-- На десктопе lovable.dev превью работает как раньше (не показывается заглушка).
+### DoD-2: Следующее автосписание создаёт сделку в GetCourse
+После ближайшего charge-cron проверить:
+- Renewal order создан
+- `meta.gc_sync_status = 'success'` в orders_v2
+- Сделка появилась в GetCourse
 
----
+### DoD-3: Нет регрессий
+- Trial conversion продолжает работать
+- Email/Telegram уведомления отправляются
 
-## 3) Доказательства выполнения (как вы требуете)
-1) Скриншот iPhone внутри lovable.dev (адресная строка видна), где показана заглушка + диагностическая строка контекста.
-2) Скриншот iPhone после 2–3 обновлений страницы подряд, что снова заглушка и нет “повторно возникла проблема”.
-3) Скриншот десктопного превью (что всё как раньше).
-4) Diff-summary: изменён только `index.html` (и почему).
+## Риски
 
----
+| Риск | Митигация |
+|------|-----------|
+| GetCourse rate limit | Вызов асинхронный, не блокирует charge flow |
+| Дублирование сделок | `getcourse-grant-access` идемпотентен (проверяет `gc_sync_status`) |
+| Нет gc_offer_id у тарифа | Skip + log в консоль |
 
-## 4) Почему это должно сработать
-- Сейчас stub зависит от `iframe`/`query flags`. Если lovable.dev мобильный режим иногда открывает превью без iframe/флага — stub не включается.
-- `document.referrer` — самый надёжный способ понять “меня открыли из lovable.dev”, даже если iframe/flags отсутствуют.
-- Перенос в `<head>` + `window.stop()` снижает вероятность, что iOS успеет раздуть память до критического порога.
-
----
-
-## 5) План внедрения (последовательность)
-1) Прочитать текущий `index.html` и аккуратно перенести скрипт в `<head>` (без изменений остальной разметки).
-2) Расширить вычисление `isPreview` → `isEditorContext` с учётом `document.referrer`.
-3) Добавить `window.stop()` и ранний `return` после подмены документа.
-4) Добавить диагностическую строку в stub (минимально, без новых стилей/зависимостей).
-5) Проверка: iPhone lovable.dev (несколько перезагрузок), затем десктоп.
-
----
-
-## 6) Риск/ограничение (фиксируем честно)
-Если даже при полном отключении загрузки превью (stub 100% всегда) lovable.dev на iPhone всё равно продолжит падать — значит редактор lovable.dev сам по себе превышает лимиты iOS Safari и это не исправляется кодом проекта. Тогда единственный рабочий процесс на iPhone — Chat без Preview (или работа с десктопа). Но текущий шаг нужен, чтобы это доказать детерминированно.
+## Опционально: массовый backfill существующих REN-заказов
+После применения патча можно запустить backfill для 107 несинхронизированных заказов через админ-панель или отдельный скрипт.
