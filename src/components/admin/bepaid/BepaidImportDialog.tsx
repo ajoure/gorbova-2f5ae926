@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 // XLSX is imported dynamically to reduce bundle size
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { transliterateToCyrillic } from "@/utils/transliteration";
 
 interface BepaidImportDialogProps {
@@ -336,6 +337,8 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
         // Page 3: ERIP transactions (detailed)
         // Page 4: Memorial orders (aggregated - skip)
         // Dynamic import of xlsx to reduce bundle size
+        // iOS preview hard stop - throw before loading heavy XLSX library
+        assertExcelAllowedOrThrow();
         const XLSX = await import("xlsx");
         const buffer = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });

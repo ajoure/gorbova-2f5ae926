@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Download, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
 // XLSX is imported dynamically to reduce bundle size
+import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 
 interface GetCourseImportDialogProps {
   open: boolean;
@@ -79,6 +80,8 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
   // Парсинг Excel файла
   const parseExcelFile = async (file: File): Promise<ParsedDeal[]> => {
     // Dynamic import of xlsx to reduce bundle size
+    // iOS preview hard stop - throw before loading heavy XLSX library
+    assertExcelAllowedOrThrow();
     const XLSX = await import("xlsx");
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { type: "array" });
@@ -214,6 +217,8 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
     ];
 
     // Dynamic import of xlsx to reduce bundle size
+    // iOS preview hard stop - throw before loading heavy XLSX library
+    assertExcelAllowedOrThrow();
     const XLSX = await import("xlsx");
     const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
     const wb = XLSX.utils.book_new();

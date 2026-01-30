@@ -1,3 +1,26 @@
+// Emergency iOS guard - runs at module evaluation time (BEFORE React renders)
+(function emergencyIOSGuard() {
+  if (typeof window === 'undefined') return;
+
+  const ua = navigator.userAgent || '';
+  const isIOS = /iP(hone|ad|od)/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
+
+  let inIframe = false;
+  try { inIframe = window.self !== window.top; } catch { inIframe = true; }
+
+  const qs = window.location.search || '';
+  const isPreview = inIframe || qs.includes('forceHideBadge') || qs.includes('lovable') || qs.includes('preview');
+
+  const path = window.location.pathname || '';
+  const shouldBlock = isIOS && isSafari && isPreview && path.startsWith('/admin');
+
+  if (shouldBlock) {
+    console.warn('[App Emergency Guard] Blocking heavy route at module load:', path);
+    window.history.replaceState(null, '', '/dashboard');
+  }
+})();
+
 import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
