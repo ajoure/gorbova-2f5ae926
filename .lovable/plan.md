@@ -1,25 +1,131 @@
-План: 
 
-# Рассылка: Анонс Базы знаний
+# План: Шаблоны и запланированные рассылки
 
-## Контекст и правки к исходному плану
-- Собственник платформы и эксперт — **Катерина Горбова** (НЕ Светлана).
-- База знаний доступна в **публичном кабинете**.
-- Факты:
-  - более **670 вопросов и ответов**
-  - **100 видеоэфиров Катерины Горбовой**
-- Публичная ссылка на базу знаний:  
-  **https://club.gorbova.by/knowledge**
-- Формулировки «внутри платформы» заменить на «в публичном кабинете».
+## Анализ текущей системы
+
+### Существующая инфраструктура:
+- **`BroadcastsTabContent.tsx`** — UI для отправки Telegram и Email рассылок
+- **`email_templates`** — таблица для email-шаблонов (уже существует)
+- **`audit_logs`** — хранит историю отправленных рассылок
+- **`telegram_logs`** — хранит детали сообщений
+
+### Чего не хватает:
+1. Таблица для **шаблонов Telegram-рассылок**
+2. UI для управления шаблонами (создание, редактирование, удаление)
+3. Возможность отправки из готового шаблона
+4. Перенос отправленных шаблонов в архив
 
 ---
 
-## Предлагаемые сообщения для утверждения
+## Техническое решение
+
+### 1. Новая таблица `broadcast_templates`
+
+```sql
+CREATE TABLE public.broadcast_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,                    -- Название шаблона
+  channel TEXT NOT NULL DEFAULT 'telegram', -- 'telegram' | 'email'
+  
+  -- Telegram fields
+  message_text TEXT,
+  button_text TEXT,
+  button_url TEXT,
+  
+  -- Email fields  
+  email_subject TEXT,
+  email_body_html TEXT,
+  
+  -- Status
+  status TEXT NOT NULL DEFAULT 'draft',  -- 'draft' | 'scheduled' | 'sent' | 'archived'
+  scheduled_for TIMESTAMPTZ,              -- Для запланированных
+  
+  -- Stats (after sending)
+  sent_count INT DEFAULT 0,
+  failed_count INT DEFAULT 0,
+  sent_at TIMESTAMPTZ,
+  
+  -- Meta
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- RLS
+ALTER TABLE broadcast_templates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admins can manage templates" ON broadcast_templates
+  FOR ALL TO authenticated
+  USING (has_permission(auth.uid(), 'entitlements.manage'));
+```
+
+### 2. Изменения в UI (`BroadcastsTabContent.tsx`)
+
+#### Новые секции:
+
+**A) Список шаблонов (вместо пустой формы)**
+- Карточки с готовыми шаблонами
+- Кнопки: «Редактировать», «Отправить», «В архив»
+- Фильтр по статусу: Черновики | Запланированные | Архив
+
+**B) Форма создания/редактирования шаблона**
+- При клике «+ Создать шаблон» открывается модалка
+- Все поля как сейчас + название шаблона
+- Кнопки: «Сохранить как черновик» | «Отправить сейчас»
+
+**C) Шаблон "Анонс Базы знаний"**
+- Предустановленный шаблон с утверждённым текстом
+- Telegram + Email версии
 
 ---
 
-### 📱 **Telegram-сообщение**
+## Структура UI
 
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  📋 Шаблоны рассылок                    [+ Создать шаблон] │
+├─────────────────────────────────────────────────────────────┤
+│  [Черновики] [Запланированные] [Архив]                      │
+├─────────────────────────────────────────────────────────────┤
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ 📢 Анонс Базы знаний                               │     │
+│  │ Telegram • Создан: 30 янв 2026                     │     │
+│  │ "База знаний открыта! Мы запустили..."            │     │
+│  │                                                    │     │
+│  │ [Редактировать] [📤 Отправить] [В архив]          │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                             │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ 📧 Email: Анонс Базы знаний                        │     │
+│  │ Email • Создан: 30 янв 2026                        │     │
+│  │ Тема: "🎉 Открыта База знаний..."                  │     │
+│  │                                                    │     │
+│  │ [Редактировать] [📤 Отправить] [В архив]          │     │
+│  └────────────────────────────────────────────────────┘     │
+├─────────────────────────────────────────────────────────────┤
+│  📜 История отправок                                        │
+│  (отправленные рассылки с результатами)                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Изменяемые файлы
+
+| Файл | Изменения |
+|------|-----------|
+| SQL миграция | Создать таблицу `broadcast_templates` с RLS |
+| `src/components/admin/communication/BroadcastsTabContent.tsx` | Рефакторинг: добавить управление шаблонами, разделить на секции |
+| Новый: `src/components/admin/communication/BroadcastTemplateCard.tsx` | Карточка шаблона |
+| Новый: `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Диалог создания/редактирования |
+
+---
+
+## Предустановленные шаблоны
+
+После миграции будут созданы 2 шаблона:
+
+**1. Telegram — Анонс Базы знаний**
+```
 🎉 База знаний открыта!
 
 Мы запустили новый публичный раздел на сайте — Базу знаний с ответами на реальные вопросы от Катерины Горбовой.
@@ -34,119 +140,35 @@
 
 👉 Участникам Клуба с тарифами FULL и BUSINESS открыт полный доступ к видео.
 👀 Остальные могут посмотреть вопросы и оценить ценность базы.
+```
+- Кнопка: «Открыть Базу знаний»
+- URL: `https://club.gorbova.by/knowledge`
 
-**Кнопка:** `Открыть Базу знаний`  
-**Ссылка:** `https://club.gorbova.by/knowledge`
+**2. Email — Анонс Базы знаний**
+- Тема: `🎉 Открыта База знаний — 670+ вопросов и 100 видеоэфиров`
+- HTML из утверждённого плана
 
 ---
 
-### 📧 **Email-письмо**
+## Логика отправки
 
-**Тема:** 🎉 Открыта База знаний — 670+ вопросов и 100 видеоэфиров
+1. Выбрать шаблон из списка
+2. Нажать «Отправить»
+3. Открывается попап с:
+   - Превью сообщения
+   - Фильтры аудитории (справа, как сейчас)
+   - Кнопка подтверждения
+4. После отправки:
+   - Шаблон обновляется: `status = 'sent'`, `sent_at`, `sent_count`, `failed_count`
+   - Можно повторно отправить или архивировать
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5;">
-  <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-    
-    <h1 style="color: #1a1a1a; font-size: 24px; margin-bottom: 16px; text-align: center;">
-      🎉 База знаний открыта!
-    </h1>
-    
-    <p style="color: #444; font-size: 16px; line-height: 1.6;">
-      Мы открыли новый публичный раздел — <strong>Базу знаний</strong> с ответами на реальные вопросы от Катерины Горбовой.
-    </p>
+---
 
-    <p style="color: #444; font-size: 16px; line-height: 1.6;">
-      На данный момент в базе:
-      <strong>более 670 вопросов и ответов</strong> и
-      <strong>100 видеоэфиров</strong> с подробными разборами.
-    </p>
-    
-    <div style="background: #f8f9fa; border-radius: 12px; padding: 20px; margin: 24px 0;">
-      <p style="color: #1a1a1a; font-weight: 600; margin: 0 0 12px 0;">📚 Что внутри:</p>
-      <ul style="color: #555; margin: 0; padding-left: 20px; line-height: 1.8;">
-        <li>ответы по налогам и документам</li>
-        <li>разборы сложных клиентских ситуаций</li>
-        <li>договоры, претензии, проверки</li>
-        <li>практика и живые кейсы</li>
-      </ul>
-    </div>
-    
-    <p style="color: #444; font-size: 16px; line-height: 1.6;">
-      Все материалы структурированы по темам — можно быстро найти нужный ответ и сразу перейти к видеоразбору.
-    </p>
-    
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 20px; margin: 24px 0; text-align: center;">
-      <p style="color: white; margin: 0 0 4px 0; font-weight: 600;">
-        Участникам Клуба с тарифами FULL и BUSINESS
-      </p>
-      <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 14px;">
-        открыт полный доступ к видеоэфирам
-      </p>
-    </div>
-    
-    <p style="color: #666; font-size: 14px; text-align: center; margin-bottom: 24px;">
-      Остальные участники могут посмотреть вопросы и оценить ценность Базы знаний.
-    </p>
-    
-    <div style="text-align: center;">
-      <a href="https://club.gorbova.by/knowledge" 
-         style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; 
-                font-weight: 600; font-size: 16px;">
-        Открыть Базу знаний →
-      </a>
-    </div>
-    
-    <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;">
-    
-    <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
-      Катерина Горбова • club.gorbova.by
-    </p>
-    
-  </div>
-</body>
-</html>
+## Ожидаемый результат
 
-
-⸻
-
-План действий после утверждения
-
-Шаг 1: Edge function — поддержка кастомного URL кнопки
-	•	В telegram-mass-broadcast добавить параметр button_url
-	•	Использовать его вместо APP_URL
-
-Шаг 2: Отправка рассылки
-
-Telegram
-	•	Получатели: все пользователи с привязанным Telegram
-	•	Без фильтра по подписке
-	•	Кнопка: Открыть Базу знаний
-	•	URL: https://club.gorbova.by/knowledge
-
-Email
-	•	Получатели: все пользователи с email
-	•	HTML-шаблон выше без изменений
-
-Шаг 3: Контроль доставки
-	•	Проверка audit_logs
-	•	Проверка telegram_logs
-	•	Отсутствие массовых ошибок
-
-⸻
-
-Требуется утверждение
-	1.	Текст Telegram — ок?
-	2.	Email-письмо — ок?
-	3.	Ссылка https://club.gorbova.by/knowledge — финальная?
-
-После подтверждения:
-	•	готово к рассылке через админ-панель
-
+После реализации:
+- В разделе «Рассылки» появится список шаблонов
+- Готовые шаблоны для анонса Базы знаний (Telegram + Email)
+- Кнопка «Отправить» откроет попап с выбором аудитории
+- После отправки — шаблон можно архивировать
+- История отправок сохраняется внизу страницы
