@@ -1454,6 +1454,59 @@ async function chargeSubscription(
         }
       }
 
+      // === PATCH: Sync renewal order to GetCourse (for non-trial renewals) ===
+      if (renewalOrderId && !is_trial) {
+        const gcOfferId = tariff?.getcourse_offer_id || (subMeta as any)?.gc_offer_id;
+        const customerEmail = orderData?.customer_email;
+        
+        if (gcOfferId && customerEmail) {
+          console.log(`[GC-SYNC] Sending renewal order ${renewalOrderId} to GetCourse, offer=${gcOfferId}`);
+          
+          try {
+            const gcResult = await supabase.functions.invoke('getcourse-grant-access', {
+              body: { order_id: renewalOrderId }
+            });
+            
+            if (gcResult.error) {
+              console.error('[GC-SYNC] GetCourse sync failed:', gcResult.error);
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.gc_sync_renewal_failed',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  renewal_order_id: renewalOrderId,
+                  gc_offer_id: gcOfferId,
+                  error: gcResult.error.message || 'Unknown error',
+                }
+              });
+            } else {
+              console.log('[GC-SYNC] Renewal synced to GetCourse:', gcResult.data);
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.gc_sync_renewal_success',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  renewal_order_id: renewalOrderId,
+                  gc_offer_id: gcOfferId,
+                  gc_result: gcResult.data,
+                }
+              });
+            }
+          } catch (gcErr) {
+            console.error('[GC-SYNC] GetCourse invocation error:', gcErr);
+          }
+        } else {
+          console.log(`[GC-SYNC] Skipping renewal sync: gcOfferId=${gcOfferId}, email=${!!customerEmail}`);
+        }
+      }
+      // === END PATCH: GC Sync ===
+
       // Grant Telegram access
       await supabase.functions.invoke('telegram-grant-access', {
         body: {
