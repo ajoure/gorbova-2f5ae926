@@ -1,85 +1,189 @@
+План: Исправление доступа к обучающему контенту
+
+Подтверждённая диагностика
+
+Корневая причина #1: RLS блокирует метаданные
+
+Таблица	Текущие политики	Результат для обычных пользователей
+training_modules	Только Admins can manage modules	SELECT возвращает []
+training_lessons	Только Admins can manage lessons	SELECT возвращает []
+module_access	Есть политика Authenticated users can read	Работает
+
+УТОЧНЕНИЕ:
+Это полностью объясняет симптом «Раздел пока пуст» — код отрабатывает корректно, но получает пустые массивы из-за RLS.
+
+⸻
+
+Корневая причина #2: RLS на lesson_blocks не учитывает module_access
+
+Текущая RLS проверяет:
+
+subscriptions_v2.product_id = training_modules.product_id
+
+Но модуль “Уроки без модулей” имеет product_id = NULL → условие всегда FALSE.
+
+Связь через module_access → tariff_id → subscriptions_v2.tariff_id не проверяется.
+
+УТОЧНЕНИЕ:
+Это приводит к ситуации:
+	•	метаданные (после шага 1) будут видны,
+	•	но при открытии урока контент всё равно не загрузится.
+
+⸻
+
+Данные (проверено):
+
+Сущность	Значение
+Модуль “Уроки без модулей”	product_id = NULL, is_container = true
+module_access	2 записи: BUSINESS, FULL
+Юлия Рабчевская	Подписка BUSINESS (активная), tariff_id совпадает
+lesson_blocks	100 блоков для 100 уроков
 
 
-# План: Исправление системы доступа к обучающим модулям ✅ ВЫПОЛНЕНО
+⸻
 
-## Диагностика (подтверждено)
+План исправлений (порядок важен)
 
-### Корневая причина
-RLS-политика на таблице `module_access` требует permission `content.manage`, который **не существует** в базе данных. Существуют только: `content.view`, `content.edit`, `content.publish`.
+Шаг 1: Добавить RLS для чтения метаданных модулей/уроков
 
-В результате:
-1. Запрос к `module_access` возвращает пустой массив для обычных пользователей
-2. Код интерпретирует пустой массив как "модуль публичный"
-3. Карточки модулей показываются как доступные
-4. Но RLS на `lesson_blocks` правильно блокирует контент
-5. Пользователь видит пустую страницу "Раздел пока пуст"
-
----
-
-## Выполненные исправления
-
-### ✅ Шаг 1: Добавлена RLS политика для чтения module_access
-
-```sql
-CREATE POLICY "Authenticated users can read module_access"
-ON public.module_access
+-- 1) Модули: все авторизованные могут читать активные
+CREATE POLICY "Authenticated users can view active modules"
+ON public.training_modules
 FOR SELECT
 TO authenticated
-USING (true);
-```
+USING (is_active = true);
 
-### ✅ Шаг 2: Создан permission content.manage
+-- 2) Уроки: все авторизованные могут читать активные
+CREATE POLICY "Authenticated users can view active lessons"
+ON public.training_lessons
+FOR SELECT
+TO authenticated
+USING (is_active = true);
 
-```sql
-INSERT INTO public.permissions (code, name, category)
-VALUES ('content.manage', 'Управление контентом', 'content')
-ON CONFLICT (code) DO NOTHING;
+DoD-1 (УТОЧНЁН):
+	•	Под аккаунтом BUSINESS:
+	•	SELECT id FROM training_modules WHERE is_container = true AND is_active = true → не пусто
+	•	SELECT id FROM training_lessons WHERE is_active = true → не пусто
 
--- Привязан к ролям admin и super_admin
-INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM public.roles r
-CROSS JOIN public.permissions p
-WHERE r.code IN ('admin', 'super_admin')
-  AND p.code = 'content.manage'
-  AND NOT EXISTS (
-    SELECT 1 FROM public.role_permissions rp
-    WHERE rp.role_id = r.id AND rp.permission_id = p.id
-  );
-```
+⸻
 
-### ✅ Шаг 3: Обновлён useContainerLessons для проверки доступа
+Шаг 2: Исправить RLS на lesson_blocks для проверки через module_access
 
-**Файл:** `src/hooks/useContainerLessons.ts`
+ПРЕДВАРИТЕЛЬНЫЙ STOP (ДОБАВЛЕНО):
+	•	Подтвердить точное имя таблицы блоков (lesson_blocks / training_lesson_blocks и т.п.).
+	•	Подтвердить, что в subscriptions_v2 реально используется поле access_end_at.
 
-- Добавлена загрузка `module_access` с названиями тарифов
-- Добавлена загрузка подписок пользователя
-- Реализована логика проверки доступа: админ OR нет ограничений OR пользователь имеет нужный тариф
-- Возвращается массив `restrictedTariffs` для отображения в плашке
+⸻
 
-### ✅ Шаг 4: Исправлено отображение плашки в Knowledge.tsx
+Текущая политика “Users can view blocks with valid subscription” проверяет только product_id.
+Нужно добавить альтернативную ветку через module_access → tariff_id.
 
-**Файл:** `src/pages/Knowledge.tsx`
+-- Старую политику удалять ТОЛЬКО после smoke-проверки
+DROP POLICY IF EXISTS "Users can view blocks with valid subscription" ON public.lesson_blocks;
 
-- Объединены названия тарифов из модулей и контейнеров
-- Плашка показывается если есть ограниченный контент
-- Передаются все необходимые названия тарифов
+CREATE POLICY "Users can view lesson blocks with access"
+ON public.lesson_blocks
+FOR SELECT
+TO authenticated
+USING (
+  -- Админы
+  EXISTS (
+    SELECT 1 FROM user_roles ur
+    WHERE ur.user_id = auth.uid()
+      AND ur.role IN ('admin', 'superadmin')
+  )
 
----
+  -- content.manage
+  OR has_permission(auth.uid(), 'content.manage')
 
-## Изменённые файлы
+  -- Через product_id (старая логика)
+  OR EXISTS (
+    SELECT 1
+    FROM training_lessons tl
+    JOIN training_modules tm ON tm.id = tl.module_id
+    JOIN subscriptions_v2 s ON s.product_id = tm.product_id
+    WHERE tl.id = lesson_blocks.lesson_id
+      AND tl.is_active = true
+      AND tm.is_active = true           -- ДОБАВЛЕНО
+      AND s.user_id = auth.uid()
+      AND s.status IN ('active', 'trial')
+      AND (s.access_end_at IS NULL OR s.access_end_at > now())
+  )
 
-| Файл | Изменение |
-|------|-----------|
-| `src/hooks/useContainerLessons.ts` | Добавлена проверка доступа, возврат restrictedTariffs |
-| `src/pages/Knowledge.tsx` | Объединение тарифов, передача в RestrictedAccessBanner |
+  -- Через entitlements (старая логика)
+  OR EXISTS (
+    SELECT 1
+    FROM training_lessons tl
+    JOIN training_modules tm ON tm.id = tl.module_id
+    JOIN products_v2 p ON p.id = tm.product_id
+    JOIN entitlements e ON e.product_code = p.code
+    WHERE tl.id = lesson_blocks.lesson_id
+      AND tl.is_active = true
+      AND tm.is_active = true           -- ДОБАВЛЕНО
+      AND e.user_id = auth.uid()
+      AND e.status = 'active'
+      AND (e.expires_at IS NULL OR e.expires_at > now())
+  )
 
----
+  -- Через module_access → tariff_id (НОВАЯ ЛОГИКА)
+  OR EXISTS (
+    SELECT 1
+    FROM training_lessons tl
+    JOIN training_modules tm ON tm.id = tl.module_id
+    JOIN module_access ma ON ma.module_id = tl.module_id
+    JOIN subscriptions_v2 s ON s.tariff_id = ma.tariff_id
+    WHERE tl.id = lesson_blocks.lesson_id
+      AND tl.is_active = true
+      AND tm.is_active = true           -- ДОБАВЛЕНО
+      AND s.user_id = auth.uid()
+      AND s.status IN ('active', 'trial')
+      AND (s.access_end_at IS NULL OR s.access_end_at > now())
+  )
+);
 
-## Ожидаемый результат
+DoD-2 (УТОЧНЁН):
+	•	BUSINESS/FULL → lesson_blocks читаются
+	•	CHAT → lesson_blocks не читаются
+	•	admin → читает всё
 
-После исправлений:
-- ✅ Пользователи с FULL/BUSINESS тарифами видят видео-контент
-- ✅ Пользователи с CHAT тарифом видят плашку "Контент доступен участникам Клуба" с названиями нужных тарифов
-- ✅ Настройки доступа в админ-панели работают корректно
-- ✅ Админы сохраняют полный доступ ко всему контенту
+⸻
+
+Шаг 3: Код не требует изменений
+
+Логика в useContainerLessons.ts корректна после RLS:
+	•	module_access читается
+	•	тарифы сопоставляются
+	•	has_access вычисляется верно
+
+ПРОВЕРКА (ДОБАВЛЕНО):
+	•	У пользователя есть RLS-доступ к subscriptions_v2 только к своим строкам
+	•	иначе userTariffIds будет пустым.
+
+⸻
+
+Проверка безопасности
+
+Что открывается:
+	•	training_modules — метаданные
+	•	training_lessons — метаданные
+
+Что остаётся защищённым:
+	•	lesson_blocks — только при наличии:
+	•	подписки по product_id
+	•	подписки по tariff_id (через module_access)
+	•	entitlement
+	•	admin / superadmin
+
+⸻
+
+Ожидаемый результат
+	•	BUSINESS/FULL:
+	•	видят 100 уроков
+	•	могут смотреть видео
+	•	CHAT:
+	•	видят карточки
+	•	не получают доступ к контенту
+	•	Плашка:
+	•	«Доступно по тарифам: BUSINESS, FULL»
+	•	Админы:
+	•	без изменений
