@@ -124,19 +124,44 @@ export function VideoBlock({
     
     // Use Kinescope API player for controlled seek+autoplay
     if (content.provider === 'kinescope' && kinescopeVideoId && useApiPlayer && !apiError) {
+      // CSS selector-safe ID (no colons)
+      const cssId = containerId;
+      
       return (
         <div className="space-y-2">
           {content.title && (
             <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
           )}
-          <div className="relative">
+          {/* Outer wrapper controls geometry (aspect-ratio) */}
+          <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+            {/* Mount point for Kinescope player - fills wrapper */}
             <div 
               id={containerId}
-              className="relative w-full aspect-video rounded-lg overflow-hidden bg-black"
+              className="absolute inset-0"
             />
+            {/* Per-instance CSS to force player sizing with !important */}
+            <style>{`
+              #${cssId} {
+                width: 100% !important;
+                height: 100% !important;
+              }
+              #${cssId} > div {
+                width: 100% !important;
+                height: 100% !important;
+                position: absolute !important;
+                inset: 0 !important;
+              }
+              #${cssId} iframe {
+                width: 100% !important;
+                height: 100% !important;
+                position: absolute !important;
+                inset: 0 !important;
+                display: block !important;
+              }
+            `}</style>
             {/* Autoplay blocked banner */}
             {autoplayBlocked && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg">
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg z-10">
                 <div className="text-center text-white p-4">
                   <p className="text-sm mb-3">Автозапуск заблокирован браузером</p>
                   <Button

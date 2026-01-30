@@ -206,6 +206,51 @@ export function useKinescopePlayer({
 
     let isMounted = true;
     let player: KinescopePlayer | null = null;
+    let observer: MutationObserver | null = null;
+    let rafId: number | null = null;
+
+    /**
+     * Force all elements inside container to fill 100%
+     * Called multiple times to counteract Kinescope's late style changes
+     */
+    const forceFill = () => {
+      const containerEl = document.getElementById(containerId);
+      if (!containerEl) return;
+
+      // Force container itself
+      containerEl.style.setProperty('width', '100%', 'important');
+      containerEl.style.setProperty('height', '100%', 'important');
+
+      // Force any wrapper div Kinescope might insert
+      const wrapper = containerEl.firstElementChild as HTMLElement | null;
+      if (wrapper && wrapper.tagName !== 'IFRAME') {
+        wrapper.style.setProperty('width', '100%', 'important');
+        wrapper.style.setProperty('height', '100%', 'important');
+        wrapper.style.setProperty('position', 'absolute', 'important');
+        wrapper.style.setProperty('inset', '0', 'important');
+      }
+
+      // Force iframe
+      const iframe = containerEl.querySelector('iframe') as HTMLIFrameElement | null;
+      if (iframe) {
+        iframe.style.setProperty('width', '100%', 'important');
+        iframe.style.setProperty('height', '100%', 'important');
+        iframe.style.setProperty('position', 'absolute', 'important');
+        iframe.style.setProperty('inset', '0', 'important');
+        iframe.style.setProperty('display', 'block', 'important');
+      }
+    };
+
+    /**
+     * Throttled forceFill via requestAnimationFrame
+     */
+    const throttledForceFill = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        forceFill();
+      });
+    };
 
     const initPlayer = async () => {
       try {
@@ -238,22 +283,30 @@ export function useKinescopePlayer({
         playerRef.current = player;
         isReadyRef.current = true;
         
-        // Force iframe to fill container (Kinescope API doesn't always respect 100%)
-        setTimeout(() => {
-          const containerEl = document.getElementById(containerId);
-          if (containerEl) {
-            const iframe = containerEl.querySelector('iframe');
-            if (iframe) {
-              iframe.style.width = '100%';
-              iframe.style.height = '100%';
-              iframe.style.position = 'absolute';
-              iframe.style.top = '0';
-              iframe.style.left = '0';
-            }
-          }
-        }, 50);
+        // Force fill immediately
+        forceFill();
         
-        console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player ready:`, { videoId, containerId });
+        // Force fill again after next frame (Kinescope may change DOM)
+        requestAnimationFrame(forceFill);
+        
+        // Force fill after delay (Kinescope sometimes changes styles later)
+        setTimeout(forceFill, 100);
+        setTimeout(forceFill, 300);
+        setTimeout(forceFill, 500);
+        
+        // Setup MutationObserver to catch any late style changes by Kinescope
+        const containerEl = document.getElementById(containerId);
+        if (containerEl) {
+          observer = new MutationObserver(throttledForceFill);
+          observer.observe(containerEl, {
+            attributes: true,
+            attributeFilter: ['style', 'class'],
+            childList: true,
+            subtree: true,
+          });
+        }
+        
+        console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player ready with size stabilizer:`, { videoId, containerId });
 
         // If initial autoplay timecode was provided, set it as pending
         if (autoplayTimecode != null && autoplayTimecode > 0) {
@@ -279,6 +332,19 @@ export function useKinescopePlayer({
     return () => {
       isMounted = false;
       isReadyRef.current = false;
+      
+      // Cleanup observer
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      
+      // Cancel pending RAF
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      
       if (player) {
         try {
           player.destroy();
