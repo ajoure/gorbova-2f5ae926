@@ -109,6 +109,13 @@ const getReadableLabel = (segment: string, parentPath: string) => {
 
 export function DashboardBreadcrumbs() {
   const location = useLocation();
+  
+  // CRITICAL: Hide global breadcrumbs on /library/* routes
+  // These pages have their own internal breadcrumbs
+  if (location.pathname.startsWith("/library")) {
+    return null;
+  }
+  
   const pathSegments = location.pathname.split("/").filter(Boolean);
   
   // Build breadcrumb items

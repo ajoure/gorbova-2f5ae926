@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
+import { goToVideoAnswer } from "@/lib/goToVideoAnswer";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -60,27 +60,9 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
     });
   };
 
-  // Navigate to video lesson with timecode - STRICTLY internal navigation
+  // Navigate to video lesson with timecode - STRICTLY internal navigation via unified handler
   const handleWatchVideo = (question: typeof questions[0]) => {
-    const moduleSlug = question.lesson?.module?.slug;
-    const lessonSlug = question.lesson?.slug;
-    
-    if (moduleSlug && lessonSlug) {
-      // Internal navigation to lesson page with seekTo state
-      navigate(`/library/${moduleSlug}/${lessonSlug}`, { 
-        state: { seekTo: question.timecode_seconds } 
-      });
-    } else {
-      // No external links! Show message instead
-      console.warn("[Knowledge] Question missing lesson/module data:", question.id, {
-        lessonSlug,
-        moduleSlug,
-        lessonId: question.lesson_id
-      });
-      toast.error("Видеоответ пока не привязан к уроку", {
-        description: "Обратитесь к администратору для настройки связи"
-      });
-    }
+    goToVideoAnswer({ navigate, question, source: 'knowledge-questions' });
   };
 
   if (isLoading) {
@@ -145,6 +127,8 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
               <button 
                 onClick={() => handleWatchVideo(question)}
                 disabled={!hasInternalLink}
+                data-action="goToVideoAnswer"
+                data-question-id={question.id}
                 className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="h-4 w-4" />
