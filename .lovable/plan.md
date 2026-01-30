@@ -1,116 +1,93 @@
 
-# План: Исправить размер видео Kinescope на странице урока
+Контекст (что видно по симптомам)
+- Вы описываете поведение: «при загрузке пытается стать большим, потом снова становится маленьким».
+- Это типичный признак того, что:
+  1) мы один раз “подтягиваем” iframe стилями,
+  2) затем сам Kinescope-скрипт/плеер позже повторно выставляет свои inline-стили (ширина/высота в px или свои обёртки), из‑за чего iframe снова “сжимается”.
+- Текущий патч делает setTimeout(50ms) и правит iframe один раз — этого недостаточно, если Kinescope перезаписывает размеры позже.
 
-## Проблема
-На скриншоте видно, что видеоплеер Kinescope отображается очень маленьким в центре контейнера вместо того, чтобы занимать полную ширину.
+Цель
+- Сделать размер плеера стабильным: всегда на всю ширину карточки, 16:9, без “сжатия обратно”.
 
-## Причина
-Kinescope IFrame API создаёт iframe внутри контейнера с размерами `width: "100%", height: "100%"`. Но:
-1. Контейнер `<div id={containerId}>` имеет только `aspect-video`, без явной ширины
-2. Когда iframe создаётся через API, он не понимает "100% от чего"
-3. Плеер отображается с минимальными размерами по умолчанию
-
-## Решение
-Добавить явные стили для контейнера и iframe внутри него:
-
-### Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx`
-
-1. **Контейнер плеера**: добавить `w-full` для полной ширины
-2. **Стили для iframe внутри контейнера**: через CSS selector или inline styles убедиться, что iframe растягивается на весь контейнер
-
-Изменения в строках 132-136:
-```tsx
-<div 
-  id={containerId}
-  className="aspect-video rounded-lg overflow-hidden bg-black w-full"
-  style={{ minHeight: '360px' }}
-/>
-```
-
-И добавить глобальный CSS или inline для iframe внутри контейнера Kinescope:
-```css
-[id^="kinescope-player"] iframe {
-  width: 100% !important;
-  height: 100% !important;
-}
-```
-
-### Альтернативный подход (более надёжный)
-В хуке `useKinescopePlayer.ts` после создания плеера найти iframe внутри контейнера и установить ему стили явно:
-
-```typescript
-// После создания плеера
-const container = document.getElementById(containerId);
-if (container) {
-  const iframe = container.querySelector('iframe');
-  if (iframe) {
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.position = 'absolute';
-    iframe.style.inset = '0';
-  }
-}
-```
-
-И контейнер сделать `position: relative` с `aspect-ratio`:
-```tsx
-<div 
-  id={containerId}
-  className="relative aspect-video rounded-lg overflow-hidden bg-black w-full"
-/>
-```
+Решение (детерминированное, точечное, без лишнего рефакторинга)
+Сделаем два слоя защиты одновременно:
+1) Правильная структура контейнера (aspect-ratio на внешнем wrapper, а mount-точка плеера — absolute fill).
+2) “Жёсткая” фиксация размеров через CSS с `!important` + MutationObserver, который будет повторно применять стили, если Kinescope их изменит после инициализации.
 
 ---
 
-## Технические детали
+1) Исправить разметку контейнера в VideoBlock (правильная геометрия)
+Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx`
 
-### VideoBlock.tsx (строки 132-136)
-```tsx
-// БЫЛО:
-<div 
-  id={containerId}
-  className="aspect-video rounded-lg overflow-hidden bg-black"
-/>
+Сделать:
+- Перенести `aspect-video` и `rounded/overflow/bg` на внешний wrapper.
+- Внутри wrapper сделать `div id={containerId}` как “mount point” с `absolute inset-0`.
+- Добавить инлайновый `<style>` (пер-экземпляр, привязанный к `containerId`) с селекторами `#containerId`, `#containerId iframe` и возможной обёрткой `#containerId > div`, чтобы:
+  - контейнер и обёртка занимали 100%,
+  - iframe всегда был `position:absolute; inset:0; width:100%; height:100%`,
+  - это было `!important`, чтобы перебить inline-стили, которые Kinescope ставит позже.
 
-// СТАНЕТ:
-<div 
-  id={containerId}
-  className="relative w-full aspect-video rounded-lg overflow-hidden bg-black"
-/>
-```
+Почему так:
+- Сейчас `aspect-video` висит на том же div, куда Kinescope может поставить свои width/height, тем самым ломая геометрию.
+- Внешний wrapper фиксирует размер, а внутренний mount point просто “заполняет” его.
 
-### useKinescopePlayer.ts (после строки 238)
-После `playerRef.current = player;` добавить:
-```typescript
-// Force iframe to fill container
-setTimeout(() => {
-  const container = document.getElementById(containerId);
-  if (container) {
-    const iframe = container.querySelector('iframe');
-    if (iframe) {
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.position = 'absolute';
-      iframe.style.top = '0';
-      iframe.style.left = '0';
-    }
-  }
-}, 50);
-```
+Требования к CSS (минимум):
+- `#<id> { width:100%!important; height:100%!important; }`
+- `#<id> iframe { width:100%!important; height:100%!important; position:absolute!important; inset:0!important; display:block!important; }`
+- `#<id> > div { width:100%!important; height:100%!important; position:absolute!important; inset:0!important; }` (на случай, если Kinescope вставляет дополнительную обёртку)
 
 ---
 
-## Ожидаемый результат
-- Видеоплеер занимает всю ширину контейнера
-- Соотношение сторон 16:9 сохраняется (aspect-video)
-- Удобно смотреть без включения полноэкранного режима
-- Работает на desktop, tablet и mobile
+2) Сделать “стабилизатор размеров” в useKinescopePlayer (на случай поздних изменений)
+Файл: `src/hooks/useKinescopePlayer.ts`
 
-## Файлы для изменения
-1. `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` — добавить `relative w-full` к контейнеру
-2. `src/hooks/useKinescopePlayer.ts` — принудительно установить размеры iframe после создания плеера
+Сделать:
+- Ввести локальную функцию `forceFill()`:
+  - находит `containerEl` по `containerId`,
+  - правит:
+    - containerEl (width/height 100%),
+    - wrapper (если есть: `containerEl.firstElementChild`),
+    - iframe (как сейчас, но с `inset:0`, `display:block`).
+- После создания player:
+  - вызвать `forceFill()` сразу,
+  - вызвать `forceFill()` ещё раз через `requestAnimationFrame` и через `setTimeout(250-400ms)` (два дополнительных “тика” — часто Kinescope меняет DOM чуть позже).
+- Подключить `MutationObserver` на `containerEl`:
+  - наблюдать `attributes: true` (style/class), `childList: true`, `subtree: true`,
+  - при любом изменении вызывать `forceFill()` (можно с лёгким throttling через rAF, чтобы не спамить).
+- На cleanup (return useEffect) обязательно `observer.disconnect()`.
 
-## DoD
-- Видео отображается на всю ширину карточки контента
-- Соотношение сторон 16:9
-- Скриншот: видео занимает нормальный размер, без необходимости включать полный экран
+Почему так:
+- Даже если Kinescope повторно ставит фиксированные размеры после нашего первого setTimeout — observer увидит это и мгновенно вернёт “fill”.
+
+STOP-предохранители (чтобы не сломать другое)
+- Наблюдатель и принудительные стили применяются только внутри `containerId` (точечный селектор), не глобально.
+- Никаких изменений для YouTube/Vimeo/прочих — только для Kinescope API режима.
+
+---
+
+3) Проверка в Preview (обязательные пруфы)
+Сценарии:
+A) Страница `/library/container-knowledge-videos/episode-100`
+- Перезагрузка страницы (hard reload).
+- Наблюдение: плеер не “скачет” обратно в маленький.
+- Скрин: видно нормальный размер видео в карточке.
+
+B) Повторная инициализация (клик по вопросам/таймкодам)
+- Нажать Play по вопросу → плеер остаётся нормального размера.
+- Скрин: после клика Play плеер всё ещё большой.
+
+C) Адаптивность
+- Mobile viewport (390x844) и tablet (820x1180):
+  - видео занимает ширину контейнера,
+  - 16:9 сохраняется,
+  - ничего не выпадает из карточки.
+- Скрины mobile + tablet.
+
+DoD
+- Видео стабильно “нормального” размера и не уменьшается через 0.5–2 сек после загрузки.
+- Приложены скриншоты: desktop + mobile + tablet.
+- В консоли нет ошибок, связанных с Kinescope (если будут — приложим и устраним).
+
+Изменяемые файлы (точечно)
+- `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` (wrapper + mount point + пер-id CSS)
+- `src/hooks/useKinescopePlayer.ts` (forceFill + дополнительные тики + MutationObserver)
