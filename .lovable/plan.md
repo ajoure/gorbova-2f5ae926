@@ -1,121 +1,141 @@
-# План: Гарантированное исправление проблемы суммы списаний (1 BYN → 100/150/250)
+Жёсткие правила исполнения для Lovable.dev
+1) Ничего не ломать и не трогать лишнее. Только add-only изменения и точечные правки.
+2) Любая массовая операция: сначала dry-run (preview), затем execute. Нужны явные STOP-предохранители (лимиты/батчи/таймауты).
+3) Никаких хардкодов сумм (1/100/250 и т.п.) в бизнес-логике и инвариантах. Классификация платежей — только по метаданным/типам/связям, а не по amount.
+4) Timezone для nightly — фиксированный Europe/London (без привязки к Warsaw). Запуск должен происходить 1 раз в сутки в 03:00 Europe/London.
+5) Все проверки делать set-based (SQL/RPC), без N+1 запросов по пользователям (иначе будет падать по лимитам).
+6) Секреты/токены: не использовать *encrypted* поля как готовые токены. Только env secrets. Никаких паролей в чате.
+7) Финальный отчёт обязателен: список изменённых файлов + diff-summary + результаты dry-run/execute + пруфы из админ-учётки 1@ajoure.by (скрины/логи/audit_logs).
+8) SYSTEM ACTOR Proof обязателен: после nightly-run должна появиться реальная запись в audit_logs с actor_type='system', actor_user_id=NULL, actor_label заполнен.
 
-## Результаты исследования
+PATCH-лист: Эталон системы + Ночной мониторинг инвариантов (Europe/London)
 
-### Ответы на контрольные вопросы
+PATCH 1 (CRITICAL) — Amount source of truth для renewals (fix корневого бага)
+- File: supabase/functions/subscription-charge/index.ts
+- Change: после успешного charge обязательно синхронизировать amount из provider_response:
+  amount = chargeResult.transaction.amount / 100
+- Add: meta tracking при INSERT payments_v2:
+  meta.amount_source, meta.calculated_amount, meta.recurring_amount, meta.is_renewal=true
+- DoD: для всех succeeded renewals payments_v2.amount == provider_response.transaction.amount/100
 
-**Вопрос 1: Сохраняется ли `provider_response` с `transaction.amount`?**
+PATCH 2 (CRITICAL) — Обязательная классификация платежей (без привязки к суммам)
+- DB Migration: payments_v2
+  ADD COLUMN payment_classification text
+  enum: card_verification | trial_purchase | regular_purchase | subscription_renewal | refund | orphan_technical
+- New shared: supabase/functions/_shared/paymentClassification.ts
+  classifyPayment() — строго по: transaction_type/status/order_id/is_trial/is_recurring/order_number/description
+  (amount НЕ использовать)
+- Integrate: вызывать классификацию в:
+  a) supabase/functions/bepaid-webhook/index.ts (create/update payment)
+  b) supabase/functions/subscription-charge/index.ts (update payment)
+- DoD: 100% новых payments_v2 имеют payment_classification != NULL
 
-✅ **ДА.** Webhook сохраняет полный body в `provider_response`.
-Проверено в БД — 40 записей имеют `provider_response.transaction.amount = 100` при `amount = 1`.
-Backfill возможен без API-запросов к bePaid.
+PATCH 3 (CRITICAL) — Централизация hasValidAccess() (единый источник истины)
+- New shared: supabase/functions/_shared/accessValidation.ts
+  hasValidAccess(supabase, userId) => {valid, source, endAt, ids...}
+- Refactor to import shared:
+  subscriptions-reconcile/index.ts
+  telegram-revoke-access/index.ts
+  telegram-check-expired/index.ts
+- DoD: поиск по репо “hasValidAccess(” показывает только import из _shared
 
-**Вопрос 2: Где создаётся `payments_v2` для renewal?**
+PATCH 4 (HIGH) — Nightly System Health Core (Europe/London + защита cron)
+- New: supabase/functions/nightly-system-health/index.ts
+  a) Validate header x-cron-secret == env CRON_SECRET (иначе 401)
+  b) Один запуск в сутки: cron вызывает hourly, но внутри guard:
+     if source='cron-hourly' and hour(Europe/London)!=3 => skipped
+  c) Создать run в system_health_runs, записать checks в system_health_checks
+  d) В конце — audit_logs запись (SYSTEM ACTOR proof)
+- DoD: nightly-run реально выполняется 1 раз/сутки в 03:00 Europe/London
 
-В `subscription-charge/index.ts` — запись создаётся ДО отправки в bePaid с предварительно рассчитанной суммой.
-После успешного charge обновляется статус и `provider_response`, но **amount НЕ перезаписывается**.
+PATCH 5 (HIGH) — Таблицы мониторинга + RLS
+- DB Migration:
+  create table system_health_runs
+  create table system_health_checks
+  indexes
+  RLS enabled
+  policies: service_role full access
+- DoD: таблицы существуют, пишутся из service_role, читаются в админке (read-only)
 
-**Вопрос 3: Признак trial в `orders_v2`?**
+PATCH 6 (HIGH) — Инварианты payments (без чисел, без N+1)
+- File: supabase/functions/nightly-payments-invariants/index.ts
+- Add invariants (set-based):
+  INV-P1 Amount synced with provider_response (mismatches=0)
+  INV-P2 Classification coverage (unclassified=0)
+  INV-P3 card_verification must NOT have order_id
+  INV-P4 orphan_technical must NOT create order/deal side effects (проверка связей)
+- DoD: ни один invariant не использует “amount == 1/100/…” как критерий
 
-`orders_v2.is_trial` — основной признак. Код `getRecurringAmount` опирается только на `order.is_trial` — это корректно.
+PATCH 7 (HIGH) — Инварианты access
+- Add invariants (set-based):
+  INV-A1 Active entitlements must have expires_at IS NULL OR > now
+  INV-A2 Active subscriptions (active/trial/past_due) must have access_end_at > now
+- DoD: нарушения => FAIL + алерт
 
----
+PATCH 8 (HIGH) — Telegram wrongly revoked detector (строго set-based, без циклов)
+- Replace текущий N+1 вариант.
+- Сделать SQL/RPC (рекомендовано):
+  rpc_find_wrongly_revoked() возвращает members где:
+    access_status IN ('removed','expired','kicked','no_access')
+    AND hasValidAccess(user_id)=true
+- Nightly invariant:
+  INV-T1 wrongly_revoked_count == 0
+- DoD: 1 запрос → список с samples, без циклов по пользователям
 
-## Диагностика: Почему патч webhook не работает
+PATCH 9 (MEDIUM) — Telegram alert владельцу (правильный источник токена)
+- Secrets:
+  OWNER_TELEGRAM_CHAT_ID=66086524
+  PRIMARY_TELEGRAM_BOT_TOKEN=... (env secret)
+- В nightly-system-health отправка через env token.
+  НЕ использовать telegram_bots.bot_token_encrypted как готовый токен.
+- DoD: при FAIL приходит plain-text сообщение владельцу
 
-Webhook обновляет `payments_v2` по `provider_payment_id` (bePaid UID).
-Но для **рекуррентных** платежей (subscription-charge) обновление происходит в самой функции — и там amount НЕ синхронизируется.
+PATCH 10 (MEDIUM) — Trial flow invariant (триал обязан работать)
+- Invariant (set-based) за 7 дней:
+  paid trial order => должен существовать access (subscription OR entitlement) с валидным сроком
+- Важно: триал — это нормальная покупка, она создаёт access и может привести к последующему списанию.
+  Проверка должна ловить именно “после триала не создан доступ” и “конверсия сломала суммы/связи”.
+- DoD: triаl сценарий проходит end-to-end без ручных фиксов
 
----
+PATCH 11 (LOW) — UI /admin/system-health (read-only)
+- New page: src/pages/admin/SystemHealth.tsx
+  list runs (last 30)
+  drilldown checks
+  filter status
+- DoD: админ видит историю и samples
 
-## Решение: 4 патча + 1 улучшение
+PATCH 12 (MANDATORY) — SYSTEM ACTOR Proof (не обсуждается)
+- После каждого nightly-run должна быть запись в audit_logs:
+  actor_type='system', actor_user_id=NULL, actor_label='nightly-system-health'
+- DoD: приложить пруф (скрин/лог из 1@ajoure.by), что запись реально появляется
 
-### ПАТЧ 1: Синхронизация amount в subscription-charge (КРИТИЧЕСКИЙ)
+CRON (Supabase SQL Editor, NOT migration)
+- Hourly trigger + guard по Europe/London:
 
-**Файл:** `supabase/functions/subscription-charge/index.ts`
+SELECT cron.schedule(
+  'nightly-system-health-hourly',
+  '0 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/nightly-system-health',
+    headers := jsonb_build_object(
+      'Content-Type','application/json',
+      'x-cron-secret', 'CRON_SECRET_VALUE'
+    ),
+    body := jsonb_build_object(
+      'source','cron-hourly',
+      'target_tz','Europe/London',
+      'target_hour',3,
+      'notify_owner', true
+    )
+  );
+  $$
+);
 
-**Проблема:** Update после успешного charge НЕ включает amount.
-
-**Исправление:** Добавить `amount: chargeResult.transaction.amount / 100` в update после успешного charge.
-
----
-
-### ПАТЧ 1.5: Трекинг источника суммы в INSERT payments_v2 (НОВОЕ)
-
-**Файл:** `supabase/functions/subscription-charge/index.ts`
-
-**Место:** При INSERT payments_v2 (до charge)
-
-**Добавить в meta:**
-```typescript
-meta: {
-  amount_source: amountSource,
-  calculated_amount: amount,
-  recurring_amount: subMeta?.recurring_amount,
-}
-```
-
-Это даёт полную прозрачность: откуда взялась сумма, какая была рассчитана, какая в подписке.
-
----
-
-### ПАТЧ 2: Guard для non-trial с amount ≤ 5 BYN
-
-**Файл:** `supabase/functions/subscription-charge/index.ts`
-
-**Логика:**
-```typescript
-if (!is_trial && amount <= 5) {
-  // Логировать в audit_logs
-  // Вернуть { success: false, blocked: true, error: '...' }
-}
-```
-
----
-
-### ПАТЧ 3: Suspicious downgrade audit в webhook
-
-**Файл:** `supabase/functions/bepaid-webhook/index.ts`
-
-**Логика:** Если `oldAmount > newAmount` и разница > 5 BYN — логировать в `audit_logs`.
-
----
-
-### ПАТЧ 4: Backfill существующих неверных payments_v2
-
-**SQL-скрипт:** Исправить `amount` из `provider_response.transaction.amount` для 40 записей.
-
----
-
-## Изменяемые файлы
-
-| # | Файл | Изменение |
-|---|------|-----------|
-| 1 | `supabase/functions/subscription-charge/index.ts` | Добавить `amount` в update после успешного charge |
-| 1.5 | `supabase/functions/subscription-charge/index.ts` | Добавить `amount_source`, `calculated_amount`, `recurring_amount` в meta при INSERT |
-| 2 | `supabase/functions/subscription-charge/index.ts` | Добавить guard для `amount ≤ 5` + `is_trial=false` |
-| 3 | `supabase/functions/bepaid-webhook/index.ts` | Добавить audit log для downgrade |
-| 4 | SQL-скрипт | Backfill из `provider_response.transaction.amount` |
-
----
-
-## Критерии готовности (DoD)
-
-1. **После успешного рекуррентного charge:** `payments_v2.amount` = `chargeResult.transaction.amount / 100`
-2. **При INSERT payments_v2:** `meta` содержит `amount_source`, `calculated_amount`, `recurring_amount`
-3. **Guard работает:** Попытка charge non-trial с `amount ≤ 5` блокируется и логируется
-4. **Webhook защита:** Подозрительный downgrade суммы логируется в `audit_logs`
-5. **Backfill выполнен:** Все 40 записей исправлены
-6. **Нет регрессий:** Trial 1 BYN проходит, renewal 100/150/250 корректно сохраняется
-
----
-
-## Порядок внедрения
-
-| # | Патч | Критичность | Эффект |
-|---|------|-------------|--------|
-| 1 | Amount sync в subscription-charge | 🔴 КРИТИЧЕСКИЙ | Исправляет корень проблемы для новых renewals |
-| 1.5 | Meta трекинг в INSERT | 🟢 ПОЛЕЗНО | Прозрачность источника суммы |
-| 2 | Guard ≤5 BYN | 🟠 ВЫСОКАЯ | Safety-net для edge cases |
-| 3 | Webhook audit | 🟡 СРЕДНЯЯ | Диагностика для внешних платежей |
-| 4 | Backfill | 🟠 ВЫСОКАЯ | Исправляет исторические данные |
+Финальный DoD спринта
+1) Nightly выполняется 1 раз/сутки в 03:00 Europe/London и пишет system_health_* + audit_logs(system).
+2) Нет хардкода сумм в проверках/логике классификации.
+3) Trial + renewal + card verification работают параллельно и не ломают суммы/сделки.
+4) Telegram revoke никогда не кикает пользователя при hasValidAccess()==true.
+5) Все критичные FAIL ловятся ночью и прилетают владельцу в Telegram.
+6) Пруфы: скрины/логи из 1@ajoure.by + diff-summary + список файлов.
