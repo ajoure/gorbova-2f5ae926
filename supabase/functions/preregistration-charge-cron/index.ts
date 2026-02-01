@@ -208,8 +208,24 @@ serve(async (req) => {
 
   try {
     const now = new Date();
-    const today = now.toISOString().split("T")[0];
-    console.log(`Preregistration charge cron started at ${now.toISOString()}, today: ${today}`);
+    
+    // PATCH-1: Use Minsk timezone for charge window logic
+    const minskFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Minsk',
+      day: 'numeric',
+      month: 'numeric',
+      year: 'numeric'
+    });
+    const minskDate = minskFormatter.format(now);
+    const [month, day, year] = minskDate.split('/');
+    const dayOfMonth = parseInt(day, 10);
+    
+    // Get date in YYYY-MM-DD format for first_charge_date comparison
+    const todayMinsk = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Minsk'
+    }).format(now);
+    
+    console.log(`Preregistration charge cron started at ${now.toISOString()}, todayMinsk: ${todayMinsk}, dayOfMonth: ${dayOfMonth}`);
 
     // 1. Find preregistrations that are ready for charging
     // Status: new or contacted, with user_id set (has account)
@@ -258,23 +274,37 @@ serve(async (req) => {
     }
 
     const meta = preregOffer.meta as any || {};
-    const chargeWindowStart = meta.charge_window_start; // e.g., "2026-02-01"
-    const chargeWindowEnd = meta.charge_window_end; // e.g., "2026-02-04"
+    // PATCH-1: Fixed charge window logic - use day-of-month integers, not date strings
+    const chargeWindowStart = meta.preregistration?.charge_window_start || meta.charge_window_start || 1;
+    const chargeWindowEnd = meta.preregistration?.charge_window_end || meta.charge_window_end || 4;
+    const firstChargeDate = meta.preregistration?.first_charge_date || meta.first_charge_date;
     const chargeOfferId = meta.charge_offer_id || preregOffer.charge_offer_id;
 
-    // Check if today is within charge window
-    if (chargeWindowStart && chargeWindowEnd) {
-      if (today < chargeWindowStart || today > chargeWindowEnd) {
-        console.log(`Today ${today} is outside charge window ${chargeWindowStart} - ${chargeWindowEnd}`);
-        return new Response(JSON.stringify({ 
-          success: true, 
-          results, 
-          message: `Outside charge window (${chargeWindowStart} - ${chargeWindowEnd})` 
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+    // PATCH-1: Check first_charge_date (YYYY-MM-DD string comparison)
+    if (firstChargeDate && todayMinsk < firstChargeDate) {
+      console.log(`Today ${todayMinsk} is before first_charge_date ${firstChargeDate}`);
+      return new Response(JSON.stringify({ 
+        success: true, 
+        results, 
+        message: `Before first charge date (${firstChargeDate})` 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
+
+    // PATCH-1: Check if day of month is within charge window (1-4)
+    if (dayOfMonth < chargeWindowStart || dayOfMonth > chargeWindowEnd) {
+      console.log(`Day ${dayOfMonth} is outside charge window ${chargeWindowStart}-${chargeWindowEnd}`);
+      return new Response(JSON.stringify({ 
+        success: true, 
+        results, 
+        message: `Outside charge window (day ${dayOfMonth} not in ${chargeWindowStart}-${chargeWindowEnd})` 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    
+    console.log(`Charge window check passed: day ${dayOfMonth} is within ${chargeWindowStart}-${chargeWindowEnd}`);
 
     // 3. Get the charge offer details (amount, product, tariff)
     if (!chargeOfferId) {
@@ -321,6 +351,29 @@ serve(async (req) => {
       console.log(`Processing preregistration ${prereg.id} for ${prereg.email}`);
 
       try {
+        // PATCH-2: Check if user already has a paid order for this product (prevent double charge)
+        const { data: existingPaidOrder } = await supabase
+          .from("orders_v2")
+          .select("id, order_number")
+          .eq("product_id", product.id)
+          .eq("status", "paid")
+          .or(`user_id.eq.${prereg.user_id},customer_email.ilike.${prereg.email}`)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingPaidOrder) {
+          console.log(`Skipping ${prereg.id}: user already has paid order ${existingPaidOrder.order_number}`);
+          
+          // Auto-convert prereg to 'paid' status
+          await supabase
+            .from("course_preregistrations")
+            .update({ status: "paid", updated_at: now.toISOString() })
+            .eq("id", prereg.id);
+          
+          results.skipped++;
+          continue;
+        }
+
         // 4.1 Get user's profile and payment method
         const { data: profile } = await supabase
           .from("profiles")
