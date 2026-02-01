@@ -163,8 +163,8 @@ serve(async (req) => {
       })
       .eq('id', runId);
 
-    // PATCH 9: Send Telegram alert to super_admin owner if FAIL
-    if (failedChecks.length > 0 && notifyOwner) {
+    // PATCH-2: Send Telegram alert to super_admin owner ALWAYS (PASS/FAIL)
+    if (notifyOwner) {
       // Find super_admin owner by email
       const ownerEmail = '7500084@gmail.com';
       
@@ -195,20 +195,30 @@ serve(async (req) => {
       if (ownerProfile?.telegram_user_id && botToken) {
         // Build plain-text message (NO Markdown to avoid parsing issues)
         const nowStr = new Date().toLocaleString('ru-RU', { timeZone: targetTz });
-        let alertText = `NIGHTLY CHECK: ${failedChecks.length}/${invariantsResult.summary?.total_checks || 0} FAILED\n\n`;
+        const isSuccess = failedChecks.length === 0;
+        const emoji = isSuccess ? '✅' : '🚨';
+        const title = isSuccess 
+          ? `NIGHTLY CHECK: ALL ${invariantsResult.summary?.total_checks || 0} PASSED`
+          : `NIGHTLY CHECK: ${failedChecks.length}/${invariantsResult.summary?.total_checks || 0} FAILED`;
         
-        for (const check of failedChecks.slice(0, 5)) {
-          alertText += `FAIL: ${check.name}\n`;
-          alertText += `  Issues: ${check.count}\n`;
-          if (check.samples?.[0]) {
-            const sampleStr = JSON.stringify(check.samples[0]);
-            alertText += `  Sample: ${sampleStr.slice(0, 80)}${sampleStr.length > 80 ? '...' : ''}\n`;
+        let alertText = `${emoji} ${title}\n\n`;
+        
+        if (isSuccess) {
+          alertText += `All invariants passed.\n\n`;
+        } else {
+          for (const check of failedChecks.slice(0, 5)) {
+            alertText += `FAIL: ${check.name}\n`;
+            alertText += `  Issues: ${check.count}\n`;
+            if (check.samples?.[0]) {
+              const sampleStr = JSON.stringify(check.samples[0]);
+              alertText += `  Sample: ${sampleStr.slice(0, 80)}${sampleStr.length > 80 ? '...' : ''}\n`;
+            }
+            alertText += '\n';
           }
-          alertText += '\n';
-        }
-        
-        if (failedChecks.length > 5) {
-          alertText += `... and ${failedChecks.length - 5} more\n\n`;
+          
+          if (failedChecks.length > 5) {
+            alertText += `... and ${failedChecks.length - 5} more\n\n`;
+          }
         }
         
         alertText += `Run: ${nowStr} ${targetTz}\n`;
@@ -225,7 +235,7 @@ serve(async (req) => {
               // NO parse_mode = plain text (more reliable)
             }),
           });
-          console.log(`[NIGHTLY] Sent alert to owner ${ownerProfile.full_name} (TG: ${ownerProfile.telegram_user_id})`);
+          console.log(`[NIGHTLY] Sent ${isSuccess ? 'SUCCESS' : 'FAIL'} alert to owner ${ownerProfile.full_name} (TG: ${ownerProfile.telegram_user_id})`);
         } catch (tgError) {
           console.error('[NIGHTLY] Failed to send Telegram alert:', tgError);
         }
