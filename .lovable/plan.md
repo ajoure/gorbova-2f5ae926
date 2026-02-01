@@ -1,177 +1,127 @@
-План: Исправление Pull-to-Refresh (жест не срабатывает)
+# План: Запуск автосписания «Бухгалтерия как бизнес» (v3 — финальный)
 
-Диагностика проблемы
+## Статус выполнения: ✅ ВЫПОЛНЕНО
 
-Текущая структура DOM
+---
 
-SidebarProvider
-└── div.min-h-screen.flex
-    ├── AppSidebar
-    └── SidebarInset (main.flex-col, NO overflow)
-        ├── header (sticky)
-        └── PullToRefresh (div.flex-1)
-            └── main.overflow-x-hidden (NO overflow-y)
-                └── children (страницы со списками)
+## Резюме результатов
 
-Выявленные проблемы
+### Сегменты предзаписей
 
-#	Проблема	Последствие
-1	findScrollableParent(containerRef.current) возвращает null	scrollTop берётся из window.scrollY, а window может быть не в топе
-2	scrollTop !== 0 — строгая проверка	На iOS scrollTop часто 1–5px из-за инерции → жест блокируется
-3	THRESHOLD_PERCENT = 0.35 (35%)	На iPhone это слишком много px — пользователь не дотягивает
-4	Нет fallback на document.scrollingElement	Если нет scrollable parent — поиск останавливается
-5	Поиск от containerRef.current вместо e.target	Ищем скролл-контейнер не от места касания
-6	touchmove без preventDefault() и/или passive listener	На iOS/Chrome браузер “забирает” жест под нативный scroll/overscroll → pull не срабатывает
-7	Нет clamp для threshold	На больших экранах порог становится чрезмерным
+| Сегмент | Кол-во | Действие | Статус |
+|---------|--------|----------|--------|
+| ALREADY_PAID (оплатили) | 3 prereg | Конвертированы в `paid` | ✅ Done |
+| HAS_CARD (есть карта) | 18 prereg | Списание 250 BYN завтра 09:00 | ✅ Готово |
+| NO_CARD (нет карты) | 8 prereg (7 чел) | Уведомить «привяжи карту» | ✅ Готово |
 
+### Подписки (4 существующие)
 
-⸻
+| Клиент | Карта | auto_renew | next_charge_at | Статус |
+|--------|-------|------------|----------------|--------|
+| Черноглазова Карина | ✅ | ✅ true | 2026-03-01 06:00 UTC | ✅ Fixed |
+| Майя Довжик | ✅ | ✅ true | 2026-03-01 06:00 UTC | ✅ Fixed |
+| Анастасия Бобровник | ✅ | ✅ true | 2026-03-01 06:00 UTC | ✅ Fixed |
+| Наталья Новикова | ❌ | ❌ false | 2026-03-01 06:00 UTC | ⚠️ Нет карты |
 
-Изменения
+---
 
-Файл: src/components/layout/PullToRefresh.tsx
+## Выполненные патчи
 
-0) Добавить константы для стабильного UX:
+### ✅ PATCH-1: Исправлена логика charge_window
 
-const THRESHOLD_PERCENT = 0.22; // 22% of screen height (was 35%)
-const COOLDOWN_MS = 1500;
-const HORIZONTAL_LOCK_THRESHOLD = 12;
-const TOP_TOLERANCE = 5; // px tolerance for iOS inertia/overscroll
-const THRESHOLD_MIN_PX = 90;
-const THRESHOLD_MAX_PX = 220;
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-1) Снизить threshold и сделать clamp:
+- Используется `Europe/Minsk` timezone через `Intl.DateTimeFormat`
+- Day-of-month сравнивается как integer (1-4), не строка
+- Добавлена проверка `first_charge_date`
 
-// БЫЛО:
-const THRESHOLD_PERCENT = 0.35;
+### ✅ PATCH-2: Добавлено исключение оплативших
 
-// СТАНЕТ:
-const THRESHOLD_PERCENT = 0.22;
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-// Расчёт threshold — БЫЛО:
-const threshold = typeof window !== 'undefined' 
-  ? Math.max(80, window.innerHeight * THRESHOLD_PERCENT) 
-  : 120;
+- Перед списанием проверяется наличие paid order по product_id
+- Автоконвертация prereg в status='paid' если уже оплачено
 
-// СТАНЕТ (clamp):
-const raw = typeof window !== 'undefined' ? window.innerHeight * THRESHOLD_PERCENT : 120;
-const threshold = Math.min(THRESHOLD_MAX_PX, Math.max(THRESHOLD_MIN_PX, raw));
+### ✅ PATCH-3: first_charge_date обновлён
 
-2) Ослабить top-check (разрешить погрешность):
+```sql
+UPDATE tariff_offers SET meta = jsonb_set(..., '{preregistration,first_charge_date}', '"2026-02-01"')
+WHERE id = '2d1b3945-b3df-45b0-996a-edd9eb95ab23';
+```
 
-// БЫЛО:
-if (scrollTop !== 0) return;
+### ✅ PATCH-4: Cron jobs созданы
 
-// СТАНЕТ:
-if (scrollTop > TOP_TOLERANCE) return;
+| Job | Schedule | Статус |
+|-----|----------|--------|
+| preregistration-charge-morning | `0 6 1-4 * *` (09:00 Минск) | ✅ Active |
+| preregistration-charge-evening | `0 18 1-4 * *` (21:00 Минск) | ✅ Active |
 
-3) Искать scroll container от e.target + добавить fallback (и безопасный Element/closest):
+### ✅ PATCH-5: Prereg оплативших конвертированы
 
-// handleTouchStart — БЫЛО:
-const scrollContainer = findScrollableParent(containerRef.current);
+3 записи course_preregistrations обновлены: status = 'paid'
+- a.falenta1988@gmail.com (x2)
+- maja_92@mail.ru
 
-// СТАНЕТ:
-const targetEl = (e.target as Element | null) ?? null;
-const startFrom = (targetEl && (targetEl as any).closest) ? (targetEl as Element) : (e.currentTarget as Element);
+### ✅ PATCH-6: auto_renew включён
 
-const scrollContainer =
-  findScrollableParent(startFrom as HTMLElement)
-  ?? (document.scrollingElement as HTMLElement | null);
+3 подписки с картами: auto_renew = true
 
-4) Аналогично в handleTouchMove — ослабить проверку:
+### ✅ PATCH-7: next_charge_at выровнен
 
-// БЫЛО:
-if (scrollTop > 0) {
-  resetPull();
-  return;
-}
+Все 4 подписки: next_charge_at = '2026-03-01 06:00:00+00' (1 марта 09:00 Минск)
 
-// СТАНЕТ:
-if (scrollTop > TOP_TOLERANCE) {
-  resetPull();
-  return;
-}
+### ✅ PATCH-8,9: Edge function для уведомлений
 
-5) Включить управление жестом: touchmove non-passive + preventDefault() только при реальном pull
+**Файл:** `supabase/functions/buh-business-notify/index.ts`
 
-Важно: preventDefault() вызывать только когда:
-(а) тянем вниз (dy > 0), (б) мы на верхушке (scrollTop <= TOP_TOLERANCE), (в) жест не горизонтальный.
+Типы уведомлений:
+- `tomorrow_charge` — 18 пользователей с картами
+- `no_card` — 7 уникальных пользователей без карт
 
-// При подписке на события (или addEventListener):
-// touchmove должен быть non-passive
-element.addEventListener('touchmove', handleTouchMove, { passive: false });
+---
 
-// В handleTouchMove (псевдо-логика):
-if (dy > 0 && scrollTop <= TOP_TOLERANCE && !isHorizontalGesture) {
-  e.preventDefault(); // иначе браузер забирает overscroll
-}
+## Как отправить уведомления
 
+### Вызов через curl/Supabase:
 
-⸻
+```bash
+# PATCH-8: Уведомить 18 человек с картами
+curl -X POST https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/buh-business-notify \
+  -H "Authorization: Bearer <anon_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "tomorrow_charge"}'
 
-Итоговый diff (концептуально)
+# PATCH-9: Уведомить 7 человек без карт
+curl -X POST https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/buh-business-notify \
+  -H "Authorization: Bearer <anon_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "no_card"}'
+```
 
-// Constants
-const THRESHOLD_PERCENT = 0.22;
-const TOP_TOLERANCE = 5;
-const THRESHOLD_MIN_PX = 90;
-const THRESHOLD_MAX_PX = 220;
+---
 
-// handleTouchStart:
-const targetEl = (e.target as Element | null) ?? null;
-const startFrom = (targetEl && (targetEl as any).closest) ? targetEl : (e.currentTarget as Element);
+## DoD (критерии выполнения)
 
-const scrollContainer =
-  findScrollableParent(startFrom as HTMLElement)
-  ?? (document.scrollingElement as HTMLElement | null);
+| # | Критерий | Статус |
+|---|----------|--------|
+| 1 | Списываются только 18 prereg с картой | ✅ |
+| 2 | ALREADY_PAID не списываются | ✅ |
+| 3 | auto_renew=true у 3 подписок | ✅ |
+| 4 | next_charge_at → март только для февральских оплат | ✅ |
+| 5 | Cron работает 09:00 / 21:00 Минск | ✅ |
+| 6 | Другие продукты не затронуты | ✅ |
+| 7 | Edge functions задеплоены | ✅ |
+| 8 | Audit logs записаны | ✅ |
 
-const scrollTop = scrollContainer ? scrollContainer.scrollTop : window.scrollY;
-if (scrollTop > TOP_TOLERANCE) return;
+---
 
-// handleTouchMove:
-if (scrollTop > TOP_TOLERANCE) { resetPull(); return; }
+## Изменённые файлы
 
-if (dy > 0 && scrollTop <= TOP_TOLERANCE && !isHorizontalGesture) {
-  e.preventDefault();
-}
-
-// threshold:
-const raw = typeof window !== 'undefined' ? window.innerHeight * THRESHOLD_PERCENT : 120;
-const threshold = Math.min(THRESHOLD_MAX_PX, Math.max(THRESHOLD_MIN_PX, raw));
-
-
-⸻
-
-Изменяемые файлы
-
-Файл	Изменения
-src/components/layout/PullToRefresh.tsx	threshold 0.22 + clamp, TOP_TOLERANCE=5, scroll container от e.target + fallback, touchmove non-passive + preventDefault() при pull
-
-
-⸻
-
-DoD
-
-После изменений:
-	1.	Обычный скролл по списку НЕ вызывает refresh
-	2.	Pull от середины списка — НЕ вызывает refresh
-	3.	Намеренный pull от верха списка (превысил threshold) вызывает refresh
-	4.	На iOS работает стабильно (не блокируется из-за 1–5px scrollTop)
-	5.	Горизонтальные жесты игнорируются
-	6.	preventDefault() не ломает обычный скролл (вызывается только при активном pull)
-	7.	Виден визуальный индикатор при pull
-	8.	Cooldown (1.5s) работает, быстрый повторный pull не срабатывает
-
-⸻
-
-Тест-кейсы
-	•	Обычный скролл списка вниз/вверх — без refresh
-	•	Pull от середины списка — без refresh
-	•	Pull от верха списка <90px — без refresh (не достигнут порог)
-	•	Pull от верха списка ~180px на iPhone — refresh срабатывает
-	•	Горизонтальный swipe — без refresh
-	•	Быстрый повторный pull (<1.5s) — cooldown работает
-	•	iOS Safari: жест срабатывает (пруф: видео/скрин-рекордер)
-	•	Android Chrome: нет конфликтов со скроллом, refresh срабатывает только от top
-
-⸻
+| Файл | Изменения |
+|------|-----------|
+| `supabase/functions/preregistration-charge-cron/index.ts` | PATCH-1,2: TZ fix + paid exclusion |
+| `supabase/functions/buh-business-notify/index.ts` | NEW: массовые уведомления |
+| SQL (tariff_offers) | PATCH-3: first_charge_date |
+| SQL (course_preregistrations) | PATCH-5: status = 'paid' |
+| SQL (subscriptions_v2) | PATCH-6,7: auto_renew, next_charge_at |
+| SQL (cron.job) | PATCH-4: 2 cron jobs |
