@@ -18,6 +18,94 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
 };
 
+// PATCH-1: Словарь инвариантов на русском для понятных уведомлений
+const INVARIANT_TRANSLATIONS: Record<string, {
+  title: string;
+  explain: string;
+  action: string;
+}> = {
+  'INV-1': {
+    title: 'Дубликаты платежей',
+    explain: 'Найдены платежи с одинаковым ID от провайдера',
+    action: 'Удалить дубликаты в админке платежей',
+  },
+  'INV-2A': {
+    title: 'Платежи без заказов',
+    explain: 'Деньги пришли, но заказ не создан (потеря учёта)',
+    action: 'Создать заказы или переклассифицировать как тестовые',
+  },
+  'INV-2B': {
+    title: 'Технические сироты',
+    explain: 'Слишком много технических платежей без привязки',
+    action: 'Проверить порог и классификацию',
+  },
+  'INV-3': {
+    title: 'Несовпадение сумм',
+    explain: 'Сумма платежа отличается от суммы заказа',
+    action: 'Проверить скидки или исправить данные',
+  },
+  'INV-4': {
+    title: 'Успешные без суммы',
+    explain: 'Платёж успешен, но сумма = 0 или пусто',
+    action: 'Проверить данные от провайдера',
+  },
+  'INV-5': {
+    title: 'Будущие платежи',
+    explain: 'Дата платежа в будущем (ошибка синхронизации)',
+    action: 'Исправить дату или проверить TZ',
+  },
+  'INV-6': {
+    title: 'Отрицательные суммы',
+    explain: 'Платёж с отрицательной суммой (не возврат)',
+    action: 'Переклассифицировать как refund',
+  },
+  'INV-7': {
+    title: 'Рассинхрон с bePaid',
+    explain: 'Сумма в нашей базе не совпадает с данными bePaid',
+    action: 'Запустить синхронизацию с выпиской',
+  },
+  'INV-8': {
+    title: 'Нет классификации',
+    explain: 'Платежи без категории (непонятно что это)',
+    action: 'Запустить автоклассификацию',
+  },
+  'INV-9': {
+    title: 'Верификации с заказами',
+    explain: 'Проверки карт ошибочно создали заказы',
+    action: 'Удалить лишние заказы',
+  },
+  'INV-10': {
+    title: 'Просроченные доступы',
+    explain: 'Активные доступы с истёкшим сроком',
+    action: 'Запустить очистку доступов',
+  },
+  'INV-11': {
+    title: 'Просроченные подписки',
+    explain: 'Активные подписки с истёкшим сроком',
+    action: 'Запустить очистку подписок',
+  },
+  'INV-12': {
+    title: 'Ошибочные ревоки TG',
+    explain: 'Пользователи с доступом исключены из групп',
+    action: 'Восстановить членство в Telegram',
+  },
+  'INV-13': {
+    title: 'Триалы без доступа',
+    explain: 'Оплаченный триал не дал доступ клиенту',
+    action: 'Проверить создание подписок',
+  },
+  'INV-14': {
+    title: 'Двойные подписки',
+    explain: 'Один пользователь имеет несколько активных подписок',
+    action: 'Объединить или деактивировать лишние',
+  },
+  'INV-15': {
+    title: 'Платежи без профиля',
+    explain: 'Успешный платёж не привязан к профилю клиента',
+    action: 'Найти и привязать профиль',
+  },
+};
+
 interface HealthCheckResult {
   name: string;
   passed: boolean;
@@ -193,37 +281,56 @@ serve(async (req) => {
       }
       
       if (ownerProfile?.telegram_user_id && botToken) {
-        // Build plain-text message (NO Markdown to avoid parsing issues)
-        const nowStr = new Date().toLocaleString('ru-RU', { timeZone: targetTz });
-        const isSuccess = failedChecks.length === 0;
-        const emoji = isSuccess ? '✅' : '🚨';
-        const title = isSuccess 
-          ? `NIGHTLY CHECK: ALL ${invariantsResult.summary?.total_checks || 0} PASSED`
-          : `NIGHTLY CHECK: ${failedChecks.length}/${invariantsResult.summary?.total_checks || 0} FAILED`;
+        // PATCH-3: Build Russian-language message
+        const nowStr = new Date().toLocaleString('ru-RU', { 
+          timeZone: 'Europe/Minsk',
+          day: '2-digit',
+          month: '2-digit', 
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
         
-        let alertText = `${emoji} ${title}\n\n`;
+        const isSuccess = failedChecks.length === 0;
+        const total = invariantsResult.summary?.total_checks || 0;
+        const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+        
+        let alertText = '';
         
         if (isSuccess) {
-          alertText += `All invariants passed.\n\n`;
+          alertText = `✅ НОЧНАЯ ПРОВЕРКА: Все ${total} тестов пройдены\n\n`;
+          alertText += `Система работает штатно.\n`;
+          alertText += `Следующая проверка: завтра в 06:00\n\n`;
         } else {
+          alertText = `🚨 НОЧНАЯ ПРОВЕРКА: ${failedChecks.length} из ${total} с ошибками\n\n`;
+          alertText += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+          
           for (const check of failedChecks.slice(0, 5)) {
-            alertText += `FAIL: ${check.name}\n`;
-            alertText += `  Issues: ${check.count}\n`;
-            if (check.samples?.[0]) {
-              const sampleStr = JSON.stringify(check.samples[0]);
-              alertText += `  Sample: ${sampleStr.slice(0, 80)}${sampleStr.length > 80 ? '...' : ''}\n`;
+            const code = check.name.split(':')[0].trim();
+            const translation = INVARIANT_TRANSLATIONS[code];
+            
+            if (translation) {
+              alertText += `❌ ${translation.title} (${code})\n`;
+              alertText += `   Найдено: ${check.count}\n`;
+              alertText += `   Проблема: ${translation.explain}\n`;
+              alertText += `   Действие: ${translation.action}\n\n`;
+            } else {
+              // Fallback for unknown invariants
+              alertText += `❌ ${check.name}\n`;
+              alertText += `   Найдено: ${check.count}\n\n`;
             }
-            alertText += '\n';
           }
           
           if (failedChecks.length > 5) {
-            alertText += `... and ${failedChecks.length - 5} more\n\n`;
+            alertText += `... и ещё ${failedChecks.length - 5}\n\n`;
           }
+          
+          alertText += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
         }
         
-        alertText += `Run: ${nowStr} ${targetTz}\n`;
-        alertText += `Duration: ${Date.now() - startTime}ms\n`;
-        alertText += `Run ID: ${runId}`;
+        alertText += `⏱ ${nowStr} Минск\n`;
+        alertText += `📊 Время: ${durationSec} сек\n`;
+        alertText += `🔗 Подробности: /admin/system-health`;
 
         try {
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
