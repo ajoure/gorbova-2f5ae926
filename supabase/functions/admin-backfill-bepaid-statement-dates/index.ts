@@ -14,6 +14,71 @@ function normalizeTimezoneOffset(dateStr: string): string {
 }
 
 /**
+ * Known mojibake patterns for date fields (UTF-8 double-encoded as Windows-1252)
+ * These are the corrupted versions of Russian text that appear when Excel encoding fails
+ */
+const PAID_AT_PATTERNS = [
+  'дата оплаты',           // Correct Russian
+  'Дата оплаты',           // Correct Russian (capitalized)
+  'ðð°ñð° ð¾ð¿ð»ð°ññ',    // Mojibake pattern (exact from DB)
+  'Ð"Ð°Ñ‚Ð° Ð¾Ð¿Ð»Ð°Ñ‚Ñ‹',  // Alternative mojibake
+];
+
+const CREATED_AT_PATTERNS = [
+  'дата создания',         // Correct Russian
+  'Дата создания',         // Correct Russian (capitalized)
+  'ðð°ñð° ñð¾ð·ð´ð°ð½ð¸ñ', // Mojibake pattern (exact from DB)
+  'Ð"Ð°Ñ‚Ð° Ñ Ð¾Ð·Ð´Ð°Ð½Ð¸Ñ',   // Alternative mojibake
+];
+
+/**
+ * Find date value from raw_data by matching known patterns
+ * Uses both exact key matching and heuristic value-based detection
+ */
+function findDateValue(rawData: Record<string, unknown>, patterns: string[], isPaymentDate: boolean): unknown {
+  // First try exact key matches
+  for (const pattern of patterns) {
+    if (rawData[pattern] !== undefined) {
+      return rawData[pattern];
+    }
+  }
+  
+  // Then try case-insensitive contains for partial matches
+  for (const key of Object.keys(rawData)) {
+    const lowerKey = key.toLowerCase();
+    for (const pattern of patterns) {
+      if (lowerKey === pattern.toLowerCase() || lowerKey.includes(pattern.toLowerCase())) {
+        return rawData[key];
+      }
+    }
+  }
+  
+  // Fallback: Look for values that look like dates with timezone
+  // Pattern: "YYYY-MM-DD HH:mm:ss +0300"
+  const datePattern = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[+-]\d{4}$/;
+  const dateKeys: Array<{key: string; value: string}> = [];
+  
+  for (const [key, value] of Object.entries(rawData)) {
+    if (typeof value === 'string' && datePattern.test(value.trim())) {
+      dateKeys.push({ key, value: value.trim() });
+    }
+  }
+  
+  // If we found date values, return based on position (first = created, second = paid typically)
+  // or by the value order (earlier date = created, later = paid)
+  if (dateKeys.length >= 2) {
+    // Sort by date value
+    dateKeys.sort((a, b) => new Date(normalizeTimezoneOffset(a.value)).getTime() - new Date(normalizeTimezoneOffset(b.value)).getTime());
+    // For payment date, return the later one; for created, return the earlier one
+    return isPaymentDate ? dateKeys[1].value : dateKeys[0].value;
+  } else if (dateKeys.length === 1) {
+    return dateKeys[0].value;
+  }
+  
+  return null;
+}
+
+/**
  * Parse date from raw_data field
  */
 function parseRawDate(value: unknown): string | null {
@@ -78,9 +143,9 @@ serve(async (req) => {
       const rawData = row.raw_data as Record<string, unknown> | null;
       if (!rawData) continue;
 
-      // Try different possible field names (case-insensitive matching done at import)
-      const rawPaid = rawData['дата оплаты'] || rawData['Дата оплаты'];
-      const rawCreated = rawData['дата создания'] || rawData['Дата создания'];
+      // Use pre-defined patterns including mojibake versions
+      const rawPaid = findDateValue(rawData, PAID_AT_PATTERNS, true);
+      const rawCreated = findDateValue(rawData, CREATED_AT_PATTERNS, false);
 
       const parsedPaid = parseRawDate(rawPaid);
       const parsedCreated = parseRawDate(rawCreated);
