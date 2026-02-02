@@ -9,7 +9,10 @@ import { BepaidStatementSummary, StatementFilterType } from "./BepaidStatementSu
 import { BepaidStatementImportDialog } from "./BepaidStatementImportDialog";
 import { useBepaidStatementPaginated, useBepaidStatementStats } from "@/hooks/useBepaidStatement";
 import { format, startOfMonth, endOfMonth } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 
+// PATCH-2: Always use Europe/Minsk timezone for period boundaries
+const MINSK_TZ = 'Europe/Minsk';
 const FILTER_LABELS: Record<Exclude<StatementFilterType, null>, string> = {
   payments: 'Платежи',
   refunds: 'Возвраты',
@@ -24,11 +27,11 @@ const PAGE_SIZE_OPTIONS = [
 ];
 
 export function BepaidStatementTabContent() {
-  // Default to current month
-  const now = new Date();
+  // PATCH-2: Default to current month in Europe/Minsk timezone
+  const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
   const [dateFilter, setDateFilter] = useState<DateFilter>({
-    from: format(startOfMonth(now), 'yyyy-MM-dd'),
-    to: format(endOfMonth(now), 'yyyy-MM-dd'),
+    from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
+    to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

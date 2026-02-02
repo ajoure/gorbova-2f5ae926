@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { parse as csvParse } from "https://deno.land/std@0.224.0/csv/parse.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const BUILD_ID = "2026-02-02T14:30:00Z-csv-import-v2";
+const BUILD_ID = "2026-02-02T21:30:00Z-csv-import-multifile-v3";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -134,7 +134,6 @@ function parseServerDate(dateStr: string): string | null {
   );
   if (match) {
     const [, date, time, sign, tzH, tzM] = match;
-    // Return ISO with original offset, NO toISOString()
     return `${date}T${time}${sign}${tzH}:${tzM}`;
   }
   
@@ -149,7 +148,7 @@ function parseServerDate(dateStr: string): string | null {
     return `${dateOnlyMatch[1]}T00:00:00+03:00`;
   }
   
-  return null; // unrecognized format
+  return null;
 }
 
 /**
@@ -166,13 +165,10 @@ function parseNumber(val: string): number | null {
  * Detect CSV delimiter by counting occurrences in header line
  */
 function detectDelimiter(csvText: string): string {
-  // Take first non-empty lines (up to 5) for analysis
   const lines = csvText.split(/\r?\n/).filter(l => l.trim()).slice(0, 5);
   if (lines.length === 0) return ';';
   
   const headerLine = lines[0];
-  
-  // Count delimiters outside quotes
   let semicolons = 0;
   let commas = 0;
   let inQuotes = false;
@@ -186,13 +182,81 @@ function detectDelimiter(csvText: string): string {
     }
   }
   
-  // Prefer semicolon if equal (common in Russian CSV)
   return semicolons >= commas ? ';' : ',';
+}
+
+/**
+ * PATCH-4: Detect if file is a Totals/Summary file (not data)
+ */
+function isTotalsFile(name: string, headers: string[]): boolean {
+  const nameLower = name.toLowerCase();
+  if (nameLower.includes('total') || nameLower.includes('итог') || nameLower.includes('summary')) {
+    return true;
+  }
+  
+  // Check headers for totals indicators
+  const headerStr = headers.join(' ').toLowerCase();
+  if (headerStr.includes('итого') || headerStr.includes('expected') || headerStr.includes('total amount')) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * PATCH-4: Parse Totals CSV for expected values
+ */
+function parseTotalsCSV(text: string, delimiter: string): { expected_count?: number; expected_amount?: number } {
+  const result: { expected_count?: number; expected_amount?: number } = {};
+  
+  try {
+    const csvData = csvParse(text, { separator: delimiter, lazyQuotes: true, fieldsPerRecord: 0 });
+    if (csvData.length < 2) return result;
+    
+    const headers = csvData[0].map(normalizeHeader);
+    
+    // Look for count/amount columns
+    const countIdx = headers.findIndex(h => 
+      h.includes('количество') || h.includes('count') || h.includes('кол-во')
+    );
+    const amountIdx = headers.findIndex(h => 
+      h.includes('сумма') || h.includes('amount') || h.includes('total')
+    );
+    
+    // Get values from first data row (or last if summary row)
+    const dataRow = csvData.length > 2 ? csvData[csvData.length - 1] : csvData[1];
+    
+    if (countIdx >= 0 && dataRow[countIdx]) {
+      const val = parseNumber(String(dataRow[countIdx]));
+      if (val !== null) result.expected_count = Math.round(val);
+    }
+    
+    if (amountIdx >= 0 && dataRow[amountIdx]) {
+      const val = parseNumber(String(dataRow[amountIdx]));
+      if (val !== null) result.expected_amount = val;
+    }
+  } catch (e) {
+    console.log(`[${BUILD_ID}] Totals parse error:`, e);
+  }
+  
+  return result;
 }
 
 interface ParsedRow {
   uid: string;
   [key: string]: unknown;
+}
+
+interface FileStats {
+  name: string;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+}
+
+interface CsvFile {
+  name: string;
+  text: string;
 }
 
 serve(async (req) => {
@@ -216,7 +280,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify admin role (PATCH-4: join with roles table, check code)
+    // Verify admin role
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -226,7 +290,6 @@ serve(async (req) => {
       });
     }
 
-    // Join user_roles_v2 with roles to get role code
     const { data: roleData } = await supabase
       .from('user_roles_v2')
       .select('role_id, roles:role_id(code)')
@@ -250,105 +313,132 @@ serve(async (req) => {
 
     // Parse request
     const body = await req.json();
-    const { dry_run = true, csv_text, source = 'bepaid_csv', limit = 5000 } = body;
-
-    if (!csv_text || typeof csv_text !== 'string') {
-      return new Response(JSON.stringify({ error: 'csv_text is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Detect delimiter
-    const delimiter = detectDelimiter(csv_text);
-    console.log(`[${BUILD_ID}] Detected delimiter: '${delimiter}'`);
-
-    // Parse CSV using Deno std/csv (supports multiline quoted fields)
-    let csvData: string[][];
-    try {
-      csvData = csvParse(csv_text, {
-        separator: delimiter,
-        lazyQuotes: true,
-        fieldsPerRecord: 0, // allow variable field count
-      });
-    } catch (parseError) {
-      console.error(`[${BUILD_ID}] CSV parse error:`, parseError);
-      return new Response(JSON.stringify({ 
-        error: `CSV parse error: ${parseError instanceof Error ? parseError.message : 'Unknown'}`,
-        build_id: BUILD_ID,
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (csvData.length < 2) {
-      return new Response(JSON.stringify({ 
-        error: 'CSV must have header row and at least one data row',
-        build_id: BUILD_ID,
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Normalize headers
-    const rawHeaders = csvData[0];
-    const headers = rawHeaders.map(normalizeHeader);
-    console.log(`[${BUILD_ID}] Parsed ${csvData.length - 1} raw rows, headers: ${headers.slice(0, 5).join(', ')}...`);
-
-    // Build rows as Record<normalizedHeader, value>
-    const rawRows = csvData.slice(1, 1 + limit).map(rowArr => {
-      const row: Record<string, string> = {};
-      headers.forEach((h, i) => {
-        row[h] = String(rowArr[i] ?? '').trim();
-      });
-      return row;
-    });
-
-    // Map and validate rows
-    const validRows: ParsedRow[] = [];
-    const invalidRows: { row: number; reason: string }[] = [];
+    const { dry_run = true, source = 'bepaid_csv', limit = 5000 } = body;
     
-    for (let i = 0; i < rawRows.length; i++) {
-      const rawRow = rawRows[i];
-      const parsedRow: ParsedRow = { uid: '', raw_data: rawRow };
+    // PATCH-3: Support both single csv_text and multi-file csv_texts
+    let csvFiles: CsvFile[] = [];
+    
+    if (body.csv_texts && Array.isArray(body.csv_texts)) {
+      csvFiles = body.csv_texts;
+    } else if (body.csv_text && typeof body.csv_text === 'string') {
+      // Legacy single-file support
+      csvFiles = [{ name: 'file.csv', text: body.csv_text }];
+    }
+    
+    if (csvFiles.length === 0) {
+      return new Response(JSON.stringify({ error: 'csv_texts or csv_text is required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    console.log(`[${BUILD_ID}] Processing ${csvFiles.length} files`);
+
+    // PATCH-3: Process each file, separate data files from totals
+    const perFileStats: FileStats[] = [];
+    const allValidRows: ParsedRow[] = [];
+    const allInvalidRows: { row: number; file: string; reason: string }[] = [];
+    let totalsExpected: { expected_count?: number; expected_amount?: number; source_file?: string } | undefined;
+    
+    for (const csvFile of csvFiles) {
+      const delimiter = detectDelimiter(csvFile.text);
       
-      // Map columns using normalized COLUMN_MAP
-      for (const [normalizedHeader, value] of Object.entries(rawRow)) {
-        const dbField = COLUMN_MAP[normalizedHeader];
-        if (!dbField || value === '') continue;
+      let csvData: string[][];
+      try {
+        csvData = csvParse(csvFile.text, {
+          separator: delimiter,
+          lazyQuotes: true,
+          fieldsPerRecord: 0,
+        });
+      } catch (parseError) {
+        console.error(`[${BUILD_ID}] CSV parse error for ${csvFile.name}:`, parseError);
+        allInvalidRows.push({ row: 0, file: csvFile.name, reason: `Parse error: ${parseError}` });
+        perFileStats.push({ name: csvFile.name, total_rows: 0, valid_rows: 0, invalid_rows: 1 });
+        continue;
+      }
+
+      if (csvData.length < 2) {
+        allInvalidRows.push({ row: 0, file: csvFile.name, reason: 'Empty or header-only file' });
+        perFileStats.push({ name: csvFile.name, total_rows: 0, valid_rows: 0, invalid_rows: 1 });
+        continue;
+      }
+
+      const rawHeaders = csvData[0];
+      const headers = rawHeaders.map(normalizeHeader);
+      
+      // PATCH-4: Check if this is a Totals file
+      if (isTotalsFile(csvFile.name, headers)) {
+        console.log(`[${BUILD_ID}] Detected Totals file: ${csvFile.name}`);
+        const totals = parseTotalsCSV(csvFile.text, delimiter);
+        if (totals.expected_count !== undefined || totals.expected_amount !== undefined) {
+          totalsExpected = { ...totals, source_file: csvFile.name };
+        }
+        perFileStats.push({ name: csvFile.name, total_rows: csvData.length - 1, valid_rows: 0, invalid_rows: 0 });
+        continue; // Skip data processing for totals file
+      }
+
+      // Process data rows
+      const rawRows = csvData.slice(1, 1 + limit).map(rowArr => {
+        const row: Record<string, string> = {};
+        headers.forEach((h, i) => {
+          row[h] = String(rowArr[i] ?? '').trim();
+        });
+        return row;
+      });
+
+      let fileValidCount = 0;
+      let fileInvalidCount = 0;
+
+      for (let i = 0; i < rawRows.length; i++) {
+        const rawRow = rawRows[i];
+        const parsedRow: ParsedRow = { uid: '', raw_data: rawRow, _source_file: csvFile.name };
         
-        if (DATE_FIELDS.includes(dbField)) {
-          const parsed = parseServerDate(value);
-          if (parsed) parsedRow[dbField] = parsed;
-        } else if (NUMBER_FIELDS.includes(dbField)) {
-          const parsed = parseNumber(value);
-          if (parsed !== null) parsedRow[dbField] = parsed;
+        for (const [normalizedHeader, value] of Object.entries(rawRow)) {
+          const dbField = COLUMN_MAP[normalizedHeader];
+          if (!dbField || value === '') continue;
+          
+          if (DATE_FIELDS.includes(dbField)) {
+            const parsed = parseServerDate(value);
+            if (parsed) parsedRow[dbField] = parsed;
+          } else if (NUMBER_FIELDS.includes(dbField)) {
+            const parsed = parseNumber(value);
+            if (parsed !== null) parsedRow[dbField] = parsed;
+          } else {
+            parsedRow[dbField] = value;
+          }
+          
+          if (dbField === 'uid' && value) {
+            parsedRow.uid = String(value);
+          }
+        }
+        
+        if (parsedRow.uid) {
+          allValidRows.push(parsedRow);
+          fileValidCount++;
         } else {
-          parsedRow[dbField] = value;
-        }
-        
-        if (dbField === 'uid' && value) {
-          parsedRow.uid = String(value);
+          allInvalidRows.push({ row: i + 2, file: csvFile.name, reason: 'Missing UID' });
+          fileInvalidCount++;
         }
       }
+
+      perFileStats.push({
+        name: csvFile.name,
+        total_rows: rawRows.length,
+        valid_rows: fileValidCount,
+        invalid_rows: fileInvalidCount,
+      });
       
-      if (parsedRow.uid) {
-        validRows.push(parsedRow);
-      } else {
-        invalidRows.push({ row: i + 2, reason: 'Missing UID' }); // +2 for header + 1-index
-      }
+      console.log(`[${BUILD_ID}] File ${csvFile.name}: ${rawRows.length} rows, ${fileValidCount} valid`);
     }
 
     // Deduplicate by UID (last-win merge)
     const deduped = new Map<string, ParsedRow>();
-    for (const row of validRows) {
+    for (const row of allValidRows) {
       const existing = deduped.get(row.uid);
       if (existing) {
         // Merge: keep existing, overwrite with new non-null
         for (const [k, v] of Object.entries(row)) {
-          if (v !== null && v !== undefined && v !== '') {
+          if (v !== null && v !== undefined && v !== '' && k !== '_source_file') {
             existing[k] = v;
           }
         }
@@ -357,21 +447,35 @@ serve(async (req) => {
       }
     }
     const finalRows = Array.from(deduped.values());
-    const duplicatesMerged = validRows.length - finalRows.length;
+    const duplicatesMerged = allValidRows.length - finalRows.length;
+    
+    // Calculate total amount for verification
+    let totalAmount = 0;
+    for (const row of finalRows) {
+      if (typeof row.amount === 'number') {
+        totalAmount += row.amount;
+      }
+    }
+
+    const totalRowsProcessed = perFileStats.reduce((sum, f) => sum + f.total_rows, 0);
+    const totalInvalidRows = allInvalidRows.length;
 
     const stats = {
-      total_rows: rawRows.length,
-      valid_rows: finalRows.length,
-      invalid_rows: invalidRows.length,
-      invalid_rate: rawRows.length > 0 ? (invalidRows.length / rawRows.length) : 0,
+      total_files: csvFiles.length,
+      per_file: perFileStats,
+      total_rows: totalRowsProcessed,
+      valid_rows: allValidRows.length,
+      invalid_rows: totalInvalidRows,
+      invalid_rate: totalRowsProcessed > 0 ? (totalInvalidRows / totalRowsProcessed) : 0,
       duplicates_merged: duplicatesMerged,
+      uids_unique: finalRows.length,
+      total_amount: Math.round(totalAmount * 100) / 100,
     };
 
-    console.log(`[${BUILD_ID}] Stats: valid=${stats.valid_rows}, invalid=${stats.invalid_rows}, rate=${(stats.invalid_rate * 100).toFixed(1)}%`);
+    console.log(`[${BUILD_ID}] Stats: files=${stats.total_files}, unique=${stats.uids_unique}, invalid=${stats.invalid_rows}, merged=${stats.duplicates_merged}`);
 
     // DRY-RUN: return stats only
     if (dry_run) {
-      // Audit log (no PII)
       await supabase.from('audit_logs').insert({
         action: 'bepaid_csv_import.dry_run',
         actor_type: 'system',
@@ -380,7 +484,11 @@ serve(async (req) => {
         meta: {
           build_id: BUILD_ID,
           initiator_user_id: user.id,
-          ...stats,
+          total_files: stats.total_files,
+          per_file: stats.per_file,
+          uids_unique: stats.uids_unique,
+          duplicates_merged: stats.duplicates_merged,
+          invalid_rows: stats.invalid_rows,
         },
       });
 
@@ -389,7 +497,8 @@ serve(async (req) => {
         mode: 'dry_run',
         build_id: BUILD_ID,
         stats,
-        sample_errors: invalidRows.slice(0, 5),
+        totals_expected: totalsExpected,
+        sample_errors: allInvalidRows.slice(0, 5),
         sample_parsed: finalRows.slice(0, 3).map(r => ({
           uid: r.uid,
           amount: r.amount,
@@ -409,6 +518,7 @@ serve(async (req) => {
         error: `STOP-guard: invalid_rate ${(stats.invalid_rate * 100).toFixed(1)}% > 10% with ${stats.total_rows} rows. Fix data or reduce batch.`,
         mode: 'execute_blocked',
         stats,
+        totals_expected: totalsExpected,
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -512,7 +622,10 @@ serve(async (req) => {
       meta: {
         build_id: BUILD_ID,
         initiator_user_id: user.id,
-        ...stats,
+        total_files: stats.total_files,
+        per_file: stats.per_file,
+        uids_unique: stats.uids_unique,
+        duplicates_merged: stats.duplicates_merged,
         upserted,
         errors,
       },
@@ -525,9 +638,11 @@ serve(async (req) => {
       mode: 'execute',
       build_id: BUILD_ID,
       stats,
+      totals_expected: totalsExpected,
       upserted,
       errors,
       error_details: errorDetails.slice(0, 5),
+      sample_errors: allInvalidRows.slice(0, 5),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
