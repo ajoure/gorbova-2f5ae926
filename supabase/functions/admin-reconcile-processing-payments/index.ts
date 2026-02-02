@@ -49,7 +49,12 @@ serve(async (req) => {
     for (const payment of payments || []) {
       try {
         const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${payment.id}`, {
-          headers: { 'Authorization': `Basic ${bepaidAuth}` },
+          method: 'GET',
+          headers: { 
+            'Authorization': `Basic ${bepaidAuth}`,
+            'Accept': 'application/json',
+            'X-Api-Version': '3',
+          },
         });
         const data = await resp.json();
         const tx = data?.transactions?.[0];
