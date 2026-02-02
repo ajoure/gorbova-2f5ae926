@@ -1,182 +1,204 @@
 
-# План: Исправить импорт выписки bePaid — ошибка дубликатов UID
+# План: Стабилизация импорта CSV bePaid
 
-## ДИАГНОСТИКА
-
-### Корневая причина
-**Ошибка PostgreSQL**:
-```
-ON CONFLICT DO UPDATE command cannot affect row a second time
-```
-
-### Объяснение
-Excel файл `1-22.xlsx` содержит несколько листов:
-- **Лист 1**: Сводка (totals) — не содержит транзакции
-- **Лист 2**: ERIP транзакции — ~15 строк с UID
-- **Лист 3**: Карточные транзакции — ~15 строк с UID
-
-Текущий код парсит **оба листа** (ERIP + Card) и объединяет их в один массив `allRows[]`. Если одна и та же транзакция присутствует на обоих листах (что бывает при возвратах или смешанных типах), создаются **дубликаты UID**.
-
-При попытке upsert батча из 100 записей с дублирующимися UID, PostgreSQL выбрасывает ошибку — нельзя обновить одну строку дважды в одном запросе.
-
-### Доказательство
-- Файл показывает `"Готово к импорту: 30 строк"` — это сумма из двух листов (~15 + ~15)
-- Результат: `"Импортировано: 0, ошибок: 30"` — весь батч отклонён
-- Console log: `"code": "21000", "message": "ON CONFLICT DO UPDATE command cannot affect row a second time"`
+## Цель
+Обеспечить стабильный импорт выписок bePaid с немедленным обновлением UI без F5, корректными периодами в TZ Europe/Minsk, поддержкой multi-file импорта и сверкой с Totals CSV.
 
 ---
 
-## ПЛАН ИЗМЕНЕНИЙ
+## PATCH-1: Исправление UI cache после импорта
 
-### PATCH-1 (BLOCKER): Дедупликация UID перед импортом
+### Проблема
+После успешного execute таблица и stat-карточки не обновляются без F5. Причины:
+- `refetchQueries` вызывается, но модалка закрывается через `setTimeout` до завершения refetch
+- Смешение predicate и фиксированных queryKey может создавать несогласованность
 
-**Файл:** `src/components/admin/payments/BepaidStatementImportDialog.tsx`
-
-**Изменение — После сбора всех строк (строка ~304), добавить дедупликацию:**
-
-```typescript
-// PATCH: Deduplicate rows by UID (keep the last occurrence with most data)
-const deduplicatedRows = Array.from(
-  allRows.reduce((map, row) => {
-    const existing = map.get(row.uid);
-    if (!existing) {
-      map.set(row.uid, row);
-    } else {
-      // Merge: keep existing values, overwrite with new non-null values
-      const merged = { ...existing };
-      for (const [key, value] of Object.entries(row)) {
-        if (value !== null && value !== undefined && value !== '') {
-          merged[key] = value;
-        }
-      }
-      map.set(row.uid, merged);
-    }
-    return map;
-  }, new Map<string, ParsedRow>())
-).map(([_, row]) => row);
-
-// Report duplicates found
-const duplicatesCount = allRows.length - deduplicatedRows.length;
-if (duplicatesCount > 0) {
-  console.log(`Deduplicated ${duplicatesCount} rows with same UID`);
-}
-```
-
-**Изменение — Обновить setParsedRows:**
-```typescript
-// БЫЛО:
-setParsedRows(allRows);
-
-// СТАНЕТ:
-setParsedRows(deduplicatedRows);
-```
-
-**Изменение — Показать информацию о дубликатах в UI:**
-```typescript
-{parseStatus === 'ready' && duplicatesCount > 0 && (
-  <div className="flex items-center gap-2 text-blue-500">
-    <Info className="h-4 w-4" />
-    <span>Объединено дубликатов UID: {duplicatesCount}</span>
-  </div>
-)}
-```
-
----
-
-### PATCH-2 (РЕКОМЕНДАЦИЯ): Улучшить обработку ошибок в useBepaidStatementImport
-
-**Файл:** `src/hooks/useBepaidStatement.ts`
-
-**Изменение — Строки 277-307:**
+### Решение
+**Файл:** `src/components/admin/payments/BepaidStatementImportDialog.tsx` (строки 194-217)
 
 ```typescript
-export function useBepaidStatementImport() {
-  const queryClient = useQueryClient();
+// После execute:
+if (result.success) {
+  toast({...});
   
-  return useMutation({
-    mutationFn: async (rows: BepaidStatementInsert[]) => {
-      const batchSize = 100;
-      let created = 0;
-      let errors = 0;
-      const errorDetails: string[] = [];
-      
-      // PATCH: Pre-deduplicate by UID to prevent "affect row second time" error
-      const uniqueRows = Array.from(
-        rows.reduce((map, row) => {
-          map.set(row.uid, row);
-          return map;
-        }, new Map<string, BepaidStatementInsert>())
-      ).map(([_, row]) => row);
-      
-      const duplicatesSkipped = rows.length - uniqueRows.length;
-      if (duplicatesSkipped > 0) {
-        console.log(`Import: skipped ${duplicatesSkipped} duplicate UIDs`);
-      }
-      
-      for (let i = 0; i < uniqueRows.length; i += batchSize) {
-        const batch = uniqueRows.slice(i, i + batchSize);
-        
-        const { error } = await supabase
-          .from('bepaid_statement_rows')
-          .upsert(
-            batch.map(row => ({
-              ...row,
-              updated_at: new Date().toISOString(),
-            })),
-            { onConflict: 'uid' }
-          );
-        
-        if (error) {
-          console.error('Batch upsert error:', error);
-          errorDetails.push(`Batch ${Math.floor(i/batchSize) + 1}: ${error.message}`);
-          errors += batch.length;
-        } else {
-          created += batch.length;
-        }
-      }
-      
-      return { 
-        created, 
-        errors, 
-        total: uniqueRows.length,
-        duplicatesSkipped,
-        errorDetails 
-      };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bepaid-statement'] });
-      queryClient.invalidateQueries({ queryKey: ['bepaid-statement-stats'] });
-    },
-  });
+  // Единый predicate для ВСЕХ bepaid-statement* queries
+  const predicate = (query: { queryKey: readonly unknown[] }) => {
+    const key = String(query.queryKey?.[0] ?? '');
+    return key.startsWith('bepaid-statement');
+  };
+  
+  // 1. Invalidate все связанные queries
+  queryClient.invalidateQueries({ predicate });
+  
+  // 2. Remove paginated queries (сброс курсора infiniteQuery)
+  queryClient.removeQueries({ predicate });
+  
+  // 3. Refetch все активные queries И ДОЖДАТЬСЯ завершения
+  await queryClient.refetchQueries({ predicate, type: 'all' });
+  
+  // 4. Закрыть модалку ТОЛЬКО после refetch
+  handleClose();
 }
+```
+
+**Ключевые изменения:**
+- Убрать `setTimeout` — закрывать сразу после `await refetchQueries`
+- Использовать `type: 'all'` вместо `type: 'active'` для гарантированного обновления stats
+- Использовать единый predicate везде (без отдельного `queryKey: ['bepaid-statement-paginated']`)
+
+---
+
+## PATCH-2: Инициализация периода в Minsk TZ
+
+### Проблема
+В `BepaidStatementTabContent.tsx` период инициализируется через `new Date()` без учёта TZ:
+```typescript
+const now = new Date();
+const [dateFilter, setDateFilter] = useState<DateFilter>({
+  from: format(startOfMonth(now), 'yyyy-MM-dd'),
+  to: format(endOfMonth(now), 'yyyy-MM-dd'),
+});
+```
+
+Это может давать неправильные границы месяца если браузер не в Europe/Minsk.
+
+### Решение
+**Файл:** `src/components/admin/payments/BepaidStatementTabContent.tsx` (строки 11, 27-32)
+
+```typescript
+import { toZonedTime } from 'date-fns-tz';
+
+const MINSK_TZ = 'Europe/Minsk';
+
+// Внутри компонента:
+const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
+const [dateFilter, setDateFilter] = useState<DateFilter>({
+  from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
+  to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
+});
 ```
 
 ---
 
-### PATCH-3 (РЕКОМЕНДАЦИЯ): Улучшить отображение результатов
+## PATCH-3: Multi-file import (3+ CSV за один запуск)
 
+### Текущее состояние
+Диалог принимает только один файл: `<Input type="file" accept=".csv" />`
+
+### Решение
 **Файл:** `src/components/admin/payments/BepaidStatementImportDialog.tsx`
 
-**Изменение — Показывать детали импорта:**
+Изменить на multi-file:
 
 ```typescript
-{importResult && (
-  <div className="rounded-lg bg-muted/50 p-3 space-y-1">
-    <p className="text-sm font-medium">Результат импорта:</p>
-    <p className="text-xs text-muted-foreground">
-      Импортировано: {importResult.created}, ошибок: {importResult.errors}
-    </p>
-    {importResult.duplicatesSkipped > 0 && (
-      <p className="text-xs text-blue-500">
-        Пропущено дубликатов UID: {importResult.duplicatesSkipped}
-      </p>
-    )}
-    {importResult.errors > 0 && importResult.errorDetails?.length > 0 && (
-      <div className="mt-2 text-xs text-destructive">
-        <p className="font-medium">Ошибки:</p>
-        {importResult.errorDetails.slice(0, 3).map((err, i) => (
-          <p key={i}>{err}</p>
-        ))}
+// State:
+const [files, setFiles] = useState<File[]>([]);
+const [csvTexts, setCsvTexts] = useState<Array<{ name: string; text: string }>>([]);
+
+// Input:
+<Input
+  type="file"
+  accept=".csv"
+  multiple  // ← Добавить
+  onChange={handleFilesChange}
+  disabled={isLoading}
+/>
+
+// Handler:
+const handleFilesChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const selectedFiles = Array.from(e.target.files || []);
+  if (selectedFiles.length === 0) return;
+  
+  // Проверка размера каждого файла
+  for (const file of selectedFiles) {
+    const sizeMB = file.size / (1024 * 1024);
+    if (sizeMB > MAX_FILE_SIZE_MB) {
+      setParseError(`Файл ${file.name} слишком большой...`);
+      return;
+    }
+  }
+  
+  setFiles(selectedFiles);
+  setParseStatus('reading');
+  
+  // Прочитать все файлы
+  const texts: Array<{ name: string; text: string }> = [];
+  for (const file of selectedFiles) {
+    const text = await file.text();
+    texts.push({ name: file.name, text });
+  }
+  
+  setCsvTexts(texts);
+  setParseStatus('ready');
+}, []);
+```
+
+### Edge Function изменения
+**Файл:** `supabase/functions/admin-import-bepaid-statement-csv/index.ts`
+
+Добавить поддержку массива CSV:
+
+```typescript
+// Request body:
+const { dry_run = true, csv_texts, source = 'bepaid_csv', limit = 5000 } = body;
+// csv_texts: Array<{ name: string; text: string }>
+
+// Парсить каждый файл, агрегировать результаты
+const fileResults = [];
+for (const csvFile of csv_texts) {
+  const result = parseCSV(csvFile.text, limit);
+  fileResults.push({ name: csvFile.name, ...result });
+}
+
+// Объединить все validRows, дедуплицировать по UID
+const allValidRows = fileResults.flatMap(f => f.validRows);
+// ... дедупликация ...
+
+// Вернуть per-file и агрегированную статистику
+return {
+  stats: {
+    total_files: csv_texts.length,
+    per_file: fileResults.map(f => ({ name: f.name, total_rows: f.total_rows, valid_rows: f.valid_rows })),
+    total_rows_combined: ...,
+    valid_rows_unique: ...,
+    duplicates_merged: ...,
+  }
+};
+```
+
+---
+
+## PATCH-4: Totals CSV сверка
+
+### Логика
+Totals CSV используется только для контроля, не пишет строки в БД.
+
+**Определение Totals CSV:**
+- Имя файла содержит "total" или "итог" (case-insensitive)
+- ИЛИ заголовки содержат "Итого", "Total amount", "Expected count"
+
+**UI интерфейс:**
+
+```typescript
+interface TotalsExpected {
+  expected_count?: number;
+  expected_amount?: number;
+}
+
+// В отчёте:
+{totalsExpected && (
+  <div className="mt-3 p-3 border rounded-lg bg-blue-500/10 border-blue-500/20">
+    <p className="text-sm font-medium mb-2">Сверка с Totals:</p>
+    <div className="grid grid-cols-2 gap-2 text-xs">
+      <div>Ожидалось транзакций: <span className="font-medium">{totalsExpected.expected_count}</span></div>
+      <div>Импортировано: <span className="font-medium">{stats.valid_rows_unique}</span></div>
+      <div>Ожидаемая сумма: <span className="font-medium">{totalsExpected.expected_amount}</span></div>
+      <div>Фактическая сумма: <span className="font-medium">{stats.total_amount}</span></div>
+    </div>
+    {hasDelta && (
+      <div className="mt-2 text-amber-500 text-xs">
+        ⚠️ Расхождение: {delta} транзакций 
+        ({stats.duplicates_merged} дубликатов, {stats.invalid_rows} невалидных)
       </div>
     )}
   </div>
@@ -185,54 +207,158 @@ export function useBepaidStatementImport() {
 
 ---
 
-## ПОРЯДОК ВЫПОЛНЕНИЯ
+## PATCH-5: Расширенный отчёт импорта
 
-1. **PATCH-1**: Дедупликация UID при парсинге (основной фикс)
-2. **PATCH-2**: Защитная дедупликация в mutation + улучшенная обработка ошибок
-3. **PATCH-3**: Улучшенный UI для отображения результатов
-
----
-
-## DoD (обязательные пруфы)
-
-### 1. Импорт файла 1-22.xlsx
-- **Было:** `Импортировано: 0, ошибок: 30`
-- **Станет:** `Импортировано: ~15-30, ошибок: 0` (точное число зависит от уникальных UID)
-
-### 2. SQL: проверка записей
-```sql
-SELECT COUNT(*) FROM bepaid_statement_rows 
-WHERE created_at_bepaid >= '2026-01-01' 
-  AND created_at_bepaid <= '2026-02-03';
--- Ожидание: +15-30 новых записей после импорта
+### Текущий ответ Edge Function:
+```json
+{
+  "upserted": 798,
+  "errors": 0,
+  "stats": {
+    "total_rows": 800,
+    "valid_rows": 800,
+    "invalid_rows": 0,
+    "duplicates_merged": 2
+  }
+}
 ```
 
-### 3. UI скриншот
-- Диалог импорта показывает: `Объединено дубликатов UID: N` (если были)
-- Результат: `Импортировано: M, ошибок: 0`
+### Расширить ответ:
+```json
+{
+  "stats": {
+    "total_files": 2,
+    "total_rows": 800,
+    "valid_rows": 798,
+    "invalid_rows": 2,
+    "uids_unique": 798,
+    "duplicates_merged": 2,
+    "sample_errors": [
+      { "row": 45, "file": "erip.csv", "reason": "Missing UID" }
+    ]
+  },
+  "upserted": 798,
+  "errors": 0
+}
+```
+
+### UI отчёт:
+```text
+Файлы загружены:
+  • cards.csv — 500 строк
+  • erip.csv — 300 строк
+  
+Итого: 800 строк → 798 уникальных UID
+
+Импортировано: 798
+Дубликатов объединено: 2
+Невалидных строк: 2
+
+Примеры ошибок:
+  Строка 45 (erip.csv): Missing UID
+```
 
 ---
 
 ## Изменяемые файлы
 
-| Файл | Патч | Изменение |
-|------|------|-----------|
-| `src/components/admin/payments/BepaidStatementImportDialog.tsx` | PATCH-1, PATCH-3 | Дедупликация + UI |
-| `src/hooks/useBepaidStatement.ts` | PATCH-2 | Защитная дедупликация в mutation |
+| Файл | PATCH | Описание изменений |
+|------|-------|-------------------|
+| `src/components/admin/payments/BepaidStatementImportDialog.tsx` | 1,3,4,5 | Multi-file, cache refresh, Totals сверка, отчёт |
+| `src/components/admin/payments/BepaidStatementTabContent.tsx` | 2 | Инициализация периода в Minsk TZ |
+| `supabase/functions/admin-import-bepaid-statement-csv/index.ts` | 3,4,5 | Multi-file parsing, Totals detection, extended stats |
 
 ---
 
-## Риски
+## Технические детали
 
-| Риск | Митигация |
-|------|-----------|
-| Потеря данных при слиянии дубликатов | Merge логика сохраняет все non-null значения из обеих записей |
-| Разные данные в ERIP и Card листах | Merge приоритезирует последнее значение, но сохраняет все заполненные поля |
+### Query cache refresh последовательность
+
+```text
+1. invalidateQueries({ predicate }) 
+   → Помечает все bepaid-statement* как stale
+
+2. removeQueries({ predicate })
+   → Удаляет кэш пагинации, сбрасывает cursor
+
+3. await refetchQueries({ predicate, type: 'all' })
+   → Запускает новый fetch для stats и первой страницы списка
+   → ЖДЁМ завершения перед закрытием модалки
+   
+4. handleClose()
+   → Закрываем ПОСЛЕ обновления данных
+```
+
+### Multi-file merge логика
+
+```text
+1. Parse each CSV separately
+2. Collect all valid rows with file source tag
+3. Deduplicate by UID (last-win merge strategy)
+4. Track duplicates_merged = original_valid_count - unique_count
+5. Return per-file stats + aggregate stats
+```
+
+### Totals CSV detection
+
+```text
+Function isTotalsFile(name, headers):
+  - name.toLowerCase() contains 'total' or 'итог' → true
+  - headers contain 'итого' or 'expected' → true
+  - else → false
+
+If Totals CSV detected:
+  - Parse expected_count from "Количество" / "Count" column
+  - Parse expected_amount from "Сумма" / "Amount" column
+  - Return as separate totals_expected object
+  - Do NOT include in upsert batch
+```
 
 ---
 
-## Безопасность
+## DoD-пруфы (обязательные)
 
-- RLS не меняется (admin-only доступ сохраняется)
-- Upsert по UID — идемпотентная операция
-- Нет риска создания дубликатов в БД
+### DoD-1: Toast без undefined
+```text
+Скрин toast: "Импортировано: 798, ошибок: 0"
+```
+
+### DoD-2: UI обновляется без F5
+```text
+После закрытия диалога:
+- Таблица показывает новые строки
+- Stat-карточки обновлены
+- Скрин Network: виден запрос bepaid_statement_rows ПОСЛЕ close dialog
+```
+
+### DoD-3: Период "Февраль" работает
+```text
+Network proof:
+Request URL содержит:
+  sort_ts=gte.2026-02-01T00:00:00+03:00
+  sort_ts=lte.2026-02-28T23:59:59+03:00
+```
+
+### DoD-4: Multi-file import
+```text
+Скрин: диалог показывает 3 загруженных файла
+Скрин: отчёт с per-file breakdown
+```
+
+### DoD-5: Totals сверка
+```text
+Скрин: блок "Сверка с Totals" показывает:
+- Ожидалось: 800
+- Импортировано: 798
+- Расхождение: 2 (2 дубликата)
+```
+
+### DoD-6: SYSTEM ACTOR audit_logs
+```sql
+SELECT action, actor_type, actor_label, meta->>'build_id', created_at
+FROM audit_logs
+WHERE action LIKE 'bepaid_csv_import.%'
+ORDER BY created_at DESC
+LIMIT 5;
+-- Ожидание: actor_type='system', meta содержит per_file stats
+```
