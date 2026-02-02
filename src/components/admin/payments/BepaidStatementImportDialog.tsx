@@ -2,19 +2,36 @@ import { useState, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Info, Eye, Play } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Info, Eye, Play, X, FileSpreadsheet } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 
 const MAX_FILE_SIZE_MB = 10;
 
+interface FileStats {
+  name: string;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+}
+
+interface TotalsExpected {
+  expected_count?: number;
+  expected_amount?: number;
+  source_file?: string;
+}
+
 interface ImportStats {
+  total_files: number;
+  per_file: FileStats[];
   total_rows: number;
   valid_rows: number;
   invalid_rows: number;
   invalid_rate: number;
   duplicates_merged: number;
+  uids_unique: number;
+  total_amount?: number;
 }
 
 interface DryRunResponse {
@@ -22,7 +39,8 @@ interface DryRunResponse {
   mode: 'dry_run';
   build_id: string;
   stats: ImportStats;
-  sample_errors?: Array<{ row: number; reason: string }>;
+  totals_expected?: TotalsExpected;
+  sample_errors?: Array<{ row: number; file?: string; reason: string }>;
   sample_parsed?: Array<{ uid: string; amount: number; status: string; paid_at: string }>;
 }
 
@@ -31,11 +49,12 @@ interface ExecuteResponse {
   mode: 'execute' | 'execute_blocked';
   build_id: string;
   stats: ImportStats;
+  totals_expected?: TotalsExpected;
   upserted?: number;
   errors?: number;
   error?: string;
   error_details?: string[];
-  sample_errors?: Array<{ row: number; reason: string }>;
+  sample_errors?: Array<{ row: number; file?: string; reason: string }>;
 }
 
 interface BepaidStatementImportDialogProps {
@@ -44,8 +63,9 @@ interface BepaidStatementImportDialogProps {
 }
 
 export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatementImportDialogProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [csvText, setCsvText] = useState<string>('');
+  // PATCH-3: Multi-file state
+  const [files, setFiles] = useState<File[]>([]);
+  const [csvTexts, setCsvTexts] = useState<Array<{ name: string; text: string }>>([]);
   const [parseStatus, setParseStatus] = useState<'idle' | 'reading' | 'ready' | 'error'>('idle');
   const [parseError, setParseError] = useState<string | null>(null);
   
@@ -55,52 +75,63 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
   
   const queryClient = useQueryClient();
 
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  // PATCH-3: Multi-file handler
+  const handleFilesChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) return;
     
-    // STOP-guard: file size limit
-    const fileSizeMB = selectedFile.size / (1024 * 1024);
-    if (fileSizeMB > MAX_FILE_SIZE_MB) {
-      setParseStatus('error');
-      setParseError(`Файл слишком большой (${fileSizeMB.toFixed(1)} MB). Максимум: ${MAX_FILE_SIZE_MB} MB. Разбейте период на части.`);
-      return;
+    // STOP-guard: file size limit for each file
+    for (const file of selectedFiles) {
+      const fileSizeMB = file.size / (1024 * 1024);
+      if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        setParseStatus('error');
+        setParseError(`Файл "${file.name}" слишком большой (${fileSizeMB.toFixed(1)} MB). Максимум: ${MAX_FILE_SIZE_MB} MB.`);
+        return;
+      }
     }
     
-    setFile(selectedFile);
+    setFiles(selectedFiles);
     setParseStatus('reading');
     setParseError(null);
-    setCsvText('');
+    setCsvTexts([]);
     setDryRunResult(null);
     setImportResult(null);
     
     try {
-      // Read file as text (UTF-8)
-      const text = await selectedFile.text();
+      // Read all files
+      const texts: Array<{ name: string; text: string }> = [];
       
-      if (!text.trim()) {
-        setParseStatus('error');
-        setParseError('Файл пуст');
-        return;
+      for (const file of selectedFiles) {
+        const text = await file.text();
+        
+        if (!text.trim()) {
+          setParseStatus('error');
+          setParseError(`Файл "${file.name}" пуст`);
+          return;
+        }
+        
+        texts.push({ name: file.name, text });
       }
       
-      // Basic validation: check if it looks like CSV
-      const lines = text.trim().split(/\r?\n/);
-      if (lines.length < 2) {
-        setParseStatus('error');
-        setParseError('Файл должен содержать заголовки и хотя бы одну строку данных');
-        return;
+      // Validate at least one file has UID column (skip totals files)
+      const dataFiles = texts.filter(f => !isTotalsFile(f.name));
+      if (dataFiles.length > 0) {
+        let hasUid = false;
+        for (const f of dataFiles) {
+          const firstLine = f.text.split(/\r?\n/)[0]?.toLowerCase() || '';
+          if (firstLine.includes('uid')) {
+            hasUid = true;
+            break;
+          }
+        }
+        if (!hasUid) {
+          setParseStatus('error');
+          setParseError('Ни один файл данных не содержит столбец UID. Убедитесь, что это выписка bePaid.');
+          return;
+        }
       }
       
-      // Check for UID column
-      const firstLine = lines[0].toLowerCase();
-      if (!firstLine.includes('uid')) {
-        setParseStatus('error');
-        setParseError('Не найден столбец UID. Убедитесь, что это выписка bePaid в формате CSV.');
-        return;
-      }
-      
-      setCsvText(text);
+      setCsvTexts(texts);
       setParseStatus('ready');
       
     } catch (err) {
@@ -110,8 +141,14 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     }
   }, []);
 
+  // PATCH-4: Detect Totals CSV by filename
+  const isTotalsFile = (name: string): boolean => {
+    const lower = name.toLowerCase();
+    return lower.includes('total') || lower.includes('итог') || lower.includes('summary');
+  };
+
   const handleDryRun = async () => {
-    if (!csvText) return;
+    if (csvTexts.length === 0) return;
     
     setIsLoading(true);
     setDryRunResult(null);
@@ -127,7 +164,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
         body: {
           dry_run: true,
           source: 'bepaid_csv',
-          csv_text: csvText,
+          csv_texts: csvTexts, // PATCH-3: Array of files
           limit: 5000,
         },
       });
@@ -142,7 +179,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
       if (result.success) {
         toast({
           title: "Проверка завершена",
-          description: `Готово к импорту: ${result.stats.valid_rows} строк`,
+          description: `Готово к импорту: ${result.stats.uids_unique} уникальных строк из ${result.stats.total_files} файлов`,
         });
       }
       
@@ -159,7 +196,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
   };
 
   const handleExecute = async () => {
-    if (!csvText || !dryRunResult?.success) return;
+    if (csvTexts.length === 0 || !dryRunResult?.success) return;
     
     setIsLoading(true);
     setImportResult(null);
@@ -174,7 +211,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
         body: {
           dry_run: false,
           source: 'bepaid_csv',
-          csv_text: csvText,
+          csv_texts: csvTexts, // PATCH-3: Array of files
           limit: 5000,
         },
       });
@@ -192,29 +229,23 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
           description: `Импортировано: ${result.upserted ?? 0}, ошибок: ${result.errors || 0}`,
         });
         
-        // PATCH-2: Correct React Query refresh
-        // Use predicate to find all bepaid-statement related queries
+        // PATCH-1: Correct React Query refresh with unified predicate
         const predicate = (query: { queryKey: readonly unknown[] }) => {
           const key = String(query.queryKey?.[0] ?? '');
           return key.startsWith('bepaid-statement');
         };
         
-        // First invalidate all related queries
+        // 1. Invalidate all related queries (mark stale)
         queryClient.invalidateQueries({ predicate });
         
-        // Remove paginated queries to reset infinite cursor/pages
-        queryClient.removeQueries({ 
-          queryKey: ['bepaid-statement-paginated'], 
-          exact: false 
-        });
+        // 2. Remove all paginated queries (reset infinite cursor)
+        queryClient.removeQueries({ predicate });
         
-        // Refetch active queries (stats will refetch immediately)
-        await queryClient.refetchQueries({ predicate, type: 'active' });
+        // 3. Refetch ALL queries and WAIT for completion
+        await queryClient.refetchQueries({ predicate, type: 'all' });
         
-        // Close after success
-        setTimeout(() => {
-          handleClose();
-        }, 1500);
+        // 4. Close ONLY after refetch completes (no setTimeout)
+        handleClose();
       } else {
         toast({
           title: "Импорт заблокирован",
@@ -235,43 +266,119 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     }
   };
 
+  const removeFile = (index: number) => {
+    const newFiles = files.filter((_, i) => i !== index);
+    const newTexts = csvTexts.filter((_, i) => i !== index);
+    setFiles(newFiles);
+    setCsvTexts(newTexts);
+    if (newFiles.length === 0) {
+      setParseStatus('idle');
+    }
+    setDryRunResult(null);
+    setImportResult(null);
+  };
+
   const handleClose = () => {
     onOpenChange(false);
-    setFile(null);
-    setCsvText('');
+    setFiles([]);
+    setCsvTexts([]);
     setParseStatus('idle');
     setParseError(null);
     setDryRunResult(null);
     setImportResult(null);
   };
 
+  // PATCH-5: Render totals comparison
+  const renderTotalsComparison = (stats: ImportStats, totalsExpected?: TotalsExpected) => {
+    if (!totalsExpected) return null;
+    
+    const countDelta = totalsExpected.expected_count !== undefined 
+      ? stats.uids_unique - totalsExpected.expected_count 
+      : null;
+    const amountDelta = totalsExpected.expected_amount !== undefined && stats.total_amount !== undefined
+      ? stats.total_amount - totalsExpected.expected_amount
+      : null;
+    const hasDelta = (countDelta !== null && countDelta !== 0) || (amountDelta !== null && Math.abs(amountDelta) > 0.01);
+    
+    return (
+      <div className="mt-3 p-3 border rounded-lg bg-blue-500/10 border-blue-500/20">
+        <p className="text-sm font-medium mb-2">Сверка с Totals ({totalsExpected.source_file}):</p>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          {totalsExpected.expected_count !== undefined && (
+            <>
+              <div>Ожидалось транзакций: <span className="font-medium">{totalsExpected.expected_count}</span></div>
+              <div>Импортировано уникальных: <span className="font-medium">{stats.uids_unique}</span></div>
+            </>
+          )}
+          {totalsExpected.expected_amount !== undefined && (
+            <>
+              <div>Ожидаемая сумма: <span className="font-medium">{totalsExpected.expected_amount?.toFixed(2)}</span></div>
+              <div>Фактическая сумма: <span className="font-medium">{stats.total_amount?.toFixed(2) ?? '—'}</span></div>
+            </>
+          )}
+        </div>
+        {hasDelta && (
+          <div className="mt-2 text-amber-500 text-xs">
+            ⚠️ Расхождение: 
+            {countDelta !== null && countDelta !== 0 && ` ${Math.abs(countDelta)} транзакций`}
+            {countDelta !== null && countDelta !== 0 && stats.duplicates_merged > 0 && ` (${stats.duplicates_merged} дубликатов)`}
+            {countDelta !== null && countDelta !== 0 && stats.invalid_rows > 0 && ` (${stats.invalid_rows} невалидных)`}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Импорт выписки bePaid
           </DialogTitle>
           <DialogDescription>
-            Загрузите CSV файл с выпиской bePaid (UTF-8). Транзакции с одинаковым UID будут обновлены.
+            Загрузите CSV файлы с выпиской bePaid (UTF-8). Можно выбрать несколько файлов + файл Totals для сверки.
           </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4 py-4">
-          {/* File input */}
+          {/* PATCH-3: Multi-file input */}
           <div className="flex flex-col gap-2">
             <Input
               type="file"
               accept=".csv"
-              onChange={handleFileChange}
+              multiple
+              onChange={handleFilesChange}
               className="cursor-pointer"
               disabled={isLoading}
             />
-            {file && (
-              <p className="text-xs text-muted-foreground">
-                Файл: {file.name} ({(file.size / 1024).toFixed(1)} KB)
-              </p>
+            
+            {/* File list */}
+            {files.length > 0 && (
+              <div className="space-y-1">
+                {files.map((file, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs p-2 rounded bg-muted/50">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="h-3 w-3" />
+                      <span className="font-medium">{file.name}</span>
+                      <span className="text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
+                      {isTotalsFile(file.name) && (
+                        <span className="text-blue-500 text-[10px] px-1 py-0.5 bg-blue-500/10 rounded">Totals</span>
+                      )}
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5" 
+                      onClick={() => removeFile(i)}
+                      disabled={isLoading}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           
@@ -279,7 +386,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
           {parseStatus === 'reading' && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Чтение файла...</span>
+              <span>Чтение файлов...</span>
             </div>
           )}
           
@@ -293,11 +400,11 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
           {parseStatus === 'ready' && !dryRunResult && (
             <div className="flex items-center gap-2 text-emerald-500">
               <CheckCircle2 className="h-4 w-4" />
-              <span>Файл прочитан, готов к проверке</span>
+              <span>{files.length} файл(ов) прочитано, готово к проверке</span>
             </div>
           )}
           
-          {/* Dry-run results */}
+          {/* PATCH-5: Dry-run results with per-file breakdown */}
           {dryRunResult && (
             <div className="rounded-lg bg-muted/50 p-3 space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
@@ -305,12 +412,28 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
                 Результат проверки (dry-run):
               </p>
               
+              {/* Per-file stats */}
+              {dryRunResult.stats.per_file && dryRunResult.stats.per_file.length > 1 && (
+                <div className="mb-2 space-y-1">
+                  <p className="text-xs text-muted-foreground">Файлы:</p>
+                  {dryRunResult.stats.per_file.map((f, i) => (
+                    <div key={i} className="text-xs pl-2 border-l-2 border-muted">
+                      <span className="font-medium">{f.name}</span>: {f.total_rows} строк → {f.valid_rows} валидных
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Aggregate stats */}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>Всего строк: <span className="font-medium">{dryRunResult.stats.total_rows}</span></div>
-                <div>Валидных: <span className="font-medium text-emerald-500">{dryRunResult.stats.valid_rows}</span></div>
+                <div>Уникальных UID: <span className="font-medium text-emerald-500">{dryRunResult.stats.uids_unique}</span></div>
                 <div>Невалидных: <span className="font-medium text-amber-500">{dryRunResult.stats.invalid_rows}</span></div>
                 <div>Дубликатов: <span className="font-medium text-blue-500">{dryRunResult.stats.duplicates_merged}</span></div>
               </div>
+              
+              {/* PATCH-4: Totals comparison */}
+              {renderTotalsComparison(dryRunResult.stats, dryRunResult.totals_expected)}
               
               {dryRunResult.stats.invalid_rate > 0.10 && (
                 <div className="flex items-center gap-2 text-destructive text-xs">
@@ -333,9 +456,9 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
               {dryRunResult.sample_errors && dryRunResult.sample_errors.length > 0 && (
                 <div className="mt-2">
                   <p className="text-xs text-amber-500 mb-1">Примеры ошибок:</p>
-                  {dryRunResult.sample_errors.slice(0, 3).map((err, i) => (
+                  {dryRunResult.sample_errors.slice(0, 5).map((err, i) => (
                     <div key={i} className="text-xs text-muted-foreground">
-                      Строка {err.row}: {err.reason}
+                      {err.file && `[${err.file}] `}Строка {err.row}: {err.reason}
                     </div>
                   ))}
                 </div>
@@ -343,30 +466,47 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             </div>
           )}
           
-          {/* Execute result - PATCH-4: Detailed report */}
+          {/* PATCH-5: Execute result - detailed report */}
           {importResult && (
             <div className="rounded-lg bg-muted/50 p-3 space-y-2">
               <p className="text-sm font-medium">Результат импорта:</p>
               {importResult.success ? (
                 <>
+                  {/* Per-file stats */}
+                  {importResult.stats.per_file && importResult.stats.per_file.length > 1 && (
+                    <div className="mb-2 space-y-1">
+                      <p className="text-xs text-muted-foreground">Файлы загружены:</p>
+                      {importResult.stats.per_file.map((f, i) => (
+                        <div key={i} className="text-xs pl-2 border-l-2 border-muted">
+                          • <span className="font-medium">{f.name}</span> — {f.total_rows} строк
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>Всего строк: <span className="font-medium">{importResult.stats.total_rows}</span></div>
-                    <div>Валидных: <span className="font-medium text-emerald-500">{importResult.stats.valid_rows}</span></div>
+                    <div>Уникальных UID: <span className="font-medium">{importResult.stats.uids_unique}</span></div>
                     <div>Импортировано: <span className="font-medium text-emerald-500">{importResult.upserted ?? 0}</span></div>
                     <div>Дубликатов: <span className="font-medium text-blue-500">{importResult.stats.duplicates_merged}</span></div>
                     <div>Невалидных: <span className="font-medium text-amber-500">{importResult.stats.invalid_rows}</span></div>
                     <div>Ошибок БД: <span className="font-medium text-destructive">{importResult.errors || 0}</span></div>
                   </div>
+                  
+                  {/* PATCH-4: Totals comparison */}
+                  {renderTotalsComparison(importResult.stats, importResult.totals_expected)}
+                  
                   {importResult.sample_errors && importResult.sample_errors.length > 0 && (
                     <div className="mt-2 border-t border-border/50 pt-2">
                       <p className="text-xs text-amber-500 mb-1">Примеры ошибок:</p>
                       {importResult.sample_errors.slice(0, 5).map((err, i) => (
                         <div key={i} className="text-xs text-muted-foreground">
-                          Строка {err.row}: {err.reason}
+                          {err.file && `[${err.file}] `}Строка {err.row}: {err.reason}
                         </div>
                       ))}
                     </div>
                   )}
+                  
                   {importResult.stats.duplicates_merged > 0 && (
                     <p className="text-xs text-muted-foreground mt-1">
                       💡 {importResult.stats.duplicates_merged} дублей UID были объединены в одну запись
@@ -386,7 +526,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
             <div className="text-muted-foreground">
               <p className="font-medium text-foreground mb-1">Рекомендация:</p>
-              <p>Экспортируйте выписку из bePaid в формате CSV (UTF-8). Это обеспечивает стабильный импорт на любых устройствах.</p>
+              <p>Выберите несколько CSV-файлов (Cards, ERIP, и т.д.). Файл с именем "totals" или "итоги" будет использован только для сверки.</p>
             </div>
           </div>
         </div>
