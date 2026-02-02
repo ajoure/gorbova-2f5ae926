@@ -1,226 +1,241 @@
+План: Исправление Nightly 401 + bePaid Autopay Processing + Mismatch Orders (v2)
 
-# План: Русификация уведомлений ночного мониторинга
+РЕЗЮМЕ ДИАГНОСТИКИ
 
-## Текущие ошибки (расшифровка для бизнеса)
+Проблема 1: Nightly 401
 
-| Код | Название | Найдено | Суть проблемы | Что делать |
-|-----|----------|---------|---------------|------------|
-| **INV-2A** | Платежи без заказов | 4 | Есть 4 платежа по 1 BYN, которые классифицированы как покупки, но для них нет заказов | Переклассифицировать как тестовые (`card_verification`) |
-| **INV-3** | Несовпадение сумм | 1 | Клиент Ольга Ананевич заплатила 45 BYN, а заказ на 55 BYN | Проверить, была ли скидка или доплата |
-| **INV-8** | Нет классификации | 3 | 3 новых платежа без категории (возврат -1 BYN, тест 1 BYN, покупка 250 BYN) | Запустить автоклассификацию |
+Факт	Значение
+job 25 (старый)	слал x-cron-secret = current_setting(...), но setting был NULL → 401
+job 27 (текущий)	работает через hardcoded anon key (плохо, убрать)
+Корень	DB setting app.settings.cron_secret не установлен / не доступен для сессии CRON
 
----
+Проблема 2: Reconciler “not_found_in_bepaid”
 
-## Изменения в коде
+Факт	Значение
+Endpoint	GET /transactions?tracking_id=...
+Подозрение	не хватает обязательных заголовков версии API
+Риск	“пустой список” может быть не «нет транзакции», а «не та версия API»
 
-### PATCH-1: Словарь инвариантов на русском
+Проблема 3: Mismatch orders
 
-**Файл:** `supabase/functions/nightly-system-health/index.ts`
+order_status	payment_status	Кол-во
+paid	processing	6
+paid	failed	14
+Итого		20
 
-Добавить маппинг кодов инвариантов на понятные русские описания:
 
-```typescript
-const INVARIANT_TRANSLATIONS: Record<string, {
-  title: string;
-  explain: string;
-  action: string;
-}> = {
-  'INV-1': {
-    title: 'Дубликаты платежей',
-    explain: 'Найдены платежи с одинаковым ID от провайдера',
-    action: 'Удалить дубликаты в админке платежей',
+⸻
+
+PATCH-1: Nightly CRON — поставить DB setting + нормальный CRON header
+
+1) Установить DB setting (PERSISTENT)
+
+ALTER DATABASE postgres SET app.settings.cron_secret = '<CRON_SECRET_VALUE>';
+
+2) DoD (правильный, без “ложного успеха” из-за старой сессии)
+
+2.1. Проверка, что setting реально записан в catalog:
+
+SELECT datname, unnest(datconfig) AS cfg
+FROM pg_database
+WHERE datname='postgres'
+  AND unnest(datconfig) LIKE 'app.settings.cron_secret=%';
+
+2.2. Проверка current_setting (только после reconnect/новой сессии):
+
+SELECT current_setting('app.settings.cron_secret', true) IS NOT NULL AS secret_set;
+
+3) Пересоздать CRON job (убрать anon key вариант)
+
+SELECT cron.unschedule('nightly-system-health-hourly');
+
+SELECT cron.schedule(
+  'nightly-system-health-hourly',
+  '0 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/nightly-system-health',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', current_setting('app.settings.cron_secret', true)
+    ),
+    body := jsonb_build_object('source', 'cron-hourly', 'target_tz', 'Europe/London', 'target_hour', 3)
+  );
+  $$
+);
+
+4) DoD (Nightly реально перестал 401)
+
+-- CRON реально зовёт функцию (не 401)
+SELECT created, status_code, left(content::text, 120) AS content_preview
+FROM net._http_response
+WHERE created >= now() - interval '2 hours'
+  AND (content::text ILIKE '%nightly%' OR content::text ILIKE '%skipped%' OR content::text ILIKE '%run_id%')
+ORDER BY created DESC
+LIMIT 5;
+
+-- system_health_runs появляются
+SELECT id, status, created_at, source
+FROM system_health_runs
+ORDER BY created_at DESC
+LIMIT 5;
+
+Требуется от владельца: значение CRON_SECRET из Edge secrets.
+
+⸻
+
+PATCH-2: Reconciler — добавить заголовки версии API + Accept
+
+Файл: supabase/functions/admin-reconcile-processing-payments/index.ts
+
+Станет:
+
+const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${payment.id}`, {
+  method: 'GET',
+  headers: {
+    'Authorization': `Basic ${bepaidAuth}`,
+    'Accept': 'application/json',
+    'X-Api-Version': '3',
   },
-  'INV-2A': {
-    title: 'Платежи без заказов',
-    explain: 'Деньги пришли, но заказ не создан (потеря учёта)',
-    action: 'Создать заказы или переклассифицировать как тестовые',
-  },
-  'INV-3': {
-    title: 'Несовпадение сумм',
-    explain: 'Сумма платежа отличается от суммы заказа',
-    action: 'Проверить скидки или исправить данные',
-  },
-  'INV-7': {
-    title: 'Рассинхрон с bePaid',
-    explain: 'Сумма в нашей базе не совпадает с данными bePaid',
-    action: 'Запустить синхронизацию с выпиской',
-  },
-  'INV-8': {
-    title: 'Нет классификации',
-    explain: 'Платежи без категории (непонятно что это)',
-    action: 'Запустить автоклассификацию',
-  },
-  'INV-9': {
-    title: 'Верификации с заказами',
-    explain: 'Проверки карт ошибочно создали заказы',
-    action: 'Удалить лишние заказы',
-  },
-  'INV-10': {
-    title: 'Просроченные доступы',
-    explain: 'Активные доступы с истёкшим сроком',
-    action: 'Запустить очистку доступов',
-  },
-  'INV-11': {
-    title: 'Просроченные подписки',
-    explain: 'Активные подписки с истёкшим сроком',
-    action: 'Запустить очистку подписок',
-  },
-  'INV-12': {
-    title: 'Ошибочные ревоки TG',
-    explain: 'Пользователи с доступом исключены из групп',
-    action: 'Восстановить членство в Telegram',
-  },
-  'INV-13': {
-    title: 'Триалы без доступа',
-    explain: 'Оплаченный триал не дал доступ клиенту',
-    action: 'Проверить создание подписок',
-  },
-};
-```
-
-### PATCH-2: Формат TG-уведомления на русском
-
-**Было:**
-```
-🚨 NIGHTLY CHECK: 3/15 FAILED
-
-FAIL: INV-2A: No business payments without order (STRICT)
-  Issues: 4
-  Sample: {"id":"919fe5bb-...
-```
-
-**Станет:**
-```
-🚨 НОЧНАЯ ПРОВЕРКА: 3 из 15 с ошибками
-
-━━━━━━━━━━━━━━━━━━━━━━
-❌ Платежи без заказов (INV-2A)
-   Найдено: 4
-   Проблема: Деньги пришли, но заказ не создан
-   Действие: Создать заказы или переклассифицировать
-
-❌ Несовпадение сумм (INV-3)
-   Найдено: 1
-   Проблема: Сумма платежа ≠ сумма заказа
-   Действие: Проверить скидки или исправить
-
-❌ Нет классификации (INV-8)
-   Найдено: 3
-   Проблема: Платежи без категории
-   Действие: Запустить автоклассификацию
-━━━━━━━━━━━━━━━━━━━━━━
-
-⏱ 02.02.2026, 06:00 Минск
-📊 Время: 5.3 сек
-🔗 Подробности: /admin/system-health
-```
-
-**При успехе:**
-```
-✅ НОЧНАЯ ПРОВЕРКА: Все 15 тестов пройдены
-
-Система работает штатно.
-Следующая проверка: завтра в 06:00
-
-⏱ 02.02.2026, 06:00 Минск
-```
-
-### PATCH-3: Код формирования сообщения
-
-**Файл:** `supabase/functions/nightly-system-health/index.ts`
-
-Заменить блок формирования `alertText` (строки 197-226):
-
-```typescript
-// Build Russian-language message
-const nowStr = new Date().toLocaleString('ru-RU', { 
-  timeZone: 'Europe/Minsk',
-  day: '2-digit',
-  month: '2-digit', 
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit'
 });
 
-const isSuccess = failedChecks.length === 0;
-const total = invariantsResult.summary?.total_checks || 0;
-const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+Fallback (если “transactions: []”): повторить запрос с X-Api-Version: 2 (в рамках PATCH-4 теста), и только потом делать вывод “не существует”.
 
-let alertText = '';
+DoD:
+	•	dry-run reconciler возвращает по хотя бы 1 tracking_id не not_found_in_bepaid (если в bePaid реально есть запись).
+	•	если всё равно пусто — это уже доказательство “не создано”.
 
-if (isSuccess) {
-  alertText = `✅ НОЧНАЯ ПРОВЕРКА: Все ${total} тестов пройдены\n\n`;
-  alertText += `Система работает штатно.\n`;
-  alertText += `Следующая проверка: завтра в 06:00\n\n`;
-} else {
-  alertText = `🚨 НОЧНАЯ ПРОВЕРКА: ${failedChecks.length} из ${total} с ошибками\n\n`;
-  alertText += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  
-  for (const check of failedChecks.slice(0, 5)) {
-    const code = check.name.split(':')[0].trim();
-    const translation = INVARIANT_TRANSLATIONS[code];
-    
-    if (translation) {
-      alertText += `❌ ${translation.title} (${code})\n`;
-      alertText += `   Найдено: ${check.count}\n`;
-      alertText += `   Проблема: ${translation.explain}\n`;
-      alertText += `   Действие: ${translation.action}\n\n`;
-    } else {
-      alertText += `❌ ${check.name}\n`;
-      alertText += `   Найдено: ${check.count}\n\n`;
-    }
-  }
-  
-  if (failedChecks.length > 5) {
-    alertText += `... и ещё ${failedChecks.length - 5}\n\n`;
-  }
-  
-  alertText += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-}
+⸻
 
-alertText += `⏱ ${nowStr} Минск\n`;
-alertText += `📊 Время: ${durationSec} сек\n`;
-alertText += `🔗 Подробности: /admin/system-health`;
-```
+PATCH-3: Mismatch Orders — корректный отчёт + needs_review (без ручных UUID)
 
----
+3.1 Сначала построить mismatch report двумя джойнами, чтобы не промахнуться схемой
 
-## Файлы для изменения
+A) через payments_v2.order_id
 
-| Файл | Изменения |
-|------|-----------|
-| `supabase/functions/nightly-system-health/index.ts` | PATCH-1, PATCH-2, PATCH-3: русификация уведомлений |
+SELECT
+  o.id AS order_id,
+  o.order_number,
+  o.status AS order_status,
+  o.final_price,
+  p.id AS payment_id,
+  p.status AS payment_status,
+  p.amount AS payment_amount,
+  p.provider_payment_id,
+  p.created_at AS payment_created
+FROM payments_v2 p
+JOIN orders_v2 o ON o.id = p.order_id
+WHERE o.status = 'paid'
+  AND p.status <> 'succeeded'
+ORDER BY p.created_at DESC;
 
----
+B) через orders_v2.payment_id (если поле существует и используется)
 
-## DoD (обязательные пруфы)
+SELECT
+  o.id AS order_id,
+  o.order_number,
+  o.status AS order_status,
+  o.final_price,
+  p.id AS payment_id,
+  p.status AS payment_status,
+  p.amount AS payment_amount,
+  p.provider_payment_id,
+  p.created_at AS payment_created
+FROM orders_v2 o
+JOIN payments_v2 p ON p.id = o.payment_id
+WHERE o.status = 'paid'
+  AND p.status <> 'succeeded'
+ORDER BY p.created_at DESC;
 
-### 1. Ручной тест после деплоя
-Вызвать:
-```
-POST /functions/v1/nightly-system-health
-Body: {"source": "manual-test", "notify_owner": true}
-```
+DoD: оба запроса дают согласуемое число/пересечение, либо явно видно какая связь “истинная”.
 
-### 2. Скриншот TG-сообщения
-Ожидание: сообщение на русском языке с понятными действиями
+3.2 Проставить флаг needs_review (guarded)
 
-### 3. Проверка перевода всех кодов
-Все 15 инвариантов должны иметь русский перевод
+(используем тот JOIN, который по факту работает в вашей модели; ниже — вариант A)
 
----
+UPDATE orders_v2 o
+SET meta = COALESCE(o.meta, '{}'::jsonb) || jsonb_build_object(
+  'needs_review', true,
+  'review_reason', 'payment_status_mismatch',
+  'flagged_at', now()::text
+)
+WHERE o.id IN (
+  SELECT o2.id
+  FROM payments_v2 p2
+  JOIN orders_v2 o2 ON o2.id = p2.order_id
+  WHERE o2.status = 'paid'
+    AND p2.status <> 'succeeded'
+);
 
-## Технические детали
+DoD:
 
-### Зона времени в уведомлении
-- Сейчас: `Europe/London`
-- Станет: `Europe/Minsk` (06:00 вместо 03:00)
+SELECT COUNT(*) 
+FROM orders_v2
+WHERE meta->>'needs_review' = 'true';
+-- Ожидание: 20 (или фактическое число из отчёта)
 
-### Структура словаря
-Каждый инвариант имеет:
-- `title`: короткое название (для заголовка)
-- `explain`: что это значит для бизнеса
-- `action`: что нужно сделать администратору
 
-### Обратная совместимость
-Если инвариант не найден в словаре — показывается оригинальное англоязычное название (fallback).
+⸻
+
+PATCH-4: Контрольный тест bePaid по tracking_id (два варианта версии)
+
+Цель: доказать, что поиск работает и что “пусто” = реально не создано.
+
+# v3
+curl -X GET "https://gateway.bepaid.by/transactions?tracking_id=0ba64777-b62a-4b08-977b-0804bd821672" \
+  -H "Authorization: Basic $(echo -n '33524:<BEPAID_SECRET_KEY>' | base64)" \
+  -H "Accept: application/json" \
+  -H "X-Api-Version: 3"
+
+Если transactions пустой → повторить:
+
+# v2 fallback
+curl -X GET "https://gateway.bepaid.by/transactions?tracking_id=0ba64777-b62a-4b08-977b-0804bd821672" \
+  -H "Authorization: Basic $(echo -n '33524:<BEPAID_SECRET_KEY>' | base64)" \
+  -H "Accept: application/json" \
+  -H "X-Api-Version: 2"
+
+DoD: получаем либо транзакцию, либо стабильный “пусто” на обеих версиях (тогда “не создано” доказано).
+
+⸻
+
+EXECUTE: порядок выполнения
+	1.	PATCH-1: получить CRON_SECRET → ALTER DATABASE ... SET → пересоздать nightly CRON без anon key
+	2.	PATCH-2: добавить X-Api-Version (+ Accept) в reconciler
+	3.	PATCH-4: контрольный tracking_id (v3 + v2) → фиксируем факт “есть/нет”
+	4.	PATCH-3: mismatch report (A/B) → needs_review=true
+	5.	Запуск reconciler:
+	•	сначала execute=false (dry-run)
+	•	затем execute=true (по лимитам/батчам)
+
+⸻
+
+Итоговые DoD (обязательные)
+
+A) Nightly перестал 401
+	•	net._http_response.status_code=200 для nightly вызовов
+	•	появились новые system_health_runs от cron-hourly (или skipped на нецелевом часу)
+
+B) bePaid reconcile корректен
+	•	dry-run reconciler по контрольному tracking_id показывает статус или доказуемое “пусто” (v3+v2)
+	•	после execute:
+
+SELECT COUNT(*) 
+FROM payments_v2
+WHERE status='processing'
+  AND created_at >= '2026-02-02';
+-- Ожидание: 0 (или объяснимый остаток: pending_3ds/прочее, если такой статус существует)
+
+C) mismatch заказы помечены
+
+SELECT COUNT(*)
+FROM orders_v2
+WHERE meta->>'needs_review'='true';
+-- Ожидание: = количеству mismatch из отчёта
+
+
+⸻
+
+Требуется от владельца
+	1.	Значение CRON_SECRET (для DB setting)
+	2.	Разрешение на reconcile execute=true (после dry-run и контрольного tracking_id)
