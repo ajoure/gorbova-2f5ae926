@@ -1,364 +1,112 @@
-
-# План: Стабилизация импорта CSV bePaid
-
-## Цель
-Обеспечить стабильный импорт выписок bePaid с немедленным обновлением UI без F5, корректными периодами в TZ Europe/Minsk, поддержкой multi-file импорта и сверкой с Totals CSV.
-
----
-
-## PATCH-1: Исправление UI cache после импорта
-
-### Проблема
-После успешного execute таблица и stat-карточки не обновляются без F5. Причины:
-- `refetchQueries` вызывается, но модалка закрывается через `setTimeout` до завершения refetch
-- Смешение predicate и фиксированных queryKey может создавать несогласованность
-
-### Решение
-**Файл:** `src/components/admin/payments/BepaidStatementImportDialog.tsx` (строки 194-217)
-
-```typescript
-// После execute:
-if (result.success) {
-  toast({...});
-  
-  // Единый predicate для ВСЕХ bepaid-statement* queries
-  const predicate = (query: { queryKey: readonly unknown[] }) => {
-    const key = String(query.queryKey?.[0] ?? '');
-    return key.startsWith('bepaid-statement');
-  };
-  
-  // 1. Invalidate все связанные queries
-  queryClient.invalidateQueries({ predicate });
-  
-  // 2. Remove paginated queries (сброс курсора infiniteQuery)
-  queryClient.removeQueries({ predicate });
-  
-  // 3. Refetch все активные queries И ДОЖДАТЬСЯ завершения
-  await queryClient.refetchQueries({ predicate, type: 'all' });
-  
-  // 4. Закрыть модалку ТОЛЬКО после refetch
-  handleClose();
-}
-```
-
-**Ключевые изменения:**
-- Убрать `setTimeout` — закрывать сразу после `await refetchQueries`
-- Использовать `type: 'all'` вместо `type: 'active'` для гарантированного обновления stats
-- Использовать единый predicate везде (без отдельного `queryKey: ['bepaid-statement-paginated']`)
+# Жёсткие правила исполнения для Lovable.dev (ОБЯЗАТЕЛЬНО)
+1) Ничего не ломать и не трогать лишнее. Только по списку ниже.
+2) Add-only / минимальный diff. Если нужно — под флагом.
+3) Всегда: dry-run → execute. Любые массовые изменения только батчами.
+4) STOP-guards обязательны (лимиты UID/строк, таймауты, батчи, retry).
+5) No-PII в логах (никаких email/тел/ФИО/полных provider_uid).
+6) DoD только по фактам: UI-скрины (из админки 7500084@gmail.com) + логи Edge Function + SQL-пруфы + diff-summary.
 
 ---
 
-## PATCH-2: Инициализация периода в Minsk TZ
+# PATCH-лист: Полная стабилизация bePaid Payments + восстановление привязки карт
 
-### Проблема
-В `BepaidStatementTabContent.tsx` период инициализируется через `new Date()` без учёта TZ:
-```typescript
-const now = new Date();
-const [dateFilter, setDateFilter] = useState<DateFilter>({
-  from: format(startOfMonth(now), 'yyyy-MM-dd'),
-  to: format(endOfMonth(now), 'yyyy-MM-dd'),
-});
-```
+## PATCH-1 (BLOCKER): Восстановить привязку "карта → профиль/контакт" и не терять её
+### Симптом
+По одному и тому же last4 (например **** 1859) платежи есть, но у части строк контакт пустой / “отвалилась” связка. 
 
-Это может давать неправильные границы месяца если браузер не в Europe/Minsk.
+### Требование
+Если карта привязана в аккаунте пользователя, привязка должна:
+- распространяться на ВСЕ исторические транзакции с этой картой
+- переживать повторные импорты/сверки/апдейты payments_v2
+- НЕ перетирать вручную подтверждённые связи
 
-### Решение
-**Файл:** `src/components/admin/payments/BepaidStatementTabContent.tsx` (строки 11, 27-32)
+### Реализация (обязательные пункты)
+A) Определить стабильный ключ карты:
+- использовать provider card fingerprint / token / card_id (что реально есть в bePaid данных).
+- last4 НЕ использовать как единственный ключ (только для UI).
 
-```typescript
-import { toZonedTime } from 'date-fns-tz';
+B) Создать/нормализовать таблицу связей (если уже есть — использовать её):
+- `card_profile_links` (provider, card_fingerprint, profile_id, linked_by, linked_at, source)
+- unique(provider, card_fingerprint)
 
-const MINSK_TZ = 'Europe/Minsk';
+C) Бэкфилл при привязке карты в аккаунте (и/или при sync/import):
+- Edge/RPC `backfill_payments_by_card_fingerprint(profile_id, provider, card_fingerprint, dry_run, limit, cursor)`
+- обновлять `payments_v2.profile_id` (и/или `contact_id` если есть) для всех записей с этим `card_fingerprint`
+- guard: НЕ трогать записи, где уже стоит profile_id и он отличается (кроме явного режима override в админке)
+- всё батчами + audit_logs (actor_type='system', без PII)
 
-// Внутри компонента:
-const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
-const [dateFilter, setDateFilter] = useState<DateFilter>({
-  from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
-  to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
-});
-```
+D) Защитить от “отваливания”:
+- любые апдейты payments_v2 из сверки/импорта НЕ должны занулять profile_id/contact_id, если связь уже известна по card_profile_links
+- после insert/update платежа — попытка attach по `card_fingerprint` (fast path)
 
----
-
-## PATCH-3: Multi-file import (3+ CSV за один запуск)
-
-### Текущее состояние
-Диалог принимает только один файл: `<Input type="file" accept=".csv" />`
-
-### Решение
-**Файл:** `src/components/admin/payments/BepaidStatementImportDialog.tsx`
-
-Изменить на multi-file:
-
-```typescript
-// State:
-const [files, setFiles] = useState<File[]>([]);
-const [csvTexts, setCsvTexts] = useState<Array<{ name: string; text: string }>>([]);
-
-// Input:
-<Input
-  type="file"
-  accept=".csv"
-  multiple  // ← Добавить
-  onChange={handleFilesChange}
-  disabled={isLoading}
-/>
-
-// Handler:
-const handleFilesChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const selectedFiles = Array.from(e.target.files || []);
-  if (selectedFiles.length === 0) return;
-  
-  // Проверка размера каждого файла
-  for (const file of selectedFiles) {
-    const sizeMB = file.size / (1024 * 1024);
-    if (sizeMB > MAX_FILE_SIZE_MB) {
-      setParseError(`Файл ${file.name} слишком большой...`);
-      return;
-    }
-  }
-  
-  setFiles(selectedFiles);
-  setParseStatus('reading');
-  
-  // Прочитать все файлы
-  const texts: Array<{ name: string; text: string }> = [];
-  for (const file of selectedFiles) {
-    const text = await file.text();
-    texts.push({ name: file.name, text });
-  }
-  
-  setCsvTexts(texts);
-  setParseStatus('ready');
-}, []);
-```
-
-### Edge Function изменения
-**Файл:** `supabase/functions/admin-import-bepaid-statement-csv/index.ts`
-
-Добавить поддержку массива CSV:
-
-```typescript
-// Request body:
-const { dry_run = true, csv_texts, source = 'bepaid_csv', limit = 5000 } = body;
-// csv_texts: Array<{ name: string; text: string }>
-
-// Парсить каждый файл, агрегировать результаты
-const fileResults = [];
-for (const csvFile of csv_texts) {
-  const result = parseCSV(csvFile.text, limit);
-  fileResults.push({ name: csvFile.name, ...result });
-}
-
-// Объединить все validRows, дедуплицировать по UID
-const allValidRows = fileResults.flatMap(f => f.validRows);
-// ... дедупликация ...
-
-// Вернуть per-file и агрегированную статистику
-return {
-  stats: {
-    total_files: csv_texts.length,
-    per_file: fileResults.map(f => ({ name: f.name, total_rows: f.total_rows, valid_rows: f.valid_rows })),
-    total_rows_combined: ...,
-    valid_rows_unique: ...,
-    duplicates_merged: ...,
-  }
-};
-```
+### DoD
+1) UI: по ****1859 все исторические платежи показывают один и тот же контакт после привязки карты в аккаунте.
+2) SQL-пруф: COUNT платежей с пустым profile_id по этому fingerprint = 0.
+3) audit_logs: есть запись system backfill (batch) с counts.
 
 ---
 
-## PATCH-4: Totals CSV сверка
+## PATCH-2: Единый источник истины для счётчиков vs таблица (убрать “800 vs 798”)
+### Важно
+Счётчики должны считаться из ТОГО ЖЕ набора, что и таблица при активных фильтрах.
+Но при пагинации “в таблице 50 строк” счётчики должны показывать total по фильтру, а не по текущей странице.
 
-### Логика
-Totals CSV используется только для контроля, не пишет строки в БД.
+### Реализация
+- Вынести агрегации в серверный запрос (preferred): `get_payments_stats(filters)` возвращает totals по фильтру.
+- Таблица получает paginated rows, отдельно `total_count`.
+- UI показывает “показано X из total_count”, а счётчики = totals по фильтру.
 
-**Определение Totals CSV:**
-- Имя файла содержит "total" или "итог" (case-insensitive)
-- ИЛИ заголовки содержат "Итого", "Total amount", "Expected count"
-
-**UI интерфейс:**
-
-```typescript
-interface TotalsExpected {
-  expected_count?: number;
-  expected_amount?: number;
-}
-
-// В отчёте:
-{totalsExpected && (
-  <div className="mt-3 p-3 border rounded-lg bg-blue-500/10 border-blue-500/20">
-    <p className="text-sm font-medium mb-2">Сверка с Totals:</p>
-    <div className="grid grid-cols-2 gap-2 text-xs">
-      <div>Ожидалось транзакций: <span className="font-medium">{totalsExpected.expected_count}</span></div>
-      <div>Импортировано: <span className="font-medium">{stats.valid_rows_unique}</span></div>
-      <div>Ожидаемая сумма: <span className="font-medium">{totalsExpected.expected_amount}</span></div>
-      <div>Фактическая сумма: <span className="font-medium">{stats.total_amount}</span></div>
-    </div>
-    {hasDelta && (
-      <div className="mt-2 text-amber-500 text-xs">
-        ⚠️ Расхождение: {delta} транзакций 
-        ({stats.duplicates_merged} дубликатов, {stats.invalid_rows} невалидных)
-      </div>
-    )}
-  </div>
-)}
-```
+### DoD
+С включёнными фильтрами totals и таблица согласованы (total_count и суммы совпадают по одному и тому же фильтру).
 
 ---
 
-## PATCH-5: Расширенный отчёт импорта
+## PATCH-3: Sync with Statement — батчи, прогресс, частичный успех вместо “Failed to send…”
+### Реализация
+- UI batching (например 100 UID) + прогресс + “повторить только ошибки”
+- STOP-guard на Edge: запрет > MAX_UIDS_PER_CALL с понятной ошибкой “use batching”
+- Ответ Edge: batch_id, applied_count, failed_count (и error codes агрегировано, без PII)
+- При частичном успехе UI показывает “частично выполнено” (а не красную “ничего не вышло”)
 
-### Текущий ответ Edge Function:
-```json
-{
-  "upserted": 798,
-  "errors": 0,
-  "stats": {
-    "total_rows": 800,
-    "valid_rows": 800,
-    "invalid_rows": 0,
-    "duplicates_merged": 2
-  }
-}
-```
-
-### Расширить ответ:
-```json
-{
-  "stats": {
-    "total_files": 2,
-    "total_rows": 800,
-    "valid_rows": 798,
-    "invalid_rows": 2,
-    "uids_unique": 798,
-    "duplicates_merged": 2,
-    "sample_errors": [
-      { "row": 45, "file": "erip.csv", "reason": "Missing UID" }
-    ]
-  },
-  "upserted": 798,
-  "errors": 0
-}
-```
-
-### UI отчёт:
-```text
-Файлы загружены:
-  • cards.csv — 500 строк
-  • erip.csv — 300 строк
-  
-Итого: 800 строк → 798 уникальных UID
-
-Импортировано: 798
-Дубликатов объединено: 2
-Невалидных строк: 2
-
-Примеры ошибок:
-  Строка 45 (erip.csv): Missing UID
-```
+### DoD
+Apply selected 800 не падает: либо проходит полностью, либо частично с отчётом и кнопкой retry.
 
 ---
 
-## Изменяемые файлы
+## PATCH-4: Единая TZ-нормализация Europe/Minsk везде (filters, sync, stats)
+### Реализация
+- В UI: now/date ranges рассчитывать в Europe/Minsk
+- На Edge/SQL: paid_at фильтровать ISO с +03:00 (или явная TZ функция), одинаково для сверки/таблицы/статов
 
-| Файл | PATCH | Описание изменений |
-|------|-------|-------------------|
-| `src/components/admin/payments/BepaidStatementImportDialog.tsx` | 1,3,4,5 | Multi-file, cache refresh, Totals сверка, отчёт |
-| `src/components/admin/payments/BepaidStatementTabContent.tsx` | 2 | Инициализация периода в Minsk TZ |
-| `supabase/functions/admin-import-bepaid-statement-csv/index.ts` | 3,4,5 | Multi-file parsing, Totals detection, extended stats |
-
----
-
-## Технические детали
-
-### Query cache refresh последовательность
-
-```text
-1. invalidateQueries({ predicate }) 
-   → Помечает все bepaid-statement* как stale
-
-2. removeQueries({ predicate })
-   → Удаляет кэш пагинации, сбрасывает cursor
-
-3. await refetchQueries({ predicate, type: 'all' })
-   → Запускает новый fetch для stats и первой страницы списка
-   → ЖДЁМ завершения перед закрытием модалки
-   
-4. handleClose()
-   → Закрываем ПОСЛЕ обновления данных
-```
-
-### Multi-file merge логика
-
-```text
-1. Parse each CSV separately
-2. Collect all valid rows with file source tag
-3. Deduplicate by UID (last-win merge strategy)
-4. Track duplicates_merged = original_valid_count - unique_count
-5. Return per-file stats + aggregate stats
-```
-
-### Totals CSV detection
-
-```text
-Function isTotalsFile(name, headers):
-  - name.toLowerCase() contains 'total' or 'итог' → true
-  - headers contain 'итого' or 'expected' → true
-  - else → false
-
-If Totals CSV detected:
-  - Parse expected_count from "Количество" / "Count" column
-  - Parse expected_amount from "Сумма" / "Amount" column
-  - Return as separate totals_expected object
-  - Do NOT include in upsert batch
-```
+### DoD
+Один и тот же период даёт одинаковые totals везде (без “прыжков” на границе суток/месяца).
 
 ---
 
-## DoD-пруфы (обязательные)
+## PATCH-5: /admin/payments — настоящая server-side pagination + лимиты 20/50/100
+### Важно
+`slice()` после загрузки “всего за период” — не решение. Нужно:
+- limit + cursor/offset на сервере
+- total_count отдельно
+- быстрый first paint
 
-### DoD-1: Toast без undefined
-```text
-Скрин toast: "Импортировано: 798, ошибок: 0"
-```
+### DoD
+Большие периоды открываются быстро, переключатель 20/50/100 реально уменьшает серверную выборку.
 
-### DoD-2: UI обновляется без F5
-```text
-После закрытия диалога:
-- Таблица показывает новые строки
-- Stat-карточки обновлены
-- Скрин Network: виден запрос bepaid_statement_rows ПОСЛЕ close dialog
-```
+---
 
-### DoD-3: Период "Февраль" работает
-```text
-Network proof:
-Request URL содержит:
-  sort_ts=gte.2026-02-01T00:00:00+03:00
-  sort_ts=lte.2026-02-28T23:59:59+03:00
-```
+## PATCH-6: Explain mismatch (почему 800 → 798) прямо в UI
+### Реализация
+- import/sync dry-run возвращает `explain_mismatch[]` (до 20), причина: duplicate_merged / missing_uid / parse_error / filtered_by_date / etc.
+- UI показывает этот список
 
-### DoD-4: Multi-file import
-```text
-Скрин: диалог показывает 3 загруженных файла
-Скрин: отчёт с per-file breakdown
-```
+### DoD
+При mismatch видно “какие UID и почему”, без догадок.
 
-### DoD-5: Totals сверка
-```text
-Скрин: блок "Сверка с Totals" показывает:
-- Ожидалось: 800
-- Импортировано: 798
-- Расхождение: 2 (2 дубликата)
-```
+---
 
-### DoD-6: SYSTEM ACTOR audit_logs
-```sql
-SELECT action, actor_type, actor_label, meta->>'build_id', created_at
-FROM audit_logs
-WHERE action LIKE 'bepaid_csv_import.%'
-ORDER BY created_at DESC
-LIMIT 5;
--- Ожидание: actor_type='system', meta содержит per_file stats
-```
+# Обязательные SQL-пруфы (приложить в отчёте)
+1) Найти платежи по card_fingerprint и проверить, что profile_id заполнен:
+- count_total, count_profile_null, count_profile_distinct
+2) Stats totals по фильтру == total_count таблицы (один и тот же период/TZ).
+
