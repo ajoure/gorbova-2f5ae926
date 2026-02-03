@@ -3,7 +3,8 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { Menu, X } from "lucide-react";
-import logoImage from "@/assets/logo.png";
+// Use optimized favicon as header logo (40x40 display size)
+const logoImage = "/favicon.png";
 
 const NAV_SECTIONS = [
   { id: "benefits", label: "Преимущества" },
