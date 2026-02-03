@@ -150,6 +150,7 @@ const AdminPaymentsPage = lazy(() => import("./pages/admin/AdminPayments"));
 const AdminPaymentsHub = lazy(() => import("./pages/admin/AdminPaymentsHub"));
 const AdminSubscriptionsV2 = lazy(() => import("./pages/admin/AdminSubscriptionsV2"));
 const AdminSystemAudit = lazy(() => import("./pages/admin/AdminSystemAudit"));
+const AdminSystemHealth = lazy(() => import("./pages/admin/AdminSystemHealth"));
 const AdminConsents = lazy(() => import("./pages/admin/AdminConsents"));
 const AdminPreregistrations = lazy(() => import("./pages/admin/AdminPreregistrations"));
 const AdminInbox = lazy(() => import("./pages/admin/AdminInbox"));
@@ -298,6 +299,7 @@ const App = () => {
               <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><LazyRoute><AdminFieldRegistry /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><LazyRoute><AdminSystemAudit /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/system-health" element={<ProtectedRoute><LazyRoute><AdminSystemHealth /></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
               <Route path="/admin/products-v2" element={<ProtectedRoute><LazyRoute><AdminProductsV2 /></LazyRoute></ProtectedRoute>} />

@@ -19,20 +19,24 @@ const corsHeaders = {
 };
 
 // PATCH-1: Словарь инвариантов на русском для понятных уведомлений
+// PATCH-5: Добавлены urlTemplate для ссылок в уведомлениях
 const INVARIANT_TRANSLATIONS: Record<string, {
   title: string;
   explain: string;
   action: string;
+  urlPath?: string;
 }> = {
   'INV-1': {
     title: 'Дубликаты платежей',
     explain: 'Найдены платежи с одинаковым ID от провайдера',
     action: 'Удалить дубликаты в админке платежей',
+    urlPath: '/admin/payments?duplicate=true',
   },
   'INV-2A': {
     title: 'Платежи без заказов',
     explain: 'Деньги пришли, но заказ не создан (потеря учёта)',
     action: 'Создать заказы или переклассифицировать как тестовые',
+    urlPath: '/admin/payments?filter=orphan',
   },
   'INV-2B': {
     title: 'Технические сироты',
@@ -43,31 +47,35 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     title: 'Несовпадение сумм',
     explain: 'Сумма платежа отличается от суммы заказа',
     action: 'Проверить скидки или исправить данные',
+    urlPath: '/admin/payments',
   },
   'INV-4': {
-    title: 'Успешные без суммы',
-    explain: 'Платёж успешен, но сумма = 0 или пусто',
-    action: 'Проверить данные от провайдера',
+    title: 'Триал-блокировки (24ч)',
+    explain: 'Статистика триал-блокировок и защиты сумм',
+    action: 'Информационно',
   },
   'INV-5': {
-    title: 'Будущие платежи',
-    explain: 'Дата платежа в будущем (ошибка синхронизации)',
-    action: 'Исправить дату или проверить TZ',
+    title: 'Несколько цен на тарифе',
+    explain: 'Тариф имеет несколько активных цен',
+    action: 'Деактивировать лишние цены',
+    urlPath: '/admin/products-v2',
   },
   'INV-6': {
-    title: 'Отрицательные суммы',
-    explain: 'Платёж с отрицательной суммой (не возврат)',
-    action: 'Переклассифицировать как refund',
+    title: 'Расчёты списаний (7д)',
+    explain: 'Статистика расчётов списаний за неделю',
+    action: 'Информационно',
   },
   'INV-7': {
     title: 'Рассинхрон с bePaid',
     explain: 'Сумма в нашей базе не совпадает с данными bePaid',
     action: 'Запустить синхронизацию с выпиской',
+    urlPath: '/admin/payments?tab=statement',
   },
   'INV-8': {
     title: 'Нет классификации',
     explain: 'Платежи без категории (непонятно что это)',
     action: 'Запустить автоклассификацию',
+    urlPath: '/admin/payments?filter=unclassified',
   },
   'INV-9': {
     title: 'Верификации с заказами',
@@ -78,21 +86,25 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     title: 'Просроченные доступы',
     explain: 'Активные доступы с истёкшим сроком',
     action: 'Запустить очистку доступов',
+    urlPath: '/admin/entitlements',
   },
   'INV-11': {
     title: 'Просроченные подписки',
     explain: 'Активные подписки с истёкшим сроком',
     action: 'Запустить очистку подписок',
+    urlPath: '/admin/subscriptions-v2',
   },
   'INV-12': {
     title: 'Ошибочные ревоки TG',
     explain: 'Пользователи с доступом исключены из групп',
     action: 'Восстановить членство в Telegram',
+    urlPath: '/admin/telegram-diagnostics',
   },
   'INV-13': {
     title: 'Триалы без доступа',
     explain: 'Оплаченный триал не дал доступ клиенту',
     action: 'Проверить создание подписок',
+    urlPath: '/admin/deals?filter=trial',
   },
   'INV-14': {
     title: 'Двойные подписки',
@@ -105,6 +117,52 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     action: 'Найти и привязать профиль',
   },
 };
+
+// PATCH-6: Форматирование примеров для Telegram
+function formatSampleForTelegram(check: HealthCheckResult, translation: typeof INVARIANT_TRANSLATIONS[string]): string {
+  if (!check.samples || check.samples.length === 0) return '';
+  
+  const lines: string[] = [];
+  const samples = check.samples.slice(0, 3);
+  
+  for (const sample of samples) {
+    // Format based on check type
+    if (sample.payment_id || sample.id) {
+      const id = sample.payment_id || sample.id;
+      const shortId = String(id).slice(0, 8);
+      
+      if (sample.payment_amount !== undefined && sample.order_final_price !== undefined) {
+        // INV-3: Amount mismatch
+        lines.push(`• Платёж ${shortId}: ${sample.payment_amount} BYN → Заказ: ${sample.order_final_price} BYN`);
+      } else if (sample.amount !== undefined) {
+        // General payment sample
+        const date = sample.paid_at ? new Date(sample.paid_at).toLocaleDateString('ru-RU') : '';
+        lines.push(`• ${shortId}: ${sample.amount} BYN ${date ? `(${date})` : ''}`);
+      } else {
+        lines.push(`• ID: ${shortId}`);
+      }
+    } else if (sample.order_number) {
+      lines.push(`• Заказ ${sample.order_number}`);
+    } else if (sample.user_id) {
+      const shortUserId = String(sample.user_id).slice(0, 8);
+      lines.push(`• Пользователь: ${shortUserId}...`);
+    } else if (sample.tariff_id) {
+      lines.push(`• Тариф: ${String(sample.tariff_id).slice(0, 8)}...`);
+    } else {
+      // Fallback: show first non-null field
+      const firstField = Object.entries(sample).find(([_, v]) => v != null);
+      if (firstField) {
+        lines.push(`• ${firstField[0]}: ${String(firstField[1]).slice(0, 20)}`);
+      }
+    }
+  }
+  
+  if (check.samples.length > 3) {
+    lines.push(`... и ещё ${check.samples.length - 3}`);
+  }
+  
+  return lines.length > 0 ? `\n   📋 Примеры:\n   ${lines.join('\n   ')}` : '';
+}
 
 interface HealthCheckResult {
   name: string;
@@ -315,7 +373,21 @@ serve(async (req) => {
               alertText += `❌ ${translation.title} (${code})\n`;
               alertText += `   Найдено: ${check.count}\n`;
               alertText += `   Проблема: ${translation.explain}\n`;
-              alertText += `   Действие: ${translation.action}\n\n`;
+              
+              // PATCH-6: Добавляем примеры
+              const samplesText = formatSampleForTelegram(check, translation);
+              if (samplesText) {
+                alertText += samplesText + '\n';
+              }
+              
+              alertText += `   🔧 ${translation.action}\n`;
+              
+              // PATCH-6: Добавляем ссылку если есть
+              if (translation.urlPath) {
+                alertText += `   → ${translation.urlPath}\n`;
+              }
+              
+              alertText += '\n';
             } else {
               // Fallback for unknown invariants
               alertText += `❌ ${check.name}\n`;
