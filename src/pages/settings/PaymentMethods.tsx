@@ -12,8 +12,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw, Calendar } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 interface PaymentMethod {
   id: string;
@@ -140,6 +142,32 @@ export default function PaymentMethodsSettings() {
       
       if (error) throw error;
       return data as (Subscription & { auto_renew?: boolean })[];
+    },
+    enabled: !!user,
+  });
+
+  // PATCH-7: Fetch provider-managed subscriptions (bePaid)
+  const { data: providerSubscriptions } = useQuery({
+    queryKey: ["user-provider-subscriptions", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from("provider_subscriptions")
+        .select(`
+          *,
+          subscriptions_v2!inner (
+            id, 
+            product_id, 
+            access_end_at,
+            products_v2 (name)
+          )
+        `)
+        .eq("user_id", user.id)
+        .in("state", ["active", "trial", "pending"])
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -285,6 +313,47 @@ export default function PaymentMethodsSettings() {
       toast.error(error.message);
     },
   });
+
+  // PATCH-7: Cancel provider subscription mutation
+  const cancelProviderSubMutation = useMutation({
+    mutationFn: async (providerSubId: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
+        body: { subscription_ids: [providerSubId], source: 'user_self_cancel' }
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
+      toast.success('Подписка отменена');
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+
+  // PATCH-7: Change card for provider subscription (cancel + create new)
+  const handleChangeProviderCard = async (providerSubId: string, subscriptionV2Id: string) => {
+    try {
+      // 1. Cancel current provider subscription
+      await cancelProviderSubMutation.mutateAsync(providerSubId);
+      
+      // 2. Create new provider subscription (redirect)
+      const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
+        body: { subscription_v2_id: subscriptionV2Id }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.redirect_url) {
+        window.location.href = data.redirect_url;
+      } else {
+        toast.error('Не удалось создать сессию подписки');
+      }
+    } catch (error: any) {
+      toast.error('Ошибка: ' + error.message);
+    }
+  };
 
   const handleAddCard = async () => {
     try {
@@ -568,6 +637,94 @@ export default function PaymentMethodsSettings() {
             )}
           </CardContent>
         </Card>
+
+        {/* PATCH-7: Provider-managed subscriptions (bePaid) */}
+        {providerSubscriptions && providerSubscriptions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5" />
+                Подписки с автопродлением
+              </CardTitle>
+              <CardDescription>
+                Автоматическое списание каждые 30 дней через платёжную систему
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {providerSubscriptions.map((sub: any) => {
+                const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
+                const accessEnd = sub.subscriptions_v2?.access_end_at;
+                const subscriptionV2Id = sub.subscriptions_v2?.id;
+                
+                return (
+                  <div key={sub.id} className="flex items-center justify-between p-4 rounded-lg border bg-muted/30">
+                    <div className="flex items-center gap-4">
+                      <RefreshCw className="h-8 w-8 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">{productName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {sub.card_brand?.toUpperCase() || 'Карта'} •••• {sub.card_last4 || '****'}
+                        </p>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                          <Calendar className="h-3 w-3" />
+                          <span>
+                            Следующее списание: {sub.next_charge_at 
+                              ? format(new Date(sub.next_charge_at), "dd.MM.yyyy", { locale: ru }) 
+                              : '—'} — {((sub.amount_cents || 0) / 100).toFixed(2)} {sub.currency || 'BYN'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleChangeProviderCard(sub.provider_subscription_id, subscriptionV2Id)}
+                        disabled={cancelProviderSubMutation.isPending}
+                      >
+                        Изменить карту
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            disabled={cancelProviderSubMutation.isPending}
+                          >
+                            {cancelProviderSubMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              'Отменить'
+                            )}
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Отменить подписку?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Автоматическое продление будет отключено. 
+                              Доступ сохранится до {accessEnd 
+                                ? format(new Date(accessEnd), "dd MMMM yyyy", { locale: ru })
+                                : 'окончания периода'}.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Назад</AlertDialogCancel>
+                            <AlertDialogAction 
+                              onClick={() => cancelProviderSubMutation.mutate(sub.provider_subscription_id)}
+                            >
+                              Отменить подписку
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Info card about 1-click payments */}
         <Card className="bg-muted/30 border-dashed">
