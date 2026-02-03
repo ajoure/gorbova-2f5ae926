@@ -210,7 +210,7 @@ export function AppSidebar() {
           aria-label="Перейти на главную страницу"
         >
           <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0">
-            <img src={logoImage} alt="Leader Hub" className="w-full h-full object-cover" />
+            <img src={logoImage} alt="Leader Hub" className="w-full h-full object-cover" width={40} height={40} loading="eager" />
           </div>
           {!collapsed && <div>
               <h1 className="font-bold text-lg text-sidebar-foreground">БУКВА ЗАКОНА</h1>
