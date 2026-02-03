@@ -111,7 +111,7 @@ export function CourseHeader() {
           href="https://club.gorbova.by" 
           className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
         >
-          <img src={logoImage} alt="Буква Закона" className="h-10 w-auto" />
+          <img src={logoImage} alt="Буква Закона" className="h-10 w-auto" width={40} height={40} loading="eager" />
           <div className="hidden sm:block">
             <span className="text-lg font-bold text-foreground">БУКВА ЗАКОНА</span>
             <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>

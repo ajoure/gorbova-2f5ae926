@@ -498,7 +498,7 @@ export default function Auth() {
         {/* Header */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-20 h-20 mb-4">
-              <img src={logoImage} alt="Буква Закона" className="w-full h-full object-contain" />
+              <img src={logoImage} alt="Буква Закона" className="w-full h-full object-contain" width={80} height={80} loading="eager" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">
               {mode === "login" && "Добро пожаловать"}

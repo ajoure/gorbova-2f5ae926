@@ -32,7 +32,7 @@ export function CourseFooter() {
               href="https://club.gorbova.by" 
               className="flex items-center gap-3 mb-4 hover:opacity-80 transition-opacity w-fit"
             >
-              <img src={logoImage} alt="Буква Закона" className="h-8 w-auto" />
+              <img src={logoImage} alt="Буква Закона" className="h-8 w-auto" width={32} height={32} loading="lazy" />
               <div>
                 <span className="font-bold text-foreground">БУКВА ЗАКОНА</span>
                 <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>
@@ -111,6 +111,9 @@ export function CourseFooter() {
                 src={paymentSystemsImage} 
                 alt="Принимаем к оплате: Visa, MasterCard, Белкарт, bePaid, Samsung Pay, Google Pay" 
                 className="h-8 w-auto"
+                width={347}
+                height={32}
+                loading="lazy"
               />
             </Link>
             <Link to="/order-payment" className="opacity-70 hover:opacity-100 transition-opacity">
@@ -118,6 +121,9 @@ export function CourseFooter() {
                 src={eripLogoImage} 
                 alt="Оплата через ЕРИП" 
                 className="h-8 w-auto"
+                width={64}
+                height={32}
+                loading="lazy"
               />
             </Link>
           </div>
