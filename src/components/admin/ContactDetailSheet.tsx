@@ -683,7 +683,51 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: methodIds.length > 0,
   });
 
-  // Fetch trial history for this contact
+  // PATCH-7: Fetch provider-managed subscriptions for contact
+  const { data: contactProviderSubscriptions } = useQuery({
+    queryKey: ["contact-provider-subscriptions", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return [];
+      const { data, error } = await supabase
+        .from("provider_subscriptions")
+        .select(`
+          *,
+          subscriptions_v2!inner (
+            id, 
+            product_id, 
+            access_end_at,
+            products_v2 (name)
+          )
+        `)
+        .eq("user_id", contact.user_id)
+        .in("state", ["active", "trial", "pending", "canceled"])
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // PATCH-7: Admin cancel provider subscription mutation
+  const cancelProviderSubAdminMutation = useMutation({
+    mutationFn: async (providerSubId: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
+        body: { subscription_ids: [providerSubId], source: 'admin_cancel' }
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      toast.success('Подписка bePaid отменена');
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+
+
   const { data: trialHistory } = useQuery({
     queryKey: ["contact-trial-history", contact?.user_id],
     queryFn: async () => {
@@ -1584,6 +1628,74 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         <p className="text-sm">Нет привязанных карт</p>
                       </div>
                     )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* PATCH-7: Provider-managed subscriptions (bePaid) for Admin */}
+              {contact.user_id && contactProviderSubscriptions && contactProviderSubscriptions.length > 0 && (
+                <Card className="border-blue-200 dark:border-blue-800">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4" />
+                      Подписки bePaid
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {contactProviderSubscriptions.map((sub: any) => {
+                      const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
+                      const isActive = sub.state === 'active' || sub.state === 'trial';
+                      
+                      return (
+                        <div 
+                          key={sub.id} 
+                          className={`p-3 rounded-lg border ${
+                            isActive 
+                              ? 'bg-blue-50 dark:bg-blue-900/20' 
+                              : 'bg-muted/50'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">{productName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                ID: {sub.provider_subscription_id?.slice(0, 12)}...
+                              </p>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <Badge 
+                                  variant={isActive ? 'default' : 'secondary'}
+                                  className={isActive ? 'bg-blue-600' : ''}
+                                >
+                                  {sub.state}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
+                                </span>
+                              </div>
+                              {sub.next_charge_at && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Следующее: {format(new Date(sub.next_charge_at), "dd.MM.yy HH:mm", { locale: ru })} — {((sub.amount_cents || 0) / 100).toFixed(2)} {sub.currency}
+                                </p>
+                              )}
+                            </div>
+                            {isActive && (
+                              <Button 
+                                variant="destructive" 
+                                size="sm"
+                                onClick={() => cancelProviderSubAdminMutation.mutate(sub.provider_subscription_id)}
+                                disabled={cancelProviderSubAdminMutation.isPending}
+                              >
+                                {cancelProviderSubAdminMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  'Отменить'
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}

@@ -90,16 +90,17 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
   { key: "contact", label: "Контакт", visible: true, width: 160, order: 1 },
   { key: "product", label: "Продукт", visible: true, width: 130, order: 2 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 3 },
-  { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 4 },
-  { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 5 },
-  { key: "grace_remaining", label: "Grace", visible: true, width: 80, order: 6 },
-  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 7 },
-  { key: "card", label: "Карта", visible: true, width: 50, order: 8 },
-  { key: "pm", label: "PM", visible: true, width: 80, order: 9 },
-  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 10 },
-  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 11 },
-  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 12 },
+  { key: "billing_type", label: "Биллинг", visible: true, width: 70, order: 3 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 4 },
+  { key: "next_charge", label: "К списанию", visible: true, width: 100, order: 5 },
+  { key: "access_end", label: "Доступ до", visible: true, width: 90, order: 6 },
+  { key: "grace_remaining", label: "Grace", visible: true, width: 80, order: 7 },
+  { key: "attempts", label: "Попытки", visible: true, width: 70, order: 8 },
+  { key: "card", label: "Карта", visible: true, width: 50, order: 9 },
+  { key: "pm", label: "PM", visible: true, width: 80, order: 10 },
+  { key: "last_attempt", label: "Last Attempt", visible: true, width: 100, order: 11 },
+  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 70, order: 12 },
+  { key: "email_status", label: "Email 7/3/1", visible: true, width: 70, order: 13 },
 ];
 
 const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
@@ -260,6 +261,8 @@ interface AutoRenewal {
   grace_period_status: string | null;
   grace_period_started_at: string | null;
   grace_period_ends_at: string | null;
+  // PATCH-7: Billing type (provider-managed subscriptions)
+  billing_type: 'mit' | 'provider_managed';
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -421,6 +424,7 @@ export function AutoRenewalsTabContent() {
           meta,
           is_trial,
           tariff_id,
+          billing_type,
           grace_period_status,
           grace_period_started_at,
           grace_period_ends_at,
@@ -521,6 +525,8 @@ export function AutoRenewalsTabContent() {
           grace_period_status: (sub as any).grace_period_status || null,
           grace_period_started_at: (sub as any).grace_period_started_at || null,
           grace_period_ends_at: (sub as any).grace_period_ends_at || null,
+          // PATCH-7: Billing type
+          billing_type: (sub as any).billing_type || 'mit',
         };
       // PATCH-2: Filter out non-subscription (one-time) products
       }).filter(sub => sub.is_subscription);
@@ -947,6 +953,20 @@ export function AutoRenewalsTabContent() {
               </span>
             )}
           </div>
+        );
+      case 'billing_type':
+        return (
+          <Badge 
+            variant={renewal.billing_type === 'provider_managed' ? 'secondary' : 'outline'}
+            className={cn(
+              'text-[10px] px-1.5',
+              renewal.billing_type === 'provider_managed' 
+                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
+                : ''
+            )}
+          >
+            {renewal.billing_type === 'provider_managed' ? '🔄 bePaid' : '💳 MIT'}
+          </Badge>
         );
       case 'amount':
         return (
