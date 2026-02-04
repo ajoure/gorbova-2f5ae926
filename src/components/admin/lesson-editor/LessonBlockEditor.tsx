@@ -74,6 +74,7 @@ import {
   Columns,
   GitBranch,
   LayoutGrid,
+  ClipboardList,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { HeadingBlock } from "./blocks/HeadingBlock";
@@ -100,6 +101,7 @@ import { QuizMatchingBlock } from "./blocks/QuizMatchingBlock";
 import { QuizSequenceBlock } from "./blocks/QuizSequenceBlock";
 import { QuizHotspotBlock } from "./blocks/QuizHotspotBlock";
 import { GalleryBlock } from "./blocks/GalleryBlock";
+import { QuizSurveyBlock } from "./blocks/QuizSurveyBlock";
 
 // Block configuration with categories
 interface BlockConfig {
@@ -141,6 +143,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   quiz_matching: { icon: GitBranch, label: "Соответствие", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_sequence: { icon: List, label: "Последовательность", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_hotspot: { icon: Image, label: "Точка на изображении", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_survey: { icon: ClipboardList, label: "Опросник", color: "bg-teal-500/10 text-teal-600", category: 'quiz' },
   
   // Input blocks — Блоки ввода
   input_short: { icon: AlignLeft, label: "Короткий ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
@@ -165,13 +168,13 @@ const categoryConfig = {
   meta: { icon: Box, label: "Структура", color: "text-gray-600" },
 };
 
-// Blocks available (Iteration 1 + 2)
+// Blocks available (Iteration 1 + 2 + survey)
 const availableBlocks: BlockType[] = [
   'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
   'video', 'audio', 'image', 'gallery', 'file',
   'button', 'embed', 'divider', 'timeline', 'steps',
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
-  'quiz_matching', 'quiz_sequence', 'quiz_hotspot',
+  'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -222,6 +225,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { question: "", imageUrl: "", correctAreas: [], explanation: "", points: 1 };
     case 'gallery':
       return { items: [], layout: 'grid', columns: 3 };
+    case 'quiz_survey':
+      return { title: "", instruction: "", questions: [], results: [], mixedResults: [], buttonText: "Узнать результат" };
     case 'divider':
     default:
       return {};
@@ -303,6 +308,8 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <QuizHotspotBlock content={block.content as any} onChange={onUpdate} />;
       case 'gallery':
         return <GalleryBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_survey':
+        return <QuizSurveyBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

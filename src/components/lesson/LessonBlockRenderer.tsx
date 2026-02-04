@@ -24,6 +24,7 @@ import { QuizFillBlankBlock } from "@/components/admin/lesson-editor/blocks/Quiz
 import { QuizMatchingBlock } from "@/components/admin/lesson-editor/blocks/QuizMatchingBlock";
 import { QuizSequenceBlock } from "@/components/admin/lesson-editor/blocks/QuizSequenceBlock";
 import { QuizHotspotBlock } from "@/components/admin/lesson-editor/blocks/QuizHotspotBlock";
+import { QuizSurveyBlock } from "@/components/admin/lesson-editor/blocks/QuizSurveyBlock";
 
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
@@ -229,6 +230,19 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             savedAnswer={savedResponse}
             isSubmitted={isSubmitted}
             attempts={attempts}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_survey':
+        return (
+          <QuizSurveyBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            blockId={block.id}
+            savedAnswer={savedResponse}
+            isSubmitted={isSubmitted}
             onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
           />

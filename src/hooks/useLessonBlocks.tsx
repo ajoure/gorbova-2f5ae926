@@ -12,6 +12,8 @@ export type BlockType =
   // Тесты (Итерация 2)
   | 'quiz_single' | 'quiz_multiple' | 'quiz_true_false' | 'quiz_fill_blank' 
   | 'quiz_matching' | 'quiz_sequence' | 'quiz_hotspot'
+  // Опросники/Самодиагностика
+  | 'quiz_survey'
   // Ввод (Итерация 3)
   | 'input_short' | 'input_long' | 'checklist' | 'table_input' | 'file_upload' | 'rating'
   // Мета (Итерация 4)
@@ -225,7 +227,32 @@ export type BlockContent =
   | QuizMatchingContentData
   | QuizSequenceContentData
   | QuizHotspotContentData
+  | QuizSurveyContentData
   | Record<string, never>;
+
+// Quiz Survey content type
+export interface QuizSurveyContentData {
+  title?: string;
+  instruction?: string;
+  questions: {
+    id: string;
+    question: string;
+    options: { id: string; text: string; category: string }[];
+  }[];
+  results: {
+    category: string;
+    title: string;
+    description: string;
+    color?: string;
+  }[];
+  mixedResults?: {
+    categories: string[];
+    title: string;
+    description: string;
+    color?: string;
+  }[];
+  buttonText?: string;
+}
 
 export interface LessonBlock {
   id: string;
