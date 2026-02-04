@@ -254,11 +254,18 @@ export default function PaymentMethodsSettings() {
       });
       
       // Handle 409 - already has pending provider subscription
-      if (error?.message?.includes('409') || data?.error?.includes('Already has active provider subscription')) {
+      // supabase-js returns error for non-2xx, but data may still contain parsed body
+      const errorMessage = error?.message || '';
+      const dataError = data?.error || '';
+      const is409Conflict = errorMessage.includes('409') || 
+                            dataError.includes('Already has active provider subscription') ||
+                            errorMessage.includes('Already has active provider subscription');
+      
+      if (is409Conflict) {
         const providerSubId = data?.provider_subscription_id;
         toast.info('Подписка bePaid уже создана', {
           description: providerSubId 
-            ? `ID: ${providerSubId}. Проверьте статус или отмените для создания новой.`
+            ? `ID: ${providerSubId}. Используйте ссылку из существующей подписки или отмените её.`
             : 'Проверьте статус подписки или отмените существующую.',
           duration: 6000,
         });
@@ -275,9 +282,9 @@ export default function PaymentMethodsSettings() {
         setCreatingSubId(null);
       }
     } catch (error: any) {
-      // Parse error body for 409 case
-      const errorBody = error?.context?.body;
-      if (errorBody?.error?.includes('Already has active provider subscription')) {
+      // Parse error message for 409 case (backup check)
+      const msg = error?.message || '';
+      if (msg.includes('409') || msg.includes('Already has active provider subscription')) {
         toast.info('Подписка bePaid уже существует', {
           description: 'Проверьте статус или отмените существующую для создания новой.',
           duration: 6000,
@@ -285,7 +292,7 @@ export default function PaymentMethodsSettings() {
         setCreatingSubId(null);
         return;
       }
-      toast.error('Ошибка: ' + error.message);
+      toast.error('Ошибка: ' + msg);
       setCreatingSubId(null);
     }
   };
