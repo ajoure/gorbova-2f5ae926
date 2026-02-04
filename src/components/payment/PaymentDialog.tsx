@@ -14,7 +14,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
@@ -105,6 +106,7 @@ interface UserFormData {
 }
 
 type Step = "email" | "login" | "additional_info" | "telegram_prompt" | "processing" | "ready";
+type PaymentFlowType = 'mit' | 'provider_managed';
 
 interface EmailCheckResult {
   exists: boolean;
@@ -147,6 +149,7 @@ export function PaymentDialog({
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
+  const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('mit');
   
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
@@ -419,9 +422,49 @@ export function PaymentDialog({
     setIsLoading(true);
     setStep("processing");
 
-    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId });
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
 
     try {
+      // If user selected provider_managed flow (bePaid subscription) for recurring products
+      if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial && !savedCard) {
+        console.log("Using provider_managed flow (bePaid subscription checkout)");
+        const { data, error } = await supabase.functions.invoke("bepaid-create-subscription-checkout", {
+          body: {
+            productId,
+            tariffCode,
+            offerId,
+            customerEmail: formData.email,
+            customerPhone: formData.phone,
+            customerFirstName: formData.firstName,
+            customerLastName: formData.lastName,
+            existingUserId,
+          },
+        });
+
+        if (error) {
+          if (data?.alreadyUsedTrial) {
+            setShowTrialUsedModal(true);
+            setStep("ready");
+            setIsLoading(false);
+            return;
+          }
+          throw new Error(data?.error || error.message);
+        }
+
+        if (!data.success) {
+          throw new Error(data.error || "Ошибка создания подписки bePaid");
+        }
+
+        // Redirect to bePaid subscription checkout page
+        if (data.redirect_url) {
+          window.location.href = data.redirect_url;
+        } else {
+          toast.error("Не удалось получить ссылку на подписку");
+          setStep("ready");
+        }
+        return;
+      }
+
       // If user has a saved card and tariffCode is provided, use direct charge
       if (savedCard && tariffCode && user) {
         console.log("Using direct charge with saved card:", savedCard.id, "offerId:", offerId);
@@ -480,7 +523,7 @@ export function PaymentDialog({
         }
       }
 
-      // Fallback: redirect to bePaid checkout
+      // Default: redirect to bePaid checkout (MIT tokenization)
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId,
@@ -1067,6 +1110,48 @@ export function PaymentDialog({
                 <p className="text-muted-foreground">
                   Управление подпиской доступно в вашем профиле 24/7.
                 </p>
+              </div>
+            )}
+
+            {/* Payment Flow Choice - only for recurring, non-trial */}
+            {isSubscription && !isTrial && !savedCard && (
+              <div className="rounded-lg border border-border/50 p-4 space-y-3">
+                <p className="font-medium text-sm flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-primary" />
+                  Способ автопродления
+                </p>
+                <RadioGroup 
+                  value={paymentFlowType} 
+                  onValueChange={(v) => setPaymentFlowType(v as PaymentFlowType)}
+                  className="space-y-2"
+                >
+                  <div className="flex items-start space-x-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer border border-transparent has-[input:checked]:border-primary/50">
+                    <RadioGroupItem value="mit" id="payment-flow-mit" className="mt-0.5" />
+                    <div className="flex-1">
+                      <Label htmlFor="payment-flow-mit" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-muted-foreground" />
+                        Привязать карту
+                        <span className="text-xs text-primary bg-primary/10 px-1.5 py-0.5 rounded">Рекомендуем</span>
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Мы сами спишем в нужный момент. Работает для пересчётов и апгрейдов.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start space-x-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer border border-transparent has-[input:checked]:border-primary/50">
+                    <RadioGroupItem value="provider_managed" id="payment-flow-bepaid" className="mt-0.5" />
+                    <div className="flex-1">
+                      <Label htmlFor="payment-flow-bepaid" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                        <Repeat className="h-4 w-4 text-muted-foreground" />
+                        Подписка bePaid
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        bePaid сам спишет каждые 30 дней. Для карт, требующих 3D-Secure.
+                      </p>
+                    </div>
+                  </div>
+                </RadioGroup>
               </div>
             )}
 
