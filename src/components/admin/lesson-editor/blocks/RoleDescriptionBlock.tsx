@@ -33,13 +33,13 @@ const DEFAULT_CONTENT: RoleDescriptionContent = {
 };
 
 const ROLE_CONFIG: Record<string, { icon: React.ElementType; label: string; color: string }> = {
-  'А': { icon: User, label: 'Исполнитель', color: 'bg-blue-500/10 text-blue-600' },
-  'Б': { icon: Briefcase, label: 'Фрилансер', color: 'bg-green-500/10 text-green-600' },
-  'В': { icon: Building2, label: 'Предприниматель', color: 'bg-purple-500/10 text-purple-600' },
+  'А': { icon: User, label: 'Исполнитель', color: 'bg-primary/10 text-primary' },
+  'Б': { icon: Briefcase, label: 'Фрилансер', color: 'bg-secondary/10 text-secondary-foreground' },
+  'В': { icon: Building2, label: 'Предприниматель', color: 'bg-accent/10 text-accent-foreground' },
   // Alternative mappings
-  'executor': { icon: User, label: 'Исполнитель', color: 'bg-blue-500/10 text-blue-600' },
-  'freelancer': { icon: Briefcase, label: 'Фрилансер', color: 'bg-green-500/10 text-green-600' },
-  'entrepreneur': { icon: Building2, label: 'Предприниматель', color: 'bg-purple-500/10 text-purple-600' },
+  'executor': { icon: User, label: 'Исполнитель', color: 'bg-primary/10 text-primary' },
+  'freelancer': { icon: Briefcase, label: 'Фрилансер', color: 'bg-secondary/10 text-secondary-foreground' },
+  'entrepreneur': { icon: Building2, label: 'Предприниматель', color: 'bg-accent/10 text-accent-foreground' },
 };
 
 export function RoleDescriptionBlock({ 

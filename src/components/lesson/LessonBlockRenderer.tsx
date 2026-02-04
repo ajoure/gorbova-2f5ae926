@@ -30,7 +30,31 @@ import { DiagnosticTableBlock } from "@/components/admin/lesson-editor/blocks/Di
 import { SequentialFormBlock } from "@/components/admin/lesson-editor/blocks/SequentialFormBlock";
 import { RoleDescriptionBlock } from "@/components/admin/lesson-editor/blocks/RoleDescriptionBlock";
 
-interface LessonBlockRendererProps {
+// Kvest-specific props passed from KvestLessonView
+export interface KvestBlockProps {
+  // Role description
+  role?: string | null;
+  onRoleSelected?: (role: string) => void;
+  
+  // Video
+  watchedPercent?: number;
+  onProgress?: (percent: number) => void;
+  
+  // Diagnostic table
+  rows?: Record<string, unknown>[];
+  onRowsChange?: (rows: Record<string, unknown>[]) => void;
+  
+  // Sequential form
+  answers?: Record<string, string>;
+  onAnswersChange?: (answers: Record<string, string>) => void;
+  
+  // Common
+  onComplete?: () => void;
+  isCompleted?: boolean;
+  userRole?: string | null;
+}
+
+export interface LessonBlockRendererProps {
   blocks: LessonBlock[];
   lessonId?: string;
   /** Active timecode in seconds for video seeking (optional) */
@@ -39,9 +63,18 @@ interface LessonBlockRendererProps {
   autoplayNonce?: number;
   /** Callback when seek was successfully applied by video player */
   onSeekApplied?: (seconds: number, nonce: number) => void;
+  /** Kvest-specific props for interactive blocks */
+  kvestProps?: KvestBlockProps;
 }
 
-export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplayNonce, onSeekApplied }: LessonBlockRendererProps) {
+export function LessonBlockRenderer({ 
+  blocks, 
+  lessonId, 
+  activeTimecode, 
+  autoplayNonce, 
+  onSeekApplied,
+  kvestProps 
+}: LessonBlockRendererProps) {
   const { progress, saveBlockResponse, resetBlockProgress } = useUserProgress(lessonId || '');
 
   if (!blocks || blocks.length === 0) {
@@ -56,6 +89,18 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
     maxScore: number
   ) => {
     await saveBlockResponse(blockId, answer, isCorrect, score, maxScore);
+    // For quiz_survey in kvest mode, extract role and call onRoleSelected
+    if (kvestProps?.onRoleSelected && answer?.selectedCategory) {
+      const categoryToRole: Record<string, string> = {
+        'A': 'executor',
+        'B': 'freelancer', 
+        'C': 'entrepreneur',
+      };
+      const role = categoryToRole[answer.selectedCategory as string];
+      if (role) {
+        kvestProps.onRoleSelected(role);
+      }
+    }
   };
 
   const handleQuizReset = async (blockId: string) => {
@@ -246,19 +291,23 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             isEditing={false}
             blockId={block.id}
             savedAnswer={savedResponse}
-            isSubmitted={isSubmitted}
+            isSubmitted={isSubmitted || kvestProps?.isCompleted}
             onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
           />
         );
       
-      // Kvest blocks (view mode only for now - full integration in KvestLessonView)
+      // Kvest blocks with kvestProps integration
       case 'video_unskippable':
         return (
           <VideoUnskippableBlock 
             content={block.content as any} 
             onChange={() => {}} 
             isEditing={false}
+            watchedPercent={kvestProps?.watchedPercent}
+            onProgress={kvestProps?.onProgress}
+            onComplete={kvestProps?.onComplete}
+            isCompleted={kvestProps?.isCompleted}
           />
         );
       case 'diagnostic_table':
@@ -267,6 +316,10 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             content={block.content as any} 
             onChange={() => {}} 
             isEditing={false}
+            rows={kvestProps?.rows}
+            onRowsChange={kvestProps?.onRowsChange}
+            onComplete={kvestProps?.onComplete}
+            isCompleted={kvestProps?.isCompleted}
           />
         );
       case 'sequential_form':
@@ -275,6 +328,10 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             content={block.content as any} 
             onChange={() => {}} 
             isEditing={false}
+            answers={kvestProps?.answers}
+            onAnswersChange={kvestProps?.onAnswersChange}
+            onComplete={kvestProps?.onComplete}
+            isCompleted={kvestProps?.isCompleted}
           />
         );
       case 'role_description':
@@ -283,6 +340,9 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             content={block.content as any} 
             onChange={() => {}} 
             isEditing={false}
+            userRole={kvestProps?.role || undefined}
+            onComplete={kvestProps?.onComplete}
+            isCompleted={kvestProps?.isCompleted}
           />
         );
       default:
