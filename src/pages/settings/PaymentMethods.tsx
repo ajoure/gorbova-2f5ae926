@@ -241,11 +241,11 @@ export default function PaymentMethodsSettings() {
   // Check for rejected cards that need 3DS
   const hasRejectedCards = paymentMethods?.some(m => m.verification_status === 'rejected');
 
-  // Create provider subscription function
-  const [isCreatingProviderSub, setIsCreatingProviderSub] = useState(false);
+  // Create provider subscription function - per-subscription loading state
+  const [creatingSubId, setCreatingSubId] = useState<string | null>(null);
   const handleCreateProviderSubscription = async (subscriptionV2Id: string) => {
     try {
-      setIsCreatingProviderSub(true);
+      setCreatingSubId(subscriptionV2Id);
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
         body: { 
           subscription_v2_id: subscriptionV2Id,
@@ -259,11 +259,11 @@ export default function PaymentMethodsSettings() {
         window.location.href = data.redirect_url;
       } else {
         toast.error('Не удалось создать сессию подписки');
-        setIsCreatingProviderSub(false);
+        setCreatingSubId(null);
       }
     } catch (error: any) {
       toast.error('Ошибка: ' + error.message);
-      setIsCreatingProviderSub(false);
+      setCreatingSubId(null);
     }
   };
 
@@ -595,10 +595,10 @@ export default function PaymentMethodsSettings() {
                           variant="outline"
                           size="sm"
                           onClick={() => handleCreateProviderSubscription(sub.id)}
-                          disabled={isCreatingProviderSub}
+                          disabled={creatingSubId === sub.id}
                           className="w-full gap-2 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-900/20"
                         >
-                          {isCreatingProviderSub ? (
+                          {creatingSubId === sub.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <RefreshCw className="h-4 w-4" />

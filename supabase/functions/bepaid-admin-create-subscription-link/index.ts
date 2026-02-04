@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
     const { data: profile } = await supabase
       .from('profiles')
       .select('id, email, full_name')
-      .eq('id', ownerId)
+      .eq('user_id', ownerId)
       .maybeSingle();
     
     const product = subscription.products_v2 || {};
@@ -309,10 +309,12 @@ Deno.serve(async (req) => {
     });
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
-      console.error('[bepaid-admin-link] bePaid error:', bepaidResult);
+      console.error('[bepaid-admin-link] bePaid error:', {
+        http_status: bepaidResponse.status,
+        has_errors: !!bepaidResult?.errors,
+      });
       return new Response(JSON.stringify({ 
-        error: 'Failed to create bePaid subscription',
-        details: bepaidResult.errors || bepaidResult 
+        error: 'Failed to create bePaid subscription'
       }), {
         status: bepaidResponse.status || 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -354,22 +356,21 @@ Deno.serve(async (req) => {
       console.error('[bepaid-admin-link] Failed to save provider_subscriptions:', provSubError);
     }
 
-    // Update subscriptions_v2
+    // Update subscriptions_v2 meta ONLY (billing_type changes on webhook/success confirmation)
     const { error: updateSubError } = await supabase
       .from('subscriptions_v2')
       .update({
-        billing_type: 'provider_managed',
         meta: {
           ...subMeta,
           bepaid_subscription_id: bepaidSubId,
-          bepaid_subscription_created_at: new Date().toISOString(),
+          bepaid_link_created_at: new Date().toISOString(),
           admin_created_link: true,
         },
       })
       .eq('id', subscription_v2_id);
 
     if (updateSubError) {
-      console.error('[bepaid-admin-link] Failed to update subscription:', updateSubError);
+      console.error('[bepaid-admin-link] Failed to update subscription meta:', { error_code: updateSubError.code });
     }
 
     // SYSTEM ACTOR Audit log - as required by DoD
