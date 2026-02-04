@@ -389,19 +389,31 @@ export function KvestLessonView({
 
   return (
     <div className="space-y-6">
-      {/* Progress Header - Sticky */}
-      <Card className="bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20 sticky top-0 z-10">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">{lesson.title}</CardTitle>
-            <Badge variant="outline" className="text-sm">
+      {/* Progress Header - Sticky with Glass Effect */}
+      <div 
+        className="sticky top-0 z-10 rounded-2xl backdrop-blur-2xl border border-primary/30 shadow-xl overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, hsl(var(--primary) / 0.08), hsl(var(--primary) / 0.03))",
+          boxShadow: "0 12px 40px hsl(var(--primary) / 0.15), inset 0 1px 0 hsl(0 0% 100% / 0.2)"
+        }}
+      >
+        {/* Decorative orb */}
+        <div className="absolute -top-16 -right-16 w-48 h-48 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
+        
+        <div className="relative px-6 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold">{lesson.title}</h3>
+            <Badge 
+              variant="outline" 
+              className="text-sm backdrop-blur-sm bg-white/20 border-white/30"
+            >
               Шаг {currentStepIndex + 1} из {totalSteps}
             </Badge>
           </div>
-        </CardHeader>
-        <CardContent className="pb-4">
-          <Progress value={progressPercent} className="h-2" />
-          <div className="flex justify-between mt-2 flex-wrap gap-1">
+          
+          <Progress value={progressPercent} className="h-2 mb-3" />
+          
+          <div className="flex justify-between flex-wrap gap-1">
             {stepBlocks.map((block, idx) => {
               const completed = isBlockCompleted(block.id);
               const isCurrent = idx === currentStepIndex;
@@ -414,14 +426,14 @@ export function KvestLessonView({
                   disabled={!isAccessible}
                   title={`Шаг ${idx + 1}`}
                   className={cn(
-                    "w-7 h-7 rounded-full text-xs font-medium transition-all flex items-center justify-center",
+                    "w-8 h-8 rounded-xl text-xs font-medium transition-all flex items-center justify-center backdrop-blur-sm",
                     completed
-                      ? 'bg-primary text-primary-foreground' 
+                      ? "bg-primary/90 text-primary-foreground shadow-lg shadow-primary/30"
                       : isCurrent
-                        ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2'
+                        ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 shadow-lg"
                         : isAccessible
-                          ? 'bg-primary/60 text-primary-foreground hover:bg-primary/80'
-                          : 'bg-muted text-muted-foreground cursor-not-allowed'
+                          ? "bg-white/40 text-foreground hover:bg-white/60 border border-white/30"
+                          : "bg-muted/50 text-muted-foreground cursor-not-allowed"
                   )}
                 >
                   {completed ? (
@@ -435,8 +447,8 @@ export function KvestLessonView({
               );
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* PATCH-2: Cumulative Block Rendering - All blocks up to currentStepIndex are visible */}
       <div className="space-y-4">
@@ -449,21 +461,38 @@ export function KvestLessonView({
           if (!isVisible) return null;
           
           return (
-            <Card 
+            <div 
               key={block.id}
               ref={(el) => {
                 if (el) blockRefs.current.set(block.id, el);
               }}
               className={cn(
-                "transition-all duration-300",
-                isCompleted && !isCurrent && "border-primary/30 bg-primary/5",
-                isCurrent && "ring-2 ring-primary/50 shadow-lg"
+                "rounded-2xl backdrop-blur-xl border transition-all duration-300 overflow-hidden",
+                isCompleted && !isCurrent 
+                  ? "border-primary/30 shadow-md"
+                  : isCurrent 
+                    ? "border-primary/40 ring-2 ring-primary/30 shadow-xl"
+                    : "border-border/40 shadow-lg"
               )}
+              style={{
+                background: isCompleted && !isCurrent
+                  ? "linear-gradient(135deg, hsl(var(--primary) / 0.08), hsl(var(--primary) / 0.03))"
+                  : isCurrent
+                    ? "linear-gradient(135deg, hsl(var(--card) / 0.7), hsl(var(--card) / 0.4))"
+                    : "linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.25))",
+                boxShadow: isCurrent 
+                  ? "0 16px 48px rgba(0, 0, 0, 0.1), inset 0 1px 0 hsl(0 0% 100% / 0.2)"
+                  : "0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.15)"
+              }}
             >
               {/* Block header with step indicator */}
               <div className={cn(
-                "px-4 py-2 border-b flex items-center justify-between",
-                isCompleted ? "bg-primary/10" : isCurrent ? "bg-primary/10" : "bg-muted/30"
+                "px-4 py-3 border-b border-white/10 flex items-center justify-between",
+                isCompleted 
+                  ? "bg-gradient-to-r from-primary/15 to-primary/5" 
+                  : isCurrent 
+                    ? "bg-gradient-to-r from-primary/10 to-transparent" 
+                    : "bg-white/5"
               )}>
                 <div className="flex items-center gap-2">
                   <Badge 
@@ -492,11 +521,11 @@ export function KvestLessonView({
 
               {/* Gate explanation for current incomplete block */}
               {isCurrent && !gateOpen && (
-                <div className="px-4 py-3 border-t bg-destructive/10 text-center text-sm text-destructive">
+                <div className="px-4 py-3 border-t border-destructive/20 bg-destructive/10 text-center text-sm text-destructive backdrop-blur-sm">
                   {getGateExplanation(block)}
                 </div>
               )}
-            </Card>
+            </div>
           );
         })}
       </div>
@@ -506,7 +535,7 @@ export function KvestLessonView({
         <div className="flex justify-center">
           <Button
             onClick={() => goToStep(currentStepIndex + 1)}
-            className="gap-2"
+            className="gap-2 bg-gradient-to-r from-primary via-primary/90 to-accent/80 hover:from-primary/90 hover:to-accent/70 shadow-lg shadow-primary/25 border-0"
             size="lg"
           >
             Перейти к следующему шагу
@@ -522,7 +551,7 @@ export function KvestLessonView({
             onClick={handleFinishLesson}
             variant="default"
             size="lg"
-            className="gap-2"
+            className="gap-2 bg-gradient-to-r from-primary via-primary/90 to-accent/80 hover:from-primary/90 hover:to-accent/70 shadow-lg shadow-primary/25 border-0"
           >
             <CheckCircle2 className="h-5 w-5" />
             Завершить урок

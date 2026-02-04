@@ -484,15 +484,25 @@ export function QuizSurveyBlock({
         </GlassCard>
       )}
 
-      {/* Questions */}
+      {/* Questions - Glass Cards */}
       <div className="space-y-6">
         {content.questions.map((q, qIndex) => (
-          <GlassCard
+          <div
             key={q.id}
             className={cn(
-              "p-5 transition-all duration-300",
-              answers[q.id] && "border-primary/30 bg-primary/5"
+              "p-5 rounded-2xl backdrop-blur-xl border transition-all duration-300",
+              answers[q.id] 
+                ? "border-primary/40 shadow-lg shadow-primary/10" 
+                : "border-border/30 shadow-md"
             )}
+            style={{
+              background: answers[q.id]
+                ? "linear-gradient(135deg, hsl(var(--primary) / 0.08), hsl(var(--primary) / 0.03))"
+                : "linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.25))",
+              boxShadow: answers[q.id]
+                ? "0 12px 40px hsl(var(--primary) / 0.1), inset 0 1px 0 hsl(0 0% 100% / 0.2)"
+                : "0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.15)"
+            }}
           >
             <div
               className="font-medium mb-4 whitespace-pre-line"
@@ -511,29 +521,30 @@ export function QuizSurveyBlock({
                 <label
                   key={opt.id}
                   className={cn(
-                    "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all",
-                    "hover:bg-muted/50 hover:border-primary/30",
-                    answers[q.id] === opt.id && "bg-primary/10 border-primary/40",
+                    "flex items-start gap-3 p-4 rounded-xl backdrop-blur-sm border cursor-pointer transition-all duration-200",
+                    answers[q.id] === opt.id 
+                      ? "bg-primary/15 border-primary/40 shadow-md"
+                      : "bg-white/10 border-white/20 hover:bg-white/20 hover:border-white/30",
                     showResults && "cursor-default hover:bg-transparent"
                   )}
                 >
                   <RadioGroupItem value={opt.id} className="mt-0.5" />
-                  <span className="text-sm">{opt.text}</span>
+                  <span className="text-sm leading-relaxed">{opt.text}</span>
                 </label>
               ))}
             </RadioGroup>
-          </GlassCard>
+          </div>
         ))}
       </div>
 
-      {/* Submit Button */}
+      {/* Submit Button with Gradient */}
       {!showResults && (
         <div className="flex justify-center pt-4">
           <Button
             size="lg"
             onClick={handleSubmitResults}
             disabled={!allQuestionsAnswered}
-            className="gap-2"
+            className="gap-2 bg-gradient-to-r from-primary via-primary/90 to-accent/80 hover:from-primary/90 hover:to-accent/70 shadow-lg shadow-primary/25 border-0 disabled:opacity-50 disabled:shadow-none"
           >
             <Sparkles className="h-4 w-4" />
             {content.buttonText || "Узнать результат"}
@@ -541,17 +552,28 @@ export function QuizSurveyBlock({
         </div>
       )}
 
-      {/* Results Section */}
+      {/* Results Section - Glass Design */}
       {showResults && (
         <div className="space-y-6 animate-in fade-in-50 duration-500">
-          {/* Category Scores */}
-          <GlassCard className="p-5">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
+          {/* Category Scores - Glass Card */}
+          <div 
+            className="p-5 rounded-2xl backdrop-blur-2xl border border-primary/30 shadow-xl overflow-hidden relative"
+            style={{
+              background: "linear-gradient(135deg, hsl(var(--primary) / 0.1), hsl(var(--primary) / 0.03))",
+              boxShadow: "0 16px 48px hsl(var(--primary) / 0.15), inset 0 1px 0 hsl(0 0% 100% / 0.3)"
+            }}
+          >
+            {/* Floating decoration */}
+            <div className="absolute -top-12 -right-12 w-40 h-40 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
+            
+            <h3 className="font-semibold mb-4 flex items-center gap-2 relative z-10">
+              <div className="p-2 rounded-xl bg-primary/20 backdrop-blur-sm">
+                <Sparkles className="h-5 w-5 text-primary" />
+              </div>
               Ваш результат
             </h3>
 
-            <div className="space-y-3 mb-6">
+            <div className="space-y-3 mb-6 relative z-10">
               {Object.entries(categoryScores)
                 .sort(([, a], [, b]) => b - a)
                 .map(([category, score]) => {
@@ -564,11 +586,11 @@ export function QuizSurveyBlock({
                     <div key={category} className="space-y-1">
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-medium">{category}</span>
-                        <span className="text-muted-foreground">
+                        <span className="text-muted-foreground/90">
                           {score} из {maxPossible}
                         </span>
                       </div>
-                      <div className="h-3 rounded-full bg-muted overflow-hidden">
+                      <div className="h-3 rounded-full bg-white/20 backdrop-blur-sm overflow-hidden">
                         <div
                           className={cn("h-full rounded-full transition-all duration-700", colors.bg)}
                           style={{
@@ -582,19 +604,22 @@ export function QuizSurveyBlock({
                 })}
             </div>
 
-            {/* Dominant Category Result */}
+            {/* Dominant Category Result - Glass */}
             {resultToShow && (
-              <GlassCard
+              <div
                 className={cn(
-                  "p-5 mt-4",
+                  "p-5 mt-4 rounded-xl backdrop-blur-sm border relative z-10",
                   colorMap[resultToShow.color || "blue"]?.bg,
                   colorMap[resultToShow.color || "blue"]?.border
                 )}
+                style={{
+                  boxShadow: "inset 0 1px 0 hsl(0 0% 100% / 0.2)"
+                }}
               >
                 <div className="flex items-start gap-3">
                   <div
                     className={cn(
-                      "p-2 rounded-lg",
+                      "p-2 rounded-xl backdrop-blur-sm",
                       colorMap[resultToShow.color || "blue"]?.bg
                     )}
                   >
@@ -604,16 +629,20 @@ export function QuizSurveyBlock({
                   </div>
                   <div>
                     <h4 className="font-semibold text-lg">{resultToShow.title}</h4>
-                    <p className="text-muted-foreground mt-1">{resultToShow.description}</p>
+                    <p className="text-muted-foreground/90 mt-1">{resultToShow.description}</p>
                   </div>
                 </div>
-              </GlassCard>
+              </div>
             )}
-          </GlassCard>
+          </div>
 
-          {/* Reset Button */}
+          {/* Reset Button - Glass Style */}
           <div className="flex justify-center">
-            <Button variant="outline" onClick={handleReset} className="gap-2">
+            <Button 
+              variant="outline" 
+              onClick={handleReset} 
+              className="gap-2 backdrop-blur-sm bg-white/10 border-white/30 hover:bg-white/20"
+            >
               <RotateCcw className="h-4 w-4" />
               Пройти ещё раз
             </Button>
