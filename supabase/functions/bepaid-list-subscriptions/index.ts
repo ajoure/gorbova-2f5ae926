@@ -429,7 +429,8 @@ Deno.serve(async (req) => {
       console.log(`[bepaid-list-subs] Hydrating from DB: ${providerSubs?.length} provider_subscriptions records`);
       
       let processed = 0;
-      const maxProcess = 20; // STOP-guard for batch limit
+      // PATCH-N: Increase limit to 100 with query param override
+      const maxProcess = Math.min(parseInt(url.searchParams.get('limit') || '100'), 100);
       
       for (const ps of providerSubs || []) {
         if (processed >= maxProcess) break;
