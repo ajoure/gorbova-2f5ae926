@@ -1,92 +1,177 @@
-# bePaid Provider-Managed Subscriptions — PATCH-лист (ВЫПОЛНЕНО ✅)
+PATCH: Критическая безопасность — «доступ выдан без оплаты» + падение checkout
 
-## Статус: ВСЕ ПАТЧИ ПРИМЕНЕНЫ
+Краткое резюме проблем
 
-Дата применения: 2026-02-04
+#	Проблема	Критичность	Статус
+1	Тестовая кнопка доступна всем admin (не только super_admin) в PaymentDialog	🔴 SECURITY	Требует фикса
+2	bepaid-create-subscription-checkout падает из-за NOT NULL (base_price, final_price, is_trial)	🔴 BLOCKER	Требует фикса
+3	Тестовая кнопка в AdminOrdersV2 уже ограничена isSuperAdmin()	✅ OK	Не требует фикса
+4	test-payment-complete на сервере уже проверяет super_admin	✅ OK	Не требует фикса
 
----
 
-## Выполненные исправления
+⸻
 
-### PATCH-1.0: Порядок проверки BasicAuth + RSA Signature ✅
-- Реализована единая логика: сначала BasicAuth, затем RSA
-- Убраны все fallback "принять без подписи"
-- 401 + orphan при invalid_signature
-- 500 + alert при missing_public_key/secret_key
+PATCH-5 (BLOCKER): Исправить NOT NULL в bepaid-create-subscription-checkout
 
-### PATCH-1.1: normalizePemPublicKey() ✅
-- Добавлена функция нормализации PEM (base64 по 64 символа)
-- Используется integration_instances.config.public_key
+Текущее состояние (строки 281-299)
 
-### PATCH-1.2: Убран BEPAID_PUBLIC_KEY ✅
-- Удалён захардкоженный ключ (строки 420-428)
+.insert({
+  user_id: userId,
+  profile_id: profileId,
+  product_id: productId,
+  tariff_id: tariff.id,
+  offer_id: effectiveOfferId || null,
+  order_number: orderNumber,
+  paid_amount: amountCents / 100,  // ← НЕВЕРНО: paid_amount до оплаты
+  currency,
+  status: 'pending',
+  meta: { ... },
+})
 
-### PATCH-1.3: verifyWebhookSignature без fallback ✅
-- Сигнатура теперь строго требует publicKeyPem
-- Убрано логирование фрагментов ключа
+Проблема
 
-### PATCH-1.4/1.5: 500 misconfig при отсутствии credentials ✅
-- Нет public_key + нет secret_key → 500 + alert + orphan
-- Есть Content-Signature, но нет public_key → 500 + alert + orphan
+Схема orders_v2 требует NOT NULL поля:
+	•	base_price — отсутствует
+	•	final_price — отсутствует
+	•	is_trial — отсутствует
 
-### PATCH-1.6: Safe subset для provider_webhook_orphans ✅
-- Заменено `raw_data: body` → `createSafeOrphanData(body, trackingId)`
-- Применено в 4 местах
+Дополнительно: paid_amount не должен быть равен сумме до реальной оплаты (должен быть 0).
 
-### PATCH-1.7: 401 unauthorized при invalid signature ✅
-- Статус код 401 для неверной/отсутствующей подписи
+Исправление
 
-### PATCH-1.8: Идемпотентность по transaction.uid ✅
-- Уже была реализована, оставлена без изменений
+const amountMoney = amountCents / 100;
 
-### PATCH-2: Email collision 409 ✅
-- Заменён `.maybeSingle()` на проверку массива
-- При >1 профиле → 409 + остановка
+.insert({
+  user_id: userId,
+  profile_id: profileId,
+  product_id: productId,
+  tariff_id: tariff.id,
+  offer_id: effectiveOfferId || null,
+  order_number: orderNumber,
+  
+  // NOT NULL fields
+  base_price: amountMoney,
+  final_price: amountMoney,
+  is_trial: false,
+  
+  // До webhook paid_amount = 0
+  paid_amount: 0,
+  
+  currency,
+  status: 'pending',
+  meta: {
+    payment_flow: 'provider_managed_checkout',
+    source: 'bepaid-create-subscription-checkout',
+    expected_amount: amountMoney,  // Для сверки в webhook
+  },
+})
 
-### PATCH-3: PaymentDialog ✅
-- Условие без `!savedCard` подтверждено
+Файл
 
-### PATCH-4: PaymentMethods UX ✅
-- Пояснения MIT vs bePaid
-- Tooltip "Изменить карту"
+supabase/functions/bepaid-create-subscription-checkout/index.ts, строки 281-299
 
----
+⸻
 
-## Развёрнутые функции
+PATCH-6 (SECURITY): Ограничить тестовую кнопку в PaymentDialog
 
-- `bepaid-webhook` — deployed ✅
-- `bepaid-create-subscription-checkout` — deployed ✅
+Текущее состояние
 
----
+Строка 583 (проверка в handleTestPayment):
 
-## SQL-пруфы (актуальное состояние)
+if (!isSuperAdmin() && !isAdmin()) {
+  toast.error("Только администраторы могут использовать эту функцию");
+  return;
+}
 
-### integration_instances config
-```
-shop_id: 33524
-public_key: present (392 chars)
-secret_key: present
-status: connected
-```
+Строки 1187-1208 (отображение кнопки):
 
-### provider_webhook_orphans
-- Старые orphans содержат полный body (до патча)
-- Новые будут содержать только safe subset
+{(isSuperAdmin() || isAdmin()) && (
+  <div className="border-t pt-4 mt-4">
+    <Button ... onClick={handleTestPayment}>
+      Тест: Симулировать оплату (только для админов)
+    </Button>
+  </div>
+)}
 
-### audit_logs
-- Записи `bepaid-webhook-security` с action `webhook.rejected_invalid_signature`
+Проблема
 
----
+Кнопка доступна всем admin, а не только super_admin.
+В отличие от AdminOrdersV2, где уже есть isSuperAdmin() проверка.
 
-## DoD: Что проверить после следующего webhook
+Исправление (минимальный безопасный вариант)
 
-1. **Подпись OK** → обработка продолжится
-2. **Подпись FAIL** → 401 + orphan с safe subset
-3. **Нет credentials** → 500 + alert + orphan
+// Строка 583
+if (!isSuperAdmin()) {
+  toast.error("Только super admin может использовать эту функцию");
+  return;
+}
 
-Ожидаемый результат при успешном webhook:
-- `orders_v2.status = 'paid'`
-- `subscriptions_v2.status = 'active', billing_type = 'provider_managed'`
-- `provider_subscriptions.state = 'active'`
-- `payments_v2` создан с `provider_payment_id = {transaction.uid}`
-- `audit_logs` запись с `actor_label = 'bepaid-webhook'`
+// Строки 1187-1188
+{isSuperAdmin() && (
+
+Файл
+
+src/components/payment/PaymentDialog.tsx, строки 583-586 и 1187-1188
+
+⸻
+
+PATCH-7 (SECURITY): Проверить отсутствие fallback в test-payment
+
+Текущее состояние
+
+Проанализировав код в PaymentDialog.tsx (строки 582-684):
+	1.	handleTestPayment сначала вызывает bepaid-create-token для создания заказа
+	2.	Затем вызывает test-payment-complete для симуляции
+
+Проверка (что уже ОК)
+	•	test-payment-complete уже проверяет super_admin на сервере (строки 158-172)
+	•	При ошибке bepaid-create-token выбрасывается исключение (строка 616-620), и test-payment-complete не вызывается
+	•	Явного fallback “если checkout упал → test-payment” нет
+
+Рекомендация
+
+Нет необходимости в изменениях. Достаточно PATCH-6 (UI) + существующего server-guard.
+
+⸻
+
+Сводка файлов для изменений
+
+Файл	Действие	Строки
+supabase/functions/bepaid-create-subscription-checkout/index.ts	Добавить base_price, final_price, is_trial, изменить paid_amount: 0	281-299
+src/components/payment/PaymentDialog.tsx	Заменить isAdmin() на isSuperAdmin()	583, 1187-1188
+
+
+⸻
+
+DoD (Definition of Done)
+
+После PATCH-5
+
+-- Новые provider_managed заказы должны иметь корректные поля
+SELECT id, order_number, status, base_price, final_price, is_trial, paid_amount,
+       meta->>'payment_flow' as flow
+FROM orders_v2
+WHERE meta->>'payment_flow' = 'provider_managed_checkout'
+ORDER BY created_at DESC LIMIT 5;
+
+-- Ожидаемый результат:
+-- status = 'pending', base_price > 0, final_price > 0, is_trial = false, paid_amount = 0
+
+После PATCH-6
+	•	UI: Тестовая кнопка видна только super_admin (не admin)
+	•	При попытке вызова endpoint напрямую без super_admin → 403
+
+Edge Function Logs
+
+После деплоя bepaid-create-subscription-checkout:
+	•	Ошибка null value in column "base_price" больше не появляется
+	•	Checkout создаёт заказ и возвращает redirect_url
+
+⸻
+
+Порядок выполнения
+	1.	PATCH-5 — Исправить base_price/final_price/is_trial/paid_amount в bepaid-create-subscription-checkout
+	2.	PATCH-6 — Ограничить тестовую кнопку только isSuperAdmin() в PaymentDialog
+	3.	Deploy Edge Function
+	4.	Тест: Попробовать bePaid subscription checkout → должен создаться заказ и редирект
+	5.	Проверка SQL: Заказ в orders_v2 со статусом pending, корректными ценами
