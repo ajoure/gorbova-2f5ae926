@@ -24,6 +24,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Loader2,
   RefreshCw,
   Ban,
@@ -41,6 +46,7 @@ import {
   Unlink,
   ShieldAlert,
   Info,
+  HelpCircle,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -64,12 +70,10 @@ interface BepaidSubscription {
   linked_user_id: string | null;
   linked_profile_name: string | null;
   is_orphan: boolean;
-  // Extended fields from snapshot
   snapshot_state?: string;
   snapshot_at?: string;
   cancellation_capability?: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown';
   needs_support?: boolean;
-  // PATCH-H: Flag for missing details from provider
   details_missing?: boolean;
 }
 
@@ -77,8 +81,9 @@ interface SubscriptionStats {
   total: number;
   active: number;
   trial: number;
-  canceled?: number;   // Correct spelling
-  cancelled?: number;  // Backward compatibility
+  pending?: number;
+  canceled?: number;
+  cancelled?: number;
   orphans: number;
   linked: number;
 }
@@ -97,25 +102,42 @@ interface ReconcileResult {
   sample_ids: string[];
 }
 
-// PATCH-H: Updated Debug info interface with all fields
+// PATCH-I++: Enhanced Debug info interface
 interface DebugInfo {
-  creds_source?: 'integration_instance' | 'env_vars';
+  creds_source?: 'integration_instance_only' | 'none';
   integration_status?: string | null;
-  statuses_tried?: string[];
+  shop_id_present?: boolean;
+  secret_present?: boolean;
+  hosts_tried?: string[];
+  paths_tried?: string[];
   api_list_count?: number;
+  list_attempts?: Array<{ host: string; path: string; status: number; items_count?: number }>;
   provider_subscriptions_count?: number;
   details_fetched_count?: number;
   details_failed_count?: number;
+  detail_errors_by_status?: Record<number, number>;
+  detail_attempts_sample?: Array<{ host: string; path: string; status: number }>;
   result_count?: number;
 }
 
-// Normalized status filter - always use 'canceled'
-type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due";
+// PATCH-J: Russian status labels dictionary
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Активна',
+  trial: 'Пробный период',
+  pending: 'Ожидает подтверждения',
+  past_due: 'Просрочена',
+  canceled: 'Отменена',
+  terminated: 'Завершена',
+  paused: 'Приостановлена',
+  unknown: 'Неизвестно',
+  legacy: 'Устаревшая',
+};
+
+type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due" | "pending";
 type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
 type SortField = "created_at" | "next_billing_at" | "plan_amount" | "status";
 type SortDir = "asc" | "desc";
 
-// Normalize status: cancelled → canceled
 function normalizeStatus(status: string): string {
   if (status === 'cancelled') return 'canceled';
   return status;
@@ -133,35 +155,26 @@ export function BepaidSubscriptionsTabContent() {
   const [showReconcileDialog, setShowReconcileDialog] = useState(false);
   const [reconcileResult, setReconcileResult] = useState<ReconcileResult | null>(null);
   
-  // Emergency unlink state
   const [showEmergencyUnlinkDialog, setShowEmergencyUnlinkDialog] = useState(false);
   const [emergencyUnlinkConfirm, setEmergencyUnlinkConfirm] = useState("");
   const [targetEmergencyUnlinkId, setTargetEmergencyUnlinkId] = useState<string | null>(null);
   
-  // Refresh snapshot state
   const [refreshingSnapshotIds, setRefreshingSnapshotIds] = useState<Set<string>>(new Set());
   
   const queryClient = useQueryClient();
   const { hasRole: isSuperAdmin } = useHasRole('superadmin');
 
-  // PATCH-E: Fetch subscriptions with proper error handling
   const { data, isLoading, refetch, isRefetching, error: fetchError } = useQuery({
     queryKey: ["bepaid-subscriptions-admin"],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("bepaid-list-subscriptions");
       
-      // PATCH-E: Transport error
-      if (error) throw new Error(error.message || 'Edge function error');
-      
-      // PATCH-E: Edge payload error (even if 200)
+      if (error) throw new Error(error.message || 'Ошибка Edge-функции');
       if (data?.error) throw new Error(data.error);
-      
-      // PATCH-E: Strict shape validation
       if (!data || !Array.isArray(data.subscriptions)) {
-        throw new Error('Invalid response: subscriptions[] missing');
+        throw new Error('Некорректный ответ: subscriptions[] отсутствует');
       }
       
-      // Normalize status for all subscriptions
       const subs = (data.subscriptions || []).map((s: BepaidSubscription) => ({
         ...s,
         status: normalizeStatus(s.status),
@@ -180,11 +193,10 @@ export function BepaidSubscriptionsTabContent() {
   const subscriptions = data?.subscriptions || [];
   const debugInfo = data?.debug;
   
-  // PATCH-A: Backward compatible stats - use canceled ?? cancelled
-  const rawStats = data?.stats || { total: 0, active: 0, trial: 0, canceled: 0, cancelled: 0, orphans: 0, linked: 0 };
+  const rawStats = data?.stats || { total: 0, active: 0, trial: 0, pending: 0, canceled: 0, cancelled: 0, orphans: 0, linked: 0 };
   const canceledCount = rawStats.canceled ?? rawStats.cancelled ?? 0;
+  const pendingCount = rawStats.pending ?? 0;
 
-  // Calculate urgent subscriptions (next charge within 7 days)
   const urgentCount = useMemo(() => {
     return subscriptions.filter((s: BepaidSubscription) => {
       if (!s.next_billing_at || s.status === 'canceled') return false;
@@ -193,12 +205,10 @@ export function BepaidSubscriptionsTabContent() {
     }).length;
   }, [subscriptions]);
 
-  // Count needs_support
   const needsSupportCount = useMemo(() => {
     return subscriptions.filter((s: BepaidSubscription) => s.needs_support).length;
   }, [subscriptions]);
 
-  // Filter and sort subscriptions
   const filteredSubscriptions = useMemo(() => {
     let result = [...subscriptions];
     
@@ -248,10 +258,9 @@ export function BepaidSubscriptionsTabContent() {
           bVal = b.plan_amount;
           break;
         case "status":
-          // Use 'canceled' in order map
-          const order: Record<string, number> = { active: 0, trial: 1, past_due: 2, canceled: 3 };
-          aVal = order[a.status] ?? 4;
-          bVal = order[b.status] ?? 4;
+          const order: Record<string, number> = { active: 0, trial: 1, pending: 2, past_due: 3, canceled: 4 };
+          aVal = order[a.status] ?? 5;
+          bVal = order[b.status] ?? 5;
           break;
       }
       
@@ -265,7 +274,6 @@ export function BepaidSubscriptionsTabContent() {
     return result;
   }, [subscriptions, statusFilter, linkFilter, searchQuery, sortField, sortDir]);
 
-  // Reconcile mutation (dry-run)
   const reconcileMutation = useMutation({
     mutationFn: async (execute: boolean) => {
       const { data, error } = await supabase.functions.invoke("admin-reconcile-bepaid-legacy", {
@@ -274,19 +282,18 @@ export function BepaidSubscriptionsTabContent() {
       if (error) throw error;
       return data as ReconcileResult;
     },
-    onSuccess: (data, execute) => {
+    onSuccess: (data) => {
       setReconcileResult(data);
       if (!data.dry_run) {
-        toast.success(`Reconcile завершён: ${data.inserted} записей создано`);
+        toast.success(`Синхронизация завершена: ${data.inserted} записей создано`);
         queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
       }
     },
     onError: (e: any) => {
-      toast.error("Ошибка reconcile: " + e.message);
+      toast.error("Ошибка синхронизации: " + e.message);
     },
   });
 
-  // Cancel mutation
   const cancelMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       const { data, error } = await supabase.functions.invoke("bepaid-cancel-subscriptions", {
@@ -300,11 +307,10 @@ export function BepaidSubscriptionsTabContent() {
       toast.success(`Отменено: ${canceledIds.length} из ${data.total_requested}`);
       
       if (data.failed?.length > 0) {
-        const failedReasons = data.failed.map((f: any) => f.reason_code || f.error || 'unknown').join(', ');
+        const failedReasons = data.failed.map((f: any) => f.reason_code || f.error || 'неизвестно').join(', ');
         toast.error(`Не удалось отменить ${data.failed.length}: ${failedReasons}`);
       }
       
-      // PATCH-B: Auto-refresh snapshot for canceled subscriptions
       if (canceledIds.length > 0) {
         await refreshSnapshotsForIds(canceledIds);
       }
@@ -318,7 +324,6 @@ export function BepaidSubscriptionsTabContent() {
     },
   });
 
-  // Refresh snapshot mutation
   const refreshSnapshotMutation = useMutation({
     mutationFn: async (subscriptionId: string) => {
       const { data, error } = await supabase.functions.invoke("bepaid-get-subscription-details", {
@@ -328,15 +333,15 @@ export function BepaidSubscriptionsTabContent() {
       return data;
     },
     onSuccess: (data) => {
-      toast.success(`Snapshot обновлён: ${data.snapshot?.state || 'unknown'}`);
+      const stateLabel = STATUS_LABELS[data.snapshot?.state] || data.snapshot?.state || 'неизвестно';
+      toast.success(`Статус обновлён: ${stateLabel}`);
       queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
     },
     onError: (e: any) => {
-      toast.error("Ошибка обновления snapshot: " + e.message);
+      toast.error("Ошибка обновления: " + e.message);
     },
   });
 
-  // Helper to refresh snapshots for multiple IDs
   const refreshSnapshotsForIds = async (ids: string[]) => {
     for (const id of ids) {
       try {
@@ -349,7 +354,6 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
-  // Handle single snapshot refresh
   const handleRefreshSnapshot = async (id: string) => {
     setRefreshingSnapshotIds(prev => new Set([...prev, id]));
     try {
@@ -363,7 +367,6 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
-  // PATCH-B: Emergency Unlink via Edge Function (no direct DB calls)
   const handleEmergencyUnlink = async () => {
     if (!targetEmergencyUnlinkId || emergencyUnlinkConfirm !== "UNLINK") return;
     
@@ -388,7 +391,6 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
-  // Check if unlink is allowed (only if canceled/terminated)
   const canUnlink = (sub: BepaidSubscription): boolean => {
     const state = sub.snapshot_state || sub.status;
     return state === 'canceled' || state === 'terminated';
@@ -437,25 +439,30 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
+  // PATCH-J: Get status badge with Russian label
   const getStatusBadge = (status: string) => {
+    const label = STATUS_LABELS[status] || status;
     switch (status) {
       case "active":
-        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Активна</Badge>;
+        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">{label}</Badge>;
       case "trial":
-        return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Trial</Badge>;
+        return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">{label}</Badge>;
+      case "pending":
+        return <Badge className="bg-purple-500/10 text-purple-600 border-purple-500/20">{label}</Badge>;
       case "past_due":
-        return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">Просрочена</Badge>;
+        return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">{label}</Badge>;
       case "canceled":
-        return <Badge variant="secondary">Отменена</Badge>;
+      case "terminated":
+        return <Badge variant="secondary">{label}</Badge>;
       default:
-        return <Badge variant="outline">{status}</Badge>;
+        return <Badge variant="outline">{label}</Badge>;
     }
   };
 
   return (
     <div className="space-y-4">
       {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
         <Card className="p-3">
           <div className="text-2xl font-bold">{rawStats.total}</div>
           <div className="text-xs text-muted-foreground">Всего</div>
@@ -466,7 +473,11 @@ export function BepaidSubscriptionsTabContent() {
         </Card>
         <Card className="p-3">
           <div className="text-2xl font-bold text-blue-600">{rawStats.trial}</div>
-          <div className="text-xs text-muted-foreground">Trial</div>
+          <div className="text-xs text-muted-foreground">Пробных</div>
+        </Card>
+        <Card className="p-3">
+          <div className="text-2xl font-bold text-purple-600">{pendingCount}</div>
+          <div className="text-xs text-muted-foreground">Ожидает</div>
         </Card>
         <Card className="p-3">
           <div className="text-2xl font-bold text-muted-foreground">{canceledCount}</div>
@@ -487,7 +498,7 @@ export function BepaidSubscriptionsTabContent() {
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-1">
               <AlertTriangle className="h-3 w-3" /> 
-              {urgentCount > 0 ? '≤7 дней' : 'Needs support'}
+              {urgentCount > 0 ? '≤7 дней' : 'Нужна помощь'}
             </div>
           </Card>
         )}
@@ -502,11 +513,11 @@ export function BepaidSubscriptionsTabContent() {
                 Подписки bePaid
               </CardTitle>
               <CardDescription className="mt-1">
-                Управление provider-managed подписками
+                Управление подписками с автосписанием
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              {/* PATCH-H: Updated debug info popover */}
+              {/* PATCH-I++: Enhanced debug info popover */}
               {debugInfo && (
                 <Popover>
                   <PopoverTrigger asChild>
@@ -514,35 +525,60 @@ export function BepaidSubscriptionsTabContent() {
                       <Info className="h-4 w-4" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-72 text-xs space-y-1">
-                    <div className="font-medium mb-2">Диагностика</div>
-                    <div><span className="text-muted-foreground">Источник creds:</span> {debugInfo.creds_source || 'N/A'}</div>
-                    <div><span className="text-muted-foreground">Статус интеграции:</span> {debugInfo.integration_status || 'N/A'}</div>
-                    <div><span className="text-muted-foreground">API list:</span> {debugInfo.api_list_count ?? 'N/A'}</div>
-                    <div><span className="text-muted-foreground">В provider_subscriptions:</span> {debugInfo.provider_subscriptions_count ?? 'N/A'}</div>
-                    <div><span className="text-muted-foreground">Details получены:</span> {debugInfo.details_fetched_count ?? 'N/A'}</div>
-                    <div><span className="text-muted-foreground">Details failed:</span> {debugInfo.details_failed_count ?? 'N/A'}</div>
-                    <div><span className="text-muted-foreground">Итого результат:</span> {debugInfo.result_count ?? 0}</div>
+                  <PopoverContent className="w-80 text-xs space-y-2">
+                    <div className="font-medium mb-2">Диагностика интеграции</div>
+                    <div className="space-y-1">
+                      <div><span className="text-muted-foreground">Источник данных:</span> {debugInfo.creds_source === 'integration_instance_only' ? 'Интеграция' : 'Не настроено'}</div>
+                      <div><span className="text-muted-foreground">Статус интеграции:</span> {debugInfo.integration_status || '—'}</div>
+                      <div><span className="text-muted-foreground">Shop ID:</span> {debugInfo.shop_id_present ? '✓' : '✗'}</div>
+                      <div><span className="text-muted-foreground">Secret Key:</span> {debugInfo.secret_present ? '✓' : '✗'}</div>
+                    </div>
+                    <div className="border-t pt-2 space-y-1">
+                      <div><span className="text-muted-foreground">Хосты проверены:</span> {debugInfo.hosts_tried?.join(', ') || '—'}</div>
+                      <div><span className="text-muted-foreground">Список из API:</span> {debugInfo.api_list_count ?? 0}</div>
+                      <div><span className="text-muted-foreground">В БД:</span> {debugInfo.provider_subscriptions_count ?? 0}</div>
+                      <div><span className="text-muted-foreground">Детали получены:</span> {debugInfo.details_fetched_count ?? 0}</div>
+                      <div><span className="text-muted-foreground">Детали не получены:</span> {debugInfo.details_failed_count ?? 0}</div>
+                    </div>
+                    {debugInfo.detail_errors_by_status && Object.keys(debugInfo.detail_errors_by_status).length > 0 && (
+                      <div className="border-t pt-2">
+                        <div className="text-muted-foreground mb-1">Ошибки по статусу:</div>
+                        {Object.entries(debugInfo.detail_errors_by_status).map(([status, count]) => (
+                          <div key={status} className="text-amber-600">HTTP {status}: {count}</div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="border-t pt-2">
+                      <div><span className="text-muted-foreground">Итого в таблице:</span> {debugInfo.result_count ?? 0}</div>
+                    </div>
                   </PopoverContent>
                 </Popover>
               )}
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => {
-                  setReconcileResult(null);
-                  setShowReconcileDialog(true);
-                  reconcileMutation.mutate(false);
-                }}
-                disabled={reconcileMutation.isPending}
-              >
-                {reconcileMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Database className="h-4 w-4 mr-2" />
-                )}
-                Reconcile Legacy
-              </Button>
+              {/* PATCH-K: Renamed button with tooltip */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setReconcileResult(null);
+                      setShowReconcileDialog(true);
+                      reconcileMutation.mutate(false);
+                    }}
+                    disabled={reconcileMutation.isPending}
+                  >
+                    {reconcileMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Database className="h-4 w-4 mr-2" />
+                    )}
+                    Синхронизация
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  Загружает старые подписки из заказов и создаёт записи в системе. Деньги НЕ списывает.
+                </TooltipContent>
+              </Tooltip>
               <Button 
                 variant="outline" 
                 size="sm"
@@ -560,7 +596,7 @@ export function BepaidSubscriptionsTabContent() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Filters */}
+          {/* Filters - PATCH-J: All Russian */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-muted-foreground" />
@@ -573,20 +609,21 @@ export function BepaidSubscriptionsTabContent() {
             </div>
             
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-              <SelectTrigger className="w-32 h-8">
+              <SelectTrigger className="w-36 h-8">
                 <SelectValue placeholder="Статус" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все статусы</SelectItem>
                 <SelectItem value="active">Активные</SelectItem>
-                <SelectItem value="trial">Trial</SelectItem>
+                <SelectItem value="trial">Пробные</SelectItem>
+                <SelectItem value="pending">Ожидают</SelectItem>
                 <SelectItem value="past_due">Просроченные</SelectItem>
                 <SelectItem value="canceled">Отменённые</SelectItem>
               </SelectContent>
             </Select>
             
             <Select value={linkFilter} onValueChange={(v) => setLinkFilter(v as LinkFilter)}>
-              <SelectTrigger className="w-36 h-8">
+              <SelectTrigger className="w-40 h-8">
                 <SelectValue placeholder="Связь" />
               </SelectTrigger>
               <SelectContent>
@@ -594,7 +631,7 @@ export function BepaidSubscriptionsTabContent() {
                 <SelectItem value="linked">Связанные</SelectItem>
                 <SelectItem value="orphan">Сироты</SelectItem>
                 <SelectItem value="urgent">Срочные (≤7д)</SelectItem>
-                <SelectItem value="needs_support">Needs support</SelectItem>
+                <SelectItem value="needs_support">Нужна помощь</SelectItem>
               </SelectContent>
             </Select>
             
@@ -646,7 +683,7 @@ export function BepaidSubscriptionsTabContent() {
             </div>
           )}
 
-          {/* PATCH-E: Error banner */}
+          {/* Error banner */}
           {fetchError && (
             <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
               <div className="flex items-center gap-2 text-destructive font-medium">
@@ -727,21 +764,30 @@ export function BepaidSubscriptionsTabContent() {
                           </button>
                           {sub.needs_support && (
                             <Badge variant="destructive" className="mt-1 text-xs">
-                              Needs support
+                              Нужна помощь
                             </Badge>
                           )}
-                          {/* PATCH-H: Show badge for records without API details */}
+                          {/* PATCH-H/K: Badge for records without API details with tooltip */}
                           {sub.details_missing && (
-                            <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-500/30">
-                              Нет деталей
-                            </Badge>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-500/30 cursor-help">
+                                  Нет деталей
+                                  <HelpCircle className="h-3 w-3 ml-1" />
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-xs">
+                                bePaid API не вернул информацию по этой подписке. 
+                                Возможно, подписка создана в другом магазине или удалена.
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                         </TableCell>
                         <TableCell>
                           {getStatusBadge(sub.status)}
                           {sub.snapshot_state && sub.snapshot_state !== sub.status && (
                             <div className="text-xs text-muted-foreground mt-1">
-                              bePaid: {sub.snapshot_state}
+                              bePaid: {STATUS_LABELS[sub.snapshot_state] || sub.snapshot_state}
                             </div>
                           )}
                         </TableCell>
@@ -794,14 +840,13 @@ export function BepaidSubscriptionsTabContent() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
-                            {/* Refresh Snapshot */}
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
                               onClick={() => handleRefreshSnapshot(sub.id)}
                               disabled={isRefreshingSnapshot}
-                              title="Обновить статус (snapshot)"
+                              title="Обновить статус"
                             >
                               {isRefreshingSnapshot ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -810,7 +855,6 @@ export function BepaidSubscriptionsTabContent() {
                               )}
                             </Button>
                             
-                            {/* Cancel */}
                             {sub.status !== 'canceled' && (
                               <Button
                                 variant="ghost"
@@ -826,7 +870,6 @@ export function BepaidSubscriptionsTabContent() {
                               </Button>
                             )}
                             
-                            {/* Unlink - disabled until canceled */}
                             {!sub.is_orphan && (
                               <>
                                 {canUnlink(sub) ? (
@@ -848,7 +891,7 @@ export function BepaidSubscriptionsTabContent() {
                                     size="icon"
                                     className="h-7 w-7 opacity-30 cursor-not-allowed"
                                     disabled
-                                    title="Сначала отмените подписку, затем отвязывайте"
+                                    title="Сначала отмените подписку"
                                   >
                                     <Unlink className="h-3.5 w-3.5" />
                                   </Button>
@@ -856,7 +899,6 @@ export function BepaidSubscriptionsTabContent() {
                               </>
                             )}
                             
-                            {/* Emergency Unlink - super_admin only for non-canceled */}
                             {!sub.is_orphan && !canUnlink(sub) && isSuperAdmin && (
                               <Button
                                 variant="ghost"
@@ -866,7 +908,7 @@ export function BepaidSubscriptionsTabContent() {
                                   setTargetEmergencyUnlinkId(sub.id);
                                   setShowEmergencyUnlinkDialog(true);
                                 }}
-                                title="Аварийное отвязывание (super_admin)"
+                                title="Аварийная отвязка (superadmin)"
                               >
                                 <ShieldAlert className="h-3.5 w-3.5" />
                               </Button>
@@ -897,9 +939,9 @@ export function BepaidSubscriptionsTabContent() {
               </p>
               <p className="text-amber-600">
                 ⚠️ Автоматические списания прекратятся. Если bePaid откажет в отмене 
-                (например, при past_due), подписка останется активной и будет помечена "needs_support".
+                (например, при задолженности), подписка останется активной и будет помечена «Нужна помощь».
               </p>
-              <p>После успешной отмены snapshot будет автоматически обновлён.</p>
+              <p>После успешной отмены статус будет автоматически обновлён.</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -934,7 +976,7 @@ export function BepaidSubscriptionsTabContent() {
               <ShieldAlert className="h-5 w-5" />
               {canUnlink(filteredSubscriptions.find(s => s.id === targetEmergencyUnlinkId) || {} as BepaidSubscription) 
                 ? "Отвязать подписку?" 
-                : "АВАРИЙНОЕ отвязывание"}
+                : "Аварийная отвязка"}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
@@ -942,7 +984,7 @@ export function BepaidSubscriptionsTabContent() {
                   <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive">
                     <p className="font-medium">⚠️ ВНИМАНИЕ: Подписка НЕ отменена в bePaid!</p>
                     <p className="text-sm mt-1">
-                      Автосписания могут продолжаться. Используйте это только если Cancel невозможен 
+                      Автосписания могут продолжаться. Используйте это только если отмена невозможна 
                       и вы понимаете последствия.
                     </p>
                   </div>
@@ -973,16 +1015,23 @@ export function BepaidSubscriptionsTabContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Reconcile dialog */}
+      {/* PATCH-L: Improved Reconcile dialog */}
       <AlertDialog open={showReconcileDialog} onOpenChange={setShowReconcileDialog}>
         <AlertDialogContent className="max-w-lg">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <Database className="h-5 w-5" />
-              Reconcile Legacy Subscriptions
+              Синхронизация старых подписок
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
+                {/* PATCH-L: Explanation text */}
+                <div className="text-sm text-muted-foreground">
+                  Эта функция находит подписки bePaid из старых заказов и создаёт 
+                  для них записи в системе. Деньги <strong>НЕ</strong> списываются, 
+                  подписки <strong>НЕ</strong> создаются в bePaid — только синхронизация данных.
+                </div>
+                
                 {reconcileMutation.isPending && !reconcileResult && (
                   <div className="flex items-center justify-center py-6">
                     <Loader2 className="h-6 w-6 animate-spin" />
@@ -995,17 +1044,13 @@ export function BepaidSubscriptionsTabContent() {
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div className="p-2 bg-muted rounded">
                         <div className="font-medium">{reconcileResult.distinct_sbs_ids_total}</div>
-                        <div className="text-xs text-muted-foreground">Всего в orders.meta</div>
-                      </div>
-                      <div className="p-2 bg-muted rounded">
-                        <div className="font-medium">{reconcileResult.missing_provider_subscriptions_count}</div>
-                        <div className="text-xs text-muted-foreground">Отсутствует в provider_subs</div>
+                        <div className="text-xs text-muted-foreground">Найдено в заказах</div>
                       </div>
                       <div className="p-2 bg-muted rounded">
                         <div className="font-medium">{reconcileResult.already_present}</div>
-                        <div className="text-xs text-muted-foreground">Уже есть</div>
+                        <div className="text-xs text-muted-foreground">Уже синхронизировано</div>
                       </div>
-                      <div className="p-2 bg-muted rounded">
+                      <div className="p-2 bg-muted rounded border-emerald-500/30 border">
                         <div className="font-medium text-emerald-600">
                           {reconcileResult.dry_run ? reconcileResult.would_insert : reconcileResult.inserted}
                         </div>
@@ -1017,15 +1062,19 @@ export function BepaidSubscriptionsTabContent() {
                         <div className="font-medium text-blue-600">{reconcileResult.linked_to_subscription_v2}</div>
                         <div className="text-xs text-muted-foreground">Со связью</div>
                       </div>
-                      <div className="p-2 bg-muted rounded">
+                      <div className="p-2 bg-muted rounded border-amber-500/30 border">
                         <div className="font-medium text-amber-600">{reconcileResult.still_unlinked}</div>
-                        <div className="text-xs text-muted-foreground">Без связи</div>
+                        <div className="text-xs text-muted-foreground">Без связи (сироты)</div>
+                      </div>
+                      <div className="p-2 bg-muted rounded">
+                        <div className="font-medium">{reconcileResult.missing_provider_subscriptions_count}</div>
+                        <div className="text-xs text-muted-foreground">Отсутствует в системе</div>
                       </div>
                     </div>
 
                     {reconcileResult.still_missing_after_execute !== undefined && !reconcileResult.dry_run && (
                       <div className={`p-2 rounded text-sm ${reconcileResult.still_missing_after_execute === 0 ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
-                        Осталось missing: <strong>{reconcileResult.still_missing_after_execute}</strong>
+                        Осталось несинхронизировано: <strong>{reconcileResult.still_missing_after_execute}</strong>
                       </div>
                     )}
 
@@ -1041,10 +1090,10 @@ export function BepaidSubscriptionsTabContent() {
 
                     {reconcileResult.dry_run && reconcileResult.would_insert > 0 && (
                       <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20 text-sm">
-                        ⚠️ Это dry-run. Нажмите "Выполнить" чтобы создать записи.
+                        ⚠️ Это предварительный просмотр. Нажмите «Выполнить» чтобы создать записи.
                         {!isSuperAdmin && (
                           <div className="text-xs text-muted-foreground mt-1">
-                            Execute доступен только для super_admin.
+                            Выполнение доступно только для суперадминов.
                           </div>
                         )}
                       </div>
@@ -1052,7 +1101,7 @@ export function BepaidSubscriptionsTabContent() {
 
                     {!reconcileResult.dry_run && (
                       <div className="p-2 bg-emerald-500/10 rounded border border-emerald-500/20 text-sm">
-                        ✅ Reconcile выполнен. Создано {reconcileResult.inserted} записей.
+                        ✅ Синхронизация завершена. Создано {reconcileResult.inserted} записей.
                       </div>
                     )}
                   </div>
@@ -1072,7 +1121,7 @@ export function BepaidSubscriptionsTabContent() {
                 ) : (
                   <Play className="h-4 w-4 mr-2" />
                 )}
-                Выполнить
+                Выполнить синхронизацию
               </Button>
             )}
           </AlertDialogFooter>
