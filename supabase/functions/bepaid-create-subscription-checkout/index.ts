@@ -287,7 +287,7 @@ Deno.serve(async (req) => {
         tariff_id: tariff.id,
         offer_id: effectiveOfferId || null,
         order_number: orderNumber,
-        amount: amountCents / 100,
+        paid_amount: amountCents / 100,
         currency,
         status: 'pending',
         meta: {
