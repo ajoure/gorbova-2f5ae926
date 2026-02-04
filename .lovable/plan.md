@@ -1,181 +1,208 @@
 
-# План: Привязка контакта и сделки для Подписок bePaid
+# План: Единый "Мастер добавления контента" для всех разделов меню
 
-## Выявленная проблема
+## Текущее состояние
 
-Ошибка `invalid input syntax for type uuid: "sbs_4f94d889190cd704"` возникает потому что:
-- `LinkDealDialog` и `LinkContactDialog` предназначены для работы с `payments_v2` / `payment_reconcile_queue`
-- Они ожидают `paymentId` как валидный UUID
-- Но для подписок передаётся `selectedSubscription.id` = `sbs_*`, который **не является UUID**
+| Компонент | Для KB-разделов | Для остальных разделов |
+|-----------|-----------------|------------------------|
+| `KbLessonFormFields` | ✅ Используется | ❌ Не используется |
+| `LessonFormFieldsSimple` | ❌ Не используется | ✅ Используется |
 
-Код проблемы (строка 1595):
-```typescript
-paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
-```
-Когда `linked_payment_id = null`, используется `sub.id` = `sbs_*` → ошибка.
+**Проблема:** `LessonFormFieldsSimple` содержит только:
+- Название урока
+- URL-slug
+- Описание
+- Превью
+
+Но **не содержит**: дату выпуска, время, часовой пояс, Kinescope URL, вопросы.
 
 ---
 
 ## Решение
 
-Создать **два специализированных диалога** для работы с подписками:
-
-1. `LinkSubscriptionContactDialog` — привязка контакта к подписке
-2. `LinkSubscriptionDealDialog` — привязка сделки к подписке
-
-Они будут обновлять таблицу `provider_subscriptions` напрямую по `provider_subscription_id`.
+Создать **универсальный компонент формы урока** `UniversalLessonFormFields`, который:
+- Объединяет логику `KbLessonFormFields` и `LessonFormFieldsSimple`
+- Динамически показывает поле "Номер выпуска *" ИЛИ "Название урока *" в зависимости от флага `isKbSection`
 
 ---
 
 ## Технический план
 
-### PATCH-1: Создать `LinkSubscriptionContactDialog`
+### PATCH-1: Создать `UniversalLessonFormFields.tsx`
 
-**Файл:** `src/components/admin/payments/LinkSubscriptionContactDialog.tsx`
+**Файл:** `src/components/admin/trainings/UniversalLessonFormFields.tsx`
 
-Логика:
-1. Поиск контактов через edge-функцию `admin-search-profiles`
-2. При выборе контакта:
-   - Обновить `provider_subscriptions.profile_id` по `provider_subscription_id`
-   - Обновить `provider_subscriptions.user_id` (из `profiles.user_id`)
-   - Если есть карта — создать связь в `card_profile_links`
-
-Props интерфейс:
+**Props:**
 ```typescript
-interface LinkSubscriptionContactDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  subscriptionId: string; // bePaid subscription ID (sbs_*)
-  customerEmail?: string | null;
-  cardLast4?: string | null;
-  cardBrand?: string | null;
-  onSuccess: () => void;
+interface UniversalLessonFormFieldsProps {
+  isKbSection: boolean;  // true = "Номер выпуска", false = "Название урока"
+  lessonData: LessonFormDataSimple;
+  kbData: KbLessonFormData;
+  onLessonChange: (data: LessonFormDataSimple) => void;
+  onKbChange: (data: KbLessonFormData) => void;
 }
 ```
 
----
-
-### PATCH-2: Создать `LinkSubscriptionDealDialog`
-
-**Файл:** `src/components/admin/payments/LinkSubscriptionDealDialog.tsx`
-
-Логика:
-1. Поиск сделок (`orders_v2`) по номеру или сумме
-2. При выборе сделки:
-   - Обновить `orders_v2.meta` — добавить `bepaid_subscription_id`
-   - Обновить `provider_subscriptions.profile_id` из `orders_v2.profile_id`
-   - Обновить `provider_subscriptions.user_id` из `orders_v2.user_id`
-
-Props интерфейс:
-```typescript
-interface LinkSubscriptionDealDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  subscriptionId: string; // bePaid subscription ID (sbs_*)
-  amount?: number;
-  currency?: string;
-  profileId?: string | null;
-  onSuccess: () => void;
-}
+**Логика формы:**
+```text
+┌────────────────────────────────────────────────────────────┐
+│ IF isKbSection:                                           │
+│   • Номер выпуска * (обязательный)                        │
+│                                                            │
+│ ELSE:                                                      │
+│   • Название урока * (обязательный)                       │
+│   • URL-slug (авто)                                        │
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│ ОБЩИЕ ПОЛЯ (всегда показываются):                         │
+│   • Дата выпуска (Calendar)                               │
+│   • Время (HH:mm)                                          │
+│   • Часовой пояс (default: Europe/Minsk)                  │
+│   • Ссылка на видео (Kinescope)                           │
+│   • Превью урока (URL / загрузка / AI генерация)          │
+│   • Вопросы к уроку + "Добавить вопрос"                   │
+└────────────────────────────────────────────────────────────┘
 ```
 
----
-
-### PATCH-3: Создать `UnlinkSubscriptionContactDialog`
-
-**Файл:** `src/components/admin/payments/UnlinkSubscriptionContactDialog.tsx`
-
-Логика:
-- Обнулить `provider_subscriptions.profile_id` и `user_id` по `provider_subscription_id`
+**Дизайн:** Переиспользовать существующий UI из `KbLessonFormFields`:
+- Поле даты + времени + таймзоны (как сейчас)
+- Kinescope input с иконкой Video
+- Thumbnail upload/generate (как сейчас)
+- Секция вопросов с прокруткой (как сейчас)
 
 ---
 
-### PATCH-4: Создать `UnlinkSubscriptionDealDialog`
+### PATCH-2: Обновить `ContentCreationWizard.tsx`
 
-**Файл:** `src/components/admin/payments/UnlinkSubscriptionDealDialog.tsx`
+**Изменения:**
 
-Логика:
-- Удалить `bepaid_subscription_id` из `orders_v2.meta`
-
----
-
-### PATCH-5: Обновить `BepaidSubscriptionsTabContent.tsx`
-
-1. Заменить импорты диалогов:
+1. Заменить импорт:
 ```typescript
 // Было
-import { LinkContactDialog } from "./LinkContactDialog";
-import { UnlinkContactDialog } from "./UnlinkContactDialog";
-import { LinkDealDialog } from "./LinkDealDialog";
-import { UnlinkDealDialog } from "./UnlinkDealDialog";
+import { KbLessonFormFields, ... } from "./KbLessonFormFields";
+import { LessonFormFieldsSimple, ... } from "./LessonFormFieldsSimple";
 
 // Станет
-import { LinkSubscriptionContactDialog } from "./LinkSubscriptionContactDialog";
-import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDialog";
-import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
-import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
+import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
+// Оставить LessonFormFieldsSimple для module flow step 3
 ```
 
-2. Обновить вызовы диалогов (строки 1554-1622):
+2. Обновить step 3 в lesson flow (строки 856-917):
 ```typescript
-{selectedSubscription && (
-  <LinkSubscriptionContactDialog
-    open={linkContactOpen}
-    onOpenChange={setLinkContactOpen}
-    subscriptionId={selectedSubscription.id}
-    customerEmail={selectedSubscription.customer_email}
-    cardLast4={selectedSubscription.card_last4}
-    cardBrand={selectedSubscription.card_brand}
-    onSuccess={() => {
-      setLinkContactOpen(false);
-      setSelectedSubscription(null);
-      queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
-    }}
-  />
-)}
+if (step === 3) {
+  // LESSON step - unified form for all sections
+  return (
+    <div className="space-y-6">
+      <UniversalLessonFormFields
+        isKbSection={isKbFlow}
+        lessonData={wizardData.lesson}
+        kbData={wizardData.kbLesson}
+        onLessonChange={handleLessonChange}
+        onKbChange={handleKbLessonChange}
+      />
+      
+      {/* Telegram notifications */}
+      <LessonNotificationConfig ... />
+    </div>
+  );
+}
+```
 
-{selectedSubscription && (
-  <LinkSubscriptionDealDialog
-    open={linkDealOpen}
-    onOpenChange={setLinkDealOpen}
-    subscriptionId={selectedSubscription.id}
-    amount={selectedSubscription.plan_amount}
-    currency={selectedSubscription.plan_currency}
-    profileId={selectedSubscription.linked_user_id}
-    onSuccess={() => {
-      setLinkDealOpen(false);
-      setSelectedSubscription(null);
-      queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
-    }}
-  />
-)}
+3. Обновить валидацию (строки 282-287):
+```typescript
+case 3: 
+  if (isKbFlow) {
+    return wizardData.kbLesson.episode_number > 0;
+  }
+  // Для не-KB: обязательно название урока
+  return !!wizardData.lesson.title && !!wizardData.lesson.slug;
+```
+
+4. Обновить логику создания урока `handleCreateStandaloneLessonWithAccess` (строки 432-722):
+   - Для не-KB разделов: использовать `wizardData.lesson.title` как название
+   - Добавить обработку `published_at` для не-KB разделов (сейчас только для KB)
+   - Создавать video block и questions для не-KB разделов (если заполнены)
+
+---
+
+### PATCH-3: Обновить сохранение урока для не-KB разделов
+
+**В `handleCreateStandaloneLessonWithAccess`:**
+
+```typescript
+// Build published_at with time and timezone - NOW FOR ALL SECTIONS
+let publishedAt: string | null = null;
+const answerDate = isKbFlow 
+  ? wizardData.kbLesson.answer_date 
+  : wizardData.lesson.answer_date;  // Добавить это поле
+const answerTime = isKbFlow 
+  ? wizardData.kbLesson.answer_time 
+  : wizardData.lesson.answer_time;
+const answerTz = isKbFlow 
+  ? wizardData.kbLesson.answer_timezone 
+  : wizardData.lesson.answer_timezone;
+
+if (answerDate) {
+  // ... та же логика форматирования
+  publishedAt = formatInTimeZone(combinedDate, answerTz, "yyyy-MM-dd'T'HH:mm:ssXXX");
+}
+
+// Create video block if URL provided - NOW FOR ALL SECTIONS
+const kinescopeUrl = isKbFlow 
+  ? wizardData.kbLesson.kinescope_url 
+  : wizardData.lesson.kinescope_url;
+if (kinescopeUrl) {
+  await supabase.from("lesson_blocks").insert({...});
+}
+
+// Create questions - NOW FOR ALL SECTIONS
+const questions = isKbFlow 
+  ? wizardData.kbLesson.questions 
+  : wizardData.lesson.questions;
+if (questions?.length > 0) {
+  // ... та же логика создания вопросов
+}
 ```
 
 ---
 
-## Схема обновления данных
+### PATCH-4: Расширить `LessonFormDataSimple`
 
-```text
-Привязка контакта:
-┌──────────────────────────────────────────────────────────┐
-│ 1. admin-search-profiles → выбор profiles.id            │
-│ 2. UPDATE provider_subscriptions                        │
-│    SET profile_id = ?, user_id = profiles.user_id       │
-│    WHERE provider_subscription_id = 'sbs_*'             │
-│ 3. INSERT card_profile_links (если есть card_last4)     │
-└──────────────────────────────────────────────────────────┘
+**Файл:** `src/components/admin/trainings/LessonFormFieldsSimple.tsx`
 
-Привязка сделки:
-┌──────────────────────────────────────────────────────────┐
-│ 1. Поиск orders_v2 по order_number / сумме              │
-│ 2. UPDATE orders_v2                                     │
-│    SET meta = meta || {"bepaid_subscription_id": "sbs_*"}│
-│    WHERE id = selected_order_id                          │
-│ 3. UPDATE provider_subscriptions                        │
-│    SET profile_id = orders_v2.profile_id,               │
-│        user_id = orders_v2.user_id                      │
-│    WHERE provider_subscription_id = 'sbs_*'             │
-└──────────────────────────────────────────────────────────┘
+Добавить поля (для совместимости с универсальной формой):
+```typescript
+export interface LessonFormDataSimple {
+  title: string;
+  slug: string;
+  description?: string;
+  thumbnail_url?: string;
+  // NEW: для универсального мастера
+  answer_date?: Date;
+  answer_time?: string;      // "HH:mm"
+  answer_timezone?: string;  // IANA, default "Europe/Minsk"
+  kinescope_url?: string;
+  questions?: Array<{
+    question_number: number;
+    title: string;
+    full_question?: string;
+    timecode?: string;
+  }>;
+}
+```
+
+Обновить `createInitialState` в wizard:
+```typescript
+lesson: {
+  title: "",
+  slug: "",
+  description: "",
+  answer_date: undefined,
+  answer_time: "00:00",
+  answer_timezone: "Europe/Minsk",
+  kinescope_url: "",
+  questions: [],
+},
 ```
 
 ---
@@ -184,11 +211,33 @@ import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
 
 | Файл | Действие |
 |------|----------|
-| `src/components/admin/payments/LinkSubscriptionContactDialog.tsx` | Создать |
-| `src/components/admin/payments/UnlinkSubscriptionContactDialog.tsx` | Создать |
-| `src/components/admin/payments/LinkSubscriptionDealDialog.tsx` | Создать |
-| `src/components/admin/payments/UnlinkSubscriptionDealDialog.tsx` | Создать |
-| `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx` | Изменить импорты и вызовы |
+| `src/components/admin/trainings/UniversalLessonFormFields.tsx` | **Создать** |
+| `src/components/admin/trainings/LessonFormFieldsSimple.tsx` | Расширить interface |
+| `src/components/admin/trainings/ContentCreationWizard.tsx` | Обновить step 3 и логику создания |
+
+---
+
+## Схема работы
+
+```text
+Шаг 1: Раздел меню
+   ↓
+Шаг 2: Тип контента
+   ↓
+Шаг 3: Доступ
+   ↓
+Шаг 4: Урок
+   ├── isKbSection = true  → "Номер выпуска *"
+   └── isKbSection = false → "Название урока *"
+   
+   + Общие поля:
+     • Дата + Время + Таймзона
+     • Kinescope URL
+     • Превью
+     • Вопросы
+   ↓
+Шаг 5: Готово
+```
 
 ---
 
@@ -196,20 +245,17 @@ import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
 
 | # | Проверка | Ожидание |
 |---|----------|----------|
-| 1 | Клик "Привязать контакт" | Открывается диалог поиска, без ошибок |
-| 2 | Выбор контакта + "Связать" | `provider_subscriptions.profile_id` обновляется |
-| 3 | Клик "Привязать сделку" | Открывается диалог поиска сделок, без ошибок UUID |
-| 4 | Выбор сделки + "Связать" | `orders_v2.meta.bepaid_subscription_id` обновляется |
-| 5 | Отвязка контакта | `provider_subscriptions.profile_id` = NULL |
-| 6 | Отвязка сделки | `bepaid_subscription_id` удаляется из `orders_v2.meta` |
+| 1 | Открыть мастер из "Обучение / Моя библиотека" | Шаг 4 показывает "Название урока *" |
+| 2 | Открыть мастер из "База знаний / Видеоответы" | Шаг 4 показывает "Номер выпуска *" |
+| 3 | Заполнить форму в не-KB разделе с видео URL | Урок создаётся с video block |
+| 4 | Добавить вопросы в не-KB разделе | Вопросы сохраняются в kb_questions |
+| 5 | После F5 в навигации | Урок виден в выбранном разделе |
 
 ---
 
-## Почему нельзя переиспользовать существующие диалоги
+## Безопасность и ограничения
 
-1. `LinkContactDialog` и `LinkDealDialog` работают с `payments_v2.id` (UUID)
-2. Они используют `rawSource: 'queue' | 'payments_v2'`
-3. Для подписок нужно обновлять `provider_subscriptions` по текстовому `provider_subscription_id`
-4. Логика привязки сделки отличается: нужно обновить `orders_v2.meta`, а не `payments_v2.order_id`
-
-Создание отдельных диалогов — чистое решение без риска сломать существующую логику платежей.
+- Никаких изменений RLS/RBAC
+- Add-only подход: новый компонент, минимальные изменения в существующих
+- Существующий функционал KB-разделов не затрагивается
+- Все тексты на русском языке
