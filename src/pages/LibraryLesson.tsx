@@ -30,6 +30,7 @@ import {
   ListVideo,
   Play,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -184,7 +185,10 @@ export default function LibraryLesson() {
 
   return (
     <DashboardLayout>
-      <div className="container mx-auto px-4 py-6 max-w-4xl">
+      <div className="container mx-auto px-4 py-6 max-w-4xl relative">
+        {/* Decorative background blobs */}
+        <div className="absolute top-0 right-0 w-80 h-80 bg-primary/5 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute bottom-1/3 left-0 w-64 h-64 bg-accent/5 rounded-full blur-3xl pointer-events-none -z-10" />
         {/* Breadcrumb - динамический на основе menu_section_key, скрываем контейнер-модули */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6 flex-wrap">
           <Link 
@@ -209,19 +213,22 @@ export default function LibraryLesson() {
         {/* Lesson Header */}
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Badge variant="secondary" className={config.color}>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <Badge 
+                variant="secondary" 
+                className={cn(config.color, "backdrop-blur-sm bg-white/20 border border-white/30")}
+              >
                 <Icon className="h-3 w-3 mr-1" />
                 {config.label}
               </Badge>
               {currentLesson.duration_minutes && (
-                <Badge variant="outline">
+                <Badge variant="outline" className="backdrop-blur-sm bg-white/10 border-white/20">
                   <Clock className="h-3 w-3 mr-1" />
                   {currentLesson.duration_minutes} мин
                 </Badge>
               )}
               {currentLesson.is_completed && (
-                <Badge variant="default" className="bg-green-500">
+                <Badge variant="default" className="bg-green-500/90 backdrop-blur-sm">
                   <CheckCircle2 className="h-3 w-3 mr-1" />
                   Пройден
                 </Badge>

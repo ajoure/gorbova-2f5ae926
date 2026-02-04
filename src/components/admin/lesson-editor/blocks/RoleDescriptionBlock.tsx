@@ -165,24 +165,38 @@ export function RoleDescriptionBlock({
         </Badge>
       </div>
 
-      {/* Role description content */}
-      <Card>
-        <CardContent className="py-6">
+      {/* Role description content - Glass Card */}
+      <div 
+        className="rounded-2xl backdrop-blur-xl border border-border/40 shadow-lg overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, hsl(var(--card) / 0.6), hsl(var(--card) / 0.3))",
+          boxShadow: "0 12px 40px rgba(0, 0, 0, 0.08), inset 0 1px 0 hsl(0 0% 100% / 0.2)"
+        }}
+      >
+        <div className="p-6">
           <div 
             className="prose prose-sm max-w-none dark:prose-invert"
             dangerouslySetInnerHTML={{ __html: roleContent }}
           />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* Action button */}
+      {/* Action button with gradient */}
       {!isCompleted ? (
-        <Button onClick={onComplete} className="w-full">
+        <Button 
+          onClick={onComplete} 
+          className="w-full bg-gradient-to-r from-primary via-primary/90 to-accent/80 hover:from-primary/90 hover:to-accent/70 shadow-lg shadow-primary/25 border-0"
+        >
           {content.buttonText || 'Перейти к видео'}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       ) : (
-        <div className="flex items-center justify-center gap-2 text-primary py-2">
+        <div 
+          className="flex items-center justify-center gap-2 text-primary py-3 rounded-xl backdrop-blur-sm"
+          style={{
+            background: "linear-gradient(135deg, hsl(var(--primary) / 0.1), hsl(var(--primary) / 0.05))"
+          }}
+        >
           <ArrowRight className="h-5 w-5" />
           <span className="font-medium">Продолжайте к следующему шагу</span>
         </div>
