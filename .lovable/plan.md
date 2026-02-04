@@ -1,294 +1,294 @@
 
-# План редизайна страницы «Подписки bePaid»
-
-## Цель
-
-Привести страницу `/admin/payments/bepaid-subscriptions` к единому стилю с вкладкой «Платежи»:
-- Карточка контакта открывается в боковой панели (Sheet) без навигации
-- Таблица компактная, с возможностью скрытия/перетаскивания/изменения ширины колонок
-- Статистика компактная и кликабельная для фильтрации
-- Дизайн glassmorphism (iOS/macOS стиль)
-- Горизонтальный скролл таблицы
-
----
+# План исправления ошибок и добавления функционала
 
 ## Выявленные проблемы
 
-| # | Проблема | Как в «Платежах» |
-|---|----------|------------------|
-| 1 | Клик на ФИО → переход на `/admin/contacts` | Sheet открывается справа без навигации |
-| 2 | Таблица громоздкая, строки занимают много места | Компактные строки, однострочные ячейки |
-| 3 | Колонка «План / Сумма» объединяет данные | Отдельные колонки: План, Сумма |
-| 4 | Нет возможности скрыть/сортировать колонки | Dropdown с чекбоксами + DnD |
-| 5 | Нет горизонтального скролла | `overflow-x-auto` + фиксированная ширина |
-| 6 | Статистика не кликабельная | Клик → фильтрация по статусу |
-| 7 | По умолчанию показывает все | По умолчанию «Активные» |
+| # | Проблема | Причина | Решение |
+|---|----------|---------|---------|
+| 1 | Ошибка "Не удалось загрузить контакт" при клике | `linked_user_id` = ID подписки, а не profile.id | Исправить `openContactSheet` — искать профиль по `user_id` через JOIN |
+| 2 | Кнопка "Открыть в bePaid" → 404 | URL `app.bepaid.by/en/subscriptions/...` не существует | Заменить на `admin.bepaid.by/subscriptions/...` |
+| 3 | Подписки не сохраняются (загружаются заново) | `staleTime: 60000` — 1 минута, данные кешируются | Увеличить `staleTime` и добавить кеширование в БД |
+| 4 | Нет привязки/отвязки сделок как в Платежах | Отсутствуют диалоги `LinkDealDialog`, `UnlinkDealDialog` | Добавить диалоги и логику привязки к orders_v2 |
+| 5 | Нет колонки ID платежа | Отсутствует в данных | Добавить колонку `payment_id` из связи с payments_v2 |
+| 6 | Нет колонки даты отмены | Отсутствует | Добавить `canceled_at` из bePaid или DB |
+| 7 | Аварийная отвязка требует ввода "UNLINK" | Текущая логика | Упростить до подтверждающей кнопки "Да" |
 
 ---
 
 ## Технический план
 
-### PATCH-S1: ContactDetailSheet без навигации
+### PATCH-T1: Исправление ошибки загрузки контакта
 
 **Файл:** `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
 
-**Изменения:**
-1. Добавить state для Sheet:
-```typescript
-import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+**Проблема:** `openContactSheet` использует `linked_user_id`, но это `user_id` (auth.users), а не `profile.id`. Supabase ищет `profiles.id = user_id` и не находит.
 
-const [contactSheetOpen, setContactSheetOpen] = useState(false);
-const [selectedContact, setSelectedContact] = useState<any>(null);
-```
+**Решение:** Искать профиль по `user_id` как в PaymentsTable:
 
-2. Функция открытия карточки:
 ```typescript
-const openContactSheet = async (profileId: string) => {
-  const { data } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", profileId)
-    .single();
-  setSelectedContact(data);
-  setContactSheetOpen(true);
+const openContactSheet = async (userId: string) => {
+  try {
+    // Ищем по user_id, а не по id
+    const { data: contact, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+    
+    if (error) throw error;
+    if (!contact) {
+      // Fallback: попробовать по id
+      const { data: byId } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+      if (byId) {
+        setSelectedContact(byId);
+        setContactSheetOpen(true);
+        return;
+      }
+      throw new Error("Контакт не найден");
+    }
+    
+    setSelectedContact(contact);
+    setContactSheetOpen(true);
+  } catch (e) {
+    console.error("Failed to load contact:", e);
+    toast.error("Не удалось загрузить контакт");
+  }
 };
-```
-
-3. Заменить `ClickableContactName` на кнопку с onClick:
-```typescript
-<button
-  onClick={() => openContactSheet(sub.linked_user_id)}
-  className="text-sm font-medium hover:underline hover:text-primary"
->
-  {sub.linked_profile_name}
-</button>
-```
-
-4. Добавить Sheet в конец компонента:
-```typescript
-<ContactDetailSheet
-  contact={selectedContact}
-  open={contactSheetOpen}
-  onOpenChange={setContactSheetOpen}
-/>
 ```
 
 ---
 
-### PATCH-S2: Система колонок с DnD + visibility
+### PATCH-T2: Исправление URL кнопки "Открыть в bePaid"
 
 **Файл:** `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
 
-**Добавить:**
-1. ColumnConfig и DEFAULT_COLUMNS:
+**Было (строка ~814):**
 ```typescript
-interface ColumnConfig {
-  key: string;
-  label: string;
-  visible: boolean;
-  width: number;
-  order: number;
-}
-
-const DEFAULT_COLUMNS: ColumnConfig[] = [
-  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "id", label: "ID", visible: true, width: 120, order: 1 },
-  { key: "status", label: "Статус", visible: true, width: 90, order: 2 },
-  { key: "customer", label: "Клиент", visible: true, width: 150, order: 3 },
-  { key: "plan", label: "План", visible: true, width: 140, order: 4 },
-  { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
-  { key: "next_billing", label: "Списание", visible: true, width: 100, order: 6 },
-  { key: "card", label: "Карта", visible: false, width: 100, order: 7 },
-  { key: "created", label: "Создано", visible: false, width: 100, order: 8 },
-  { key: "connection", label: "Связь", visible: true, width: 120, order: 9 },
-  { key: "actions", label: "", visible: true, width: 80, order: 10 },
-];
-
-const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v1';
+onClick={() => window.open(`https://app.bepaid.by/en/subscriptions/${sub.id}`, '_blank')}
 ```
 
-2. Импорты для DnD:
+**Станет:**
 ```typescript
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
-import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Settings } from "lucide-react";
+onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}
 ```
 
-3. State для колонок с localStorage:
-```typescript
-const [columns, setColumns] = useState<ColumnConfig[]>(() => {
-  const saved = localStorage.getItem(COLUMNS_STORAGE_KEY);
-  if (saved) {
-    try { return JSON.parse(saved); } catch { return DEFAULT_COLUMNS; }
-  }
-  return DEFAULT_COLUMNS;
-});
+---
 
-useEffect(() => {
-  localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(columns));
-}, [columns]);
+### PATCH-T3: Добавить функционал привязки контактов и сделок
+
+**Файл:** `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
+
+**Добавить импорты:**
+```typescript
+import { LinkContactDialog } from "./LinkContactDialog";
+import { UnlinkContactDialog } from "./UnlinkContactDialog";
+import { LinkDealDialog } from "./LinkDealDialog";
+import { UnlinkDealDialog } from "./UnlinkDealDialog";
 ```
 
-4. Dropdown для управления видимостью:
+**Добавить state:**
+```typescript
+// Dialogs for linking
+const [linkContactOpen, setLinkContactOpen] = useState(false);
+const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
+const [linkDealOpen, setLinkDealOpen] = useState(false);
+const [unlinkDealOpen, setUnlinkDealOpen] = useState(false);
+const [selectedSubscription, setSelectedSubscription] = useState<BepaidSubscription | null>(null);
+```
+
+**Добавить действия в ячейку `actions`:**
 ```typescript
 <DropdownMenu>
   <DropdownMenuTrigger asChild>
-    <Button variant="outline" size="sm" className="h-8">
-      <Settings className="h-3.5 w-3.5 mr-1" />
-      Колонки
+    <Button variant="ghost" size="icon" className="h-6 w-6">
+      <MoreHorizontal className="h-3 w-3" />
     </Button>
   </DropdownMenuTrigger>
-  <DropdownMenuContent>
-    {columns.filter(c => c.key !== 'checkbox' && c.key !== 'actions').map(col => (
-      <DropdownMenuCheckboxItem
-        key={col.key}
-        checked={col.visible}
-        onCheckedChange={(checked) => setColumns(
-          columns.map(c => c.key === col.key ? {...c, visible: checked} : c)
-        )}
-      >
-        {col.label}
-      </DropdownMenuCheckboxItem>
-    ))}
+  <DropdownMenuContent align="end">
+    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
+      <User className="h-3 w-3 mr-2" />
+      {sub.linked_user_id ? "Перепривязать контакт" : "Привязать контакт"}
+    </DropdownMenuItem>
+    {sub.linked_user_id && (
+      <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkContactOpen(true); }}>
+        <Unlink className="h-3 w-3 mr-2" />
+        Отвязать контакт
+      </DropdownMenuItem>
+    )}
+    <DropdownMenuSeparator />
+    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
+      <Handshake className="h-3 w-3 mr-2" />
+      Привязать сделку
+    </DropdownMenuItem>
+    {/* ... другие действия */}
   </DropdownMenuContent>
 </DropdownMenu>
 ```
 
 ---
 
-### PATCH-S3: Компактная таблица + горизонтальный скролл
+### PATCH-T4: Добавить новые колонки
 
-**Стили:**
-1. Обёртка таблицы:
+**Обновить DEFAULT_COLUMNS:**
 ```typescript
-<div className="overflow-x-auto rounded-xl border border-border/30 bg-card/30 backdrop-blur-xl">
-  <Table className="min-w-[1000px]">
+const DEFAULT_COLUMNS: ColumnConfig[] = [
+  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
+  { key: "id", label: "ID подписки", visible: true, width: 130, order: 1 },
+  { key: "status", label: "Статус", visible: true, width: 100, order: 2 },
+  { key: "customer", label: "Клиент", visible: true, width: 160, order: 3 },
+  { key: "plan", label: "План", visible: true, width: 150, order: 4 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
+  { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
+  { key: "card", label: "Карта", visible: true, width: 100, order: 7 },  // включить
+  { key: "payment_id", label: "ID платежа", visible: false, width: 130, order: 8 }, // NEW
+  { key: "deal", label: "Сделка", visible: true, width: 100, order: 9 }, // NEW
+  { key: "created", label: "Создано", visible: false, width: 100, order: 10 },
+  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 11 }, // NEW
+  { key: "connection", label: "Связь", visible: true, width: 100, order: 12 },
+  { key: "actions", label: "", visible: true, width: 100, order: 13 },
+];
 ```
 
-2. Строки таблицы компактные:
+**Обновить interface BepaidSubscription:**
 ```typescript
-<TableRow className="hover:bg-muted/30 transition-colors h-12">
+interface BepaidSubscription {
+  // ... existing fields
+  linked_order_id?: string | null;
+  linked_order_number?: string | null;
+  linked_payment_id?: string | null;
+  canceled_at?: string | null;
+}
 ```
 
-3. Ячейки однострочные с truncate:
+**Обновить renderCell для новых колонок:**
 ```typescript
-<TableCell className="py-2 px-3">
-  <span className="truncate block max-w-[140px]">{value}</span>
-</TableCell>
-```
+case 'payment_id':
+  return sub.linked_payment_id ? (
+    <button onClick={() => copyId(sub.linked_payment_id!)} className="...">
+      {sub.linked_payment_id.slice(0, 8)}...
+    </button>
+  ) : <span className="text-muted-foreground text-xs">—</span>;
 
----
+case 'deal':
+  return sub.linked_order_id ? (
+    <button onClick={() => openDealSheet(sub.linked_order_id!)} className="...">
+      {sub.linked_order_number || 'Сделка'}
+    </button>
+  ) : (
+    <Button variant="ghost" size="sm" onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
+      <Plus className="h-3 w-3" />
+    </Button>
+  );
 
-### PATCH-S4: Кликабельная статистика с фильтрацией
-
-**Изменить статус-бейджи на кнопки:**
-```typescript
-<button
-  onClick={() => setStatusFilter("active")}
-  className={cn(
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
-    statusFilter === "active" 
-      ? "bg-emerald-500/20 text-emerald-600 ring-2 ring-emerald-500/30" 
-      : "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
-  )}
->
-  <span className="font-semibold">{rawStats.active}</span>
-  <span className="text-xs">активных</span>
-</button>
-```
-
-**По умолчанию фильтр «active»:**
-```typescript
-const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
-```
-
----
-
-### PATCH-S5: Glassmorphism дизайн
-
-**Убрать Card wrapper, использовать прозрачные контейнеры:**
-
-```typescript
-// Вместо <Card><CardContent>
-<div className="space-y-4">
-  {/* Stats row */}
-  <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-white/10">
-    ...
-  </div>
-  
-  {/* Filters */}
-  <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-white/10">
-    ...
-  </div>
-  
-  {/* Table */}
-  <div className="rounded-xl border border-border/30 bg-card/30 backdrop-blur-xl overflow-hidden">
-    <div className="overflow-x-auto">
-      <Table>...</Table>
-    </div>
-  </div>
-</div>
+case 'canceled_at':
+  return sub.canceled_at ? formatDate(sub.canceled_at) : <span className="text-muted-foreground text-xs">—</span>;
 ```
 
 ---
 
-### PATCH-S6: Разбиение колонки «План / Сумма»
+### PATCH-T5: Упростить аварийную отвязку
+
+**Файл:** `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
+
+**Было (требует ввода "UNLINK"):**
+```typescript
+<p>Введите <strong>UNLINK</strong> для подтверждения:</p>
+<Input value={emergencyUnlinkConfirm} ... />
+<Button disabled={emergencyUnlinkConfirm !== "UNLINK"} ...>
+```
+
+**Станет (простое подтверждение):**
+```typescript
+<AlertDialogDescription asChild>
+  <div className="space-y-3">
+    {!canUnlink(...) && (
+      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-sm">
+        <p className="font-medium">⚠️ Подписка НЕ отменена в bePaid!</p>
+        <p className="mt-1">Автосписания могут продолжаться.</p>
+      </div>
+    )}
+    <p>Вы уверены, что хотите отвязать подписку от системы?</p>
+  </div>
+</AlertDialogDescription>
+<AlertDialogFooter>
+  <AlertDialogCancel>Отмена</AlertDialogCancel>
+  <AlertDialogAction onClick={handleEmergencyUnlink} className="bg-destructive">
+    Да, отвязать
+  </AlertDialogAction>
+</AlertDialogFooter>
+```
+
+**Убрать проверку UNLINK:**
+```typescript
+const handleEmergencyUnlink = async () => {
+  if (!targetEmergencyUnlinkId) return;
+  // ... остальная логика без проверки emergencyUnlinkConfirm
+};
+```
+
+---
+
+### PATCH-T6: Улучшить кеширование данных
+
+**Файл:** `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
 
 **Было:**
 ```typescript
-<TableHead>План / Сумма</TableHead>
-<TableCell>
-  <div>{sub.plan_title}</div>
-  <div>{sub.plan_amount} {sub.plan_currency}</div>
-</TableCell>
+staleTime: 60000, // 1 минута
 ```
 
 **Станет:**
 ```typescript
-// Колонка "План"
-<TableCell className="truncate max-w-[140px]">
-  {sub.plan_title || '—'}
-</TableCell>
+staleTime: 5 * 60 * 1000, // 5 минут — данные реже устаревают
+refetchOnWindowFocus: false, // не перезагружать при фокусе
+```
 
-// Колонка "Сумма"
-<TableCell className="tabular-nums text-right font-medium">
-  {sub.plan_amount.toFixed(2)} {sub.plan_currency}
-</TableCell>
+---
+
+### PATCH-T7: Обновить Edge Function для связей
+
+**Файл:** `supabase/functions/bepaid-list-subscriptions/index.ts`
+
+**Добавить запрос связей с orders/payments:**
+```typescript
+// Get linked orders and payments
+const { data: linkedPayments } = await supabase
+  .from('payments_v2')
+  .select('id, order_id, meta, orders_v2(id, order_number)')
+  .not('meta->bepaid_subscription_id', 'is', null);
+
+const bepaidIdToPaymentOrder = new Map();
+for (const p of linkedPayments || []) {
+  const bepaidSubId = (p.meta as any)?.bepaid_subscription_id;
+  if (bepaidSubId) {
+    bepaidIdToPaymentOrder.set(String(bepaidSubId), {
+      payment_id: p.id,
+      order_id: p.order_id,
+      order_number: p.orders_v2?.order_number,
+    });
+  }
+}
+```
+
+**Добавить в результат:**
+```typescript
+linked_order_id: linkedPaymentOrder?.order_id || null,
+linked_order_number: linkedPaymentOrder?.order_number || null,
+linked_payment_id: linkedPaymentOrder?.payment_id || null,
 ```
 
 ---
 
 ## Файлы к изменению
 
-| Файл | Изменения |
-|------|-----------|
-| `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx` | Все PATCH-S1–S6 |
-
----
-
-## Визуальная схема
-
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│ Stats:  [64 всего] [16 активных•] [0 пробных] [29 отменённых]    │
-│         Кликабельные для фильтрации, выделенный = активный       │
-├──────────────────────────────────────────────────────────────────┤
-│ Toolbar: [Поиск...] [Статус ▼] [Связь ▼] [Сорт. ▼] [⚙ Колонки]  │
-├──────────────────────────────────────────────────────────────────┤
-│ ☐ │ ID              │ Статус  │ Клиент    │ План     │ Сумма    │
-│───┼─────────────────┼─────────┼───────────┼──────────┼──────────│
-│ ☐ │ sbs_5b9ff021... │ Активна │ Иван →    │ BUSINESS │ 250 BYN  │
-│ ☐ │ sbs_67b05be8... │ Активна │ Мария →   │ CHAT     │ 100 BYN  │
-└──────────────────────────────────────────────────────────────────┘
-              ← горизонтальный скролл →
-                                            ┌─────────────────────┐
-                                            │ ContactDetailSheet  │
-                                            │ Иван Иванов         │
-                                            │ email, phone...     │
-                                            │ [Закрыть]           │
-                                            └─────────────────────┘
-```
+| Файл | Патчи |
+|------|-------|
+| `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx` | T1, T2, T3, T4, T5, T6 |
+| `supabase/functions/bepaid-list-subscriptions/index.ts` | T7 |
 
 ---
 
@@ -296,22 +296,21 @@ const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
 
 | # | Проверка | Ожидание |
 |---|----------|----------|
-| 1 | Клик на имя клиента | Открывается Sheet справа, страница не меняется |
-| 2 | Горизонтальный скролл | Работает влево-вправо на узких экранах |
-| 3 | Кнопка «⚙ Колонки» | Показывает чекбоксы для скрытия колонок |
-| 4 | Перетаскивание колонок | Работает drag-and-drop заголовков |
-| 5 | Клик на «16 активных» | Фильтрует таблицу по статусу active |
-| 6 | По умолчанию | Показывает только активные подписки |
-| 7 | Колонки План и Сумма | Разделены на две отдельные колонки |
-| 8 | Дизайн | Стеклянный, прозрачный, воздушный (glassmorphism) |
+| 1 | Клик на имя клиента | Открывается Sheet без ошибки |
+| 2 | Кнопка "Открыть в bePaid" | Переходит на admin.bepaid.by |
+| 3 | Колонка "Карта" | Показывает **** XXXX |
+| 4 | Колонка "Сделка" | Кликабельна, открывает DealDetailSheet |
+| 5 | Кнопка "Привязать контакт" | Открывает LinkContactDialog |
+| 6 | Аварийная отвязка | Не требует ввода "UNLINK" |
+| 7 | После обновления страницы | Данные не обнуляются на 5 минут |
 
 ---
 
 ## Приоритеты
 
-1. **CRITICAL**: PATCH-S1 (ContactDetailSheet без навигации)
-2. **HIGH**: PATCH-S3 (горизонтальный скролл + компактность)
-3. **HIGH**: PATCH-S4 (кликабельная статистика + фильтр по умолчанию)
-4. **HIGH**: PATCH-S5 (glassmorphism)
-5. **MEDIUM**: PATCH-S2 (DnD + visibility колонок)
-6. **LOW**: PATCH-S6 (разбиение План/Сумма)
+1. **CRITICAL**: PATCH-T1 — исправить ошибку загрузки контакта
+2. **CRITICAL**: PATCH-T2 — исправить URL bePaid
+3. **HIGH**: PATCH-T5 — упростить аварийную отвязку
+4. **HIGH**: PATCH-T6 — улучшить кеширование
+5. **MEDIUM**: PATCH-T3 — добавить диалоги привязки
+6. **MEDIUM**: PATCH-T4, T7 — новые колонки
