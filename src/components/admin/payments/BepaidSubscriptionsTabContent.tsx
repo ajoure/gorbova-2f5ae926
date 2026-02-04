@@ -53,6 +53,7 @@ import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useHasRole } from "@/hooks/useHasRole";
+import { ClickableContactName } from "@/components/admin/ClickableContactName";
 
 interface BepaidSubscription {
   id: string;
@@ -120,7 +121,7 @@ interface DebugInfo {
   result_count?: number;
 }
 
-// PATCH-J: Russian status labels dictionary
+// PATCH-J+O: Russian status labels dictionary with all bePaid statuses
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
@@ -131,6 +132,11 @@ const STATUS_LABELS: Record<string, string> = {
   paused: 'Приостановлена',
   unknown: 'Неизвестно',
   legacy: 'Устаревшая',
+  // PATCH-O: Additional statuses from bePaid
+  redirecting: 'Перенаправление',
+  failed: 'Ошибка',
+  expired: 'Истекла',
+  suspended: 'Заблокирована',
 };
 
 type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due" | "pending";
@@ -461,46 +467,55 @@ export function BepaidSubscriptionsTabContent() {
 
   return (
     <div className="space-y-4">
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
-        <Card className="p-3">
-          <div className="text-2xl font-bold">{rawStats.total}</div>
-          <div className="text-xs text-muted-foreground">Всего</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-emerald-600">{rawStats.active}</div>
-          <div className="text-xs text-muted-foreground">Активных</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-blue-600">{rawStats.trial}</div>
-          <div className="text-xs text-muted-foreground">Пробных</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-purple-600">{pendingCount}</div>
-          <div className="text-xs text-muted-foreground">Ожидает</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-muted-foreground">{canceledCount}</div>
-          <div className="text-xs text-muted-foreground">Отменённых</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-red-600">{rawStats.orphans}</div>
-          <div className="text-xs text-muted-foreground">Сирот</div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-2xl font-bold text-emerald-600">{rawStats.linked}</div>
-          <div className="text-xs text-muted-foreground">Связанных</div>
-        </Card>
-        {(urgentCount > 0 || needsSupportCount > 0) && (
-          <Card className="p-3 border-amber-500/50 bg-amber-500/5">
-            <div className="text-2xl font-bold text-amber-600">
-              {urgentCount > 0 ? urgentCount : needsSupportCount}
-            </div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" /> 
-              {urgentCount > 0 ? '≤7 дней' : 'Нужна помощь'}
-            </div>
-          </Card>
+      {/* PATCH-P: Compact stats row */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/50 rounded-full text-sm">
+          <span className="font-semibold">{rawStats.total}</span>
+          <span className="text-muted-foreground text-xs">всего</span>
+        </div>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 rounded-full text-sm">
+          <span className="font-semibold">{rawStats.active}</span>
+          <span className="text-xs">активных</span>
+        </div>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 text-blue-600 rounded-full text-sm">
+          <span className="font-semibold">{rawStats.trial}</span>
+          <span className="text-xs">пробных</span>
+        </div>
+        {pendingCount > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 text-purple-600 rounded-full text-sm">
+            <span className="font-semibold">{pendingCount}</span>
+            <span className="text-xs">ожидает</span>
+          </div>
+        )}
+        {canceledCount > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/30 rounded-full text-sm text-muted-foreground">
+            <span className="font-semibold">{canceledCount}</span>
+            <span className="text-xs">отменённых</span>
+          </div>
+        )}
+        {rawStats.orphans > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-600 rounded-full text-sm">
+            <span className="font-semibold">{rawStats.orphans}</span>
+            <span className="text-xs">сирот</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 rounded-full text-sm">
+          <span className="font-semibold">{rawStats.linked}</span>
+          <span className="text-xs">связанных</span>
+        </div>
+        {urgentCount > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-600 rounded-full text-sm">
+            <AlertTriangle className="h-3 w-3" />
+            <span className="font-semibold">{urgentCount}</span>
+            <span className="text-xs">≤7 дней</span>
+          </div>
+        )}
+        {needsSupportCount > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-600 rounded-full text-sm">
+            <HelpCircle className="h-3 w-3" />
+            <span className="font-semibold">{needsSupportCount}</span>
+            <span className="text-xs">нужна помощь</span>
+          </div>
         )}
       </div>
 
@@ -831,10 +846,18 @@ export function BepaidSubscriptionsTabContent() {
                               <Link2Off className="h-3 w-3" />
                               Сирота
                             </Badge>
+                          ) : sub.linked_user_id ? (
+                            <ClickableContactName
+                              userId={sub.linked_user_id}
+                              name={sub.linked_profile_name}
+                              email={sub.customer_email}
+                              fromPage="bepaid-subscriptions"
+                              className="text-sm"
+                            />
                           ) : (
                             <Badge variant="outline" className="flex items-center gap-1 w-fit bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
                               <Link2 className="h-3 w-3" />
-                              {sub.linked_profile_name || "Связана"}
+                              Связана
                             </Badge>
                           )}
                         </TableCell>
