@@ -377,6 +377,18 @@ Deno.serve(async (req) => {
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription.id}&order=${order.id}`;
 
+    // PATCH-M: Build descriptive title and description for bePaid checkout
+    const productName = product.name || 'Подписка';
+    const tariffName = tariff.name || tariff.code || '';
+    const intervalLabel = intervalDays === 30 ? 'месяц' : `${intervalDays} дней`;
+    
+    // Compose display title: "ProductName — TariffName" or just "ProductName"
+    const planTitle = tariffName ? `${productName} — ${tariffName}` : productName;
+    const planDescription = `Подписка. Автосписание каждые ${intervalLabel}. Можно отменить в любой момент.`;
+    
+    // Determine billing mode for meta storage
+    const billingMode = intervalDays === 30 ? 'monthly' : 'days_30';
+
     // bePaid Subscriptions API docs: https://docs.bepaid.by/ru/payment_management/subscriptions/subscriptions/
     // Key points from docs:
     // 1. plan.shop_id must be a number
@@ -396,7 +408,8 @@ Deno.serve(async (req) => {
       plan: {
         shop_id: Number(credentials.shop_id),
         currency,
-        title: `${product.name || 'Подписка'}`,
+        title: planTitle,  // PATCH-M: Descriptive title
+        description: planDescription,  // PATCH-M: Clear description
         plan: {
           amount: amountCents,
           interval: intervalDays,
@@ -471,6 +484,7 @@ Deno.serve(async (req) => {
 
     // Create provider_subscriptions record
     // PATCH-2: Store safe subset only, no PII
+    // PATCH-M: Store display_title, display_description for admin visibility
     const { error: provSubError } = await supabase
       .from('provider_subscriptions')
       .upsert({
@@ -489,6 +503,14 @@ Deno.serve(async (req) => {
           created_at: bepaidSubscription.created_at,
           checkout_url_present: !!redirectUrl,
         },
+        meta: {
+          display_title: planTitle,
+          display_description: planDescription,
+          product_name: product.name,
+          tariff_name: tariff.name || tariff.code,
+          billing_mode: billingMode,
+          interval_days: intervalDays,
+        },
       }, { 
         onConflict: 'provider,provider_subscription_id',
         ignoreDuplicates: false 
@@ -499,6 +521,7 @@ Deno.serve(async (req) => {
     }
 
     // Update subscription meta with bePaid subscription ID
+    // PATCH-M: Store display metadata for admin visibility
     await supabase
       .from('subscriptions_v2')
       .update({
@@ -508,6 +531,12 @@ Deno.serve(async (req) => {
           offer_id: effectiveOfferId,
           bepaid_subscription_id: bepaidSubId,
           bepaid_subscription_created_at: new Date().toISOString(),
+          display_title: planTitle,
+          display_description: planDescription,
+          product_name: product.name,
+          tariff_name: tariff.name || tariff.code,
+          billing_mode: billingMode,
+          interval_days: intervalDays,
         },
       })
       .eq('id', subscription.id);
