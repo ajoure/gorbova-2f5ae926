@@ -75,6 +75,11 @@ interface SubscriptionWithLink {
   cancellation_capability?: string;
   needs_support?: boolean;
   details_missing?: boolean;
+  // PATCH-T7: New linked data fields
+  linked_order_id?: string | null;
+  linked_order_number?: string | null;
+  linked_payment_id?: string | null;
+  canceled_at?: string | null;
 }
 
 interface CredentialsResult {
@@ -382,6 +387,30 @@ Deno.serve(async (req) => {
       }
     }
 
+    // PATCH-T7: Get linked orders and payments from payments_v2
+    const { data: linkedPayments } = await supabase
+      .from('payments_v2')
+      .select('id, order_id, meta, profile_id, orders_v2(id, order_number)')
+      .not('meta->bepaid_subscription_id', 'is', null);
+
+    const bepaidIdToPaymentOrder = new Map<string, { 
+      payment_id: string; 
+      order_id: string | null; 
+      order_number: string | null;
+      profile_id: string | null;
+    }>();
+    
+    for (const p of linkedPayments || []) {
+      const bepaidSubId = (p.meta as any)?.bepaid_subscription_id;
+      if (bepaidSubId) {
+        bepaidIdToPaymentOrder.set(String(bepaidSubId), {
+          payment_id: p.id,
+          order_id: p.order_id,
+          order_number: (p.orders_v2 as any)?.order_number || null,
+          profile_id: p.profile_id,
+        });
+      }
+    }
     const allSubscriptions: BepaidSubscription[] = [];
     const fetchedIds = new Set<string>();
     
@@ -505,7 +534,10 @@ Deno.serve(async (req) => {
       const ourSub = sub.id ? bepaidIdToOurSub.get(String(sub.id)) : undefined;
       const providerSub = providerSubsMap.get(String(sub.id));
       
-      const linkedUserId = ourSub?.user_id || providerSub?.user_id || null;
+      // PATCH-T7: Get linked payment/order data
+      const linkedPaymentOrder = bepaidIdToPaymentOrder.get(String(sub.id));
+      
+      const linkedUserId = ourSub?.user_id || providerSub?.user_id || linkedPaymentOrder?.profile_id || null;
       const linkedSubId = ourSub?.id || providerSub?.subscription_v2_id || null;
       
       const profile = linkedUserId ? userIdToProfile.get(linkedUserId) : null;
@@ -518,6 +550,10 @@ Deno.serve(async (req) => {
 
       const providerMeta = providerSub?.meta as Record<string, any> | undefined;
       const snapshot = providerMeta?.provider_snapshot;
+      
+      // Extract canceled_at from bePaid data or snapshot
+      const canceledAt = (sub as any).cancelled_at || (sub as any).canceled_at || 
+                         snapshot?.cancelled_at || snapshot?.canceled_at || null;
 
       return {
         id: String(sub.id),
@@ -541,6 +577,11 @@ Deno.serve(async (req) => {
         cancellation_capability: providerMeta?.cancellation_capability,
         needs_support: providerMeta?.needs_support,
         details_missing: !!(sub as any)._details_missing,
+        // PATCH-T7: New fields
+        linked_order_id: linkedPaymentOrder?.order_id || null,
+        linked_order_number: linkedPaymentOrder?.order_number || null,
+        linked_payment_id: linkedPaymentOrder?.payment_id || null,
+        canceled_at: canceledAt,
       };
     });
 

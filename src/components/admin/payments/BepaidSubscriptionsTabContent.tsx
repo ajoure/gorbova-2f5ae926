@@ -31,6 +31,8 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
   DropdownMenuTrigger,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
   Loader2,
@@ -53,6 +55,10 @@ import {
   HelpCircle,
   Settings,
   GripVertical,
+  User,
+  Handshake,
+  MoreHorizontal,
+  Plus,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -60,6 +66,10 @@ import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useHasRole } from "@/hooks/useHasRole";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { LinkContactDialog } from "./LinkContactDialog";
+import { UnlinkContactDialog } from "./UnlinkContactDialog";
+import { LinkDealDialog } from "./LinkDealDialog";
+import { UnlinkDealDialog } from "./UnlinkDealDialog";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -100,6 +110,11 @@ interface BepaidSubscription {
   cancellation_capability?: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown';
   needs_support?: boolean;
   details_missing?: boolean;
+  // PATCH-T4: New linked data fields
+  linked_order_id?: string | null;
+  linked_order_number?: string | null;
+  linked_payment_id?: string | null;
+  canceled_at?: string | null;
 }
 
 interface SubscriptionStats {
@@ -155,16 +170,19 @@ interface ColumnConfig {
 
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "id", label: "ID", visible: true, width: 130, order: 1 },
+  { key: "id", label: "ID подписки", visible: true, width: 130, order: 1 },
   { key: "status", label: "Статус", visible: true, width: 100, order: 2 },
   { key: "customer", label: "Клиент", visible: true, width: 160, order: 3 },
   { key: "plan", label: "План", visible: true, width: 150, order: 4 },
   { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
   { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
-  { key: "card", label: "Карта", visible: false, width: 100, order: 7 },
-  { key: "created", label: "Создано", visible: false, width: 100, order: 8 },
-  { key: "connection", label: "Связь", visible: true, width: 100, order: 9 },
-  { key: "actions", label: "", visible: true, width: 80, order: 10 },
+  { key: "card", label: "Карта", visible: true, width: 100, order: 7 },
+  { key: "payment_id", label: "ID платежа", visible: false, width: 130, order: 8 },
+  { key: "deal", label: "Сделка", visible: true, width: 100, order: 9 },
+  { key: "created", label: "Создано", visible: false, width: 100, order: 10 },
+  { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 11 },
+  { key: "connection", label: "Связь", visible: true, width: 100, order: 12 },
+  { key: "actions", label: "", visible: true, width: 100, order: 13 },
 ];
 
 const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v2';
@@ -296,6 +314,13 @@ export function BepaidSubscriptionsTabContent() {
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
   
+  // PATCH-T3: Dialogs for linking contacts and deals
+  const [linkContactOpen, setLinkContactOpen] = useState(false);
+  const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
+  const [linkDealOpen, setLinkDealOpen] = useState(false);
+  const [unlinkDealOpen, setUnlinkDealOpen] = useState(false);
+  const [selectedSubscription, setSelectedSubscription] = useState<BepaidSubscription | null>(null);
+  
   // Columns state with localStorage
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     const saved = localStorage.getItem(COLUMNS_STORAGE_KEY);
@@ -323,6 +348,7 @@ export function BepaidSubscriptionsTabContent() {
     [columns]
   );
 
+  // PATCH-T6: Improved caching
   const { data, isLoading, refetch, isRefetching, error: fetchError } = useQuery({
     queryKey: ["bepaid-subscriptions-admin"],
     queryFn: async () => {
@@ -346,7 +372,8 @@ export function BepaidSubscriptionsTabContent() {
         debug: data.debug as DebugInfo | undefined,
       };
     },
-    staleTime: 60000,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false,
   });
 
   const subscriptions = data?.subscriptions || [];
@@ -527,21 +554,22 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
+  // PATCH-T5: Simplified emergency unlink (no UNLINK input required)
   const handleEmergencyUnlink = async () => {
-    if (!targetEmergencyUnlinkId || emergencyUnlinkConfirm !== "UNLINK") return;
+    if (!targetEmergencyUnlinkId) return;
     
     try {
       const { data, error } = await supabase.functions.invoke('admin-bepaid-emergency-unlink', {
         body: { 
           provider_subscription_id: targetEmergencyUnlinkId,
-          confirm_text: emergencyUnlinkConfirm
+          confirm_text: "UNLINK" // Always pass UNLINK since we use simple confirmation
         }
       });
       
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
       
-      toast.success('Подписка аварийно отвязана');
+      toast.success('Подписка отвязана');
       setShowEmergencyUnlinkDialog(false);
       setEmergencyUnlinkConfirm("");
       setTargetEmergencyUnlinkId(null);
@@ -617,16 +645,33 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
   
-  // Open contact sheet without navigation
-  const openContactSheet = async (profileId: string) => {
+  // PATCH-T1: Fixed contact sheet - search by user_id, not profile.id
+  const openContactSheet = async (userId: string) => {
     try {
+      // First try by user_id (the correct field)
       const { data: contact, error } = await supabase
         .from("profiles")
         .select("*")
-        .eq("id", profileId)
-        .single();
+        .eq("user_id", userId)
+        .maybeSingle();
       
       if (error) throw error;
+      
+      if (!contact) {
+        // Fallback: try by profile.id
+        const { data: byId } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+          
+        if (byId) {
+          setSelectedContact(byId);
+          setContactSheetOpen(true);
+          return;
+        }
+        throw new Error("Контакт не найден");
+      }
       
       setSelectedContact(contact);
       setContactSheetOpen(true);
@@ -789,9 +834,59 @@ export function BepaidSubscriptionsTabContent() {
           </span>
         );
         
+      // PATCH-T4: New columns
+      case 'payment_id':
+        return sub.linked_payment_id ? (
+          <button
+            onClick={() => copyId(sub.linked_payment_id!)}
+            className="font-mono text-xs hover:text-primary flex items-center gap-1"
+            title="Скопировать ID платежа"
+          >
+            {sub.linked_payment_id.slice(0, 8)}...
+            {copiedId === sub.linked_payment_id ? (
+              <Check className="h-3 w-3 text-emerald-500" />
+            ) : (
+              <Copy className="h-3 w-3 opacity-50" />
+            )}
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+        
+      case 'deal':
+        return sub.linked_order_id ? (
+          <button
+            onClick={() => copyId(sub.linked_order_id!)}
+            className="text-xs font-medium hover:underline hover:text-primary"
+          >
+            {sub.linked_order_number || sub.linked_order_id.slice(0, 8)}
+          </button>
+        ) : (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 px-2"
+            onClick={() => { 
+              setSelectedSubscription(sub); 
+              setLinkDealOpen(true); 
+            }}
+          >
+            <Plus className="h-3 w-3" />
+          </Button>
+        );
+        
+      case 'canceled_at':
+        return sub.canceled_at ? (
+          <span className="text-xs text-muted-foreground">
+            {formatDate(sub.canceled_at)}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+        
       case 'connection':
         return sub.is_orphan ? (
-          <Badge variant="outline" className="text-[10px] text-red-600 border-red-500/30">
+          <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
             <Link2Off className="h-2.5 w-2.5 mr-1" />
             Сирота
           </Badge>
@@ -802,6 +897,7 @@ export function BepaidSubscriptionsTabContent() {
           </Badge>
         );
         
+      // PATCH-T2: Fixed bePaid URL + PATCH-T3: Added actions dropdown
       case 'actions':
         return (
           <div className="flex items-center gap-0.5">
@@ -811,7 +907,7 @@ export function BepaidSubscriptionsTabContent() {
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6"
-                  onClick={() => window.open(`https://app.bepaid.by/en/subscriptions/${sub.id}`, '_blank')}
+                  onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}
                 >
                   <ExternalLink className="h-3 w-3" />
                 </Button>
@@ -838,33 +934,62 @@ export function BepaidSubscriptionsTabContent() {
               <TooltipContent>Обновить статус</TooltipContent>
             </Tooltip>
             
-            {!sub.is_orphan && (
-              canUnlink(sub) ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => {
-                    setTargetEmergencyUnlinkId(sub.id);
-                    setShowEmergencyUnlinkDialog(true);
-                  }}
-                >
-                  <Unlink className="h-3 w-3" />
+            {/* Actions dropdown menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6">
+                  <MoreHorizontal className="h-3 w-3" />
                 </Button>
-              ) : isSuperAdmin ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-destructive hover:text-destructive"
-                  onClick={() => {
-                    setTargetEmergencyUnlinkId(sub.id);
-                    setShowEmergencyUnlinkDialog(true);
-                  }}
-                >
-                  <ShieldAlert className="h-3 w-3" />
-                </Button>
-              ) : null
-            )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
+                  <User className="h-3 w-3 mr-2" />
+                  {sub.linked_user_id ? "Перепривязать контакт" : "Привязать контакт"}
+                </DropdownMenuItem>
+                {sub.linked_user_id && (
+                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkContactOpen(true); }}>
+                    <Unlink className="h-3 w-3 mr-2" />
+                    Отвязать контакт
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
+                  <Handshake className="h-3 w-3 mr-2" />
+                  {sub.linked_order_id ? "Перепривязать сделку" : "Привязать сделку"}
+                </DropdownMenuItem>
+                {sub.linked_order_id && (
+                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkDealOpen(true); }}>
+                    <Unlink className="h-3 w-3 mr-2" />
+                    Отвязать сделку
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                {!sub.is_orphan && (
+                  canUnlink(sub) ? (
+                    <DropdownMenuItem 
+                      onClick={() => {
+                        setTargetEmergencyUnlinkId(sub.id);
+                        setShowEmergencyUnlinkDialog(true);
+                      }}
+                    >
+                      <Unlink className="h-3 w-3 mr-2" />
+                      Отвязать подписку
+                    </DropdownMenuItem>
+                  ) : isSuperAdmin ? (
+                    <DropdownMenuItem 
+                      className="text-destructive"
+                      onClick={() => {
+                        setTargetEmergencyUnlinkId(sub.id);
+                        setShowEmergencyUnlinkDialog(true);
+                      }}
+                    >
+                      <ShieldAlert className="h-3 w-3 mr-2" />
+                      Аварийная отвязка
+                    </DropdownMenuItem>
+                  ) : null
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         );
         
@@ -1274,7 +1399,7 @@ export function BepaidSubscriptionsTabContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Emergency Unlink dialog */}
+      {/* PATCH-T5: Simplified Emergency Unlink dialog - no UNLINK input */}
       <AlertDialog open={showEmergencyUnlinkDialog} onOpenChange={(open) => {
         if (!open) {
           setEmergencyUnlinkConfirm("");
@@ -1298,28 +1423,19 @@ export function BepaidSubscriptionsTabContent() {
                     <p className="mt-1">Автосписания могут продолжаться.</p>
                   </div>
                 )}
-                <p>
-                  Введите <strong>UNLINK</strong> для подтверждения:
-                </p>
-                <Input 
-                  value={emergencyUnlinkConfirm}
-                  onChange={(e) => setEmergencyUnlinkConfirm(e.target.value.toUpperCase())}
-                  placeholder="UNLINK"
-                  className="font-mono"
-                />
+                <p>Вы уверены, что хотите отвязать подписку от системы?</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <Button 
-              variant="destructive"
-              disabled={emergencyUnlinkConfirm !== "UNLINK"}
+            <AlertDialogAction
               onClick={handleEmergencyUnlink}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               <Unlink className="h-4 w-4 mr-2" />
-              Отвязать
-            </Button>
+              Да, отвязать
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1405,6 +1521,77 @@ export function BepaidSubscriptionsTabContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* PATCH-T3: Link Contact Dialog */}
+      {selectedSubscription && (
+        <LinkContactDialog
+          open={linkContactOpen}
+          onOpenChange={setLinkContactOpen}
+          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
+          rawSource="payments_v2"
+          initialEmail={selectedSubscription.customer_email}
+          cardLast4={selectedSubscription.card_last4}
+          cardBrand={selectedSubscription.card_brand}
+          onSuccess={() => {
+            setLinkContactOpen(false);
+            setSelectedSubscription(null);
+            queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+          }}
+        />
+      )}
+
+      {/* PATCH-T3: Unlink Contact Dialog */}
+      {selectedSubscription && selectedSubscription.linked_user_id && (
+        <UnlinkContactDialog
+          open={unlinkContactOpen}
+          onOpenChange={setUnlinkContactOpen}
+          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
+          rawSource="payments_v2"
+          cardLast4={selectedSubscription.card_last4}
+          profileId={selectedSubscription.linked_user_id}
+          profileName={selectedSubscription.linked_profile_name}
+          onSuccess={() => {
+            setUnlinkContactOpen(false);
+            setSelectedSubscription(null);
+            queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+          }}
+        />
+      )}
+
+      {/* PATCH-T3: Link Deal Dialog */}
+      {selectedSubscription && (
+        <LinkDealDialog
+          open={linkDealOpen}
+          onOpenChange={setLinkDealOpen}
+          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
+          rawSource="payments_v2"
+          amount={selectedSubscription.plan_amount}
+          currency={selectedSubscription.plan_currency}
+          profileId={selectedSubscription.linked_user_id}
+          onSuccess={() => {
+            setLinkDealOpen(false);
+            setSelectedSubscription(null);
+            queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+          }}
+        />
+      )}
+
+      {/* PATCH-T3: Unlink Deal Dialog */}
+      {selectedSubscription && selectedSubscription.linked_order_id && (
+        <UnlinkDealDialog
+          open={unlinkDealOpen}
+          onOpenChange={setUnlinkDealOpen}
+          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
+          rawSource="payments_v2"
+          orderId={selectedSubscription.linked_order_id}
+          orderNumber={selectedSubscription.linked_order_number}
+          onSuccess={() => {
+            setUnlinkDealOpen(false);
+            setSelectedSubscription(null);
+            queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+          }}
+        />
+      )}
     </div>
   );
 }
