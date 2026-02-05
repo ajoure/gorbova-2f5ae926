@@ -169,11 +169,25 @@ export default function AdminLessonBlockEditor() {
             <Button 
               variant="outline"
               onClick={async () => {
-                await resetProgress();          // lesson_progress_state
-                await resetLessonProgress();    // user_lesson_progress
-                toast.success("Прогресс урока сброшен");
+                try {
+                  // Reset both tables with proper await
+                  const stateResult = await resetProgress('lesson_all');
+                  const progressResult = await resetLessonProgress();
+                  
+                  // Invalidate all related queries
+                  queryClient.invalidateQueries({ queryKey: ['lesson-progress'] });
+                  queryClient.invalidateQueries({ queryKey: ['user-progress', lessonId] });
+                  
+                  // Force refetch blocks to update UI
+                  await refetch();
+                  
+                  console.log('[AdminReset] Progress reset:', { stateResult, progressResult });
+                  toast.success("Прогресс урока сброшен");
+                } catch (error) {
+                  console.error('[AdminReset] Error:', error);
+                  toast.error("Ошибка сброса прогресса");
+                }
               }}
-              disabled={!progressState}
               title="Сбросить свой прогресс прохождения урока"
             >
               <RotateCcw className="mr-2 h-4 w-4" />

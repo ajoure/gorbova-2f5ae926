@@ -189,12 +189,18 @@ export function KvestLessonView({
   }, [updateState]);
 
   // Handler for quiz_survey reset (clears role and removes from completedSteps)
-  const handleQuizSurveyReset = useCallback((blockId: string) => {
+  const handleQuizSurveyReset = useCallback(async (blockId: string) => {
+    console.log('[KvestLessonView] Quiz reset triggered for block:', blockId.slice(0, 8));
+    
+    // Clear role and completedSteps from lesson_progress_state
     const newCompletedSteps = (state?.completedSteps || []).filter(id => id !== blockId);
     updateState({ 
       role: undefined,
-      completedSteps: newCompletedSteps 
+      completedSteps: newCompletedSteps,
+      currentStepIndex: 0  // Reset to first step
     });
+    
+    console.log('[KvestLessonView] State cleared: role=undefined, currentStepIndex=0');
   }, [state?.completedSteps, updateState]);
 
   // Handler for role_description block completion
@@ -287,7 +293,9 @@ export function KvestLessonView({
               kvestProps={{
                 onRoleSelected: isReadOnly ? undefined : handleRoleSelected,
                 isCompleted: isCompleted,
-                onQuizReset: isReadOnly ? undefined : () => handleQuizSurveyReset(blockId),
+                onQuizReset: isReadOnly ? undefined : async () => {
+                  await handleQuizSurveyReset(blockId);
+                },
               }}
             />
           </div>

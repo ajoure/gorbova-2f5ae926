@@ -36,8 +36,8 @@ export interface KvestBlockProps {
   role?: string | null;
   onRoleSelected?: (role: string) => void;
   
-  // Quiz reset (clears role in lesson_progress_state)
-  onQuizReset?: () => void;
+  // Quiz reset (clears role in lesson_progress_state) - async for proper awaiting
+  onQuizReset?: () => Promise<void> | void;
   
   // Video
   watchedPercent?: number;
@@ -121,7 +121,9 @@ export function LessonBlockRenderer({
   };
 
   const handleQuizReset = async (blockId: string) => {
+    // Clear user_lesson_progress entry for this block
     await resetBlockProgress(blockId);
+    console.log(`[handleQuizReset] Block progress cleared: ${blockId.slice(0, 8)}`);
   };
 
   const renderBlock = (block: LessonBlock) => {
@@ -310,9 +312,10 @@ export function LessonBlockRenderer({
             savedAnswer={savedResponse}
             isSubmitted={isSubmitted || kvestProps?.isCompleted}
             onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
-            onReset={() => {
-              handleQuizReset(block.id);       // Clear user_lesson_progress
-              kvestProps?.onQuizReset?.();     // Clear role in lesson_progress_state
+            onReset={async () => {
+              await handleQuizReset(block.id);       // Clear user_lesson_progress
+              await kvestProps?.onQuizReset?.();     // Clear role in lesson_progress_state
+              console.log('[LessonBlockRenderer] Quiz reset complete');
             }}
           />
         );

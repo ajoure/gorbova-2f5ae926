@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQueryClient } from "@tanstack/react-query";
 
 export interface LessonProgressStateData {
   role?: string;                          // Selected role from quiz_survey
@@ -26,6 +27,7 @@ interface LessonProgressStateRecord {
 
 export function useLessonProgressState(lessonId?: string) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [record, setRecord] = useState<LessonProgressStateRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -163,25 +165,76 @@ export function useLessonProgressState(lessonId?: string) {
     }
   }, [lessonId, user, record, fetchState]);
 
-  // Reset progress
-  const reset = useCallback(async () => {
-    if (!lessonId || !user) return;
+  // Reset progress - clears entire state_json OR specific quiz keys
+  const reset = useCallback(async (scope: 'lesson_all' | 'quiz_only' = 'lesson_all') => {
+    if (!lessonId || !user) {
+      console.warn('[reset] Missing lessonId or user');
+      return { ok: false, error: 'missing_params' };
+    }
+
+    // Cancel any pending saves
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
 
     try {
-      const { error } = await supabase
-        .from("lesson_progress_state")
-        .delete()
-        .eq("user_id", user.id)
-        .eq("lesson_id", lessonId);
+      if (scope === 'lesson_all') {
+        // Full reset - delete the record entirely
+        const { error } = await supabase
+          .from("lesson_progress_state")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("lesson_id", lessonId);
 
-      if (error) throw error;
+        if (error) throw error;
+        
+        // Clear local state immediately
+        setRecord(null);
+        pendingStateRef.current = null;
+      } else {
+        // Quiz-only reset - clear only quiz-related keys
+        const currentState = record?.state_json || {};
+        const cleanedState: LessonProgressStateData = {
+          ...currentState,
+          role: undefined,
+          completedSteps: (currentState.completedSteps || []).filter(
+            step => !step.includes('quiz') // Simple heuristic, adjust as needed
+          ),
+          currentStepIndex: 0, // Reset to beginning
+        };
+
+        const { error } = await supabase
+          .from("lesson_progress_state")
+          .upsert({
+            user_id: user.id,
+            lesson_id: lessonId,
+            state_json: cleanedState as unknown as Record<string, unknown>,
+            updated_at: new Date().toISOString(),
+          } as any, {
+            onConflict: 'user_id,lesson_id'
+          });
+
+        if (error) throw error;
+
+        setRecord(prev => prev ? {
+          ...prev,
+          state_json: cleanedState
+        } : null);
+        pendingStateRef.current = null;
+      }
+
+      // Invalidate all related queries to force refetch everywhere
+      queryClient.invalidateQueries({ queryKey: ['lesson-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['user-progress', lessonId] });
       
-      setRecord(null);
-      pendingStateRef.current = null;
+      console.log(`[reset] Success: scope=${scope}, lessonId=${lessonId.slice(0, 8)}`);
+      return { ok: true, scope };
     } catch (error) {
       console.error("Error resetting lesson progress:", error);
+      return { ok: false, error };
     }
-  }, [lessonId, user]);
+  }, [lessonId, user, record, queryClient]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
