@@ -1,125 +1,113 @@
 
-# План исправления: Баг статистики выписки BePaid
+# План исправления: Формула "Чистая выручка" и удаление карточки "Перечислено"
 
-## Обнаруженная проблема
+## Обнаруженные проблемы
 
-### Корневая причина
-В SQL-функции `get_bepaid_statement_stats` используется **ILIKE '%успешн%'** для определения успешных платежей:
+### 1. Неверная формула "Чистая выручка"
 
-```sql
-WHERE (status ILIKE '%успешн%' OR status ILIKE '%successful%')
+**Текущая формула (НЕПРАВИЛЬНО):**
+```typescript
+netRevenue = successful_amount - refunded_amount - commission_total
+// 14,764 - 195 - 176.33 = 14,392.67 BYN ← на скриншоте
 ```
 
-**Проблема:** Строка **"Неуспешный"** также содержит подстроку "успешн", поэтому попадает в категорию успешных!
-
-### SQL-доказательство
-```sql
-SELECT 'Неуспешный' ILIKE '%успешн%' as matches;
--- Результат: TRUE (БАГ!)
+**Правильная формула:**
+```typescript
+netRevenue = successful_amount - refunded_amount - cancelled_amount - commission_total
+// 14,764 - 195 - 14 - 176.33 = 14,378.67 BYN
 ```
 
-### Фактические данные за февраль
-| Status | Transaction Type | Кол-во | Сумма |
-|--------|------------------|--------|-------|
-| Успешный | Платеж | 70 | 14 514 BYN |
-| Неуспешный | Платеж | 36 | 5 657 BYN |
-| Успешный | Отмена | 14 | 14 BYN |
-| Успешный | Возврат средств | 1 | 195 BYN |
+**Проблема:** Не вычитаются отмены (`cancelled_amount`).
 
-### Что показывается сейчас (НЕПРАВИЛЬНО)
-- Платежи: **20 171 BYN / 106 шт** (считает 70 успешных + 36 неуспешных)
-- Ошибки: **0 BYN / 0 шт** (не находит "Неуспешный", т.к. ищет "ошибк" или "failed")
+### 2. Карточка "Перечислено" не нужна
 
-### Что должно быть (ПРАВИЛЬНО)
-- Платежи: **14 514 BYN / 70 шт** (только успешные платежи)
-- Ошибки: **5 657 BYN / 36 шт** (неуспешные платежи)
+Пользователь объясняет:
+- "Перечислено" концептуально должно равняться "Чистой выручке"
+- В реальности `payout_amount` в выписке BePaid — это банковские переводы, которые происходят с задержкой
+- Показывать 8,268.67 BYN вместо 14,378.67 BYN сбивает с толку
+- **Решение:** Удалить карточку "Перечислено" из обоих табов
+
+### 3. Ошибки не входят в расчёт денег
+
+Ошибки (36 шт / 5,657 BYN) — это неудавшиеся попытки оплаты:
+- Деньги НЕ поступали → не включать в денежные расчёты
+- Нужны только для общего количества транзакций: 71 + 1 + 14 + 36 = 122 шт
+
+### 4. Применить ту же логику к "Выписке BePaid"
+
+Добавить карточку "Чистая выручка" в `BepaidStatementSummary` с формулой:
+```
+Чистая выручка = Платежи - Возвраты - Отмены - Комиссия
+```
 
 ---
 
 ## Решение
 
-### Изменить RPC функцию `get_bepaid_statement_stats`
+### PATCH-1: Исправить формулу в PaymentsStatsPanel.tsx
 
-Заменить нечёткий поиск `ILIKE '%успешн%'` на **точное совпадение** с учётом реальных значений из выписки bePaid.
+**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
 
-**Реальные значения в базе:**
-- `status`: "Успешный", "Неуспешный"
-- `transaction_type`: "Платеж", "Отмена", "Возврат средств"
+```typescript
+// Строки 134-137 — исправить формулу:
+// БЫЛО:
+const netRevenue = serverStats.successful_amount 
+  - serverStats.refunded_amount 
+  - serverStats.commission_total;
 
-### Исправленный SQL
-
-```sql
-CREATE OR REPLACE FUNCTION public.get_bepaid_statement_stats(
-  from_date TIMESTAMPTZ,
-  to_date TIMESTAMPTZ
-) RETURNS JSONB
-LANGUAGE plpgsql STABLE
-SET search_path TO 'public'
-AS $$
-DECLARE
-  result JSONB;
-BEGIN
-  SELECT jsonb_build_object(
-    -- Успешные платежи: status = 'Успешный' И transaction_type = 'Платеж' И amount > 0
-    'payments_count', COUNT(*) FILTER (
-      WHERE status = 'Успешный'
-        AND transaction_type = 'Платеж'
-        AND amount > 0
-    ),
-    'payments_amount', COALESCE(SUM(amount) FILTER (
-      WHERE status = 'Успешный'
-        AND transaction_type = 'Платеж'
-        AND amount > 0
-    ), 0),
-    
-    -- Возвраты: transaction_type = 'Возврат средств'
-    'refunds_count', COUNT(*) FILTER (
-      WHERE transaction_type = 'Возврат средств'
-    ),
-    'refunds_amount', COALESCE(SUM(ABS(amount)) FILTER (
-      WHERE transaction_type = 'Возврат средств'
-    ), 0),
-    
-    -- Отмены: transaction_type = 'Отмена'
-    'cancellations_count', COUNT(*) FILTER (
-      WHERE transaction_type = 'Отмена'
-    ),
-    'cancellations_amount', COALESCE(SUM(ABS(amount)) FILTER (
-      WHERE transaction_type = 'Отмена'
-    ), 0),
-    
-    -- Ошибки: status = 'Неуспешный'
-    'errors_count', COUNT(*) FILTER (
-      WHERE status = 'Неуспешный'
-    ),
-    'errors_amount', COALESCE(SUM(ABS(amount)) FILTER (
-      WHERE status = 'Неуспешный'
-    ), 0),
-    
-    -- Комиссия и перечисления (только по успешным платежам)
-    'commission_total', COALESCE(SUM(commission_total) FILTER (
-      WHERE status = 'Успешный' AND transaction_type = 'Платеж'
-    ), 0),
-    'payout_total', COALESCE(SUM(payout_amount) FILTER (
-      WHERE status = 'Успешный' AND transaction_type = 'Платеж'
-    ), 0),
-    
-    'total_count', COUNT(*)
-  )
-  INTO result
-  FROM bepaid_statement_rows
-  WHERE sort_ts >= from_date 
-    AND sort_ts <= to_date;
-  
-  RETURN result;
-END;
-$$;
+// СТАЛО:
+const netRevenue = serverStats.successful_amount 
+  - serverStats.refunded_amount 
+  - serverStats.cancelled_amount  // ДОБАВИТЬ!
+  - serverStats.commission_total;
 ```
 
-### Почему точное совпадение безопасно
-Выписка bePaid всегда содержит одни и те же русские значения статусов и типов транзакций. Мы проверили distinct values:
-- `status`: только "Успешный" и "Неуспешный"
-- `transaction_type`: только "Платеж", "Отмена", "Возврат средств"
+### PATCH-2: Удалить карточку "Перечислено" из PaymentsStatsPanel
+
+**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
+
+Удалить строки 245-254:
+```typescript
+// УДАЛИТЬ:
+<StatCard
+  title="Перечислено"
+  amount={stats.payout}
+  count={stats.successful.count}
+  subtitle="из выписки"
+  icon={<Wallet className="h-4 w-4 text-teal-500" />}
+  colorClass="text-teal-500"
+  accentGradient="from-teal-500 to-cyan-400"
+  isClickable={false}
+/>
+```
+
+Также удалить:
+- `Wallet` из импорта lucide-react
+- `payout` из объекта `stats` в useMemo
+- Изменить grid: `lg:grid-cols-7` → `lg:grid-cols-7` (оставить 7, т.к. останется 7 карточек: Успешные, Возвраты, В обработке, Отмены, Ошибки, Комиссия, Чистая выручка)
+
+### PATCH-3: Обновить BepaidStatementSummary
+
+**Файл:** `src/components/admin/payments/BepaidStatementSummary.tsx`
+
+1. Добавить карточку "Чистая выручка":
+```typescript
+// Вычислить:
+const netRevenue = data.payments_amount 
+  - data.refunds_amount 
+  - data.cancellations_amount 
+  - data.commission_total;
+```
+
+2. Удалить карточку "Перечислено"
+
+3. Изменить grid: `md:grid-cols-6` → `md:grid-cols-6` (будет: Платежи, Возвраты, Отмены, Ошибки, Комиссия, Чистая выручка)
+
+### PATCH-4: Обновить интерфейс BepaidStatementStats (если нужно)
+
+**Файл:** `src/hooks/useBepaidStatement.ts`
+
+Интерфейс `BepaidStatementStats` уже содержит все нужные поля. Изменения не требуются.
 
 ---
 
@@ -127,20 +115,50 @@ $$;
 
 | Файл | Изменения |
 |------|-----------|
-| SQL Migration | Обновить RPC `get_bepaid_statement_stats` — точное совпадение вместо ILIKE |
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Исправить формулу `netRevenue`, удалить карточку "Перечислено" |
+| `src/components/admin/payments/BepaidStatementSummary.tsx` | Удалить "Перечислено", добавить "Чистая выручка" |
 
 ---
 
-## Ожидаемый результат после исправления
+## Ожидаемый результат
 
-| Метрика | Было (баг) | Станет (правильно) |
-|---------|------------|-------------------|
-| Платежи | 20 171 BYN / 106 шт | 14 514 BYN / 70 шт |
-| Возвраты | 195 BYN / 1 шт | 195 BYN / 1 шт |
-| Отмены | 14 BYN / 14 шт | 14 BYN / 14 шт |
-| Ошибки | 0 BYN / 0 шт | 5 657 BYN / 36 шт |
-| Комиссия | 181.01 BYN | 176.33 BYN (только успешные) |
-| Перечислено | 8 458.99 BYN | (пересчитано) |
+### Таб "Платежи" (/admin/payments)
+
+| Карточка | Было | Станет |
+|----------|------|--------|
+| Успешные | 14,764.00 BYN / 71 шт | 14,764.00 BYN / 71 шт ✓ |
+| Возвраты | 195.00 BYN / 1 шт | 195.00 BYN / 1 шт ✓ |
+| В обработке | 0.00 BYN / 0 шт | 0.00 BYN / 0 шт ✓ |
+| Отмены | 14.00 BYN / 14 шт | 14.00 BYN / 14 шт ✓ |
+| Ошибки | 5,657.00 BYN / 36 шт | 5,657.00 BYN / 36 шт ✓ |
+| Комиссия | 176.33 BYN | 176.33 BYN ✓ |
+| Чистая выручка | 14,392.67 BYN | **14,378.67 BYN** (было без отмен) |
+| ~~Перечислено~~ | ~~8,268.67 BYN~~ | **УДАЛЕНО** |
+
+### Таб "Выписка BePaid" (/admin/payments/statement)
+
+| Карточка | Было | Станет |
+|----------|------|--------|
+| Платежи | 14,514.00 BYN / 70 шт | 14,514.00 BYN / 70 шт ✓ |
+| Возвраты | 195.00 BYN / 1 шт | 195.00 BYN / 1 шт ✓ |
+| Отмены | 14.00 BYN / 14 шт | 14.00 BYN / 14 шт ✓ |
+| Ошибки | 5,657.00 BYN / 36 шт | 5,657.00 BYN / 36 шт ✓ |
+| Комиссия | 176.33 BYN | 176.33 BYN ✓ |
+| ~~Перечислено~~ | ~~8,268.67 BYN~~ | **УДАЛЕНО** |
+| Чистая выручка | — | **14,128.67 BYN** (новая) |
+
+---
+
+## Формула расчёта (финальная)
+
+```text
+Чистая выручка = Успешные - Возвраты - Отмены - Комиссия
+               = 14,764 - 195 - 14 - 176.33 = 14,378.67 BYN (Платежи)
+               = 14,514 - 195 - 14 - 176.33 = 14,128.67 BYN (Выписка)
+```
+
+> Небольшая разница (250 BYN / 1 платёж) — разные источники данных: 
+> `payments_v2` (все платежи) vs `bepaid_statement_rows` (только импортированная выписка)
 
 ---
 
@@ -148,7 +166,9 @@ $$;
 
 | Проверка | Ожидаемый результат |
 |----------|---------------------|
-| "Платежи" карточка | 14 514 BYN / 70 шт |
-| "Ошибки" карточка | 5 657 BYN / 36 шт |
-| Сумма совпадает с Excel | Копейка в копейку |
-| Повторный импорт не ломает | Идемпотентность |
+| Формула netRevenue включает отмены | `successful - refunded - cancelled - commission` |
+| Карточка "Перечислено" удалена | Нет в обоих табах |
+| Карточка "Чистая выручка" в Выписке BePaid | Добавлена с правильной формулой |
+| Ошибки не участвуют в расчёте | Только для подсчёта транзакций |
+| Скрин /admin/payments | Показать статистику февраля |
+| Скрин /admin/payments/statement | Показать статистику февраля |
