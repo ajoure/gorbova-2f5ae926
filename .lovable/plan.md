@@ -1,195 +1,249 @@
 
+# План: Добавление всех настроек мастера в редактирование и создание урока
 
-# План: Реорганизация страницы "Тренинги" и перенос "Импорт КБ"
+## Текущая ситуация
 
-## Обзор задач
+### В мастере создания (`UniversalLessonFormFields.tsx`) есть:
+- Название урока / номер выпуска
+- URL-slug
+- Описание
+- **Дата выпуска** (календарь)
+- **Время выпуска** (input type="time")
+- **Часовой пояс** (TimezoneSelector)
+- **Ссылка на видео Kinescope**
+- Превью урока (загрузка + AI)
+- Вопросы (для KB)
 
-1. Удалить кнопки "Excel" и "GetCourse" полностью (и их сущности — диалоги)
-2. Добавить кнопку "Импорт" → ссылка на `/admin/kb-import`
-3. Добавить вкладку "Прогресс" для перехода к `/admin/training-lessons/:moduleId/progress/:lessonId`
-4. Унифицировать стиль и размер всех кнопок сверху
+### В редактировании урока (`AdminTrainingLessons.tsx`) есть только:
+- Название урока
+- URL-slug
+- Описание
+- Превью урока
+- Активен/неактивен
 
-## Текущее состояние
+### В БД есть, но не редактируются:
+- `published_at` — дата/время публикации (timestamptz)
+- `completion_mode` — режим завершения (manual, view_all_blocks, watch_video, kvest)
+- `require_previous` — требовать прохождения предыдущего урока
 
-На скриншоте видно:
-- Вкладки: "Модули", "Настройки" (слева в стиле pills)
-- Кнопки справа: "Excel" (outline), "GetCourse" (outline), "Мастер" (primary, фиолетовый), "Добавить" (outline)
+## Что нужно добавить
 
-Проблемы:
-- Кнопки разных стилей и размеров
-- "Excel" и "GetCourse" больше не нужны
-- Нет быстрого доступа к "Прогресс учеников" с этой страницы
+| Поле | Создание | Редактирование |
+|------|----------|----------------|
+| Дата публикации | ✅ Добавить | ✅ Добавить |
+| Время публикации | ✅ Добавить | ✅ Добавить |
+| Часовой пояс | ✅ Добавить | ✅ Добавить |
+| Видео Kinescope | ✅ Добавить | ✅ Добавить |
+| Режим завершения | ✅ Добавить | ✅ Добавить |
+| Требовать предыдущий | ✅ Добавить | ✅ Добавить |
 
 ## Файлы для изменения
 
 | Файл | Изменения |
 |------|-----------|
-| `src/pages/admin/AdminTrainingModules.tsx` | Удалить импорты диалогов, удалить state для них, удалить кнопки Excel/GetCourse, добавить кнопку "Импорт", унифицировать стили |
-| `src/components/admin/ExcelTrainingImportDialog.tsx` | **УДАЛИТЬ ФАЙЛ** — больше не используется |
-| `src/components/admin/GetCourseContentImportDialog.tsx` | **УДАЛИТЬ ФАЙЛ** — больше не используется |
+| `src/hooks/useTrainingLessons.tsx` | Расширить `TrainingLessonFormData` новыми полями |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Расширить `LessonFormContent` всеми полями из мастера |
 
 ## Детальные изменения
 
-### 1. AdminTrainingModules.tsx
-
-**Удалить импорты (строки 62-63):**
-```tsx
-// УДАЛИТЬ:
-import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
-import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
-```
-
-**Удалить state переменные (строки 364-365):**
-```tsx
-// УДАЛИТЬ:
-const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
-```
-
-**Добавить новую вкладку "Прогресс" в tab-bar:**
-
-Текущие вкладки: "Модули" | "Настройки"
-Новые вкладки: "Модули" | "Прогресс" | "Настройки"
-
-Вкладка "Прогресс" будет открывать селектор модуля/урока для просмотра прогресса (или показывать список последних активных уроков).
-
-**Упростить панель кнопок (строки 541-558):**
+### 1. useTrainingLessons.tsx — расширить TrainingLessonFormData
 
 ```tsx
-{/* Desktop actions - унифицированный стиль */}
-<div className="hidden md:flex items-center gap-2">
-  <Button 
-    variant="outline" 
-    size="sm" 
-    onClick={() => navigate("/admin/kb-import")}
-  >
-    <Upload className="mr-1.5 h-4 w-4" />
-    Импорт
-  </Button>
-  <Button 
-    variant="outline" 
-    size="sm" 
-    onClick={() => setIsWizardOpen(true)}
-  >
-    <Wand2 className="mr-1.5 h-4 w-4" />
-    Мастер
-  </Button>
-  <Button 
-    variant="default" 
-    size="sm" 
-    onClick={openCreateDialog}
-  >
-    <Plus className="mr-1.5 h-4 w-4" />
-    Добавить
-  </Button>
-</div>
+export interface TrainingLessonFormData {
+  module_id: string;
+  title: string;
+  slug: string;
+  description?: string;
+  content?: string;
+  content_type?: "video" | "audio" | "article" | "document" | "mixed";
+  video_url?: string;
+  audio_url?: string;
+  thumbnail_url?: string;
+  sort_order?: number;
+  duration_minutes?: number;
+  is_active?: boolean;
+  // Новые поля:
+  published_at?: string;           // ISO string
+  completion_mode?: CompletionMode;
+  require_previous?: boolean;
+}
 ```
 
-Примечание: "Мастер" меняется на `outline`, "Добавить" становится `default` (primary) — это единственная акцентная кнопка.
+### 2. AdminTrainingLessons.tsx — расширить форму
 
-**Обновить мобильное меню (строки 560-587):**
+Новая структура `LessonFormContent`:
+
+```text
+┌─────────────────────────────────────────────────────────┐
+│ Редактирование урока                                    │
+├─────────────────────────────────────────────────────────┤
+│ ── Основное ────────────────────────────────────────── │
+│ [Название урока *] [URL-slug *]                        │
+│ [Краткое описание                                    ] │
+│                                                         │
+│ ── Публикация ──────────────────────────────────────── │
+│ [Дата] [Время] [Часовой пояс ▼]                        │
+│ ℹ️ Урок будет показан со статусом «Скоро» до даты       │
+│                                                         │
+│ ── Видео ───────────────────────────────────────────── │
+│ [🎬 Ссылка на видео Kinescope                        ] │
+│                                                         │
+│ ── Прохождение ─────────────────────────────────────── │
+│ Режим завершения: [Ручная отметка ▼]                   │
+│   • Ручная отметка                                     │
+│   • Просмотр всех блоков                               │
+│   • Просмотр видео                                     │
+│   • Прохождение квеста                                 │
+│                                                         │
+│ ☐ Заблокировать, пока не пройден предыдущий урок       │
+│                                                         │
+│ ── Превью ──────────────────────────────────────────── │
+│ [URL превью] [📤] [✨]                                  │
+│ [Thumbnail preview]                                     │
+│                                                         │
+│ [⚡ Активен]                                            │
+│                                                         │
+│ ℹ️ Видео, текст добавляются через кнопку «Контент»     │
+│                                                         │
+│                    [Отмена] [Сохранить]                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 3. Добавить импорты в AdminTrainingLessons.tsx
 
 ```tsx
-<DropdownMenuContent align="end">
-  <DropdownMenuItem onClick={openCreateDialog}>
-    <Plus className="h-4 w-4 mr-2" />
-    Добавить модуль
-  </DropdownMenuItem>
-  <DropdownMenuItem onClick={() => setIsWizardOpen(true)}>
-    <Wand2 className="h-4 w-4 mr-2" />
-    Мастер добавления
-  </DropdownMenuItem>
-  <DropdownMenuItem onClick={() => navigate("/admin/kb-import")}>
-    <Upload className="h-4 w-4 mr-2" />
-    Импорт КБ
-  </DropdownMenuItem>
-</DropdownMenuContent>
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
+import { format, parseISO } from "date-fns";
+import { formatInTimeZone, toZonedTime } from "date-fns-tz";
+import { ru } from "date-fns/locale";
+import { CalendarIcon, Video } from "lucide-react";
+import { CompletionMode } from "@/hooks/useTrainingLessons";
 ```
 
-**Удалить диалоги из рендера (строки 733-742):**
-```tsx
-// УДАЛИТЬ:
-<GetCourseContentImportDialog ... />
-<ExcelTrainingImportDialog ... />
-```
+### 4. Новые поля состояния
 
-### 2. Новая вкладка "Прогресс"
-
-Добавить третью вкладку между "Модули" и "Настройки":
+В `LessonFormContent` добавить локальное состояние для даты/времени:
 
 ```tsx
-<button
-  onClick={() => setActiveTab("progress")}
-  className={cn(
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
-    activeTab === "progress"
-      ? "bg-background text-foreground shadow-sm"
-      : "text-muted-foreground hover:text-foreground"
-  )}
->
-  <Users className="h-3.5 w-3.5" />
-  <span>Прогресс</span>
-</button>
+// Parsed from published_at prop
+const [publishDate, setPublishDate] = useState<Date | undefined>();
+const [publishTime, setPublishTime] = useState("12:00");
+const [publishTimezone, setPublishTimezone] = useState("Europe/Minsk");
 ```
 
-Для содержимого вкладки "Прогресс" — показать список квест-уроков с кнопками перехода:
+### 5. Логика работы с published_at
+
+**При открытии редактирования:**
+```tsx
+// Parse published_at ISO string into separate fields
+if (lesson.published_at) {
+  const date = parseISO(lesson.published_at);
+  // Extract date, time and use stored timezone
+  setPublishDate(date);
+  setPublishTime(format(date, "HH:mm"));
+  // Timezone can be stored in separate field or default to Minsk
+}
+```
+
+**При сохранении:**
+```tsx
+// Combine date + time + timezone back to ISO
+let publishedAt: string | null = null;
+if (publishDate) {
+  const [hours, minutes] = publishTime.split(":").map(Number);
+  const combined = new Date(publishDate);
+  combined.setHours(hours, minutes, 0, 0);
+  publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+}
+```
+
+### 6. Расширить openEditDialog
 
 ```tsx
-{activeTab === "progress" && (
-  <ProgressTabContent modules={modules} />
-)}
+const openEditDialog = useCallback((lesson: TrainingLesson) => {
+  setEditingLesson(lesson);
+  
+  // Parse published_at
+  let parsedDate: Date | undefined;
+  let parsedTime = "12:00";
+  if (lesson.published_at) {
+    try {
+      parsedDate = parseISO(lesson.published_at);
+      parsedTime = format(parsedDate, "HH:mm");
+    } catch {}
+  }
+  
+  setFormData({
+    module_id: lesson.module_id,
+    title: lesson.title,
+    slug: lesson.slug,
+    description: lesson.description || "",
+    content: lesson.content || "",
+    content_type: lesson.content_type,
+    video_url: lesson.video_url || "",
+    audio_url: lesson.audio_url || "",
+    thumbnail_url: lesson.thumbnail_url || "",
+    duration_minutes: lesson.duration_minutes || undefined,
+    is_active: lesson.is_active,
+    // Новые поля:
+    published_at: lesson.published_at || undefined,
+    completion_mode: lesson.completion_mode || "manual",
+    require_previous: lesson.require_previous || false,
+  });
+  
+  // Set separate date/time state for form
+  setPublishDate(parsedDate);
+  setPublishTime(parsedTime);
+}, []);
 ```
 
-Где `ProgressTabContent` — отдельный компонент, который:
-1. Получает список модулей
-2. Для каждого модуля получает уроки с `completion_mode = 'kvest'`
-3. Показывает их в виде списка с кнопкой "Прогресс" → `/admin/training-lessons/:moduleId/progress/:lessonId`
+### 7. Расширить handleUpdate
 
-### 3. Удаление файлов
-
-Полностью удалить:
-- `src/components/admin/ExcelTrainingImportDialog.tsx` (712 строк)
-- `src/components/admin/GetCourseContentImportDialog.tsx` (759 строк)
-
-Эти компоненты больше не используются нигде в проекте.
-
-## Визуальный результат
-
-**Было (на скриншоте):**
+```tsx
+const handleUpdate = useCallback(async () => {
+  if (!editingLesson || !formData.title || !formData.slug) return;
+  
+  // Build published_at from date/time/timezone
+  let publishedAt: string | null = null;
+  if (publishDate) {
+    const [hours, minutes] = publishTime.split(":").map(Number);
+    const combined = new Date(publishDate);
+    combined.setHours(hours, minutes, 0, 0);
+    publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+  }
+  
+  const success = await updateLesson(editingLesson.id, {
+    ...formData,
+    published_at: publishedAt,
+  });
+  
+  if (success) {
+    setEditingLesson(null);
+    resetForm();
+  }
+}, [editingLesson, formData, publishDate, publishTime, publishTimezone, updateLesson, resetForm]);
 ```
-[Модули] [Настройки]          [Excel] [GetCourse] [Мастер*] [+ Добавить]
+
+### 8. Режим завершения — варианты
+
+```tsx
+const completionModeOptions = [
+  { value: "manual", label: "Ручная отметка", description: "Ученик сам отмечает урок пройденным" },
+  { value: "view_all_blocks", label: "Просмотр всех блоков", description: "Автоматически при просмотре всех блоков" },
+  { value: "watch_video", label: "Просмотр видео", description: "Автоматически при полном просмотре видео" },
+  { value: "kvest", label: "Прохождение квеста", description: "Пошаговое прохождение интерактивного урока" },
+];
 ```
-(* — фиолетовый акцент)
-
-**Станет:**
-```
-[Модули] [Прогресс] [Настройки]          [Импорт] [Мастер] [+ Добавить*]
-```
-(* — primary/default акцент только на "Добавить")
-
-Все кнопки:
-- `size="sm"` — одинаковый размер
-- "Импорт" и "Мастер" — `variant="outline"`
-- "Добавить" — `variant="default"` (акцент)
-
-## Содержимое вкладки "Прогресс"
-
-Показывает карточки или список квест-уроков:
-
-| Модуль | Урок | Учеников | Завершено | Действие |
-|--------|------|----------|-----------|----------|
-| Бухгалтерия как бизнес | Урок 1 | 5 | 2 | [Открыть →] |
-
-Клик → переход на `/admin/training-lessons/:moduleId/progress/:lessonId`
 
 ## DoD (Definition of Done)
 
 | Проверка | Ожидаемый результат |
 |----------|---------------------|
-| Кнопки "Excel" и "GetCourse" | Полностью удалены |
-| Кнопка "Импорт" | Ведёт на `/admin/kb-import` |
-| Вкладка "Прогресс" | Отображает список квест-уроков |
-| Все кнопки справа | Одинаковый размер (`sm`) и стиль |
-| Мобильное меню | Обновлено без Excel/GetCourse |
-| Файлы диалогов | Удалены из проекта |
-
+| Редактирование урока | Видны все поля: дата/время публикации, видео, режим завершения, require_previous |
+| Создание урока | Те же поля доступны при создании нового урока |
+| Изменение даты публикации | Сохраняется в БД как `published_at` с учётом часового пояса |
+| Изменение режима завершения | Сохраняется как `completion_mode` |
+| Изменение require_previous | Сохраняется как `require_previous` |
+| Видео Kinescope | Поле доступно, сохраняется в `video_url` |
