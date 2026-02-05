@@ -1,9 +1,9 @@
-import { useState, useCallback, memo } from "react";
+import { useState, useCallback, memo, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { useTrainingLessons, TrainingLesson, TrainingLessonFormData } from "@/hooks/useTrainingLessons";
+import { useTrainingLessons, TrainingLesson, TrainingLessonFormData, CompletionMode } from "@/hooks/useTrainingLessons";
 import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
+import { format, parseISO } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
+import { ru } from "date-fns/locale";
 import {
   Dialog,
   DialogContent,
@@ -55,6 +61,9 @@ import {
   ChevronRight,
   Blocks,
   Users,
+  CalendarIcon,
+  Lock,
+  Info,
 } from "lucide-react";
 
 const contentTypeOptions = [
@@ -63,6 +72,13 @@ const contentTypeOptions = [
   { value: "audio", label: "Аудио", icon: Music },
   { value: "document", label: "Документ", icon: Files },
   { value: "mixed", label: "Смешанный", icon: BookOpen },
+];
+
+const completionModeOptions = [
+  { value: "manual", label: "Ручная отметка", description: "Ученик сам отмечает урок пройденным" },
+  { value: "view_all_blocks", label: "Просмотр всех блоков", description: "Автоматически при просмотре всех блоков" },
+  { value: "watch_video", label: "Просмотр видео", description: "Автоматически при полном просмотре видео" },
+  { value: "kvest", label: "Прохождение квеста", description: "Пошаговое прохождение интерактивного урока" },
 ];
 
 // Helper function for slug generation
@@ -86,15 +102,29 @@ interface LessonFormContentProps {
   formData: TrainingLessonFormData;
   onFormDataChange: (updater: (prev: TrainingLessonFormData) => TrainingLessonFormData) => void;
   editingLesson: TrainingLesson | null;
+  publishDate: Date | undefined;
+  setPublishDate: (date: Date | undefined) => void;
+  publishTime: string;
+  setPublishTime: (time: string) => void;
+  publishTimezone: string;
+  setPublishTimezone: (tz: string) => void;
 }
 
 const LessonFormContent = memo(function LessonFormContent({ 
   formData, 
   onFormDataChange,
-  editingLesson 
+  editingLesson,
+  publishDate,
+  setPublishDate,
+  publishTime,
+  setPublishTime,
+  publishTimezone,
+  setPublishTimezone,
 }: LessonFormContentProps) {
   return (
     <div className="space-y-4">
+      {/* === ОСНОВНОЕ === */}
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Основное</div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="lesson-title">Название *</Label>
@@ -134,7 +164,133 @@ const LessonFormContent = memo(function LessonFormContent({
         />
       </div>
 
-      {/* Thumbnail Editor */}
+      {/* === ПУБЛИКАЦИЯ === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Публикация</div>
+        <div className="flex flex-wrap items-end gap-2">
+          {/* Date picker */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Дата</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="w-[140px] justify-start text-left font-normal h-9"
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {publishDate ? format(publishDate, "dd.MM.yyyy") : <span className="text-muted-foreground">Выбрать</span>}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={publishDate}
+                  onSelect={setPublishDate}
+                  locale={ru}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* Time input */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Время</Label>
+            <Input
+              type="time"
+              value={publishTime}
+              onChange={(e) => setPublishTime(e.target.value)}
+              className="w-[100px] h-9"
+            />
+          </div>
+
+          {/* Timezone */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Часовой пояс</Label>
+            <TimezoneSelector
+              value={publishTimezone}
+              onValueChange={setPublishTimezone}
+            />
+          </div>
+
+          {/* Clear button */}
+          {publishDate && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setPublishDate(undefined)}
+              className="h-9 text-xs text-muted-foreground"
+            >
+              Очистить
+            </Button>
+          )}
+        </div>
+        {publishDate && (
+          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+            <Info className="h-3 w-3" />
+            Урок будет показан со статусом «Скоро» до указанной даты
+          </p>
+        )}
+      </div>
+
+      {/* === ВИДЕО === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Видео</div>
+        <div className="space-y-2">
+          <Label htmlFor="lesson-video-url">Ссылка на видео Kinescope</Label>
+          <Input
+            id="lesson-video-url"
+            value={formData.video_url || ""}
+            onChange={(e) => onFormDataChange(prev => ({ ...prev, video_url: e.target.value }))}
+            placeholder="https://kinescope.io/..."
+          />
+        </div>
+      </div>
+
+      {/* === ПРОХОЖДЕНИЕ === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Прохождение</div>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Режим завершения урока</Label>
+            <Select
+              value={formData.completion_mode || "manual"}
+              onValueChange={(value) => onFormDataChange(prev => ({ ...prev, completion_mode: value as CompletionMode }))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {completionModeOptions.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <div className="flex flex-col">
+                      <span>{opt.label}</span>
+                      <span className="text-xs text-muted-foreground">{opt.description}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="lesson-require_previous"
+              checked={formData.require_previous || false}
+              onCheckedChange={(checked) => onFormDataChange(prev => ({ ...prev, require_previous: checked }))}
+            />
+            <Label htmlFor="lesson-require_previous" className="flex items-center gap-1.5">
+              <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+              Заблокировать, пока не пройден предыдущий урок
+            </Label>
+          </div>
+        </div>
+      </div>
+
+      {/* === ПРЕВЬЮ === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Превью</div>
       <LessonThumbnailEditor
         lessonId={editingLesson?.id || "new"}
         lessonTitle={formData.title}
@@ -142,6 +298,7 @@ const LessonFormContent = memo(function LessonFormContent({
         currentThumbnail={formData.thumbnail_url || null}
         onThumbnailChange={(url) => onFormDataChange(prev => ({ ...prev, thumbnail_url: url || undefined }))}
       />
+      </div>
 
       <Alert className="border-primary/30 bg-primary/5">
         <Blocks className="h-4 w-4 text-primary" />
@@ -169,6 +326,12 @@ export default function AdminTrainingLessons() {
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  
+  // Date/time state for publish scheduling
+  const [publishDate, setPublishDate] = useState<Date | undefined>();
+  const [publishTime, setPublishTime] = useState("12:00");
+  const [publishTimezone, setPublishTimezone] = useState("Europe/Minsk");
+  
   const [formData, setFormData] = useState<TrainingLessonFormData>({
     module_id: moduleId || "",
     title: "",
@@ -180,6 +343,8 @@ export default function AdminTrainingLessons() {
     audio_url: "",
     duration_minutes: undefined,
     is_active: true,
+    completion_mode: "manual",
+    require_previous: false,
   });
 
   // Fetch module info
@@ -212,7 +377,12 @@ export default function AdminTrainingLessons() {
       thumbnail_url: "",
       duration_minutes: undefined,
       is_active: true,
+      completion_mode: "manual",
+      require_previous: false,
     });
+    setPublishDate(undefined);
+    setPublishTime("12:00");
+    setPublishTimezone("Europe/Minsk");
   }, [moduleId]);
 
   const openCreateDialog = useCallback(() => {
@@ -222,6 +392,19 @@ export default function AdminTrainingLessons() {
 
   const openEditDialog = useCallback((lesson: TrainingLesson) => {
     setEditingLesson(lesson);
+    
+    // Parse published_at into separate fields
+    let parsedDate: Date | undefined;
+    let parsedTime = "12:00";
+    if (lesson.published_at) {
+      try {
+        parsedDate = parseISO(lesson.published_at);
+        parsedTime = format(parsedDate, "HH:mm");
+      } catch {}
+    }
+    setPublishDate(parsedDate);
+    setPublishTime(parsedTime);
+    
     setFormData({
       module_id: lesson.module_id,
       title: lesson.title,
@@ -234,32 +417,56 @@ export default function AdminTrainingLessons() {
       thumbnail_url: lesson.thumbnail_url || "",
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
+      completion_mode: lesson.completion_mode || "manual",
+      require_previous: lesson.require_previous || false,
     });
   }, []);
 
   const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
     
+    // Build published_at from date/time/timezone
+    let publishedAt: string | null = null;
+    if (publishDate) {
+      const [hours, minutes] = publishTime.split(":").map(Number);
+      const combined = new Date(publishDate);
+      combined.setHours(hours, minutes, 0, 0);
+      publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+    }
+    
     const success = await createLesson({
       ...formData,
       module_id: moduleId,
       sort_order: lessons.length,
+      published_at: publishedAt || undefined,
     });
     if (success) {
       setIsCreateDialogOpen(false);
       resetForm();
     }
-  }, [formData, moduleId, lessons.length, createLesson, resetForm]);
+  }, [formData, moduleId, lessons.length, createLesson, resetForm, publishDate, publishTime, publishTimezone]);
 
   const handleUpdate = useCallback(async () => {
     if (!editingLesson || !formData.title || !formData.slug) return;
     
-    const success = await updateLesson(editingLesson.id, formData);
+    // Build published_at from date/time/timezone
+    let publishedAt: string | null = null;
+    if (publishDate) {
+      const [hours, minutes] = publishTime.split(":").map(Number);
+      const combined = new Date(publishDate);
+      combined.setHours(hours, minutes, 0, 0);
+      publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+    }
+    
+    const success = await updateLesson(editingLesson.id, {
+      ...formData,
+      published_at: publishedAt || undefined,
+    });
     if (success) {
       setEditingLesson(null);
       resetForm();
     }
-  }, [editingLesson, formData, updateLesson, resetForm]);
+  }, [editingLesson, formData, updateLesson, resetForm, publishDate, publishTime, publishTimezone]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteConfirmId) return;
@@ -447,6 +654,12 @@ export default function AdminTrainingLessons() {
               formData={formData}
               onFormDataChange={handleFormDataChange}
               editingLesson={null}
+              publishDate={publishDate}
+              setPublishDate={setPublishDate}
+              publishTime={publishTime}
+              setPublishTime={setPublishTime}
+              publishTimezone={publishTimezone}
+              setPublishTimezone={setPublishTimezone}
             />
             <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -472,6 +685,12 @@ export default function AdminTrainingLessons() {
               formData={formData}
               onFormDataChange={handleFormDataChange}
               editingLesson={editingLesson}
+              publishDate={publishDate}
+              setPublishDate={setPublishDate}
+              publishTime={publishTime}
+              setPublishTime={setPublishTime}
+              publishTimezone={publishTimezone}
+              setPublishTimezone={setPublishTimezone}
             />
             <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setEditingLesson(null)}>

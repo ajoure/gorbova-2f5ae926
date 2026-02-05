@@ -54,6 +54,10 @@ export interface TrainingLessonFormData {
   sort_order?: number;
   duration_minutes?: number;
   is_active?: boolean;
+  // Scheduling & completion fields
+  published_at?: string;
+  completion_mode?: CompletionMode;
+  require_previous?: boolean;
 }
 
 export function useTrainingLessons(moduleId?: string) {
