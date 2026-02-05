@@ -1,174 +1,178 @@
-ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV
+## Жёсткие правила исполнения для Lovable.dev (обязательно)
 
-1) Ничего не ломать и не трогать лишнее. Только то, что описано ниже.
-2) Add-only где возможно. Удаления — только там, где явно указано.
-3) Всегда: DRY-RUN → EXECUTE. Любые массовые/опасные действия только с STOP-guard.
-4) Никаких хардкод-UUID / магических значений. Project-ref — только из фактов (см. ниже).
-5) Строгие STOP-предохранители: если деплой/функция таймаутит или 404 — остановиться и зафиксировать причину, НЕ продолжать “пачкой”.
-6) Безопасность: если `verify_jwt=false`, то обязателен ручной guard внутри функции: Authorization → getUser() → has_role(admin/superadmin) / permissions. Иначе `verify_jwt=true`.
-7) Финальный отчёт (DoD) только фактами: Network/HTTP статус + скрины UI из 7500084@gmail.com + список изменённых файлов + diff-summary.
-
-STOP-CONDITIONS:
-- Любая функция после деплоя всё ещё 404 → STOP, проверка project-ref, config.toml, фактического деплоя.
-- Любая функция возвращает 200 без токена/без роли → STOP, критический security bug.
-
-# PATCH: Регистрация admin-функций + фикс project-ref + стабилизация импортов
-
-## Цель
-Устранить 404 ("Failed to send a request to the Edge Function") для критических admin-функций на `/admin/payments` и исправить CI/CD workflow, который сейчас линкается на НЕПРАВИЛЬНЫЙ Supabase проект.
+1) **Ничего не ломать и не трогать лишнее.** Только изменения из PATCH.  
+2) **Add-only / минимальный diff.** Любое удаление/рефактор — только если прямо указано.  
+3) **Dry-run → execute.** Сначала проверка через curl/Network, потом деплой.  
+4) **STOP-guards обязательны:** если 401/403/таймауты не сходятся с DoD — STOP и отчёт.  
+5) **Безопасность:** `verify_jwt=false` допустим только при **ручном auth guard** внутри функции.  
+6) **DoD только по фактам:** Network (headers + status), curl, скрин UI из админки `7500084@gmail.com`.  
+7) **No-PII в логах.** Токены/секреты не логировать.
 
 ---
 
-## Результаты аудита (факты)
+# PATCH: integration-healthcheck — auth guard (superadmin only) + timeout внешних вызовов
 
-### Функции-сироты (есть в repo, но НЕ зарегистрированы в config.toml → будут 404)
-| Функция | Импорт | Auth Guard |
-|---------|--------|------------|
-| `admin-fix-payments-integrity` | `esm.sh` | ✅ admin/super_admin |
-| `admin-search-profiles` | `esm.sh` | ✅ admin + has_permission |
-| `admin-payments-diagnostics` | `npm:` | ✅ admin |
-| `admin-bepaid-emergency-unlink` | `esm.sh` | ✅ superadmin only |
-| `admin-bepaid-full-reconcile` | `esm.sh` | ✅ admin |
-| `admin-bepaid-reconcile-amounts` | `esm.sh` | ✅ admin |
+## Контекст / проблема
 
-### GitHub Actions баг (BLOCKER)
-- Сейчас: `supabase link --project-ref ypwsuumurrtkxatoyqhk` (НЕПРАВИЛЬНЫЙ проект)
-- Должно быть: `supabase link --project-ref hdjgkjceownmmnrqqtuz` (ФАКТ: это project-ref в реальном Network URL `https://hdjgkjceownmmnrqqtuz.supabase.co/...`)
+На `/admin/integrations/payments` при проверке bePaid падает запрос:
+- Endpoint: `POST /functions/v1/integration-healthcheck`
+- Ошибка в UI/Network: `Load failed` (обрыв/таймаут, не 404)
+
+**Security issue:** функция **не ограничена по ролям** → любой аутентифицированный пользователь может вызвать healthcheck и получить чувствительную информацию о статусе интеграций.
+
+Цель:  
+1) сделать `integration-healthcheck` доступной **только superadmin**  
+2) сделать таймауты fetch и вернуть **понятные ошибки**, а не “Load failed”
 
 ---
 
-## PATCH-0 (BLOCKER): Фикс project-ref в GitHub Actions
+## PATCH-1: Добавить auth guard (superadmin only)
 
-Файл: `.github/workflows/deploy-functions.yml`
+**Файл:** `supabase/functions/integration-healthcheck/index.ts`
 
-Изменение (строка 28):
-```yaml
-# БЫЛО
-supabase link --project-ref ypwsuumurrtkxatoyqhk
+### Требование
+- guard должен стоять **после OPTIONS** (CORS preflight) и **до любых действий**.
+- `verify_jwt` в config не меняем (может оставаться `false`), но **guard обязателен**.
 
-# СТАЛО
-supabase link --project-ref hdjgkjceownmmnrqqtuz
+### Реализация (вставить в начало handler после OPTIONS)
 
-DoD PATCH-0:
-	•	В логах GitHub Actions видно supabase link на hdjgkjceownmmnrqqtuz
-	•	Следующий деплой функций идёт в правильный проект (проверить по Network URL)
+> Важно: используем **service role** клиент для RPC `has_role`, чтобы RLS не мешал.  
+> Не логируем токен.
 
-⸻
+```ts
+// After: if (req.method === "OPTIONS") return ...
 
-PATCH-1: Регистрация функций в supabase/config.toml
+// --- AUTH GUARD: superadmin only ---
+const authHeader = req.headers.get("Authorization") ?? "";
+if (!authHeader.startsWith("Bearer ")) {
+  return new Response(
+    JSON.stringify({ success: false, error: "Unauthorized" }),
+    { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
 
-Файл: supabase/config.toml
+const token = authHeader.slice("Bearer ".length).trim();
+const { data: userData, error: userError } = await supabase.auth.getUser(token);
 
-Добавить в конец (после строки 331):
+if (userError || !userData?.user?.id) {
+  return new Response(
+    JSON.stringify({ success: false, error: "Invalid token" }),
+    { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
 
-[functions.admin-fix-payments-integrity]
-verify_jwt = false
+const { data: isSuperAdmin, error: roleErr } = await supabase.rpc("has_role", {
+  _user_id: userData.user.id,
+  _role: "superadmin",
+});
 
-[functions.admin-search-profiles]
-verify_jwt = false
+if (roleErr) {
+  return new Response(
+    JSON.stringify({ success: false, error: "Role check failed" }),
+    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
 
-[functions.admin-payments-diagnostics]
-verify_jwt = false
-
-[functions.admin-bepaid-emergency-unlink]
-verify_jwt = false
-
-[functions.admin-bepaid-full-reconcile]
-verify_jwt = false
-
-[functions.admin-bepaid-reconcile-amounts]
-verify_jwt = false
-
-Обоснование:
-	•	Все 6 функций содержат ручной auth guard (Authorization → getUser → role/permission), поэтому verify_jwt=false допустим.
-	•	Если в какой-то из функций guard окажется неполным — вернуть verify_jwt=true ИЛИ добавить недостающий guard (см. PATCH-4 Security).
-
-⸻
-
-PATCH-2: Стабилизация импортов (esm.sh → npm:)
-
-Причина:
-	•	esm.sh повышает риск “Bundle generation timed out” при деплое.
-	•	npm: specifier уже показал стабильный деплой (пример: bepaid-list-subscriptions).
-
-Файлы для изменения (5 шт; admin-payments-diagnostics уже OK):
-	1.	supabase/functions/admin-fix-payments-integrity/index.ts (строка 2)
-	2.	supabase/functions/admin-search-profiles/index.ts (строка 1)
-	3.	supabase/functions/admin-bepaid-emergency-unlink/index.ts (строка 1)
-	4.	supabase/functions/admin-bepaid-full-reconcile/index.ts (строка 1)
-	5.	supabase/functions/admin-bepaid-reconcile-amounts/index.ts (строка 2)
-
-Замена:
-
-// БЫЛО
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// СТАЛО
-import { createClient } from "npm:@supabase/supabase-js@2";
+if (isSuperAdmin !== true) {
+  return new Response(
+    JSON.stringify({ success: false, error: "Superadmin access required" }),
+    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
 
 
 ⸻
 
-PATCH-3: Точечный деплой (с STOP-guard)
+PATCH-2: Таймауты и нормальные ошибки для внешних API
 
-Деплоить по 1 функции за раз (Lovable Cloud):
+Файл: supabase/functions/integration-healthcheck/index.ts
 
-supabase--deploy_edge_functions: ["<function-name>"]
+Требование
+	•	каждый внешний fetch (bePaid / Kinescope / GetCourse / AmoCRM и т.д.) должен иметь:
+	•	AbortController timeout 10s
+	•	обработку AbortError → вернуть { success:false, error:"TIMEOUT", provider:"..." } (HTTP 504 или 200 с error — выбрать единый стиль, см. ниже)
 
-Порядок:
-	1.	admin-search-profiles
-	2.	admin-fix-payments-integrity
-	3.	admin-payments-diagnostics
-	4.	admin-bepaid-emergency-unlink
-	5.	admin-bepaid-full-reconcile
-	6.	admin-bepaid-reconcile-amounts
+Единый стиль ответов
+	•	HTTP:
+	•	guard ошибки: 401/403/500
+	•	provider timeout: 504
+	•	provider error: 502
+	•	body:
 
-STOP-guard:
-	•	Любая функция таймаутит/не отвечает/после деплоя 404 → STOP, прикладываем логи деплоя + Network.
+{ "success": false, "provider": "bepaid", "error": "TIMEOUT" }
+
+Хелпер (добавить один раз вверху файла)
+
+async function fetchWithTimeout(input: RequestInfo, init: RequestInit = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+Заменить ВСЕ fetch
+
+Было:
+
+const response = await fetch(url, { ... });
+
+Стало:
+
+let response: Response;
+try {
+  response = await fetchWithTimeout(url, { ... }, 10000);
+} catch (e: any) {
+  const isAbort = e?.name === "AbortError";
+  return new Response(
+    JSON.stringify({ success: false, provider: "bepaid", error: isAbort ? "TIMEOUT" : "FETCH_FAILED" }),
+    { status: isAbort ? 504 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+Применить аналогично для всех провайдеров внутри healthcheck.
 
 ⸻
 
-PATCH-4: Security Guard (обязательная проверка, иначе STOP)
+PATCH-3: Деплой функции
 
-Для каждой функции с verify_jwt=false подтвердить:
-	1.	Нет Authorization → 401
-	2.	getUser(token) невалиден → 401
-	3.	Нет admin/superadmin (и где нужно permission) → 403
-	4.	Только admin/superadmin → 200
+supabase--deploy_edge_functions: ["integration-healthcheck"]
 
-Если у любой функции отсутствует один из пунктов — ДОБАВИТЬ минимальным diff.
 
 ⸻
 
-Верификация (DoD)
+DoD (проверка по фактам)
 
-A) Network (НЕ 404):
-	•	POST /functions/v1/admin-search-profiles → 200/401/403
-	•	POST /functions/v1/admin-fix-payments-integrity → 200/401/403
-	•	POST /functions/v1/admin-payments-diagnostics → 200/401/403
+Security
+	1.	curl без токена:
 
-B) Security:
-	•	Без токена → 401
-	•	Не-админ → 403
-	•	Админ (7500084@gmail.com) → 200
+curl -i -X POST "https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/integration-healthcheck" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 
-C) UI:
-	•	/admin/payments — поиск профилей/контактов, диагностика и фиксы работают без “Failed to send…”
+Ожидаем: 401
+	2.	пользователь без superadmin (через браузер Network или curl с его JWT): 403
+	3.	superadmin (7500084@gmail.com): 200 (или 502/504, но НЕ 401/403)
 
-D) CI:
-	•	GitHub Actions деплоит в hdjgkjceownmmnrqqtuz
+Functionality
+	4.	/admin/integrations/payments → “Проверить bePaid”:
+
+	•	больше нет “Load failed”
+	•	вместо этого: либо успешный статус, либо читабельная ошибка (TIMEOUT/FETCH_FAILED)
+	•	Network: запрос НЕ падает на уровне браузера
+
+Регрессия
+	5.	CORS OPTIONS работает (preflight возвращает 200/204 как было).
 
 ⸻
 
 Diff-summary
+	•	supabase/functions/integration-healthcheck/index.ts
+	•	+superadmin auth guard
+	•	+fetchWithTimeout helper
+	•	replace all fetch → fetchWithTimeout + abort handling
 
-Файл	Изменение
-.github/workflows/deploy-functions.yml	project-ref: ypwsuumurrtkxatoyqhk → hdjgkjceownmmnrqqtuz
-supabase/config.toml	+6 секций [functions.*]
-supabase/functions/admin-fix-payments-integrity/index.ts	esm.sh → npm:
-supabase/functions/admin-search-profiles/index.ts	esm.sh → npm:
-supabase/functions/admin-bepaid-emergency-unlink/index.ts	esm.sh → npm:
-supabase/functions/admin-bepaid-full-reconcile/index.ts	esm.sh → npm:
-supabase/functions/admin-bepaid-reconcile-amounts/index.ts	esm.sh → npm:
-
-Если хочешь, следующим сообщением дам ультра-короткий PATCH-лист (5–7 пунктов) без таблиц — чисто “сделай раз, два, три” для Lovable.
