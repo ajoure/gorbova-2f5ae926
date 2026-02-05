@@ -1,170 +1,163 @@
 
-# План: Исправление трекинга прогресса видео в блоке "Видео (обязат.)"
+# План: Исправление отображения scheduled уроков в LibraryModule
 
-## Диагноз проблемы
+## 🔴 Корневая проблема
 
-**Корневая причина:**  
-В `VideoUnskippableBlock.tsx` используется пассивный `postMessage` listener (строки 132-219), который ожидает события от iframe. Однако **Kinescope Player API не отправляет события автоматически** — необходимо создать плеер через их `IframePlayer.create()` API.
+Страница `/library/buhgalteriya-kak-biznes` обрабатывается компонентом **`LibraryModule.tsx`**, а не `BusinessTrainingContent.tsx`.
 
-В отличие от этого, `VideoBlock.tsx` использует `useKinescopePlayer.ts`, который:
-1. Загружает скрипт `https://player.kinescope.io/latest/iframe.player.js`
-2. Создаёт плеер через `Kinescope.IframePlayer.create(containerId, { url })`
-3. Получает события через API плеера (`player.on('timeupdate', ...)`)
+В `LibraryModule.tsx` **отсутствует логика для отображения scheduled уроков**:
+- Scheduled урок (с `isScheduled: true`) не отфильтровывается хуком, но UI не обрабатывает этот флаг
+- Если все уроки scheduled → `lessons.length > 0`, но `.filter(l => l.is_active)` возвращает пустой массив (дубликат фильтрации)
+- Нет бейджа "Скоро" и даты открытия
 
-**Проблема:** `VideoUnskippableBlock` пытается слушать postMessage от обычного iframe — это не работает с Kinescope.
+## ✅ Решение
 
----
+### PATCH-1: Убрать дублирующий фильтр и добавить UI для scheduled
 
-## Решение
-
-### PATCH-1: Добавить подписку на события через Kinescope IframePlayer API
-
-**Файл:** `src/hooks/useKinescopePlayer.ts`
-
-Добавить callback `onTimeUpdate` для передачи прогресса:
-
-```typescript
-interface UseKinescopePlayerOptions {
-  // ... существующие поля
-  onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
-  onEnded?: () => void;
-}
-```
-
-Внутри `initPlayer()` после создания плеера:
-
-```typescript
-// Subscribe to timeupdate events
-player.on('timeupdate', async () => {
-  try {
-    const currentTime = await player.getCurrentTime();
-    const duration = ...; // получить из события или закешировать
-    const percent = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
-    onTimeUpdate?.(currentTime, duration, percent);
-  } catch { /* ignore */ }
-});
-
-player.on('ended', () => {
-  onEnded?.();
-});
-```
-
----
-
-### PATCH-2: Переписать VideoUnskippableBlock на использование useKinescopePlayer
-
-**Файл:** `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+**Файл:** `src/pages/LibraryModule.tsx`
 
 **Изменения:**
 
-1. **Импортировать `useKinescopePlayer` и `extractKinescopeVideoId`**
-
-2. **Заменить postMessage listener на хук:**
-
+1. **Импортировать недостающие компоненты:**
 ```typescript
-// Для Kinescope используем IframePlayer API
-const kinescopeVideoId = content.provider === 'kinescope' 
-  ? extractKinescopeVideoId(content.url || "") 
-  : null;
-
-const containerId = `kinescope-unskippable-${useId().replace(/:/g, '-')}`;
-
-// Обновлённый useKinescopePlayer с onTimeUpdate
-const { isReady } = useKinescopePlayer({
-  videoId: kinescopeVideoId || "",
-  containerId,
-  onReady: () => {
-    setApiWorking(true);
-  },
-  onTimeUpdate: (currentTime, duration, percent) => {
-    setLocalWatched(prev => Math.max(prev, percent));
-    setVideoStarted(true);
-    onProgress?.(percent);
-  },
-  onEnded: () => {
-    setLocalWatched(100);
-    onProgress?.(100);
-  },
-  onError: () => {
-    setApiDetectionDone(true); // Показать fallback
-  }
-});
+import { Timer } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 ```
 
-3. **Для Kinescope — рендерить контейнер `<div id={containerId}>` вместо `<iframe>`**  
-   (плеер создаётся автоматически хуком)
+2. **Убрать дублирующий фильтр `.filter(l => l.is_active)` (строка 219)**  
+   Хук `useTrainingLessons` уже фильтрует по `is_active = true`.
 
-4. **Для YouTube/Vimeo — оставить iframe с postMessage** (они поддерживают postMessage API напрямую)
+3. **Добавить отображение scheduled уроков:**
+   - Для уроков с `isScheduled: true`:
+     - Показывать бейдж "Скоро" (оранжевый)
+     - Показывать дату/время открытия
+     - Иконка замка вместо номера
+     - Карточка disabled (не кликабельная)
+
+4. **Обновить условие "Уроки пока не добавлены":**
+   - Показывать пустое состояние только если `lessons.length === 0`
+   - Если есть уроки (даже scheduled) — показывать список
 
 ---
 
-### PATCH-3: Расширить useKinescopePlayer для получения duration и timeupdate
+## 📋 Изменения в коде
 
-**Файл:** `src/hooks/useKinescopePlayer.ts`
-
-Добавить:
-
-```typescript
-interface UseKinescopePlayerOptions {
-  // ... существующие
-  onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
-  onPlay?: () => void;
-  onEnded?: () => void;
-}
+### Строка 219 (убрать фильтр):
+**Было:**
+```tsx
+{lessons.filter(l => l.is_active).map((lesson, index) => {
 ```
 
-В `initPlayer()`:
+**Станет:**
+```tsx
+{lessons.map((lesson, index) => {
+```
 
-```typescript
-let cachedDuration = 0;
+### Строки 223-282 (добавить scheduled UI):
+```tsx
+{lessons.map((lesson, index) => {
+  const config = contentTypeConfig[lesson.content_type];
+  const Icon = config.icon;
+  const isScheduled = lesson.isScheduled;
 
-// Listen for duration change (usually fires once on ready)
-player.on('durationchange', async () => {
-  try {
-    cachedDuration = await player.getDuration?.() || 0;
-  } catch {}
-});
+  return (
+    <Card
+      key={lesson.id}
+      className={`transition-all group ${
+        lesson.is_completed ? "bg-muted/30" : ""
+      } ${isScheduled 
+        ? "opacity-80 cursor-not-allowed" 
+        : "cursor-pointer hover:shadow-md"
+      }`}
+      onClick={() => !isScheduled && handleLessonClick(lesson)}
+    >
+      <CardContent className="flex items-center gap-4 p-4">
+        {/* Lesson number or lock icon */}
+        <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+          isScheduled 
+            ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30" 
+            : "bg-muted"
+        }`}>
+          {isScheduled ? (
+            <Lock className="h-4 w-4" />
+          ) : (
+            index + 1
+          )}
+        </div>
 
-// Listen for timeupdate
-player.on('timeupdate', async () => {
-  try {
-    const currentTime = await player.getCurrentTime();
-    // Try to get duration if not cached
-    if (!cachedDuration) {
-      cachedDuration = await player.getDuration?.() || 0;
-    }
-    if (cachedDuration > 0) {
-      const percent = Math.round((currentTime / cachedDuration) * 100);
-      onTimeUpdate?.(currentTime, cachedDuration, percent);
-    }
-  } catch {}
-});
+        {/* Content type icon */}
+        <div className={`shrink-0 ${config.color}`}>
+          <Icon className="h-5 w-5" />
+        </div>
 
-player.on('play', () => onPlay?.());
-player.on('ended', () => onEnded?.());
+        {/* Lesson info */}
+        <div className="flex-1 min-w-0">
+          <h3 className={`font-medium transition-colors ${
+            lesson.is_completed ? "text-muted-foreground line-through" : ""
+          } ${!isScheduled ? "group-hover:text-primary" : ""}`}>
+            {lesson.title}
+          </h3>
+          {isScheduled && lesson.published_at ? (
+            <p className="text-xs text-amber-600 flex items-center gap-1">
+              <Timer className="h-3 w-3" />
+              Откроется {format(new Date(lesson.published_at), "d MMMM 'в' HH:mm", { locale: ru })}
+            </p>
+          ) : lesson.description ? (
+            <p className="text-sm text-muted-foreground line-clamp-1">
+              {lesson.description}
+            </p>
+          ) : null}
+        </div>
+
+        {/* Scheduled badge */}
+        {isScheduled ? (
+          <Badge variant="outline" className="shrink-0 bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-500 dark:border-amber-700">
+            <Clock className="h-3 w-3 mr-1" />
+            Скоро
+          </Badge>
+        ) : (
+          <>
+            {/* Duration */}
+            {lesson.duration_minutes && (
+              <div className="shrink-0 flex items-center gap-1 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span>{lesson.duration_minutes} мин</span>
+              </div>
+            )}
+
+            {/* Content type badge */}
+            <Badge variant="secondary" className="shrink-0">
+              {config.label}
+            </Badge>
+
+            {/* Completion checkbox */}
+            <div
+              className="shrink-0"
+              onClick={(e) => handleToggleComplete(lesson, e)}
+            >
+              <Checkbox
+                checked={lesson.is_completed}
+                className="h-6 w-6 rounded-full"
+              />
+            </div>
+
+            <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+})}
 ```
 
 ---
 
-## Файлы для изменения
+## 📂 Файлы для изменения
 
-| Файл | Действие |
-|------|----------|
-| `src/hooks/useKinescopePlayer.ts` | Добавить `onTimeUpdate`, `onPlay`, `onEnded` callbacks |
-| `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx` | Использовать `useKinescopePlayer` для Kinescope вместо postMessage |
-
----
-
-## Тестирование
-
-После изменений необходимо протестировать:
-
-1. **Открыть квест-урок с video_unskippable блоком (Kinescope)**
-2. **Запустить видео** → прогресс должен увеличиваться (0% → 10% → 50% → ...)
-3. **Достичь порога (95%)** → кнопка "Я просмотрел(а) видео" активируется
-4. **Нажать кнопку** → блок помечается завершённым, открывается следующий шаг
-5. **Перемотка** — должна корректно обновлять прогресс (currentTime / duration)
-6. **Fallback таймер** — если API не сработал за 5 сек, показать кнопку ручного старта
+| Файл | Изменение |
+|------|-----------|
+| `src/pages/LibraryModule.tsx` | Добавить импорты `Timer`, `format`, `ru`; убрать `.filter(l => l.is_active)`; добавить UI для scheduled |
 
 ---
 
@@ -172,19 +165,23 @@ player.on('ended', () => onEnded?.());
 
 | Проверка | Критерий |
 |----------|----------|
-| Прогресс обновляется | При просмотре Kinescope видео % растёт в реальном времени |
-| Порог срабатывает | При достижении 95% (или настроенного порога) кнопка активируется |
-| Перемотка работает | Перемотка вперёд обновляет прогресс корректно |
-| Данные сохраняются | Прогресс сохраняется в `lesson_progress_state.state_json.videoProgress[blockId]` |
-| Fallback работает | Если API недоступен, fallback-таймер активируется через 5 сек |
-| YouTube/Vimeo | Для этих провайдеров сохраняется текущая логика (postMessage) |
+| Scheduled урок виден | Урок с `published_at` в будущем отображается в списке |
+| Бейдж "Скоро" | Оранжевый бейдж справа от карточки |
+| Дата открытия | Под названием: "Откроется 5 февраля в 18:00" |
+| Иконка замка | Вместо номера урока |
+| Disabled состояние | Клик на карточку не переходит на урок |
+| Прямой URL | Заглушка "Урок ещё не опубликован" (уже работает в LibraryLesson) |
+| Обычные уроки | Работают как раньше (кликабельные, checkbox, etc.) |
 
 ---
 
-## Техническое примечание
+## Тест-кейс
 
-Kinescope IframePlayer API использует **нестандартный подход**: вместо отправки событий через `postMessage` к родительскому окну, он требует создания инстанса плеера через их JS SDK и подписки на события через `player.on(event, callback)`.
-
-Это отличается от YouTube/Vimeo, которые отправляют postMessage-события напрямую.
-
-Именно поэтому текущий `postMessage` listener в `VideoUnskippableBlock` не получает события — Kinescope их просто не отправляет таким образом.
+1. Зайти как `gerda_nat@mail.ru` (не админ)
+2. Открыть `/library/buhgalteriya-kak-biznes`
+3. **Ожидаемый результат:**
+   - Урок "Тест: В какой роли вы находитесь сейчас" виден
+   - Бейдж "Скоро" справа
+   - Под названием: "Откроется 5 февраля в 18:00" (или другая дата)
+   - Иконка замка вместо номера "1"
+   - Клик на карточку не переходит на урок
