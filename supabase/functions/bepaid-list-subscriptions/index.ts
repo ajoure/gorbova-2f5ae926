@@ -604,6 +604,10 @@ Deno.serve(async (req) => {
       const providerMeta = providerSub?.meta as Record<string, any> | undefined;
       const snapshot = providerMeta?.provider_snapshot;
       
+      // PATCH-TITLE: Use display_title from meta as fallback for plan title
+      const displayTitleFromMeta = providerMeta?.display_title;
+      const rawDataPlanTitle = (providerSub?.raw_data as any)?.plan?.title;
+      
       // Extract canceled_at from bePaid data or snapshot
       const canceledAt = (sub as any).cancelled_at || (sub as any).canceled_at || 
                          snapshot?.cancelled_at || snapshot?.canceled_at || null;
@@ -617,7 +621,7 @@ Deno.serve(async (req) => {
       return {
         id: String(sub.id),
         status: normalizedStatus,
-        plan_title: sub.plan?.title || 'Без названия',
+        plan_title: sub.plan?.title || displayTitleFromMeta || rawDataPlanTitle || 'Без названия',
         plan_amount: planAmount,
         plan_currency: sub.plan?.currency || providerSub?.currency || 'BYN',
         customer_email: sub.customer?.email || '',

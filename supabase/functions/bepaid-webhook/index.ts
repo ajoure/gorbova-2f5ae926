@@ -1050,12 +1050,31 @@ Deno.serve(async (req) => {
         
         // 6. Send notifications
         try {
-          // Admin notification
+          // Full admin notification (same detail level as regular checkout)
+          const { data: customerProfile } = await supabase
+            .from('profiles')
+            .select('full_name, email, phone, telegram_username')
+            .eq('user_id', subV2.user_id)
+            .maybeSingle();
+
           const productName = subV2.products_v2?.name || 'Подписка';
           const tariffName = subV2.tariffs?.name || '';
           const amountFormatted = paymentAmount.toFixed(2);
+          const paymentType = '💰 Оплата через подписку bePaid';
           
-          await fetch(
+          const notifyMessage = `${paymentType}\n\n` +
+            `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+            `📧 Email: ${customerProfile?.email || 'Не указан'}\n` +
+            `📱 Телефон: ${customerProfile?.phone || 'Не указан'}\n` +
+            (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+            `\n📦 <b>Продукт:</b> ${productName}\n` +
+            `📋 Тариф: ${tariffName}\n` +
+            `💵 Сумма: ${amountFormatted} BYN\n` +
+            `🆔 Заказ: ${orderV2?.order_number || 'N/A'}\n` +
+            `🔄 Следующее списание: ${renewAt.toLocaleDateString('ru-RU')}\n` +
+            `📎 bePaid sub: ${subscriptionId}`;
+            
+          const notifyResp = await fetch(
             `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
             {
               method: 'POST',
@@ -1064,17 +1083,111 @@ Deno.serve(async (req) => {
                 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
               },
               body: JSON.stringify({
-                message: `💳 Подписка bePaid активирована\n\n📦 Продукт: ${productName}${tariffName ? ` — ${tariffName}` : ''}\n💵 Сумма: ${amountFormatted} BYN\n🔄 Следующее списание: ${renewAt.toLocaleDateString('ru-RU')}\n🆔 bePaid sub: ${subscriptionId}`,
+                message: notifyMessage,
                 source: 'bepaid_subscription_webhook',
+                order_id: orderV2Id,
+                order_number: orderV2?.order_number,
               }),
             }
           );
-          console.log('[WEBHOOK-SUBSCRIPTION] Admin notification sent');
+          console.log('[WEBHOOK-SUBSCRIPTION] Full admin notification sent, status:', notifyResp.status);
         } catch (notifyErr) {
           console.error('[WEBHOOK-SUBSCRIPTION] Notification error:', notifyErr);
         }
         
-        // 7. Audit log (SYSTEM ACTOR PROOF)
+       // 6b. GETCOURSE SYNC for provider-managed subscriptions
+       const getcourseOfferId = subV2.tariffs?.getcourse_offer_id;
+       const paymentEmail = transaction?.customer?.email || body.customer?.email;
+       const tariffCode = subV2.tariffs?.code || subV2.tariffs?.name || 'subscription';
+       
+       if (getcourseOfferId && orderV2) {
+         console.log('[WEBHOOK-SUBSCRIPTION] Starting GetCourse sync: offer_id=' + getcourseOfferId);
+         
+         // Get profile data for GetCourse
+         const { data: profileForGC } = await supabase
+           .from('profiles')
+           .select('email, phone, first_name, last_name, full_name')
+           .eq('user_id', subV2.user_id)
+           .maybeSingle();
+         
+         const gcEmail = profileForGC?.email || paymentEmail || orderV2.customer_email;
+         
+         if (gcEmail) {
+           // Parse first/last name from full_name if needed
+           let firstName = profileForGC?.first_name;
+           let lastName = profileForGC?.last_name;
+           if (!firstName && profileForGC?.full_name) {
+             const parts = profileForGC.full_name.split(' ');
+             firstName = parts[0];
+             lastName = parts.slice(1).join(' ');
+           }
+           
+           const gcResult = await sendToGetCourse(
+             {
+               email: gcEmail,
+               phone: profileForGC?.phone || null,
+               firstName: firstName || null,
+               lastName: lastName || null,
+             },
+             parseInt(String(getcourseOfferId), 10) || 0,
+             orderV2.order_number || `SUB-${subscriptionV2Id.slice(0, 8)}`,
+             paymentAmount,
+             tariffCode
+           );
+           
+           // Update order meta with GC sync result
+           await supabase.from('orders_v2').update({
+             meta: {
+               ...(orderV2.meta || {}),
+               gc_sync_status: gcResult.success ? 'success' : 'failed',
+               gc_sync_error: gcResult.error || null,
+               gc_order_id: gcResult.gcOrderId || null,
+               gc_deal_number: gcResult.gcDealNumber || null,
+               gc_synced_at: new Date().toISOString(),
+             }
+           }).eq('id', orderV2Id);
+           
+           // Audit log for GC sync
+           await supabase.from('audit_logs').insert({
+             actor_type: 'system',
+             actor_user_id: null,
+             actor_label: 'bepaid-webhook',
+             action: gcResult.success ? 'gc_sync_success' : 'gc_sync_failed',
+             target_user_id: subV2.user_id,
+             meta: { 
+               order_id: orderV2Id,
+               order_number: orderV2.order_number,
+               gc_offer_id: getcourseOfferId,
+               gc_order_id: gcResult.gcOrderId,
+               error: gcResult.error,
+               source: 'provider_managed_subscription',
+             },
+           });
+           
+           console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync result:', gcResult.success ? 'OK' : gcResult.error);
+         } else {
+           console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped: no email');
+           await supabase.from('orders_v2').update({
+             meta: { ...(orderV2.meta || {}), gc_sync_status: 'skipped', gc_sync_error: 'No email found' }
+           }).eq('id', orderV2Id);
+         }
+       } else {
+         const skipReason = !getcourseOfferId ? 'no_gc_offer' : 'no_order';
+         console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped:', skipReason);
+         if (orderV2) {
+           await supabase.from('orders_v2').update({
+             meta: { 
+               ...(orderV2.meta || {}), 
+               gc_sync_status: 'skipped', 
+               gc_sync_error: skipReason === 'no_gc_offer' 
+                 ? `No GetCourse offer ID for tariff: ${subV2.tariffs?.name || 'unknown'}` 
+                 : 'Order not found',
+             }
+           }).eq('id', orderV2Id);
+         }
+       }
+       
+       // 7. Audit log (SYSTEM ACTOR PROOF)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
