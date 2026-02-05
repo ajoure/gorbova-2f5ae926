@@ -1,116 +1,174 @@
+ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV
 
-Цель: убрать ошибку “Failed to send a request to the Edge Function” в модалке «Синхронизация с Выпиской bePaid» и одновременно устранить deploy-ошибку “Bundle generation timed out” минимальным diff’ом, строго в рамках PATCH.
+1) Ничего не ломать и не трогать лишнее. Только то, что описано ниже.
+2) Add-only где возможно. Удаления — только там, где явно указано.
+3) Всегда: DRY-RUN → EXECUTE. Любые массовые/опасные действия только с STOP-guard.
+4) Никаких хардкод-UUID / магических значений. Project-ref — только из фактов (см. ниже).
+5) Строгие STOP-предохранители: если деплой/функция таймаутит или 404 — остановиться и зафиксировать причину, НЕ продолжать “пачкой”.
+6) Безопасность: если `verify_jwt=false`, то обязателен ручной guard внутри функции: Authorization → getUser() → has_role(admin/superadmin) / permissions. Иначе `verify_jwt=true`.
+7) Финальный отчёт (DoD) только фактами: Network/HTTP статус + скрины UI из 7500084@gmail.com + список изменённых файлов + diff-summary.
 
-## 0) Что сейчас происходит (Dry-run / факты)
-1) UI вызывает backend‑функцию:
-- `src/components/admin/payments/SyncWithStatementDialog.tsx` → `supabase.functions.invoke('sync-payments-with-statement', ...)`
+STOP-CONDITIONS:
+- Любая функция после деплоя всё ещё 404 → STOP, проверка project-ref, config.toml, фактического деплоя.
+- Любая функция возвращает 200 без токена/без роли → STOP, критический security bug.
 
-2) Функция в backend сейчас НЕ доступна:
-- Проверка вызовом `POST /functions/v1/sync-payments-with-statement` возвращает **404 NOT_FOUND** (Requested function was not found).
+# PATCH: Регистрация admin-функций + фикс project-ref + стабилизация импортов
 
-3) Причина 404 в текущей архитектуре проекта:
-- В `supabase/config.toml` **нет секции** `[functions.sync-payments-with-statement]`.
-- По факту в этом проекте задеплоены/доступны именно те функции, которые перечислены в `supabase/config.toml` (это уже проявлялось раньше на кейсе `bepaid-list-subscriptions`).
-
-4) Дополнительный риск для деплоя (почему вы видите “Bundle generation timed out”):
-- В `supabase/functions/sync-payments-with-statement/index.ts` используется импорт `createClient` через `https://esm.sh/...`, а `esm.sh` реально бывает нестабилен на bundling’е.
-- Самый минимальный и проверенный способ снизить риск таймаута — заменить `esm.sh` на `npm:`.
-
-Важно по безопасности:
-- Внутри `sync-payments-with-statement` уже есть ручная проверка Authorization + проверка роли через RPC `has_role` (403 для не-админа). Значит `verify_jwt=false` допустим (JWT проверяется вручную).
+## Цель
+Устранить 404 ("Failed to send a request to the Edge Function") для критических admin-функций на `/admin/payments` и исправить CI/CD workflow, который сейчас линкается на НЕПРАВИЛЬНЫЙ Supabase проект.
 
 ---
 
-## 1) PATCH (минимальный diff, только это)
+## Результаты аудита (факты)
 
-### PATCH-1 (BLOCKER): Исправить импорт Supabase клиента для стабильного bundling
-Файл: `supabase/functions/sync-payments-with-statement/index.ts`
+### Функции-сироты (есть в repo, но НЕ зарегистрированы в config.toml → будут 404)
+| Функция | Импорт | Auth Guard |
+|---------|--------|------------|
+| `admin-fix-payments-integrity` | `esm.sh` | ✅ admin/super_admin |
+| `admin-search-profiles` | `esm.sh` | ✅ admin + has_permission |
+| `admin-payments-diagnostics` | `npm:` | ✅ admin |
+| `admin-bepaid-emergency-unlink` | `esm.sh` | ✅ superadmin only |
+| `admin-bepaid-full-reconcile` | `esm.sh` | ✅ admin |
+| `admin-bepaid-reconcile-amounts` | `esm.sh` | ✅ admin |
 
-Было:
-```ts
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-```
-
-Стало:
-```ts
-import { createClient } from "npm:@supabase/supabase-js@2";
-```
-
-Ничего больше в логике функции не трогаем.
+### GitHub Actions баг (BLOCKER)
+- Сейчас: `supabase link --project-ref ypwsuumurrtkxatoyqhk` (НЕПРАВИЛЬНЫЙ проект)
+- Должно быть: `supabase link --project-ref hdjgkjceownmmnrqqtuz` (ФАКТ: это project-ref в реальном Network URL `https://hdjgkjceownmmnrqqtuz.supabase.co/...`)
 
 ---
 
-### PATCH-2 (BLOCKER): Зарегистрировать функцию в `supabase/config.toml`
-Файл: `supabase/config.toml`
+## PATCH-0 (BLOCKER): Фикс project-ref в GitHub Actions
 
-Добавить (в конец или рядом с другими функциями):
-```toml
-[functions.sync-payments-with-statement]
+Файл: `.github/workflows/deploy-functions.yml`
+
+Изменение (строка 28):
+```yaml
+# БЫЛО
+supabase link --project-ref ypwsuumurrtkxatoyqhk
+
+# СТАЛО
+supabase link --project-ref hdjgkjceownmmnrqqtuz
+
+DoD PATCH-0:
+	•	В логах GitHub Actions видно supabase link на hdjgkjceownmmnrqqtuz
+	•	Следующий деплой функций идёт в правильный проект (проверить по Network URL)
+
+⸻
+
+PATCH-1: Регистрация функций в supabase/config.toml
+
+Файл: supabase/config.toml
+
+Добавить в конец (после строки 331):
+
+[functions.admin-fix-payments-integrity]
 verify_jwt = false
-```
 
-Почему false:
-- Функция уже делает ручной auth-check по заголовку Authorization
-- И делает RBAC через `has_role` (admin/superadmin)
+[functions.admin-search-profiles]
+verify_jwt = false
 
----
+[functions.admin-payments-diagnostics]
+verify_jwt = false
 
-### PATCH-3 (BLOCKER): Явный деплой только этой функции
-Выполнить деплой строго одной функции:
-- `supabase--deploy_edge_functions: ["sync-payments-with-statement"]`
+[functions.admin-bepaid-emergency-unlink]
+verify_jwt = false
+
+[functions.admin-bepaid-full-reconcile]
+verify_jwt = false
+
+[functions.admin-bepaid-reconcile-amounts]
+verify_jwt = false
+
+Обоснование:
+	•	Все 6 функций содержат ручной auth guard (Authorization → getUser → role/permission), поэтому verify_jwt=false допустим.
+	•	Если в какой-то из функций guard окажется неполным — вернуть verify_jwt=true ИЛИ добавить недостающий guard (см. PATCH-4 Security).
+
+⸻
+
+PATCH-2: Стабилизация импортов (esm.sh → npm:)
+
+Причина:
+	•	esm.sh повышает риск “Bundle generation timed out” при деплое.
+	•	npm: specifier уже показал стабильный деплой (пример: bepaid-list-subscriptions).
+
+Файлы для изменения (5 шт; admin-payments-diagnostics уже OK):
+	1.	supabase/functions/admin-fix-payments-integrity/index.ts (строка 2)
+	2.	supabase/functions/admin-search-profiles/index.ts (строка 1)
+	3.	supabase/functions/admin-bepaid-emergency-unlink/index.ts (строка 1)
+	4.	supabase/functions/admin-bepaid-full-reconcile/index.ts (строка 1)
+	5.	supabase/functions/admin-bepaid-reconcile-amounts/index.ts (строка 2)
+
+Замена:
+
+// БЫЛО
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// СТАЛО
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+
+⸻
+
+PATCH-3: Точечный деплой (с STOP-guard)
+
+Деплоить по 1 функции за раз (Lovable Cloud):
+
+supabase--deploy_edge_functions: ["<function-name>"]
+
+Порядок:
+	1.	admin-search-profiles
+	2.	admin-fix-payments-integrity
+	3.	admin-payments-diagnostics
+	4.	admin-bepaid-emergency-unlink
+	5.	admin-bepaid-full-reconcile
+	6.	admin-bepaid-reconcile-amounts
 
 STOP-guard:
-- Если деплой снова падает с “Bundle generation timed out” — останавливаемся и НЕ трогаем другие функции.
-- Тогда следующий шаг будет отдельным согласованным PATCH (например, замена/упрощение зависимостей, исключение тяжёлых импортов), но не “массовая” чистка.
+	•	Любая функция таймаутит/не отвечает/после деплоя 404 → STOP, прикладываем логи деплоя + Network.
 
----
+⸻
 
-## 2) Верификация (DoD только фактами)
+PATCH-4: Security Guard (обязательная проверка, иначе STOP)
 
-### DoD-1: HTTP / Network (главное)
-1) Открыть `/admin/payments`
-2) Запустить «Синхронизация с Выпиской bePaid» → «Проверить (Dry-run)»
-3) В DevTools → Network найти запрос:
-- `.../functions/v1/sync-payments-with-statement`
-- **Status: 200**
-- Response: JSON с `success: true` и `stats`/`changes` (не важно сколько записей, важно что это не 404/не transport error)
+Для каждой функции с verify_jwt=false подтвердить:
+	1.	Нет Authorization → 401
+	2.	getUser(token) невалиден → 401
+	3.	Нет admin/superadmin (и где нужно permission) → 403
+	4.	Только admin/superadmin → 200
 
-Артефакт: скрин Network (Request URL + Status + кусок Response).
+Если у любой функции отсутствует один из пунктов — ДОБАВИТЬ минимальным diff.
 
----
+⸻
 
-### DoD-2: UI
-На той же странице:
-- модалка переходит из “Ошибка” в “Preview” (показывает списки create/update/delete или хотя бы корректный empty-state без красной ошибки).
-Артефакт: UI‑скрин из аккаунта **7500084@gmail.com** с видимым результатом (не toast с ошибкой).
+Верификация (DoD)
 
----
+A) Network (НЕ 404):
+	•	POST /functions/v1/admin-search-profiles → 200/401/403
+	•	POST /functions/v1/admin-fix-payments-integrity → 200/401/403
+	•	POST /functions/v1/admin-payments-diagnostics → 200/401/403
 
-### DoD-3: RBAC регрессия (безопасность)
-Проверка с НЕ‑админ пользователем:
-- Ожидаемо: **403** (или 401 если нет сессии), но не 200.
-Пояснение:
-- Это гарантирует, что синхронизация выписки не доступна любому пользователю.
+B) Security:
+	•	Без токена → 401
+	•	Не-админ → 403
+	•	Админ (7500084@gmail.com) → 200
 
-Артефакт: скрин Network с 403/401 на том же эндпоинте для обычного пользователя (без секретов).
+C) UI:
+	•	/admin/payments — поиск профилей/контактов, диагностика и фиксы работают без “Failed to send…”
 
----
+D) CI:
+	•	GitHub Actions деплоит в hdjgkjceownmmnrqqtuz
 
-### DoD-4: Regression check
-Проверить, что другая функция, например `telegram-admin-chat`, продолжает отвечать как раньше (401/200 в зависимости от прав), то есть деплой точечный и ничего не сломал.
+⸻
 
----
+Diff-summary
 
-## 3) Diff-summary (что поменяется)
-- `supabase/functions/sync-payments-with-statement/index.ts`
-  - 1 строка: `esm.sh` → `npm:`
-- `supabase/config.toml`
-  - + секция `[functions.sync-payments-with-statement] verify_jwt=false`
-- Деплой: только `sync-payments-with-statement`
+Файл	Изменение
+.github/workflows/deploy-functions.yml	project-ref: ypwsuumurrtkxatoyqhk → hdjgkjceownmmnrqqtuz
+supabase/config.toml	+6 секций [functions.*]
+supabase/functions/admin-fix-payments-integrity/index.ts	esm.sh → npm:
+supabase/functions/admin-search-profiles/index.ts	esm.sh → npm:
+supabase/functions/admin-bepaid-emergency-unlink/index.ts	esm.sh → npm:
+supabase/functions/admin-bepaid-full-reconcile/index.ts	esm.sh → npm:
+supabase/functions/admin-bepaid-reconcile-amounts/index.ts	esm.sh → npm:
 
----
-
-## 4) Почему это должно решить проблему
-- Сейчас UI падает с transport error потому что функция фактически отсутствует (404).
-- Регистрация в config + явный деплой устраняет 404.
-- Замена `esm.sh` → `npm:` снижает вероятность “Bundle generation timed out” на этапе bundling/deploy.
+Если хочешь, следующим сообщением дам ультра-короткий PATCH-лист (5–7 пунктов) без таблиц — чисто “сделай раз, два, три” для Lovable.
