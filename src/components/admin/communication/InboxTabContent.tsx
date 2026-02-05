@@ -173,15 +173,16 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const [channel, setChannel] = useState<"telegram" | "email" | "support">(defaultChannel);
   
   // Load saved panel size from localStorage
+  // Default: 40% for contacts panel (user wants contacts list fully visible)
   const [savedPanelSize] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(PANEL_SIZE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        return parsed.left || 25;
+        return parsed.left || 40;
       }
     } catch {}
-    return 25;
+    return 40;
   });
   
   // Save panel size to localStorage

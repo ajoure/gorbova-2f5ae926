@@ -320,3 +320,6 @@ verify_jwt = false
 
 [functions.bepaid-list-subscriptions]
 verify_jwt = false
+
+[functions.telegram-admin-chat]
+verify_jwt = false
