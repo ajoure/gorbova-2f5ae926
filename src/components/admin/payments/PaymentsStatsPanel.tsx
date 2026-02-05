@@ -81,7 +81,28 @@ export default function PaymentsStatsPanel({
   }
 
   return (
-     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div 
+      className="relative rounded-3xl p-4 overflow-hidden"
+      style={{
+        background: 'linear-gradient(135deg, hsl(217 91% 60% / 0.1) 0%, hsl(260 80% 65% / 0.08) 50%, hsl(280 75% 60% / 0.06) 100%)',
+      }}
+    >
+      {/* Decorative blur spheres for depth */}
+      <div 
+        className="absolute -top-20 -left-20 w-40 h-40 rounded-full opacity-40 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, hsl(217 91% 60% / 0.5), transparent)' }}
+      />
+      <div 
+        className="absolute -bottom-10 -right-10 w-32 h-32 rounded-full opacity-30 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, hsl(280 75% 60% / 0.5), transparent)' }}
+      />
+      <div 
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-60 h-60 rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, hsl(260 80% 70% / 0.4), transparent)' }}
+      />
+      
+      {/* Stats grid */}
+      <div className="relative grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
        <GlassStatCard
         title="Успешные"
          value={formatAmount(stats.successful.amount)}
@@ -137,6 +158,7 @@ export default function PaymentsStatsPanel({
         icon={<TrendingUp className="h-4 w-4 text-purple-500" />}
         isClickable={false}
       />
+      </div>
     </div>
   );
 }
