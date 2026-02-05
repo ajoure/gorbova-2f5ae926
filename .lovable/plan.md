@@ -1,190 +1,117 @@
 
 
-# План: Реалистичный Glass-эффект для статистики платежей
+# План: Исправление published_at + дубликаты модулей
 
-## Проблема
+## 🔴 Критические проблемы (BLOCKER)
 
-Текущий дизайн создаёт "молочные" карточки вместо настоящего стекла:
-- `bg-white/50` слишком плотный → выглядит как белая плашка
-- Нет насыщенного цветного фона → нечего размывать
-- `backdrop-blur` не работает визуально на светлом фоне
+### Проблема 1: Урок виден несмотря на `published_at` в будущем
 
-**Референс (image-884)**: Стекло работает на **тёмном градиентном фоне** с цветными пятнами — это создаёт эффект прозрачности и размытия.
+**Причина:**  
+В `useTrainingLessons.tsx` **отсутствует фильтр по `is_active`**.  
+- Урок в БД: `is_active = false`, `published_at = 2026-02-05 17:00:00+00`
+- Хук загружает ВСЕ уроки модуля без фильтрации по `is_active`
+- Фильтр `published_at` есть (строки 121-128), но бесполезен если урок с `is_active = false` попадает в список
 
----
+**SQL-пруф:**
+```sql
+-- Урок is_active = false, но виден пользователю
+SELECT is_active, published_at, title 
+FROM training_lessons 
+WHERE module_id = (
+  SELECT id FROM training_modules WHERE slug = 'buhgalteriya-kak-biznes'
+);
+-- Результат: is_active = false, published_at = 2026-02-05 17:00+00
+```
 
-## Решение
+**Файл:** `src/hooks/useTrainingLessons.tsx`
 
-### PATCH-1: Обновить GlassStatCard — настоящее стекло
-
-**Файл:** `src/components/admin/payments/GlassStatCard.tsx`
-
-Изменения:
-1. **Снизить плотность фона** — `bg-white/50` → `bg-white/[0.08]` (критично!)
-2. **Усилить blur с saturate** — `backdrop-blur-2xl` + `saturate(160%)`
-3. **Добавить ring** — тонкий внутренний кант `ring-1 ring-white/[0.10]`
-4. **Реалистичный блик** — overlay с градиентом и поворотом
+**Исправление (PATCH-1):**  
+Добавить фильтр `.eq("is_active", true)` в запрос (строка 84):
 
 ```typescript
-className={cn(
-  "relative overflow-hidden rounded-[28px] p-4",
-  "bg-white/[0.08] dark:bg-white/[0.06]",
-  "border border-white/[0.22] dark:border-white/[0.12]",
-  "shadow-[0_18px_60px_rgba(0,0,0,0.18)]",
-  "ring-1 ring-white/[0.10]",
-  "transition-all duration-300",
-  // ...
-)}
-style={{ 
-  backdropFilter: 'blur(22px) saturate(160%)', 
-  WebkitBackdropFilter: 'blur(22px) saturate(160%)' 
-}}
-```
-
-Реалистичный блик (overlay):
-```tsx
-<div className="pointer-events-none absolute inset-0">
-  {/* Основной блик */}
-  <div className="absolute -top-20 left-[-30%] h-56 w-[160%] rotate-[-12deg] bg-gradient-to-b from-white/35 via-white/10 to-transparent" />
-  {/* Вторичное свечение */}
-  <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/5" />
-</div>
+// Строка 81-86
+const { data: lessonsData, error } = await supabase
+  .from("training_lessons")
+  .select("*")
+  .eq("module_id", moduleId)
+  .eq("is_active", true)  // ← ДОБАВИТЬ
+  .order("sort_order", { ascending: true });
 ```
 
 ---
 
-### PATCH-2: Создать цветную "сцену" для стекла
+### Проблема 2: Дубликаты карточки "Бухгалтерия как бизнес"
 
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
+**Причина:**  
+Несоответствие slug в условии фильтрации.
 
-Обернуть весь контент в wrapper с тёмным градиентным фоном и размытыми пятнами:
+**Файл:** `src/pages/Learning.tsx`
 
-```tsx
-<div className="relative isolate rounded-3xl overflow-hidden p-4">
-  {/* Фоновый градиент — тёмно-синий → сине-фиолетовый */}
-  <div 
-    className="absolute inset-0 -z-10"
-    style={{ 
-      background: 'linear-gradient(135deg, #0B2A6F 0%, #123B8B 50%, #0A1E4A 100%)' 
-    }}
-  />
-  
-  {/* Размытые пятна — цветной glow */}
-  <div className="absolute -z-10 top-[-100px] left-[-100px] h-[320px] w-[320px] rounded-full bg-cyan-400/25 blur-[90px]" />
-  <div className="absolute -z-10 bottom-[-140px] right-[-140px] h-[380px] w-[380px] rounded-full bg-violet-500/20 blur-[110px]" />
-  <div className="absolute -z-10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[280px] w-[280px] rounded-full bg-blue-500/15 blur-[100px]" />
-  
-  {/* Stats grid — стеклянные карточки */}
-  <div className="relative grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-    {/* GlassStatCard... */}
-  </div>
-</div>
+Строка 103:
+```javascript
+courseSlug: "buhgalteriya-kak-biznes",
+```
+
+Строка 408:
+```javascript
+if (product.courseSlug === "buh-business") {  // ← НЕВЕРНЫЙ SLUG!
+```
+
+Условие никогда не срабатывает → карточка не получает корректные данные о доступе → отображается как "не куплено" + модуль из БД тоже рендерится.
+
+**Исправление (PATCH-2):**  
+Заменить `"buh-business"` на `"buhgalteriya-kak-biznes"` (строка 408):
+
+```typescript
+// Строка 407-408
+// Special handling for buh-business
+if (product.courseSlug === "buhgalteriya-kak-biznes") {  // ← ИСПРАВИТЬ
 ```
 
 ---
 
-### PATCH-3: Применить тот же стиль к BepaidStatementSummary
+### Проблема 3: Неправильная сборка `published_at` в админке
 
-**Файл:** `src/components/admin/payments/BepaidStatementSummary.tsx`
+**Причина:**  
+`new Date("2026-02-05T18:00:00")` парсится в **локальной таймзоне браузера**, а не в Europe/Minsk.
 
-Идентичный wrapper с тёмным фоном и цветными пятнами.
+**Файл:** `src/pages/admin/AdminTrainingLessons.tsx` (строки 442-446, 473-477)
 
----
-
-### PATCH-4: (Опционально) Обновить Sync Dropdown
-
-**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
-
-Применить glass-стиль к `DropdownMenuContent`:
-```tsx
-<DropdownMenuContent 
-  align="end" 
-  className="w-64 bg-white/[0.08] backdrop-blur-2xl border-white/[0.18] ring-1 ring-white/[0.08]"
-  style={{ backdropFilter: 'blur(22px) saturate(160%)' }}
->
+**Текущий код:**
+```typescript
+publishedAt = formatInTimeZone(
+  new Date(`${dateStr}T${publishTime}:00`),  // ← Парсится в локальной TZ!
+  publishTimezone, 
+  "yyyy-MM-dd'T'HH:mm:ssXXX"
+);
 ```
 
----
+**Исправление (PATCH-3):**  
+Использовать `date-fns-tz/fromZonedTime` для создания даты из "wall clock" времени:
 
-## Файлы для изменения
+```typescript
+import { fromZonedTime } from "date-fns-tz";
 
-| Файл | Изменения |
-|------|-----------|
-| `src/components/admin/payments/GlassStatCard.tsx` | bg-white/[0.08], реалистичный блик, saturate |
-| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Тёмный градиентный wrapper с blur-пятнами |
-| `src/components/admin/payments/BepaidStatementSummary.tsx` | Тот же тёмный wrapper |
+// ...
 
----
-
-## Визуальное сравнение
-
-| Аспект | Было | Станет |
-|--------|------|--------|
-| Фон карточек | `bg-white/50` (молочный) | `bg-white/[0.08]` (прозрачный) |
-| Фон контейнера | Светлый градиент (hsl 10%) | Тёмно-синий градиент (#0B2A6F) |
-| Backdrop-filter | `blur(16px)` | `blur(22px) saturate(160%)` |
-| Блик | Простой градиент | Повёрнутый (-12deg) + multi-layer |
-| Пятна | opacity 20-40% | Более насыщенные (cyan/violet) |
-
----
-
-## Техническая спецификация
-
-### Стеклянная карточка
-```css
-.glass-card {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
-  border-radius: 28px;
-}
-
-/* Реалистичный блик */
-.glass-card::before {
-  content: '';
-  position: absolute;
-  top: -80px;
-  left: -30%;
-  width: 160%;
-  height: 224px;
-  transform: rotate(-12deg);
-  background: linear-gradient(to bottom, 
-    rgba(255,255,255,0.35), 
-    rgba(255,255,255,0.10), 
-    transparent
-  );
-  pointer-events: none;
-}
+// Вместо new Date(...) + formatInTimeZone:
+const wallClockDate = new Date(`${dateStr}T${publishTime}:00`);
+// Интерпретируем wallClockDate как время в выбранной TZ
+const utcDate = fromZonedTime(wallClockDate, publishTimezone);
+publishedAt = utcDate.toISOString();
 ```
 
-### Фоновая "сцена"
-```css
-.glass-scene {
-  background: linear-gradient(135deg, #0B2A6F, #123B8B, #0A1E4A);
-  position: relative;
-  isolation: isolate;
-}
-
-.glass-scene::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  /* Цветные пятна через radial-gradient */
-}
-```
+Или эквивалентный подход через строку с offset.
 
 ---
 
-## Ожидаемый результат
+## 📋 Сводка изменений
 
-- Карточки выглядят как **настоящее стекло** — прозрачные, размывают фон
-- Видно цветной градиент сквозь карточки
-- Реалистичный блик сверху (как на image-884)
-- Тонкая обводка + внутренний ring для глубины
-- Без "белой плашки" или "молочного" эффекта
+| Файл | Изменение | Критичность |
+|------|-----------|-------------|
+| `src/hooks/useTrainingLessons.tsx` | Добавить `.eq("is_active", true)` в запрос | BLOCKER |
+| `src/pages/Learning.tsx` | Исправить slug `"buh-business"` → `"buhgalteriya-kak-biznes"` | BLOCKER |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Использовать `fromZonedTime` для корректной сборки `published_at` | HIGH |
 
 ---
 
@@ -192,10 +119,24 @@ style={{
 
 | Проверка | Критерий |
 |----------|----------|
-| bg-white/[0.08] | Фон карточек очень низкой плотности |
-| Тёмный gradient | Wrapper использует #0B2A6F → #0A1E4A |
-| Blur пятна | cyan-400/25 и violet-500/20 с blur-[90px+] |
-| Блик rotate(-12deg) | Overlay с поворотом и градиентом |
-| saturate(160%) | Inline-style для backdrop-filter |
-| Скрин /admin/payments | Визуально соответствует референсу image-884 |
+| Урок с `is_active = false` | НЕ отображается в списке (даже для пользователя с доступом) |
+| Урок с `published_at` в будущем | НЕ отображается для обычного пользователя |
+| Прямой URL future-урока | Заглушка "Урок ещё не опубликован" с датой |
+| Админ | Видит все уроки (bypass) |
+| "Моя библиотека" | Одна карточка "Бухгалтерия как бизнес" (без дубля) |
+| Сохранение `published_at` 18:00 Minsk | В БД: `17:00:00+00` (UTC) |
+
+---
+
+## Тест-кейсы
+
+1. **Пользователь gerda_nat@mail.ru** (не админ):
+   - Открыть /library/buhgalteriya-kak-biznes → урок НЕ виден в списке
+   - Прямой URL /library/buhgalteriya-kak-biznes/test-v-kakoj-roli-vy-nahodites-sejchas → заглушка "Урок откроется 5 февраля 2026 в 18:00"
+
+2. **Админ 7500084@gmail.com**:
+   - Урок виден в списке и открывается
+
+3. **"Моя библиотека"**:
+   - Одна карточка "Бухгалтерия как бизнес" с бейджем "Куплено"/"Активно"
 
