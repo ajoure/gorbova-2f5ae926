@@ -188,6 +188,15 @@ export function KvestLessonView({
     updateState({ role });
   }, [updateState]);
 
+  // Handler for quiz_survey reset (clears role and removes from completedSteps)
+  const handleQuizSurveyReset = useCallback((blockId: string) => {
+    const newCompletedSteps = (state?.completedSteps || []).filter(id => id !== blockId);
+    updateState({ 
+      role: undefined,
+      completedSteps: newCompletedSteps 
+    });
+  }, [state?.completedSteps, updateState]);
+
   // Handler for role_description block completion
   const handleRoleDescriptionComplete = useCallback((blockId: string) => {
     markBlockCompleted(blockId);
@@ -278,6 +287,7 @@ export function KvestLessonView({
               kvestProps={{
                 onRoleSelected: isReadOnly ? undefined : handleRoleSelected,
                 isCompleted: isCompleted,
+                onQuizReset: isReadOnly ? undefined : () => handleQuizSurveyReset(blockId),
               }}
             />
           </div>
@@ -361,6 +371,7 @@ export function KvestLessonView({
     pointBAnswers,
     savedSummary,
     handleRoleSelected,
+    handleQuizSurveyReset,
     handleRoleDescriptionComplete,
     handleVideoProgress,
     handleVideoComplete,

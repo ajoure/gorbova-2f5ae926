@@ -8,6 +8,7 @@ import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonProgressState } from "@/hooks/useLessonProgressState";
+import { useUserProgress } from "@/hooks/useUserProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -26,6 +27,7 @@ export default function AdminLessonBlockEditor() {
   
   // Progress state for reset functionality
   const { reset: resetProgress, state: progressState } = useLessonProgressState(lessonId);
+  const { resetLessonProgress } = useUserProgress(lessonId || '');
 
   // Refetch blocks when switching to preview mode
   const handleTogglePreview = useCallback(async () => {
@@ -167,7 +169,8 @@ export default function AdminLessonBlockEditor() {
             <Button 
               variant="outline"
               onClick={async () => {
-                await resetProgress();
+                await resetProgress();          // lesson_progress_state
+                await resetLessonProgress();    // user_lesson_progress
                 toast.success("Прогресс урока сброшен");
               }}
               disabled={!progressState}
