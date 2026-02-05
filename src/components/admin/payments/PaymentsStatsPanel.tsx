@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2, Clock } from "lucide-react";
+import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2, Clock, Wallet } from "lucide-react";
 import { usePaymentsServerStats } from "@/hooks/usePaymentsServerStats";
 import { cn } from "@/lib/utils";
 
@@ -144,6 +144,7 @@ export default function PaymentsStatsPanel({
       processing: { count: serverStats.processing_count, amount: serverStats.processing_amount },
       fees: { amount: serverStats.commission_total, percent: feePercent },
       netRevenue,
+      payout: serverStats.payout_total,
     };
   }, [serverStats]);
 
@@ -239,6 +240,16 @@ export default function PaymentsStatsPanel({
         icon={<TrendingUp className="h-4 w-4 text-purple-500" />}
         colorClass="text-purple-500"
         accentGradient="from-purple-500 via-fuchsia-500 to-pink-400"
+        isClickable={false}
+      />
+      <StatCard
+        title="Перечислено"
+        amount={stats.payout}
+        count={stats.successful.count}
+        subtitle="из выписки"
+        icon={<Wallet className="h-4 w-4 text-teal-500" />}
+        colorClass="text-teal-500"
+        accentGradient="from-teal-500 to-cyan-400"
         isClickable={false}
       />
     </div>

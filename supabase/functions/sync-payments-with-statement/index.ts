@@ -95,22 +95,17 @@ function normalizeStatus(rawStatus: string | null): string {
   return s;
 }
 
-// Normalize transaction_type to canonical English values
-// CRITICAL: Prevents storing Russian values that break consistency
-function normalizeTransactionType(rawType: string | null): string {
-  if (!rawType) return 'payment';
-  const t = rawType.toLowerCase().trim();
-  
-  // Refund
-  if (t.includes('возврат') || t.includes('refund')) return 'refund';
-  
-  // Cancellation / Void
-  if (t.includes('отмен') || t.includes('void') || t.includes('cancel')) return 'void';
-  
-  // Payment (default)
-  if (t.includes('плат') || t.includes('payment')) return 'payment';
-  
-  return 'payment';
+// PATCH-2: Preserve original Russian transaction_type from statement
+// Don't normalize — keep as-is ("Платёж", "Возврат средств", "Отмена")
+function preserveTransactionType(rawType: string | null): string {
+  if (!rawType) return 'Платёж';
+  return rawType;
+}
+
+// Helper for comparison only: normalize for ё/е check, not for storage
+function normalizeForComparison(type: string | null): string {
+  if (!type) return '';
+  return type.toLowerCase().replace(/ё/g, 'е').trim();
 }
 
 // Calculate detailed statistics for a set of rows
@@ -126,14 +121,15 @@ function calculateDetailedStats(rows: any[], isStatement: boolean): DetailedStat
   
   for (const row of rows) {
     const status = normalizeStatus(row.status);
-    const txType = normalizeTransactionType(row.transaction_type);
+    // PATCH-2: use normalized comparison instead of converting to English
+    const txTypeNorm = normalizeForComparison(row.transaction_type);
     const amount = Math.abs(row.amount || 0);
     
     // Categorize by transaction_type first, then by status
-    if (txType === 'refund') {
+    if (txTypeNorm.includes('возврат') || txTypeNorm === 'refund') {
       stats.refunded.count++;
       stats.refunded.amount += amount;
-    } else if (txType === 'void') {
+    } else if (txTypeNorm.includes('отмен') || txTypeNorm === 'void') {
       stats.cancelled.count++;
       stats.cancelled.amount += amount;
     } else if (status === 'failed' || status === 'error' || status === 'declined') {
@@ -285,14 +281,20 @@ function compareFields(payment: any, statement: any): Difference[] {
     });
   }
   
-  // Transaction type
-  if (statement.transaction_type && statement.transaction_type !== payment.transaction_type) {
-    diffs.push({
-      field: 'transaction_type',
-      label: 'Тип транзакции',
-      current: payment.transaction_type || '—',
-      statement: statement.transaction_type,
-    });
+  // Transaction type - PATCH-3: compare normalized (ё → е), don't show false diffs
+  if (statement.transaction_type) {
+    const stmtTypeNorm = normalizeForComparison(statement.transaction_type);
+    const pmtTypeNorm = normalizeForComparison(payment.transaction_type);
+    
+    // Only show diff if fundamentally different (not just ё/е)
+    if (stmtTypeNorm !== pmtTypeNorm) {
+      diffs.push({
+        field: 'transaction_type',
+        label: 'Тип транзакции',
+        current: payment.transaction_type || '—',
+        statement: statement.transaction_type,
+      });
+    }
   }
   
   // Paid at
@@ -809,7 +811,7 @@ Deno.serve(async (req) => {
                   amount: Math.abs(stmt.amount),
                   currency: stmt.currency || 'BYN',
                   status: normalizeStatus(stmt.status),
-                  transaction_type: normalizeTransactionType(stmt.transaction_type),
+                  transaction_type: preserveTransactionType(stmt.transaction_type),
                   paid_at: paid_at_utc,
                   card_last4,
                   card_brand,
@@ -855,7 +857,7 @@ Deno.serve(async (req) => {
                 amount: Math.abs(stmt.amount),
                 currency: stmt.currency || 'BYN',
                 status: normalizeStatus(stmt.status),
-                transaction_type: normalizeTransactionType(stmt.transaction_type),
+              transaction_type: preserveTransactionType(stmt.transaction_type),
                 paid_at: paid_at_utc,
                 card_last4,
                 card_brand,
@@ -898,7 +900,7 @@ Deno.serve(async (req) => {
             const updates: any = {
               amount: Math.abs(stmt.amount),
               status: normalizeStatus(stmt.status),
-              transaction_type: normalizeTransactionType(stmt.transaction_type),
+              transaction_type: preserveTransactionType(stmt.transaction_type),
               paid_at: stmt.paid_at,
               card_last4: extractLast4(stmt.card_masked) || pmt.card_last4,
               card_brand: extractCardBrand(stmt.card_masked) || pmt.card_brand,
