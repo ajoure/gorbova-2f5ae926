@@ -36,6 +36,9 @@ export interface KvestBlockProps {
   role?: string | null;
   onRoleSelected?: (role: string) => void;
   
+  // Quiz reset (clears role in lesson_progress_state)
+  onQuizReset?: () => void;
+  
   // Video
   watchedPercent?: number;
   onProgress?: (percent: number) => void;
@@ -307,7 +310,10 @@ export function LessonBlockRenderer({
             savedAnswer={savedResponse}
             isSubmitted={isSubmitted || kvestProps?.isCompleted}
             onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
-            onReset={() => handleQuizReset(block.id)}
+            onReset={() => {
+              handleQuizReset(block.id);       // Clear user_lesson_progress
+              kvestProps?.onQuizReset?.();     // Clear role in lesson_progress_state
+            }}
           />
         );
       
