@@ -3,7 +3,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 // 3DS-related error codes from bePaid that indicate card requires 3DS for each transaction
 const REQUIRES_3DS_CODES = ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'];
@@ -94,9 +95,9 @@ serve(async (req) => {
         adminUserId = user.id;
         console.log('[SECURITY] Authorized via admin JWT:', user.id);
       } else {
-        // Also check super_admin
+        // Also check superadmin (correct enum value without underscore)
         const { data: superAdminCheck } = await supabase
-          .rpc('has_role', { _user_id: user.id, _role: 'super_admin' });
+          .rpc('has_role', { _user_id: user.id, _role: 'superadmin' });
         
         if (superAdminCheck) {
           isAuthorized = true;

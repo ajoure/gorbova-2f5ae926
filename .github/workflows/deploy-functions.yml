@@ -39,7 +39,7 @@ jobs:
             dir="supabase/functions/$func_name"
             if [ -f "$dir/index.ts" ]; then
               echo "Deploying function: $func_name"
-              # Use config.toml settings (no --no-verify-jwt flag)
-              supabase functions deploy "$func_name" || echo "Warning: Failed to deploy $func_name"
+              # CRITICAL: Deploy must fail pipeline if function deploy fails (no silent ignore)
+              supabase functions deploy "$func_name"
             fi
           done

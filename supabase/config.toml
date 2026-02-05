@@ -347,3 +347,6 @@ verify_jwt = false
 
 [functions.admin-bepaid-reconcile-amounts]
 verify_jwt = false
+
+[functions.bepaid-get-subscription-details]
+verify_jwt = false
