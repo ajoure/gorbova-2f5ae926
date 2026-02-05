@@ -14,6 +14,7 @@
    processing_count: number;
    processing_amount: number;
    commission_total: number;
+  payout_total: number;
  }
  
  export function usePaymentsServerStats(dateFilter: { from: string; to?: string }) {
@@ -49,6 +50,7 @@
          processing_count: Number(result?.processing_count ?? 0),
          processing_amount: Number(result?.processing_amount ?? 0),
          commission_total: Number(result?.commission_total ?? 0),
+          payout_total: Number(result?.payout_total ?? 0),
        };
      },
      staleTime: 30000, // 30 seconds
