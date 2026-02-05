@@ -195,7 +195,31 @@ Deno.serve(async (req) => {
       profiles = profiles.filter(p => clubUserIds.has(p.user_id));
     }
 
-    console.log(`Found ${profiles.length} matching profiles`);
+    // Always include administrators (so they can see what was sent)
+    const { data: adminRoles } = await supabase
+      .from('user_roles')
+      .select('user_id')
+      .eq('role', 'admin');
+    
+    const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
+    
+    // Add admins who have telegram_user_id but might not be in filtered list
+    const { data: adminProfiles } = await supabase
+      .from('profiles')
+      .select('user_id, telegram_user_id, full_name')
+      .not('telegram_user_id', 'is', null)
+      .in('user_id', [...adminUserIds]);
+    
+    // Merge admin profiles into the list (avoid duplicates)
+    const existingUserIds = new Set(profiles.map(p => p.user_id));
+    for (const adminProfile of (adminProfiles || [])) {
+      if (!existingUserIds.has(adminProfile.user_id)) {
+        profiles.push(adminProfile);
+        existingUserIds.add(adminProfile.user_id);
+      }
+    }
+
+    console.log(`Found ${profiles.length} matching profiles (including admins)`);
 
     // Get first available bot token
     const { data: bots, error: botsError } = await supabase
