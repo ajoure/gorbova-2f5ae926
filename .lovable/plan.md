@@ -1,130 +1,109 @@
 
+# План: Исправить ошибку бота + добавить кнопки форматирования
 
-# План: Добавить URL кнопки в быструю рассылку + кнопка "Тест себе"
+## Проблема 1: "Нет активного бота"
 
-## Найденные проблемы
+**Причина:** Код ищет `.eq("is_active", true)`, но в таблице `telegram_bots`:
+- Поле называется `status` (не `is_active`)
+- Значение `'active'` (строка, не boolean)
 
-### Проблема 1: Отсутствует поле URL кнопки
 **Файл:** `src/components/admin/communication/BroadcastsTabContent.tsx`
 
-В "Быстрой рассылке" (строки 571-580):
-- ✅ Есть: `buttonText` (текст кнопки)
-- ❌ Нет: `buttonUrl` (ссылка кнопки)
-
-Кнопка без URL — бесполезна. Edge function `telegram-mass-broadcast` ожидает параметр `button_url`, но он не передаётся.
-
-### Проблема 2: Нет кнопки "Тест себе"
-Администратор не может проверить сообщение перед отправкой всей аудитории.
+**Строка 340:**
+```text
+БЫЛО:   .eq("is_active", true)
+СТАЛО:  .eq("status", "active")
+```
 
 ---
 
-## Изменения
+## Проблема 2: Кнопки форматирования
 
-### PATCH-1: Добавить state для buttonUrl
+Нужно добавить toolbar над Textarea с кнопками:
+- **B** — жирный (`*текст*`)
+- **I** — курсив (`_текст_`)
+- **</>** — код (`` `текст` ``)
+- **🔗** — ссылка (`[текст](url)`)
 
-**Файл:** `src/components/admin/communication/BroadcastsTabContent.tsx`
+### Реализация
 
-Строка ~98-99:
+1. **Создать компонент TelegramTextToolbar**
+
 ```typescript
-const [buttonText, setButtonText] = useState("Открыть платформу");
-const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");  // ДОБАВИТЬ
-```
+interface Props {
+  textareaRef: React.RefObject<HTMLTextAreaElement>;
+  value: string;
+  onChange: (value: string) => void;
+}
 
-### PATCH-2: Добавить поле ввода URL
+function TelegramTextToolbar({ textareaRef, value, onChange }: Props) {
+  const wrapSelection = (prefix: string, suffix: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = value.substring(start, end);
+    
+    const newText = 
+      value.substring(0, start) + 
+      prefix + selectedText + suffix + 
+      value.substring(end);
+    
+    onChange(newText);
+    
+    // Restore cursor position
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(
+        start + prefix.length,
+        end + prefix.length
+      );
+    }, 0);
+  };
 
-После "Текст кнопки" (строка 578) добавить:
-```typescript
-{includeButton && (
-  <div className="space-y-2 pl-4 border-l-2 border-muted">
-    <Label>Текст кнопки</Label>
-    <Input
-      value={buttonText}
-      onChange={(e) => setButtonText(e.target.value)}
-      placeholder="Открыть платформу"
-    />
-    <Label>URL кнопки</Label>       {/* ДОБАВИТЬ */}
-    <Input                          {/* ДОБАВИТЬ */}
-      value={buttonUrl}
-      onChange={(e) => setButtonUrl(e.target.value)}
-      placeholder="https://club.gorbova.by/products"
-    />
-  </div>
-)}
-```
-
-### PATCH-3: Передать buttonUrl в mutation
-
-Строки 256-259 и 287-289 — добавить `button_url`:
-```typescript
-// FormData вариант
-formData.append("button_url", buttonUrl);  // ДОБАВИТЬ
-
-// JSON вариант
-body: {
-  message: message.trim(),
-  include_button: includeButton,
-  button_text: includeButton ? buttonText : undefined,
-  button_url: includeButton ? buttonUrl : undefined,  // ДОБАВИТЬ
-  filters,
+  return (
+    <div className="flex gap-1 mb-2">
+      <Button variant="outline" size="sm" onClick={() => wrapSelection('*', '*')}>
+        <Bold className="h-4 w-4" />
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => wrapSelection('_', '_')}>
+        <Italic className="h-4 w-4" />
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => wrapSelection('`', '`')}>
+        <Code className="h-4 w-4" />
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => {
+        const url = prompt('Введите URL:');
+        if (url) wrapSelection('[', `](${url})`);
+      }}>
+        <Link className="h-4 w-4" />
+      </Button>
+    </div>
+  );
 }
 ```
 
-### PATCH-4: Добавить кнопку "Тест себе"
+2. **Добавить ref для textarea и toolbar в UI**
 
-Рядом с кнопкой "Отправить" добавить вторую кнопку:
 ```typescript
-// Новая мутация для теста
-const sendTestMutation = useMutation({
-  mutationFn: async () => {
-    // Получить ID первого активного бота
-    const { data: bots } = await supabase
-      .from("telegram_bots")
-      .select("id")
-      .eq("is_active", true)
-      .limit(1);
-    
-    if (!bots?.length) throw new Error("Нет активного бота");
-    
-    const { data, error } = await supabase.functions.invoke("telegram-send-test", {
-      body: {
-        botId: bots[0].id,
-        messageText: message.trim(),
-        buttonText: includeButton ? buttonText : undefined,
-        buttonUrl: includeButton ? buttonUrl : undefined,
-      },
-    });
-    if (error) throw error;
-    return data;
-  },
-  onSuccess: () => {
-    toast.success("Тестовое сообщение отправлено вам в Telegram");
-  },
-  onError: (error) => {
-    toast.error("Ошибка: " + (error as Error).message);
-  },
-});
-```
+// State
+const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-UI — добавить кнопку перед "Отправить":
-```typescript
-<div className="flex gap-2">
-  <Button
-    variant="outline"
-    onClick={() => sendTestMutation.mutate()}
-    disabled={!message.trim() || sendTestMutation.isPending}
-  >
-    {sendTestMutation.isPending ? (
-      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-    ) : (
-      <Send className="h-4 w-4 mr-2" />
-    )}
-    🧪 Тест себе
-  </Button>
-  
-  <Button size="lg" className="flex-1 gap-2" onClick={handleSend} disabled={isSendDisabled}>
-    ...
-  </Button>
-</div>
+// В JSX перед Textarea:
+<TelegramTextToolbar 
+  textareaRef={textareaRef}
+  value={message}
+  onChange={setMessage}
+/>
+
+<Textarea
+  ref={textareaRef}
+  placeholder="Введите текст сообщения..."
+  value={message}
+  onChange={(e) => setMessage(e.target.value)}
+  rows={6}
+/>
 ```
 
 ---
@@ -133,14 +112,12 @@ UI — добавить кнопку перед "Отправить":
 
 | Файл | Изменение |
 |------|-----------|
-| `src/components/admin/communication/BroadcastsTabContent.tsx` | Добавить buttonUrl state, поле ввода, передачу в mutation, кнопку "Тест себе" |
+| `src/components/admin/communication/BroadcastsTabContent.tsx` | Исправить запрос бота + добавить toolbar |
 
 ---
 
-## DoD
+## Результат
 
-1. В "Быстрой рассылке" видно поле "URL кнопки"
-2. При включённой кнопке и заполненном URL — сообщение уходит с рабочей inline-кнопкой
-3. Кнопка "Тест себе" отправляет тестовое сообщение администратору в Telegram
-4. Основная кнопка "Отправить" работает как раньше
-
+1. Кнопка "Тест себе" успешно отправляет сообщение
+2. Над текстовым полем появятся кнопки: **B**, _I_, `</>`, 🔗
+3. При выделении текста и нажатии кнопки — текст оборачивается в нужные символы
