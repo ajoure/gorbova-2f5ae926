@@ -52,7 +52,7 @@ interface QuizSurveyBlockProps {
   savedAnswer?: { answers?: Record<string, string>; isCompleted?: boolean };
   isSubmitted?: boolean;
   onSubmit?: (answer: Record<string, unknown>, isCorrect: boolean, score: number, maxScore: number) => void;
-  onReset?: () => void;
+  onReset?: () => Promise<void> | void;  // Can be async for proper reset handling
 }
 
 const defaultContent: QuizSurveyContentData = {
@@ -256,10 +256,14 @@ export function QuizSurveyBlock({
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    // 1. Call server-side reset FIRST to clear DB
+    if (onReset) {
+      await onReset();
+    }
+    // 2. Then reset ALL local state (critical: must happen AFTER onReset returns)
     setAnswers({});
     setShowResults(false);
-    if (onReset) onReset();
   };
 
   // ============ EDITOR MODE ============
