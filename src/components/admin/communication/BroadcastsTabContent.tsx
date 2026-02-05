@@ -94,8 +94,9 @@ export function BroadcastsTabContent() {
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
-  const [includeButton, setIncludeButton] = useState(true);
+const [includeButton, setIncludeButton] = useState(true);
   const [buttonText, setButtonText] = useState("Открыть платформу");
+  const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
@@ -255,6 +256,7 @@ export function BroadcastsTabContent() {
         formData.append("include_button", String(includeButton));
         if (includeButton) {
           formData.append("button_text", buttonText);
+          formData.append("button_url", buttonUrl);
         }
         formData.append("filters", JSON.stringify(filters));
         formData.append("media_type", mediaFile.type || "");
@@ -286,6 +288,7 @@ export function BroadcastsTabContent() {
           message: message.trim(),
           include_button: includeButton,
           button_text: includeButton ? buttonText : undefined,
+          button_url: includeButton ? buttonUrl : undefined,
           filters,
         },
       });
@@ -324,6 +327,37 @@ export function BroadcastsTabContent() {
     },
     onError: (error) => {
       toast.error("Ошибка отправки: " + (error as Error).message);
+    },
+  });
+
+  // Send test message to admin
+  const sendTestMutation = useMutation<unknown, Error, void>({
+    mutationFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: bots } = await (supabase as any)
+        .from("telegram_bots")
+        .select("id")
+        .eq("is_active", true)
+        .limit(1);
+      
+      if (!bots?.length) throw new Error("Нет активного бота");
+      
+      const { data, error } = await supabase.functions.invoke("telegram-send-test", {
+        body: {
+          botId: bots[0].id,
+          messageText: message.trim(),
+          buttonText: includeButton ? buttonText : undefined,
+          buttonUrl: includeButton ? buttonUrl : undefined,
+        },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Тестовое сообщение отправлено вам в Telegram");
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + error.message);
     },
   });
 
@@ -569,13 +603,23 @@ export function BroadcastsTabContent() {
                   </div>
 
                   {includeButton && (
-                    <div className="space-y-2 pl-4 border-l-2 border-muted">
-                      <Label>Текст кнопки</Label>
-                      <Input
-                        value={buttonText}
-                        onChange={(e) => setButtonText(e.target.value)}
-                        placeholder="Открыть платформу"
-                      />
+                    <div className="space-y-3 pl-4 border-l-2 border-muted">
+                      <div className="space-y-2">
+                        <Label>Текст кнопки</Label>
+                        <Input
+                          value={buttonText}
+                          onChange={(e) => setButtonText(e.target.value)}
+                          placeholder="Открыть платформу"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>URL кнопки</Label>
+                        <Input
+                          value={buttonUrl}
+                          onChange={(e) => setButtonUrl(e.target.value)}
+                          placeholder="https://club.gorbova.by/products"
+                        />
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -618,30 +662,46 @@ export function BroadcastsTabContent() {
             </TabsContent>
           </Tabs>
 
-          {/* Send Button */}
-          <Button
-            size="lg"
-            className="w-full gap-2"
-            onClick={handleSend}
-            disabled={isSendDisabled}
-          >
-            {(sendTelegramMutation.isPending || sendEmailMutation.isPending) ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Отправка...
-              </>
-            ) : (
-              <>
-                <Send className="h-4 w-4" />
-                Отправить {activeTab === "telegram" ? "в Telegram" : "на Email"}
-                {audience && (
-                  <Badge variant="secondary" className="ml-2">
-                    {activeTab === "telegram" ? audience.telegramCount : audience.emailCount} получателей
-                  </Badge>
+          {/* Send Buttons */}
+          <div className="flex gap-2">
+            {activeTab === "telegram" && (
+              <Button
+                variant="outline"
+                onClick={() => sendTestMutation.mutate()}
+                disabled={!message.trim() || sendTestMutation.isPending}
+              >
+                {sendTestMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Send className="h-4 w-4 mr-2" />
                 )}
-              </>
+                🧪 Тест себе
+              </Button>
             )}
-          </Button>
+            <Button
+              size="lg"
+              className="flex-1 gap-2"
+              onClick={handleSend}
+              disabled={isSendDisabled}
+            >
+              {(sendTelegramMutation.isPending || sendEmailMutation.isPending) ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Отправка...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" />
+                  Отправить {activeTab === "telegram" ? "в Telegram" : "на Email"}
+                  {audience && (
+                    <Badge variant="secondary" className="ml-2">
+                      {activeTab === "telegram" ? audience.telegramCount : audience.emailCount} получателей
+                    </Badge>
+                  )}
+                </>
+              )}
+            </Button>
+          </div>
 
           {/* History */}
           <Card>
