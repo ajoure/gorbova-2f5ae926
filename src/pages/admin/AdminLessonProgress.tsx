@@ -1,25 +1,26 @@
- import { useState } from "react";
- import { useParams, useNavigate, Link } from "react-router-dom";
- import { useQuery } from "@tanstack/react-query";
- import { supabase } from "@/integrations/supabase/client";
- import { AdminLayout } from "@/components/layout/AdminLayout";
- import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
- import { Button } from "@/components/ui/button";
- import { Badge } from "@/components/ui/badge";
- import { Skeleton } from "@/components/ui/skeleton";
- import {
-   Table,
-   TableBody,
-   TableCell,
-   TableHead,
-   TableHeader,
-   TableRow,
- } from "@/components/ui/table";
- import { ArrowLeft, ChevronRight, Eye, Users } from "lucide-react";
- import { format } from "date-fns";
- import { ru } from "date-fns/locale";
+import { useState } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { AdminLayout } from "@/components/layout/AdminLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ArrowLeft, ChevronRight, Eye, Users } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import type { LessonProgressRecord as ModalRecord, LessonBlock as ModalBlock } from "@/components/admin/trainings/StudentProgressModal";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 
 type LessonProgressRecord = ModalRecord;
 type LessonBlock = ModalBlock;
@@ -33,7 +34,9 @@ type LessonBlock = ModalBlock;
  export default function AdminLessonProgress() {
    const { moduleId, lessonId } = useParams<{ moduleId: string; lessonId: string }>();
    const navigate = useNavigate();
-   const [selectedRecord, setSelectedRecord] = useState<LessonProgressRecord | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<LessonProgressRecord | null>(null);
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
  
    // Fetch lesson info
    const { data: lesson, isLoading: lessonLoading } = useQuery({
@@ -77,14 +80,18 @@ type LessonBlock = ModalBlock;
  
        if (error) throw error;
       
-      // Fetch profiles separately
+      // Fetch profiles separately - JOIN by user_id (not id!)
       const userIds = data.map(r => r.user_id);
+      if (userIds.length === 0) {
+        return data.map(record => ({ ...record, profiles: null })) as LessonProgressRecord[];
+      }
+      
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("id, email, full_name")
-        .in("id", userIds);
+        .select("id, user_id, email, full_name, phone, telegram_username, telegram_user_id, avatar_url, status, created_at, last_seen_at")
+        .in("user_id", userIds);
       
-      const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
       
       return data.map(record => ({
         ...record,
@@ -227,16 +234,41 @@ type LessonBlock = ModalBlock;
                      
                      return (
                        <TableRow key={record.id}>
-                         <TableCell>
-                           <div>
-                             <p className="font-medium">
-                               {profile?.full_name || "—"}
-                             </p>
-                             <p className="text-sm text-muted-foreground">
-                               {profile?.email}
-                             </p>
-                           </div>
-                         </TableCell>
+                        <TableCell>
+                          <div>
+                            <button
+                              className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+                              onClick={() => {
+                                if (profile) {
+                                  setSelectedContact({
+                                    id: profile.id,
+                                    user_id: profile.user_id,
+                                    email: profile.email,
+                                    full_name: profile.full_name,
+                                    first_name: null,
+                                    last_name: null,
+                                    phone: profile.phone || null,
+                                    telegram_username: profile.telegram_username || null,
+                                    telegram_user_id: profile.telegram_user_id || null,
+                                    avatar_url: profile.avatar_url || null,
+                                    status: profile.status || "active",
+                                    created_at: profile.created_at,
+                                    last_seen_at: profile.last_seen_at || null,
+                                    duplicate_flag: null,
+                                    deals_count: 0,
+                                    last_deal_at: null,
+                                  });
+                                  setContactSheetOpen(true);
+                                }
+                              }}
+                            >
+                              {profile?.full_name || "—"}
+                            </button>
+                            <p className="text-sm text-muted-foreground">
+                              {profile?.email}
+                            </p>
+                          </div>
+                        </TableCell>
                          <TableCell>
                            {state?.role ? (
                              <Badge variant="outline">
@@ -289,13 +321,20 @@ type LessonBlock = ModalBlock;
            </CardContent>
          </Card>
  
-         {/* Detail Modal */}
-         <StudentProgressModal
-           record={selectedRecord}
+        {/* Detail Modal */}
+        <StudentProgressModal
+          record={selectedRecord}
           lessonBlocks={(lessonBlocks || []) as LessonBlock[]}
-           open={!!selectedRecord}
-           onClose={() => setSelectedRecord(null)}
-         />
+          open={!!selectedRecord}
+          onClose={() => setSelectedRecord(null)}
+        />
+
+        {/* Contact Detail Sheet */}
+        <ContactDetailSheet
+          contact={selectedContact}
+          open={contactSheetOpen}
+          onOpenChange={setContactSheetOpen}
+        />
        </div>
      </AdminLayout>
    );
