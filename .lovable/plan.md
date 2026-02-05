@@ -1,174 +1,166 @@
 
-# План исправления: Формула "Чистая выручка" и удаление карточки "Перечислено"
+# План редизайна статистики платежей
 
-## Обнаруженные проблемы
+## Задачи
 
-### 1. Неверная формула "Чистая выручка"
+1. **Удалить карточку "В обработке"** из `PaymentsStatsPanel`
+2. **Унифицировать стиль карточек** — использовать единый компонент `GlassStatCard` для обоих панелей
+3. **Применить "реальный glass" эффект** по референсу: мягкие полупрозрачные границы, усиленный blur, внутреннее свечение
 
-**Текущая формула (НЕПРАВИЛЬНО):**
-```typescript
-netRevenue = successful_amount - refunded_amount - commission_total
-// 14,764 - 195 - 176.33 = 14,392.67 BYN ← на скриншоте
-```
+---
 
-**Правильная формула:**
-```typescript
-netRevenue = successful_amount - refunded_amount - cancelled_amount - commission_total
-// 14,764 - 195 - 14 - 176.33 = 14,378.67 BYN
-```
+## Анализ референса (image-880.png)
 
-**Проблема:** Не вычитаются отмены (`cancelled_amount`).
-
-### 2. Карточка "Перечислено" не нужна
-
-Пользователь объясняет:
-- "Перечислено" концептуально должно равняться "Чистой выручке"
-- В реальности `payout_amount` в выписке BePaid — это банковские переводы, которые происходят с задержкой
-- Показывать 8,268.67 BYN вместо 14,378.67 BYN сбивает с толку
-- **Решение:** Удалить карточку "Перечислено" из обоих табов
-
-### 3. Ошибки не входят в расчёт денег
-
-Ошибки (36 шт / 5,657 BYN) — это неудавшиеся попытки оплаты:
-- Деньги НЕ поступали → не включать в денежные расчёты
-- Нужны только для общего количества транзакций: 71 + 1 + 14 + 36 = 122 шт
-
-### 4. Применить ту же логику к "Выписке BePaid"
-
-Добавить карточку "Чистая выручка" в `BepaidStatementSummary` с формулой:
-```
-Чистая выручка = Платежи - Возвраты - Отмены - Комиссия
-```
+Ключевые визуальные характеристики:
+- **Скруглённые углы** — `rounded-2xl` или `rounded-3xl`
+- **Полупрозрачный фон** — `bg-white/5` с усиленным blur (`backdrop-blur-2xl`)
+- **Мягкая граница** — `border-white/10` с внутренним свечением
+- **Эффект "стеклянной капсулы"** — внутренний градиент от светлого к прозрачному
+- **Тень с мягким glow** — `shadow-[0_8px_32px_rgba(0,0,0,0.12)]`
 
 ---
 
 ## Решение
 
-### PATCH-1: Исправить формулу в PaymentsStatsPanel.tsx
+### PATCH-1: Создать унифицированный компонент `GlassStatCard`
+
+**Новый файл:** `src/components/admin/payments/GlassStatCard.tsx`
+
+Единый компонент для обоих панелей с параметрами:
+- `title` — заголовок
+- `value` — основное значение (форматированная сумма)
+- `subtitle` — подзаголовок (количество)
+- `icon` — иконка
+- `variant` — цветовая схема (`success`, `warning`, `danger`, `info`, `default`)
+- `isActive`, `isClickable`, `onClick` — интерактивность
+
+Стиль (CSS):
+```tsx
+className={cn(
+  // Base glass effect
+  "relative overflow-hidden rounded-2xl p-4",
+  "bg-white/[0.08] dark:bg-white/[0.04]",
+  "backdrop-blur-2xl",
+  "border border-white/[0.12] dark:border-white/[0.08]",
+  // Soft shadow with color glow
+  "shadow-[0_8px_32px_rgba(0,0,0,0.08)]",
+  // Inner shine overlay (pseudo-element in component)
+  "transition-all duration-300",
+  // Hover & active states
+  isClickable && "cursor-pointer hover:bg-white/[0.12] hover:border-white/[0.18] hover:scale-[1.02]",
+  isActive && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
+)}
+```
+
+Внутренний shine overlay (CSS-in-JSX):
+```tsx
+<div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/[0.08] via-transparent to-transparent pointer-events-none" />
+```
+
+### PATCH-2: Обновить `PaymentsStatsPanel`
 
 **Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
 
-```typescript
-// Строки 134-137 — исправить формулу:
-// БЫЛО:
-const netRevenue = serverStats.successful_amount 
-  - serverStats.refunded_amount 
-  - serverStats.commission_total;
+Изменения:
+1. **Удалить карточку "В обработке"** (строки 192-203)
+2. **Заменить `StatCard` на `GlassStatCard`** с единым интерфейсом
+3. **Изменить grid** — `lg:grid-cols-6` → `lg:grid-cols-5` (убрали 1 карточку)
+4. **Удалить `Clock` из импортов** lucide-react
+5. **Убрать `processing` из `StatsFilterType`** (опционально — или оставить для совместимости с быстрыми фильтрами)
 
-// СТАЛО:
-const netRevenue = serverStats.successful_amount 
-  - serverStats.refunded_amount 
-  - serverStats.cancelled_amount  // ДОБАВИТЬ!
-  - serverStats.commission_total;
-```
+Итоговые карточки (5 шт):
+| # | Название | Иконка | Variant |
+|---|----------|--------|---------|
+| 1 | Успешные | CheckCircle2 | success |
+| 2 | Возвраты | RotateCcw | warning |
+| 3 | Отмены | XCircle | danger |
+| 4 | Ошибки | XCircle | danger |
+| 5 | Комиссия | Percent | info |
+| 6 | Чистая выручка | TrendingUp | success |
 
-### PATCH-2: Удалить карточку "Перечислено" из PaymentsStatsPanel
+**Примечание:** Убираем только карточку статистики "В обработке", но оставляем возможность фильтрации по этому статусу в быстрых табах (pill buttons "В обработке").
 
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
-
-Удалить строки 245-254:
-```typescript
-// УДАЛИТЬ:
-<StatCard
-  title="Перечислено"
-  amount={stats.payout}
-  count={stats.successful.count}
-  subtitle="из выписки"
-  icon={<Wallet className="h-4 w-4 text-teal-500" />}
-  colorClass="text-teal-500"
-  accentGradient="from-teal-500 to-cyan-400"
-  isClickable={false}
-/>
-```
-
-Также удалить:
-- `Wallet` из импорта lucide-react
-- `payout` из объекта `stats` в useMemo
-- Изменить grid: `lg:grid-cols-7` → `lg:grid-cols-7` (оставить 7, т.к. останется 7 карточек: Успешные, Возвраты, В обработке, Отмены, Ошибки, Комиссия, Чистая выручка)
-
-### PATCH-3: Обновить BepaidStatementSummary
+### PATCH-3: Обновить `BepaidStatementSummary`
 
 **Файл:** `src/components/admin/payments/BepaidStatementSummary.tsx`
 
-1. Добавить карточку "Чистая выручка":
-```typescript
-// Вычислить:
-const netRevenue = data.payments_amount 
-  - data.refunds_amount 
-  - data.cancellations_amount 
-  - data.commission_total;
-```
-
-2. Удалить карточку "Перечислено"
-
-3. Изменить grid: `md:grid-cols-6` → `md:grid-cols-6` (будет: Платежи, Возвраты, Отмены, Ошибки, Комиссия, Чистая выручка)
-
-### PATCH-4: Обновить интерфейс BepaidStatementStats (если нужно)
-
-**Файл:** `src/hooks/useBepaidStatement.ts`
-
-Интерфейс `BepaidStatementStats` уже содержит все нужные поля. Изменения не требуются.
+Изменения:
+1. **Заменить локальный `StatCard` на импорт `GlassStatCard`**
+2. **Адаптировать props** — унифицировать интерфейс с `PaymentsStatsPanel`
+3. **Применить тот же glass-эффект**
 
 ---
 
 ## Файлы для изменения
 
-| Файл | Изменения |
-|------|-----------|
-| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Исправить формулу `netRevenue`, удалить карточку "Перечислено" |
-| `src/components/admin/payments/BepaidStatementSummary.tsx` | Удалить "Перечислено", добавить "Чистая выручка" |
+| Файл | Действие |
+|------|----------|
+| `src/components/admin/payments/GlassStatCard.tsx` | **Создать** — единый glass-компонент |
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Убрать "В обработке", использовать `GlassStatCard` |
+| `src/components/admin/payments/BepaidStatementSummary.tsx` | Использовать `GlassStatCard` |
 
 ---
 
 ## Ожидаемый результат
 
-### Таб "Платежи" (/admin/payments)
+### До (текущий UI)
+- Разный стиль карточек в Платежах и Выписке
+- Карточка "В обработке" занимает место
+- Менее выраженный glass-эффект
 
-| Карточка | Было | Станет |
-|----------|------|--------|
-| Успешные | 14,764.00 BYN / 71 шт | 14,764.00 BYN / 71 шт ✓ |
-| Возвраты | 195.00 BYN / 1 шт | 195.00 BYN / 1 шт ✓ |
-| В обработке | 0.00 BYN / 0 шт | 0.00 BYN / 0 шт ✓ |
-| Отмены | 14.00 BYN / 14 шт | 14.00 BYN / 14 шт ✓ |
-| Ошибки | 5,657.00 BYN / 36 шт | 5,657.00 BYN / 36 шт ✓ |
-| Комиссия | 176.33 BYN | 176.33 BYN ✓ |
-| Чистая выручка | 14,392.67 BYN | **14,378.67 BYN** (было без отмен) |
-| ~~Перечислено~~ | ~~8,268.67 BYN~~ | **УДАЛЕНО** |
-
-### Таб "Выписка BePaid" (/admin/payments/statement)
-
-| Карточка | Было | Станет |
-|----------|------|--------|
-| Платежи | 14,514.00 BYN / 70 шт | 14,514.00 BYN / 70 шт ✓ |
-| Возвраты | 195.00 BYN / 1 шт | 195.00 BYN / 1 шт ✓ |
-| Отмены | 14.00 BYN / 14 шт | 14.00 BYN / 14 шт ✓ |
-| Ошибки | 5,657.00 BYN / 36 шт | 5,657.00 BYN / 36 шт ✓ |
-| Комиссия | 176.33 BYN | 176.33 BYN ✓ |
-| ~~Перечислено~~ | ~~8,268.67 BYN~~ | **УДАЛЕНО** |
-| Чистая выручка | — | **14,128.67 BYN** (новая) |
+### После (новый UI)
+- Единый стиль для всех карточек
+- 5 карточек в Платежах, 6 в Выписке (с "Чистой выручкой")
+- Усиленный glassmorphism: `backdrop-blur-2xl`, мягкие границы, внутреннее свечение
+- Hover-анимация с масштабированием
 
 ---
 
-## Формула расчёта (финальная)
+## Техническая спецификация CSS Glass-эффекта
 
-```text
-Чистая выручка = Успешные - Возвраты - Отмены - Комиссия
-               = 14,764 - 195 - 14 - 176.33 = 14,378.67 BYN (Платежи)
-               = 14,514 - 195 - 14 - 176.33 = 14,128.67 BYN (Выписка)
+```css
+.glass-stat-card {
+  /* Base */
+  background: linear-gradient(135deg, 
+    rgba(255,255,255,0.08) 0%, 
+    rgba(255,255,255,0.02) 100%
+  );
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  
+  /* Border */
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 1rem;
+  
+  /* Shadow */
+  box-shadow: 
+    0 8px 32px rgba(0,0,0,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+    
+  /* Inner shine */
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(135deg, 
+      rgba(255,255,255,0.08) 0%, 
+      transparent 50%
+    );
+    pointer-events: none;
+  }
+}
 ```
-
-> Небольшая разница (250 BYN / 1 платёж) — разные источники данных: 
-> `payments_v2` (все платежи) vs `bepaid_statement_rows` (только импортированная выписка)
 
 ---
 
 ## DoD (Definition of Done)
 
-| Проверка | Ожидаемый результат |
-|----------|---------------------|
-| Формула netRevenue включает отмены | `successful - refunded - cancelled - commission` |
-| Карточка "Перечислено" удалена | Нет в обоих табах |
-| Карточка "Чистая выручка" в Выписке BePaid | Добавлена с правильной формулой |
-| Ошибки не участвуют в расчёте | Только для подсчёта транзакций |
-| Скрин /admin/payments | Показать статистику февраля |
-| Скрин /admin/payments/statement | Показать статистику февраля |
+| Проверка | Критерий |
+|----------|----------|
+| Карточка "В обработке" | Удалена из PaymentsStatsPanel |
+| Единый стиль | GlassStatCard используется в обоих компонентах |
+| Glass-эффект | backdrop-blur-2xl, полупрозрачные границы, внутренний shine |
+| Сетка | 5 карточек в Платежах, 6 в Выписке |
+| Hover-эффект | scale-[1.02] при наведении на кликабельные карточки |
+| Скрин /admin/payments | Визуальное соответствие референсу |
