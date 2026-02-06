@@ -1,230 +1,265 @@
+name: Full Audit - Supabase Edge Functions
 
+on:
+  workflow_dispatch:
+    inputs:
+      fail_on_404:
+        description: "Fail workflow if any function is NOT_DEPLOYED (404/NOT_FOUND)"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      fail_on_boot:
+        description: "Fail workflow if any function appears to have BOOT_ERROR (runtime/module error)"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      concurrency_limit:
+        description: "Max concurrent checks (1..20). Lower = safer, higher = faster."
+        required: true
+        default: "8"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "4"
+          - "6"
+          - "8"
+          - "10"
+          - "12"
+          - "16"
+          - "20"
 
-# FIX: Telegram медиа, информативная выдача доступа и Email история
+  # OPTIONAL: enable when ready
+  # schedule:
+  #   - cron: "*/30 * * * *"
 
-## Выявленные проблемы
+concurrency:
+  group: functions-full-audit
+  cancel-in-progress: true
 
-### Проблема 1: Медиа в Telegram не загружаются (photo.jpg "Загружается...")
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      # !!! Set these in GitHub Secrets (recommended)
+      # SUPABASE_URL: https://<project_ref>.supabase.co
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      AUDIT_ORIGIN: https://gorbova.lovable.app
 
-**Диагноз:**
-- Cron-задача `telegram-media-worker-cron` работает каждую минуту
-- Но сама функция `telegram-media-worker` возвращает **404 NOT_FOUND**
-- Обе функции **не включены в `functions.registry.txt`** → CI их не деплоит
+    steps:
+      - uses: actions/checkout@v4
 
-**Доказательство:**
-```sql
--- media_jobs в статусе pending (не обрабатываются)
-SELECT id, status, attempts FROM media_jobs WHERE status = 'pending';
--- 2 записи с attempts=0
-```
+      - name: Guard - required env
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::error::Missing SUPABASE_URL. Set GitHub Secret SUPABASE_URL=https://<project_ref>.supabase.co"
+            exit 1
+          fi
+          echo "SUPABASE_URL=$SUPABASE_URL"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "GITHUB_RUN_ID=${GITHUB_RUN_ID}"
+          echo "UTC_NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
-### Проблема 2: Выдача доступа неинформативна
+      - name: Build functions list (repo)
+        run: |
+          set -euo pipefail
+          mkdir -p audit_out
+          find supabase/functions -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort > audit_out/functions.list
+          echo "TOTAL_FUNCTIONS=$(wc -l < audit_out/functions.list)" | tee audit_out/summary.txt
+          echo "Total functions in repo: $(wc -l < audit_out/functions.list)"
+          head -n 50 audit_out/functions.list > audit_out/functions.list.head50 || true
 
-**Диагноз:**
-- В UI показывается: `Автоматическая выдача доступа 06.02 15:39`
-- Нет информации: какой продукт, какой клуб, на какой срок
-- В `telegram_logs.meta` записывается только: `valid_until`, `chat_invite_link`, `channel_invite_link`
-- **Нет поля `product_name`** в meta
+      - name: Run full audit (OPTIONS + POST)
+        env:
+          FAIL_ON_404: ${{ inputs.fail_on_404 }}
+          FAIL_ON_BOOT: ${{ inputs.fail_on_boot }}
+          CONCURRENCY_LIMIT: ${{ inputs.concurrency_limit }}
+        run: |
+          set -euo pipefail
 
-**Что сейчас в meta:**
-```json
-{
-  "chat_invite_link": "https://t.me/+9Y1rg-zuT20zNTEy",
-  "valid_until": "2026-03-08T14:25:26.574+00:00"
-}
-```
+          LIST="audit_out/functions.list"
+          NOW="$(date -u +%Y%m%d-%H%M%S)"
+          LOG="audit_out/functions-audit-$NOW.log"
+          JSON="audit_out/functions-audit-$NOW.json"
 
-### Проблема 3: Email-история пустая почти для всех контактов
+          echo "=== FULL AUDIT STARTED ===" | tee "$LOG"
+          echo "UTC: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" | tee -a "$LOG"
+          echo "SUPABASE_URL: $SUPABASE_URL" | tee -a "$LOG"
+          echo "ORIGIN: $AUDIT_ORIGIN" | tee -a "$LOG"
+          echo "fail_on_404=$FAIL_ON_404 fail_on_boot=$FAIL_ON_BOOT concurrency_limit=$CONCURRENCY_LIMIT" | tee -a "$LOG"
+          echo "Total in repo: $(wc -l < "$LIST")" | tee -a "$LOG"
+          echo "" | tee -a "$LOG"
 
-**Диагноз:**
-- В `email_logs` есть 305 записей, но только 92 имеют `user_id`
-- Функции отправки email (subscription-charge, renewal-reminders и др.) не всегда заполняют `user_id`/`profile_id`
-- Запрос в UI фильтрует по `user_id` или `profile_id` → письма без этих полей не отображаются
-- У Марии Громыко письма отображаются потому что в них есть `to_email = 'slmmls@mail.ru'`
+          # Worker script (one function)
+          cat > audit_out/_audit_one.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
 
-**Статистика:**
-```
-Всего писем: 305
-С user_id: 92
-Без user_id/profile_id: 213 (70%)
-```
+          func="$1"
 
----
+          # --- OPTIONS preflight ---
+          OPT_RAW="$(curl -s -i -m 10 -X OPTIONS \
+            -H "Origin: ${AUDIT_ORIGIN}" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: content-type,authorization,x-supabase-client-platform" \
+            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
 
-## План исправления
+          OPT_HTTP="$(echo "$OPT_RAW" | head -n 1 | awk '{print $2}' | tr -d '\r')"
+          OPT_ALLOW_HEADERS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-headers:/{sub(/^access-control-allow-headers:[ ]*/,""); print; exit}')"
+          OPT_ALLOW_METHODS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-methods:/{sub(/^access-control-allow-methods:[ ]*/,""); print; exit}')"
 
-### A. Telegram медиа — добавить функции в registry (КРИТИЧНО)
+          # --- POST ping existence ---
+          POST_RAW="$(curl -s -w "\n%{http_code}" -m 15 \
+            -X POST -H "Content-Type: application/json" \
+            -d '{"ping":true}' \
+            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
 
-**Файл:** `supabase/functions.registry.txt`
+          POST_HTTP="$(echo "$POST_RAW" | tail -1 | tr -d '\r')"
+          POST_BODY="$(echo "$POST_RAW" | sed '$d' | head -c 1200 | tr '\n' ' ')"
 
-Добавить в секцию P1:
-```text
-telegram-media-worker
-telegram-media-worker-cron
-```
+          # --- classify ---
+          status="OK"
 
-**Файл:** `supabase/functions/telegram-media-worker/index.ts`
+          # connection failure
+          if [ "${POST_HTTP}" = "000" ] || echo "$POST_BODY" | grep -qiE "connection.*failed|timed out|Could not resolve|TLS"; then
+            status="CONNECTION_FAILED"
+          # not deployed
+          elif [ "${POST_HTTP}" = "404" ] || echo "$POST_BODY" | grep -q '"code":"NOT_FOUND"'; then
+            status="NOT_DEPLOYED"
+          else
+            # possible boot error (heuristic)
+            if echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Uncaught|Module not found|Cannot find module|SyntaxError|TypeError|ReferenceError|Internal Server Error"; then
+              # Only mark BOOT_ERROR if server responded 500-ish or body looks like runtime crash
+              if [ "${POST_HTTP}" = "500" ] || echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Module not found|SyntaxError"; then
+                status="BOOT_ERROR"
+              fi
+            fi
 
-Исправить import и CORS headers:
-```typescript
-// Было: import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { createClient } from "npm:@supabase/supabase-js@2";
+            # CORS check (warning only if function exists)
+            if [ "${OPT_HTTP}" = "404" ] || [ -z "${OPT_HTTP}" ]; then
+              # OPTIONS path not responding or function missing on OPTIONS
+              if [ "$status" = "OK" ]; then
+                status="CORS_404"
+              fi
+            else
+              # If allow-headers is missing x-supabase-client-* => warning
+              if [ "$status" = "OK" ]; then
+                if [ -z "$OPT_ALLOW_HEADERS" ]; then
+                  status="CORS_WARNING"
+                elif ! echo "$OPT_ALLOW_HEADERS" | grep -qi "x-supabase-client-platform"; then
+                  status="CORS_WARNING"
+                fi
+              fi
+            fi
+          fi
 
-// Было: 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-worker-token'
-'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-worker-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-'Access-Control-Allow-Methods': 'POST, OPTIONS',
-```
+          # Print compact line for log consumption
+          echo "${func}|${OPT_HTTP:-}|${POST_HTTP:-}|${status}|${OPT_ALLOW_METHODS:-}|${OPT_ALLOW_HEADERS:-}|${POST_BODY}"
+          SH
+          chmod +x audit_out/_audit_one.sh
 
-### B. Выдача доступа — добавить информацию о продукте
+          # Prepare JSON header
+          echo "[" > "$JSON"
+          first=1
 
-**Файл:** `supabase/functions/telegram-grant-access/index.ts`
+          # Run with controlled concurrency
+          export SUPABASE_URL AUDIT_ORIGIN
 
-Изменить запись в `telegram_logs` (строка ~671-678):
-```typescript
-// Получить название продукта/клуба
-const clubName = club.name || club.slug || 'Клуб';
+          # shellcheck disable=SC2016
+          run_one() {
+            local f="$1"
+            audit_out/_audit_one.sh "$f"
+          }
 
-// Запись в telegram_logs с расширенной meta
-await supabase.from('telegram_logs').insert({
-  user_id,
-  club_id: club.id,
-  action: is_manual ? 'MANUAL_GRANT' : 'AUTO_GRANT',
-  target: 'both',
-  status: (chatInviteLink || channelInviteLink) ? 'ok' : 'partial',
-  meta: { 
-    chat_invite_link: chatInviteLink, 
-    channel_invite_link: channelInviteLink, 
-    valid_until: activeUntil,
-    // НОВЫЕ ПОЛЯ:
-    club_name: clubName,
-    product_name: club.product_name || null,
-    access_end_date: activeUntil ? new Date(activeUntil).toLocaleDateString('ru-RU') : null,
-  },
-  // PATCH: Сохранить текст уведомления для отображения в чате
-  message_text: `🔑 Выдан доступ в "${clubName}" до ${activeUntil ? new Date(activeUntil).toLocaleDateString('ru-RU') : 'бессрочно'}`,
-});
-```
+          # Read list and parallelize
+          C_LIMIT="${CONCURRENCY_LIMIT:-8}"
+          if ! [[ "$C_LIMIT" =~ ^[0-9]+$ ]]; then C_LIMIT=8; fi
+          if [ "$C_LIMIT" -lt 1 ]; then C_LIMIT=1; fi
+          if [ "$C_LIMIT" -gt 20 ]; then C_LIMIT=20; fi
 
-**Файл:** `src/components/admin/ContactTelegramChat.tsx`
+          echo "Concurrency limit: $C_LIMIT" | tee -a "$LOG"
 
-Изменить отображение события `AUTO_GRANT` (строка ~820-848):
-```typescript
-// Вместо просто getEventLabel(event.action) показать расширенную информацию
-const getEventDisplayText = (event: TelegramEvent): string => {
-  const meta = event.meta as Record<string, unknown> | undefined;
-  
-  if (event.action === 'AUTO_GRANT' || event.action === 'MANUAL_GRANT') {
-    const clubName = meta?.club_name || meta?.product_name || '';
-    const validUntil = meta?.valid_until as string | undefined;
-    const accessEndDate = validUntil 
-      ? new Date(validUntil).toLocaleDateString('ru-RU')
-      : null;
-    
-    const prefix = event.action === 'AUTO_GRANT' ? 'Авто-выдача' : 'Ручная выдача';
-    
-    if (clubName && accessEndDate) {
-      return `${prefix}: ${clubName} до ${accessEndDate}`;
-    }
-    if (clubName) {
-      return `${prefix}: ${clubName}`;
-    }
-    if (accessEndDate) {
-      return `${prefix} до ${accessEndDate}`;
-    }
-  }
-  
-  return getEventLabel(event.action);
-};
-```
+          # Use xargs -P for parallel audit
+          export -f run_one || true
 
-### C. Email-история — улучшить запрос и backfill
+          # xargs will call subshell, so call script directly
+          mapfile -t lines < <(cat "$LIST" | xargs -I{} -P "$C_LIMIT" bash audit_out/_audit_one.sh "{}")
 
-**Файл:** `src/components/admin/ContactEmailHistory.tsx`
+          # Summaries
+          not_deployed=0
+          boot_error=0
+          cors_warn=0
+          cors_404=0
+          conn_failed=0
+          ok=0
 
-Расширить запрос для более надёжного поиска писем:
-```typescript
-// Добавить поиск по email даже если user_id/profile_id NULL
-const { data: emails, isLoading: isLoadingLogs } = useQuery({
-  queryKey: ["email-logs", userId, profileId, email],
-  queryFn: async () => {
-    // ОСНОВНОЙ ПРИОРИТЕТ: по email (самый надёжный)
-    if (email) {
-      const { data: byEmail, error } = await supabase
-        .from("email_logs")
-        .select("*")
-        .or(`to_email.eq.${email},from_email.eq.${email}`)
-        .order("created_at", { ascending: false })
-        .limit(50);
-      
-      if (!error && byEmail && byEmail.length > 0) {
-        return byEmail as EmailLog[];
-      }
-    }
-    
-    // FALLBACK: по user_id/profile_id
-    let query = supabase
-      .from("email_logs")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(50);
-    
-    const conditions: string[] = [];
-    if (userId) conditions.push(`user_id.eq.${userId}`);
-    if (profileId) conditions.push(`profile_id.eq.${profileId}`);
-    
-    if (conditions.length > 0) {
-      query = query.or(conditions.join(','));
-    }
-    
-    const { data, error } = await query;
-    if (error) throw error;
-    return data as EmailLog[];
-  },
-  enabled: !!(userId || profileId || email),
-});
-```
+          for line in "${lines[@]}"; do
+            IFS='|' read -r name opt_http post_http st allow_methods allow_headers snippet <<<"$line"
 
----
+            # log line
+            printf "%-40s OPT:%-4s POST:%-4s %-16s\n" "$name" "${opt_http:-}" "${post_http:-}" "$st" | tee -a "$LOG"
 
-## Технические изменения
+            # counters
+            case "$st" in
+              OK) ok=$((ok+1));;
+              NOT_DEPLOYED) not_deployed=$((not_deployed+1));;
+              BOOT_ERROR) boot_error=$((boot_error+1));;
+              CORS_WARNING) cors_warn=$((cors_warn+1));;
+              CORS_404) cors_404=$((cors_404+1));;
+              CONNECTION_FAILED) conn_failed=$((conn_failed+1));;
+              *) ;;
+            esac
 
-### Изменяемые файлы:
+            # JSON entry
+            esc_snippet="$(echo "${snippet:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            esc_hdrs="$(echo "${allow_headers:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            esc_meth="$(echo "${allow_methods:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 
-| Файл | Изменение |
-|------|-----------|
-| `supabase/functions.registry.txt` | +2 функции: `telegram-media-worker`, `telegram-media-worker-cron` |
-| `supabase/functions/telegram-media-worker/index.ts` | npm: import + полные CORS headers |
-| `supabase/functions/telegram-grant-access/index.ts` | Расширить meta в telegram_logs (product_name, club_name, access_end_date) + message_text |
-| `src/components/admin/ContactTelegramChat.tsx` | Показывать детали выдачи доступа (продукт, срок) |
-| `src/components/admin/ContactEmailHistory.tsx` | Приоритетный поиск по email вместо user_id |
+            entry="{\"name\":\"$name\",\"options_http\":\"${opt_http:-}\",\"post_http\":\"${post_http:-}\",\"status\":\"$st\",\"allow_methods\":\"$esc_meth\",\"allow_headers\":\"$esc_hdrs\",\"post_body_snippet\":\"$esc_snippet\"}"
 
----
+            if [ $first -eq 1 ]; then first=0; else echo "," >> "$JSON"; fi
+            echo "$entry" >> "$JSON"
+          done
 
-## Ожидаемый результат
+          echo "]" >> "$JSON"
 
-### После исправлений:
+          echo "" | tee -a "$LOG"
+          echo "=== SUMMARY ===" | tee -a "$LOG"
+          echo "OK=$ok" | tee -a "$LOG"
+          echo "NOT_DEPLOYED=$not_deployed" | tee -a "$LOG"
+          echo "BOOT_ERROR=$boot_error" | tee -a "$LOG"
+          echo "CORS_WARNING=$cors_warn" | tee -a "$LOG"
+          echo "CORS_404=$cors_404" | tee -a "$LOG"
+          echo "CONNECTION_FAILED=$conn_failed" | tee -a "$LOG"
+          echo "JSON=$JSON" | tee -a "$LOG"
 
-1. **Медиа в Telegram** — фото/видео от пользователей загружаются корректно (не "Загружается...")
+          echo "AUDIT_JSON=$JSON" >> $GITHUB_ENV
+          echo "AUDIT_LOG=$LOG" >> $GITHUB_ENV
 
-2. **Выдача доступа** — в чате отображается:
-   ```
-   🔑 Авто-выдача: Бухгалтерия как бизнес до 08.03.2026  06.02 15:39 ✓
-   ```
-   Вместо:
-   ```
-   Автоматическая выдача доступа  06.02 15:39 ✓
-   ```
+          # Fail conditions
+          if [ "${FAIL_ON_404}" = "true" ] && [ "$not_deployed" -gt 0 ]; then
+            echo "::error::Full audit found NOT_DEPLOYED functions: $not_deployed"
+            exit 1
+          fi
 
-3. **Email-история** — показываются все письма для контакта по его email (даже если user_id не заполнен)
+          if [ "${FAIL_ON_BOOT}" = "true" ] && [ "$boot_error" -gt 0 ]; then
+            echo "::error::Full audit found BOOT_ERROR functions: $boot_error"
+            exit 1
+          fi
 
----
+          echo "✅ Full audit completed (no blocking failures)."
 
-## DoD (Definition of Done)
-
-| Проверка | Критерий |
-|----------|----------|
-| Функции задеплоены | `curl POST /telegram-media-worker` → НЕ 404 |
-| Медиа загружаются | `media_jobs.status = 'ok'` после обработки |
-| Выдача информативна | В UI видно: продукт + дата окончания |
-| Email-история работает | Письма отображаются для любого контакта с email |
-
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: functions-full-audit
+          path: audit_out/
+          retention-days: 14
