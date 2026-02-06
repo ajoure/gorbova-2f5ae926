@@ -209,6 +209,11 @@ export function OlegSettingsSection() {
   const [localSliders, setLocalSliders] = useState<Record<string, number>>({});
   const [localTemplates, setLocalTemplates] = useState<Record<string, string>>({});
   const [localPackages, setLocalPackages] = useState<string[] | null>(null);
+  
+  // Bot identity state
+  const [localBotEnabled, setLocalBotEnabled] = useState<boolean | null>(null);
+  const [localBotName, setLocalBotName] = useState<string | null>(null);
+  const [localBotPosition, setLocalBotPosition] = useState<string | null>(null);
 
   // File upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -279,6 +284,11 @@ export function OlegSettingsSection() {
   const currentSliders = { ...DEFAULT_SLIDERS, ...dbSliders, ...localSliders };
   const currentTemplates = { ...DEFAULT_TEMPLATES, ...dbTemplates, ...localTemplates };
   const currentPackages = localPackages ?? dbPackages;
+  
+  // Bot identity
+  const currentBotEnabled = localBotEnabled ?? settings?.bot_enabled ?? false;
+  const currentBotName = localBotName ?? settings?.bot_name ?? "Олег";
+  const currentBotPosition = localBotPosition ?? settings?.bot_position ?? "AI-ассистент поддержки";
 
   // Save mutation
   const saveMutation = useMutation({
@@ -286,6 +296,9 @@ export function OlegSettingsSection() {
       if (!activeBotId) throw new Error("Нет активного бота");
       const { error } = await supabase.from("ai_bot_settings").upsert({
         bot_id: activeBotId,
+        bot_enabled: currentBotEnabled,
+        bot_name: currentBotName,
+        bot_position: currentBotPosition,
         style_preset: currentPreset,
         toggles: currentToggles,
         sliders: currentSliders,
@@ -303,6 +316,9 @@ export function OlegSettingsSection() {
       setLocalSliders({});
       setLocalTemplates({});
       setLocalPackages(null);
+      setLocalBotEnabled(null);
+      setLocalBotName(null);
+      setLocalBotPosition(null);
       toast.success("Настройки сохранены");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -465,10 +481,36 @@ export function OlegSettingsSection() {
 
   return (
     <GlassCard className="p-6">
+      {/* Header with master switch */}
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Bot className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold">🤖 Олег — AI-бот поддержки</h2>
+          <h2 className="text-lg font-semibold">🤖 {currentBotName} — {currentBotPosition}</h2>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={currentBotEnabled}
+                    onCheckedChange={v => { setLocalBotEnabled(v); setHasChanges(true); }}
+                  />
+                  <Badge variant={currentBotEnabled ? "default" : "secondary"} className={cn(
+                    "text-xs transition-colors",
+                    currentBotEnabled ? "bg-primary/10 text-primary border-primary/20" : ""
+                  )}>
+                    {currentBotEnabled ? "В бою" : "Выключен"}
+                  </Badge>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                <p className="text-sm">
+                  {currentBotEnabled 
+                    ? "Бот активен и автоматически отвечает на все входящие сообщения" 
+                    : "Бот выключен и не отвечает на сообщения"}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
         <Button onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending}>
           {saveMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
@@ -479,7 +521,43 @@ export function OlegSettingsSection() {
       {loadingSettings ? (
         <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
       ) : (
-        <Accordion type="multiple" defaultValue={["toggles", "style"]} className="space-y-4">
+        <Accordion type="multiple" defaultValue={["identity", "toggles", "style"]} className="space-y-4">
+          {/* Bot Identity */}
+          <AccordionItem value="identity" className="border rounded-lg px-4">
+            <AccordionTrigger>
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4" />
+                Имя и должность бота
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="pt-4 pb-2 space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <LabelWithTooltip 
+                    label="Имя бота" 
+                    tooltip="Имя, которым бот представляется пользователям. Используется в приветствии и подписи." 
+                  />
+                  <Input
+                    value={currentBotName}
+                    onChange={e => { setLocalBotName(e.target.value); setHasChanges(true); }}
+                    placeholder="Олег"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <LabelWithTooltip 
+                    label="Должность" 
+                    tooltip="Должность или роль бота. Отображается в заголовке и помогает пользователям понять, с кем они общаются." 
+                  />
+                  <Input
+                    value={currentBotPosition}
+                    onChange={e => { setLocalBotPosition(e.target.value); setHasChanges(true); }}
+                    placeholder="AI-ассистент поддержки"
+                  />
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
           {/* Toggles */}
           <AccordionItem value="toggles" className="border rounded-lg px-4">
             <AccordionTrigger>
