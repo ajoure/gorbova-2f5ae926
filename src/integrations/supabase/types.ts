@@ -41,7 +41,10 @@ export type Database = {
       ai_bot_settings: {
         Row: {
           active_prompt_packages: string[] | null
+          bot_enabled: boolean | null
           bot_id: string | null
+          bot_name: string | null
+          bot_position: string | null
           confidence_threshold: number | null
           created_at: string | null
           id: string
@@ -55,7 +58,10 @@ export type Database = {
         }
         Insert: {
           active_prompt_packages?: string[] | null
+          bot_enabled?: boolean | null
           bot_id?: string | null
+          bot_name?: string | null
+          bot_position?: string | null
           confidence_threshold?: number | null
           created_at?: string | null
           id?: string
@@ -69,7 +75,10 @@ export type Database = {
         }
         Update: {
           active_prompt_packages?: string[] | null
+          bot_enabled?: boolean | null
           bot_id?: string | null
+          bot_name?: string | null
+          bot_position?: string | null
           confidence_threshold?: number | null
           created_at?: string | null
           id?: string
