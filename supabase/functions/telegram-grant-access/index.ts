@@ -169,8 +169,11 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    
+    // Create service role client for all operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // ========== AUTH GUARD (PATCH-1) ==========
+    // ========== AUTH GUARD (PATCH-1 + PATCH-2: Service Role bypass) ==========
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(
@@ -180,41 +183,49 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
+    
+    // PATCH-2: Allow Service Role Key as valid auth (for system-to-system calls from queue processor)
+    const isServiceRoleCall = token === supabaseServiceKey;
+    
+    if (isServiceRoleCall) {
+      console.log('[telegram-grant-access] Service role call authorized');
+    } else {
+      // Standard user auth check
+      const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
 
-    if (authError || !user) {
-      console.error('[telegram-grant-access] Auth error:', authError?.message);
-      return new Response(
-        JSON.stringify({ error: 'Invalid token', code: 'INVALID_TOKEN' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check admin permission using service role
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
-      _user_id: user.id,
-      _permission_code: 'entitlements.manage',
-    });
-
-    if (!hasPermission) {
-      // Fallback: check admin/superadmin role
-      const { data: isAdmin } = await supabase.rpc('has_role', {
-        _user_id: user.id,
-        _role: 'admin',
-      });
-      const { data: isSuperAdmin } = await supabase.rpc('has_role', {
-        _user_id: user.id,
-        _role: 'superadmin',
-      });
-
-      if (!isAdmin && !isSuperAdmin) {
-        console.warn(`[telegram-grant-access] Forbidden: user ${user.id} lacks entitlements.manage`);
+      if (authError || !user) {
+        console.error('[telegram-grant-access] Auth error:', authError?.message);
         return new Response(
-          JSON.stringify({ error: 'Forbidden', code: 'INSUFFICIENT_PERMISSIONS' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'Invalid token', code: 'INVALID_TOKEN' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+      }
+
+      // Check admin permission using service role
+      const { data: hasPermission } = await supabase.rpc('has_permission', {
+        _user_id: user.id,
+        _permission_code: 'entitlements.manage',
+      });
+
+      if (!hasPermission) {
+        // Fallback: check admin/superadmin role
+        const { data: isAdmin } = await supabase.rpc('has_role', {
+          _user_id: user.id,
+          _role: 'admin',
+        });
+        const { data: isSuperAdmin } = await supabase.rpc('has_role', {
+          _user_id: user.id,
+          _role: 'superadmin',
+        });
+
+        if (!isAdmin && !isSuperAdmin) {
+          console.warn(`[telegram-grant-access] Forbidden: user ${user.id} lacks entitlements.manage`);
+          return new Response(
+            JSON.stringify({ error: 'Forbidden', code: 'INSUFFICIENT_PERMISSIONS' }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
     }
     // ========== END AUTH GUARD ==========

@@ -62,7 +62,7 @@ serve(async (req) => {
 
       try {
         if (item.action === "grant") {
-          // Call telegram-grant-access
+          // Call telegram-grant-access with Service Role token for authentication
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "telegram-grant-access",
             {
@@ -72,6 +72,9 @@ serve(async (req) => {
                 is_manual: false,
                 source: "auto_subscription",
                 source_id: item.subscription_id,
+              },
+              headers: {
+                Authorization: `Bearer ${supabaseKey}`,
               },
             }
           );
@@ -97,13 +100,16 @@ serve(async (req) => {
           results.push({ id: item.id, success: true });
 
         } else if (item.action === "revoke") {
-          // Call telegram-revoke-access
+          // Call telegram-revoke-access with Service Role token for authentication
           const { data: revokeResult, error: revokeError } = await supabase.functions.invoke(
             "telegram-revoke-access",
             {
               body: {
                 user_id: item.user_id,
                 club_id: item.club_id,
+              },
+              headers: {
+                Authorization: `Bearer ${supabaseKey}`,
               },
             }
           );

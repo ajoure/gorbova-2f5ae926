@@ -54,6 +54,12 @@ import {
   Music,
   Circle,
   Edit2,
+  CreditCard,
+  Package,
+  RefreshCcw,
+  AlertTriangle,
+  CheckCircle2,
+  Settings,
   Trash2,
   MoreVertical,
 } from "lucide-react";
@@ -132,20 +138,50 @@ const EMOJI_LIST = [
 ];
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
+  // Telegram linking
   LINK_SUCCESS: <Link className="w-3 h-3 text-green-500" />,
   RELINK_SUCCESS: <Link className="w-3 h-3 text-blue-500" />,
   UNLINK: <Unlink className="w-3 h-3 text-orange-500" />,
+  
+  // Access management
   AUTO_GRANT: <Key className="w-3 h-3 text-green-500" />,
   MANUAL_GRANT: <Key className="w-3 h-3 text-green-500" />,
   MANUAL_EXTEND: <Key className="w-3 h-3 text-blue-500" />,
   AUTO_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
   MANUAL_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
   AUTO_KICK_VIOLATOR: <UserMinus className="w-3 h-3 text-red-500" />,
+  "telegram.access_granted": <Key className="w-3 h-3 text-green-500" />,
+  "telegram.access_revoked": <UserMinus className="w-3 h-3 text-red-500" />,
+  "telegram.access_queued": <RefreshCcw className="w-3 h-3 text-blue-500" />,
+  
+  // Notifications
   manual_notification: <Bell className="w-3 h-3 text-blue-500" />,
   ADMIN_CHAT_MESSAGE: <MessageCircle className="w-3 h-3 text-primary" />,
   ADMIN_CHAT_FILE: <Paperclip className="w-3 h-3 text-primary" />,
+  
+  // Contacts
   CONTACT_MERGED: <UserPlus className="w-3 h-3 text-purple-500" />,
   CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
+  
+  // Billing / Subscriptions (NEW)
+  "subscription.charged": <CreditCard className="w-3 h-3 text-green-500" />,
+  "subscription.renewal_order_created": <Package className="w-3 h-3 text-blue-500" />,
+  "subscription.purchased": <CreditCard className="w-3 h-3 text-green-500" />,
+  "subscription.created": <Package className="w-3 h-3 text-blue-500" />,
+  "subscription.activated": <CheckCircle2 className="w-3 h-3 text-green-500" />,
+  "subscription.expired": <AlertTriangle className="w-3 h-3 text-orange-500" />,
+  "subscription.canceled": <AlertTriangle className="w-3 h-3 text-red-500" />,
+  "subscription.charge_failed": <AlertTriangle className="w-3 h-3 text-red-500" />,
+  "subscription.gc_sync_renewal_success": <RefreshCcw className="w-3 h-3 text-green-500" />,
+  "subscription.gc_sync_renewal_failed": <AlertTriangle className="w-3 h-3 text-orange-500" />,
+  
+  // Payments
+  "payment.success": <CreditCard className="w-3 h-3 text-green-500" />,
+  "payment.failed": <AlertTriangle className="w-3 h-3 text-red-500" />,
+  
+  // System
+  "system.trigger_fix_telegram_status": <Settings className="w-3 h-3 text-muted-foreground" />,
+  "telegram.backfill_grant": <RefreshCcw className="w-3 h-3 text-blue-500" />,
 };
 
 // PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
@@ -268,11 +304,53 @@ export function ContactTelegramChat({
     refetchOnWindowFocus: false,
   });
 
-  // Combine and sort messages + events
-  const chatItems: ChatItem[] = [...(messages || []), ...(events || [])]
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  // Fetch billing/subscription events from audit_logs
+  const { data: billingEvents, isLoading: billingLoading, refetch: refetchBilling } = useQuery({
+    queryKey: ["billing-events", userId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("audit_logs")
+        .select("id, action, created_at, meta")
+        .eq("target_user_id", userId)
+        .in("action", [
+          "subscription.charged",
+          "subscription.renewal_order_created",
+          "subscription.purchased",
+          "subscription.created",
+          "subscription.activated",
+          "subscription.expired",
+          "subscription.canceled",
+          "subscription.charge_failed",
+          "subscription.gc_sync_renewal_success",
+          "subscription.gc_sync_renewal_failed",
+          "payment.success",
+          "payment.failed",
+          "telegram.access_granted",
+          "telegram.access_revoked",
+          "telegram.backfill_grant",
+        ])
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (error) throw error;
+      return (data || []).map((e: any) => ({ 
+        ...e, 
+        type: "event",
+        status: "ok",
+      })) as TelegramEvent[];
+    },
+    enabled: !!userId,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
+  });
 
-  const isLoading = messagesLoading || eventsLoading;
+  // Combine and sort messages + telegram events + billing events
+  const chatItems: ChatItem[] = [
+    ...(messages || []), 
+    ...(events || []),
+    ...(billingEvents || []),
+  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  const isLoading = messagesLoading || eventsLoading || billingLoading;
 
   // Check if any messages have pending upload status
   const hasPendingMedia = useMemo(() => {
@@ -286,7 +364,8 @@ export function ContactTelegramChat({
   const refetch = useCallback(() => {
     refetchMessages();
     refetchEvents();
-  }, [refetchMessages, refetchEvents]);
+    refetchBilling();
+  }, [refetchMessages, refetchEvents, refetchBilling]);
 
   // Debounced refetch to prevent parallel requests on mobile
   const refetchTimerRef = useRef<number | null>(null);
