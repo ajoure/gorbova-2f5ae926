@@ -170,6 +170,22 @@ export const EVENT_LABELS: Record<string, string> = {
   // ===== Payment Diagnostics =====
   "payments.diagnostics.generated": "Сформирован отчёт диагностики платежей",
   "payments.diagnostics.exported": "Экспортирован отчёт диагностики",
+  
+  // ===== Subscription Charge Events (auto-renewal) =====
+  "subscription.charged": "💳 Автопродление успешно",
+  "subscription.renewal_order_created": "📦 Заказ продления создан",
+  "subscription.gc_sync_renewal_success": "🔄 Синхронизировано с GetCourse",
+  "subscription.gc_sync_renewal_failed": "⚠️ Ошибка синхронизации GetCourse",
+  "subscription.charge_failed": "❌ Ошибка автопродления",
+  "subscription.charge_skipped": "⏭ Автопродление пропущено",
+  
+  // ===== Telegram Access Queue =====
+  "telegram.access_queued": "📋 Доступ добавлен в очередь",
+  "telegram.queue_processed": "✅ Очередь доступов обработана",
+  
+  // ===== System fixes =====
+  "system.trigger_fix_telegram_status": "🔧 Исправлен триггер Telegram",
+  "telegram.backfill_grant": "🔄 Массовое восстановление доступов",
 };
 
 /**

@@ -1527,13 +1527,39 @@ async function chargeSubscription(
       }
       // === END PATCH: GC Sync ===
 
-      // Grant Telegram access
-      await supabase.functions.invoke('telegram-grant-access', {
-        body: {
-          user_id,
-          duration_days: tariff.access_days || 30,
-        },
-      });
+      // Grant Telegram access via queue (not direct function call - avoids auth issues)
+      // The queue is processed by pg_cron calling telegram-process-access-queue
+      try {
+        const { data: clubMappings } = await supabase
+          .from('product_club_mappings')
+          .select('club_id')
+          .eq('product_id', product_id)
+          .eq('is_active', true);
+
+        if (clubMappings && clubMappings.length > 0) {
+          for (const mapping of clubMappings) {
+            const { error: queueError } = await supabase
+              .from('telegram_access_queue')
+              .upsert({
+                user_id,
+                club_id: mapping.club_id,
+                subscription_id: id,
+                action: 'grant',
+                status: 'pending',
+              }, { onConflict: 'user_id,club_id,subscription_id,action' });
+
+            if (queueError) {
+              console.error('[TG-QUEUE] Failed to queue access grant:', queueError);
+            } else {
+              console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${mapping.club_id}`);
+            }
+          }
+        } else {
+          console.log('[TG-QUEUE] No active club mappings found for product:', product_id);
+        }
+      } catch (queueErr) {
+        console.error('[TG-QUEUE] Error queuing Telegram access:', queueErr);
+      }
 
       // Send success notifications
       await sendRenewalSuccessTelegram(
