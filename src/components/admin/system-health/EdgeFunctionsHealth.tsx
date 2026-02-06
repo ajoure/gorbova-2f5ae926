@@ -29,6 +29,13 @@ function StatusBadge({ status }: { status: EdgeFunctionStatus["status"] }) {
           Доступна
         </Badge>
       );
+    case "slow_preflight":
+      return (
+        <Badge variant="default" className="bg-yellow-500 hover:bg-yellow-600">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Доступна (медл. CORS)
+        </Badge>
+      );
     case "not_found":
       return (
         <Badge variant="destructive">
@@ -61,7 +68,7 @@ function StatusBadge({ status }: { status: EdgeFunctionStatus["status"] }) {
   }
 }
 
-function LatencyBadge({ latency }: { latency: number | null }) {
+function LatencyDisplay({ latency }: { latency: number | null }) {
   if (latency === null) return <span className="text-muted-foreground">—</span>;
   
   const color = latency < 300 ? "text-green-600" : latency < 1000 ? "text-yellow-600" : "text-red-600";
@@ -185,7 +192,7 @@ export function EdgeFunctionsHealth() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <LatencyBadge latency={fn.latency} />
+                      <LatencyDisplay latency={fn.latency} />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {fn.lastCheck 
