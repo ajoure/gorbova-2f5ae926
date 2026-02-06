@@ -83,6 +83,23 @@ interface ConversationContext {
 
 const LOVABLE_API_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 
+// =============================================
+// PRESET TO PACKAGE MAPPING (авто-включение пакета пресета)
+// =============================================
+const PRESET_TO_PACKAGE: Record<string, string> = {
+  strict: 'preset_strict',
+  diplomatic: 'preset_diplomatic',
+  legal: 'preset_legal',
+  friendly: 'preset_friendly',
+  sales: 'preset_sales',
+  support_calm: 'preset_support_calm',
+  concierge_premium: 'preset_concierge_premium',
+  safe_flirt: 'safe_flirt',
+  humor_irony: 'humor_rules',
+  crisis_deescalation: 'crisis_protocol',
+  flirt: 'safe_flirt', // alias
+};
+
 const PRESET_DESCRIPTIONS: Record<string, string> = {
   strict: 'Отвечай коротко, по делу, без смайлов и лишних слов. Дисциплина важнее теплоты.',
   diplomatic: 'Отвечай вежливо и спокойно, без давления. Уважай личное пространство собеседника.',
@@ -94,6 +111,7 @@ const PRESET_DESCRIPTIONS: Record<string, string> = {
   humor_irony: 'Используй мягкую иронию и юмор. Но никогда не шути над проблемами пользователя.',
   concierge_premium: 'Веди себя как премиум-консьерж. Очень заботливо, проактивно предлагай варианты.',
   crisis_deescalation: 'Максимум спокойствия, минимум слов. При необходимости сразу передай руководителю.',
+  safe_flirt: 'Общайся дружелюбно с лёгким галантным флиртом. При дискомфорте — сразу на "вы".',
 };
 
 const INTENT_KEYWORDS: Record<string, string[]> = {
@@ -166,7 +184,8 @@ function buildSystemPrompt(
   },
   productsCatalog: string,
   botIdentity: { name: string; position: string },
-  isFirstMessage: boolean
+  isNewDayConversation: boolean,
+  nameUsagePolicy: string
 ): string {
   const presetDescription = PRESET_DESCRIPTIONS[settings.style_preset] || PRESET_DESCRIPTIONS.friendly;
   
@@ -178,9 +197,15 @@ function buildSystemPrompt(
     `- Юмор: ${settings.sliders.humor_level}% (0=без юмора, 100=много иронии)`,
   ].join('\n');
   
-  // Collect active prompt packages
+  // АВТО-ВКЛЮЧЕНИЕ ПАКЕТА ПРЕСЕТА
+  const presetPackageCode = PRESET_TO_PACKAGE[settings.style_preset];
+  const effectivePackages = presetPackageCode 
+    ? [...new Set([presetPackageCode, ...settings.active_prompt_packages])]
+    : settings.active_prompt_packages;
+  
+  // Collect active prompt packages (с авто-включением пакета пресета)
   const packagesContent = promptPackages
-    .filter(p => settings.active_prompt_packages.includes(p.code))
+    .filter(p => effectivePackages.includes(p.code))
     .map(p => `=== ${p.code} ===\n${p.content}`)
     .join('\n\n');
   
@@ -210,14 +235,27 @@ function buildSystemPrompt(
     ? `== ШАБЛОНЫ (ИСПОЛЬЗУЙ ЕСЛИ УМЕСТНО) ==\n${templatesSection.join('\n')}`
     : '';
   
-  // First message greeting instruction
-  const greetingInstruction = isFirstMessage
-    ? `== ПЕРВОЕ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ ==
-Это ПЕРВОЕ сообщение от этого пользователя. ОБЯЗАТЕЛЬНО:
+  // GREETING ONCE PER DAY + NAME USAGE POLICY
+  const nameInstruction = nameUsagePolicy === 'never' 
+    ? 'НИКОГДА не обращайся по имени.'
+    : nameUsagePolicy === 'rare'
+    ? 'Используй имя ТОЛЬКО при приветствии в начале дня. В остальных ответах НЕ используй имя.'
+    : 'Можешь использовать имя умеренно.';
+  
+  const greetingInstruction = isNewDayConversation
+    ? `== НАЧАЛО НОВОГО ДНЯ ==
+Это первое сообщение от этого пользователя СЕГОДНЯ. ОБЯЗАТЕЛЬНО:
 1. Поздоровайся и представься: "Привет${userContext.firstName ? ', ' + userContext.firstName : ''}! Я ${botIdentity.name}${botIdentity.position ? ', ' + botIdentity.position : ''}."
 2. Спроси, чем можешь помочь
-3. Будь дружелюбным и открытым`
-    : '';
+3. Будь дружелюбным и открытым
+
+ПОСЛЕ ПРИВЕТСТВИЯ — НЕ представляйся повторно до следующего дня.`
+    : `== ПРОДОЛЖЕНИЕ ДИАЛОГА ==
+Пользователь УЖЕ писал сегодня. 
+- НЕ здоровайся снова
+- НЕ представляйся
+- ${nameInstruction}
+Просто отвечай по делу в выбранном стиле.`;
   
   return `Ты — ${botIdentity.name}, ${botIdentity.position} клуба «Буква закона» Катерины Горбовой.
 
@@ -541,7 +579,33 @@ Deno.serve(async (req) => {
       max_messages_per_minute: 10,
     };
     
-    // Check if AI is enabled
+    // ==========================================
+    // 2.1 BOT_ENABLED GUARD (master switch)
+    // ==========================================
+    const botEnabled = settingsRow?.bot_enabled ?? true;
+    if (!botEnabled) {
+      console.log(`[AI Support] Bot disabled via master switch for bot ${botId}`);
+      
+      // Audit log
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'telegram-ai-support',
+        action: 'telegram.ai.skipped',
+        meta: { telegram_user_id: telegramUserId, bot_id: botId, reason: 'bot_disabled' },
+      });
+      
+      return jsonResponse({
+        reply: null,
+        intent: 'unknown',
+        confidence: 0,
+        used_tools: [],
+        safety_flags: ['bot_disabled'],
+        skipped_reason: 'bot_disabled',
+      } as AISupportResponse);
+    }
+    
+    // Check if AI auto-reply is enabled
     if (!settings.toggles.auto_reply_enabled) {
       console.log(`[AI Support] Auto-reply disabled for bot ${botId}`);
       return jsonResponse({
@@ -553,6 +617,12 @@ Deno.serve(async (req) => {
         skipped_reason: 'auto_reply_disabled',
       } as AISupportResponse);
     }
+    
+    // Get additional settings for later use
+    const nameUsagePolicy = settingsRow?.name_usage_policy || 'rare';
+    const handoffEnabled = settingsRow?.handoff_enabled ?? true;
+    const adminNotifyEnabled = settingsRow?.admin_notify_enabled ?? true;
+    const holdAiWhenHandoff = settingsRow?.hold_ai_when_handoff_open ?? true;
     
     // ==========================================
     // 3. CHECK HANDOFF STATUS
@@ -649,6 +719,13 @@ Deno.serve(async (req) => {
       user_tone_preference: null,
     };
     
+    // ==========================================
+    // 6.1 GREETING ONCE PER DAY LOGIC
+    // ==========================================
+    const todayDate = new Date().toISOString().split('T')[0]; // "2026-02-06"
+    const lastGreetedDate = conversation?.last_greeted_date || null;
+    const isNewDayConversation = lastGreetedDate !== todayDate;
+    
     // Get subscriptions summary
     let subscriptionsSummary = 'Нет активных подписок';
     if (userId) {
@@ -692,20 +769,20 @@ Deno.serve(async (req) => {
     // ==========================================
     const { intent: detectedIntent, confidence: detectedConfidence } = detectIntent(messageText);
     
-    // Check if handoff needed
-    const needsHandoff = detectedIntent === 'handoff' || detectedConfidence < settings.confidence_threshold;
+    // Check if handoff needed (учитываем handoff_enabled)
+    const needsHandoff = (detectedIntent === 'handoff' || detectedConfidence < settings.confidence_threshold) && handoffEnabled;
     
     if (needsHandoff && settings.sliders.risk_aversion > 70) {
       // Create handoff
-      await supabase.from('ai_handoffs').insert({
+      const { data: newHandoff } = await supabase.from('ai_handoffs').insert({
         telegram_user_id: telegramUserId,
         user_id: userId,
         bot_id: botId,
         status: 'waiting_human',
         reason: detectedIntent === 'handoff' ? 'user_requested' : 'low_confidence',
         last_message_id: messageId,
-        meta: { detected_intent: detectedIntent, confidence: detectedConfidence },
-      });
+        meta: { detected_intent: detectedIntent, confidence: detectedConfidence, style_preset: settings.style_preset },
+      }).select('id').single();
       
       // Log audit
       await supabase.from('audit_logs').insert({
@@ -721,9 +798,50 @@ Deno.serve(async (req) => {
         },
       });
       
-      // Use custom template if set, otherwise AI will generate
+      // ==========================================
+      // 9.1 ADMIN NOTIFICATION (без PII)
+      // ==========================================
+      if (adminNotifyEnabled) {
+        // Очистка последнего сообщения от PII (email/phone)
+        const cleanedExcerpt = messageText
+          .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[email]')
+          .replace(/\+?\d[\d\s\-()]{8,}/g, '[phone]')
+          .substring(0, 200);
+        
+        await supabase.from('ai_admin_notifications').insert({
+          bot_id: botId,
+          telegram_user_id: telegramUserId,
+          handoff_id: newHandoff?.id,
+          status: 'new',
+          payload: {
+            reason: detectedIntent === 'handoff' ? 'user_requested' : 'low_confidence',
+            intent: detectedIntent,
+            confidence: detectedConfidence,
+            style_preset: settings.style_preset,
+            last_topics_summary: conversationContext.last_topics_summary || null,
+            last_user_message_excerpt: cleanedExcerpt,
+            chat_type: 'private',
+          },
+        });
+        
+        // Audit: admin notified
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'telegram-ai-support',
+          action: 'telegram.ai.admin_notified',
+          target_user_id: userId,
+          meta: {
+            telegram_user_id: telegramUserId,
+            handoff_id: newHandoff?.id,
+            notify_mode: settingsRow?.admin_notify_mode || 'inbox',
+          },
+        });
+      }
+      
+      // Use custom template if set, otherwise default
       const escalationReply = settings.templates.escalation_template?.trim() 
-        || 'Передаю ваш вопрос коллегам. Они свяжутся с вами в ближайшее время.';
+        || 'Понял. Сейчас позову руководителя. Оставайтесь в чате — вернёмся с ответом.';
       
       return jsonResponse({
         reply: escalationReply,
@@ -743,8 +861,8 @@ Deno.serve(async (req) => {
       position: settingsRow?.bot_position || 'AI-ассистент поддержки',
     };
     
-    // Check if this is first message
-    const isFirstMessage = !conversationContext.messages || conversationContext.messages.length === 0;
+    // Use isNewDayConversation instead of isFirstMessage for greeting logic
+    // isNewDayConversation учитывает last_greeted_date
     
     const systemPrompt = buildSystemPrompt(
       settings,
@@ -757,7 +875,8 @@ Deno.serve(async (req) => {
       },
       productsCatalog,
       botIdentity,
-      isFirstMessage
+      isNewDayConversation,
+      nameUsagePolicy
     );
     
     // ==========================================
@@ -896,6 +1015,7 @@ Deno.serve(async (req) => {
       last_message_at: new Date().toISOString(),
       last_intent: detectedIntent,
       last_confidence: detectedConfidence,
+      last_greeted_date: isNewDayConversation ? todayDate : (conversation?.last_greeted_date || todayDate),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'telegram_user_id,bot_id' });
     

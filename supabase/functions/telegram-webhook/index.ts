@@ -219,18 +219,27 @@ interface AIInvokeParams {
 
 async function invokeAISupport(supabase: any, params: AIInvokeParams) {
   try {
-    // Check if AI is enabled for this bot
+    // Check if AI is enabled for this bot (master switch + auto_reply)
     const { data: settings } = await supabase
       .from('ai_bot_settings')
-      .select('toggles')
+      .select('bot_enabled, toggles, hold_ai_when_handoff_open')
       .eq('bot_id', params.botId)
       .maybeSingle();
+    
+    // Master switch: bot_enabled
+    if (settings?.bot_enabled === false) {
+      console.log('[AI Support] Bot disabled via master switch for bot', params.botId);
+      return; // Входящие сообщения уже сохранены в БД, просто не отвечаем
+    }
     
     const toggles = settings?.toggles;
     if (!toggles?.auto_reply_enabled) {
       console.log('[AI Support] Auto-reply disabled for bot', params.botId);
       return;
     }
+    
+    // Check if hold_ai_when_handoff_open is enabled
+    const holdAiWhenHandoff = settings?.hold_ai_when_handoff_open ?? true;
     
     // Check for active handoff
     const { data: activeHandoff } = await supabase

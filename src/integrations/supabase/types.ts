@@ -38,56 +38,156 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_admin_notifications: {
+        Row: {
+          bot_id: string | null
+          created_at: string | null
+          handoff_id: string | null
+          id: string
+          payload: Json | null
+          status: string | null
+          telegram_user_id: number
+          updated_at: string | null
+        }
+        Insert: {
+          bot_id?: string | null
+          created_at?: string | null
+          handoff_id?: string | null
+          id?: string
+          payload?: Json | null
+          status?: string | null
+          telegram_user_id: number
+          updated_at?: string | null
+        }
+        Update: {
+          bot_id?: string | null
+          created_at?: string | null
+          handoff_id?: string | null
+          id?: string
+          payload?: Json | null
+          status?: string | null
+          telegram_user_id?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_admin_notifications_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_admin_notifications_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_admin_notifications_handoff_id_fkey"
+            columns: ["handoff_id"]
+            isOneToOne: false
+            referencedRelation: "ai_handoffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_bot_settings: {
         Row: {
           active_prompt_packages: string[] | null
+          admin_notify_enabled: boolean | null
+          admin_notify_mode: string | null
+          admin_notify_targets: Json | null
+          anger_policy: string | null
           bot_enabled: boolean | null
           bot_id: string | null
           bot_name: string | null
           bot_position: string | null
           confidence_threshold: number | null
           created_at: string | null
+          followup_cooldown_minutes: number | null
+          followup_enabled: boolean | null
+          greeting_policy: string | null
+          handoff_enabled: boolean | null
+          hold_ai_when_handoff_open: boolean | null
           id: string
+          max_handoff_per_day: number | null
+          max_handoff_per_hour: number | null
           max_messages_per_minute: number | null
+          message_limit_per_minute: number | null
+          name_usage_policy: string | null
+          payment_link_limit_per_10min: number | null
           quiet_hours: Json | null
           sliders: Json | null
           style_preset: string | null
           templates: Json | null
           toggles: Json | null
+          unknown_policy: string | null
           updated_at: string | null
         }
         Insert: {
           active_prompt_packages?: string[] | null
+          admin_notify_enabled?: boolean | null
+          admin_notify_mode?: string | null
+          admin_notify_targets?: Json | null
+          anger_policy?: string | null
           bot_enabled?: boolean | null
           bot_id?: string | null
           bot_name?: string | null
           bot_position?: string | null
           confidence_threshold?: number | null
           created_at?: string | null
+          followup_cooldown_minutes?: number | null
+          followup_enabled?: boolean | null
+          greeting_policy?: string | null
+          handoff_enabled?: boolean | null
+          hold_ai_when_handoff_open?: boolean | null
           id?: string
+          max_handoff_per_day?: number | null
+          max_handoff_per_hour?: number | null
           max_messages_per_minute?: number | null
+          message_limit_per_minute?: number | null
+          name_usage_policy?: string | null
+          payment_link_limit_per_10min?: number | null
           quiet_hours?: Json | null
           sliders?: Json | null
           style_preset?: string | null
           templates?: Json | null
           toggles?: Json | null
+          unknown_policy?: string | null
           updated_at?: string | null
         }
         Update: {
           active_prompt_packages?: string[] | null
+          admin_notify_enabled?: boolean | null
+          admin_notify_mode?: string | null
+          admin_notify_targets?: Json | null
+          anger_policy?: string | null
           bot_enabled?: boolean | null
           bot_id?: string | null
           bot_name?: string | null
           bot_position?: string | null
           confidence_threshold?: number | null
           created_at?: string | null
+          followup_cooldown_minutes?: number | null
+          followup_enabled?: boolean | null
+          greeting_policy?: string | null
+          handoff_enabled?: boolean | null
+          hold_ai_when_handoff_open?: boolean | null
           id?: string
+          max_handoff_per_day?: number | null
+          max_handoff_per_hour?: number | null
           max_messages_per_minute?: number | null
+          message_limit_per_minute?: number | null
+          name_usage_policy?: string | null
+          payment_link_limit_per_10min?: number | null
           quiet_hours?: Json | null
           sliders?: Json | null
           style_preset?: string | null
           templates?: Json | null
           toggles?: Json | null
+          unknown_policy?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -7345,6 +7445,7 @@ export type Database = {
           created_at: string | null
           id: string
           last_confidence: number | null
+          last_greeted_date: string | null
           last_intent: string | null
           last_message_at: string | null
           last_topics_summary: string | null
@@ -7360,6 +7461,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_confidence?: number | null
+          last_greeted_date?: string | null
           last_intent?: string | null
           last_message_at?: string | null
           last_topics_summary?: string | null
@@ -7375,6 +7477,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_confidence?: number | null
+          last_greeted_date?: string | null
           last_intent?: string | null
           last_message_at?: string | null
           last_topics_summary?: string | null
