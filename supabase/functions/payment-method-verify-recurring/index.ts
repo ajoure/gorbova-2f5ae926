@@ -91,6 +91,63 @@ function calculateBackoff(attempt: number): number {
   return delays[Math.min(attempt, delays.length - 1)] * 1000;
 }
 
+// P0.5: Check if PM meta needs update (STOP-guard)
+function shouldUpdatePmMeta(
+  existingMeta: Record<string, unknown>,
+  newAttempt: number,
+  newNextRetry?: string | null
+): boolean {
+  const currentAttempt = existingMeta.verify_attempt;
+  const currentNextRetry = existingMeta.verify_next_retry_at;
+  
+  // Update if attempt changed OR next_retry changed
+  if (currentAttempt !== newAttempt) return true;
+  if (newNextRetry && currentNextRetry !== newNextRetry) return true;
+  
+  return false;
+}
+
+// P0.5: Update PM meta with verify_* fields (merge-only, with STOP-guard)
+async function updatePmVerifyMeta(
+  supabase: any,
+  pmId: string,
+  patch: Record<string, unknown>,
+  force = false
+): Promise<boolean> {
+  const existingMeta = await getExistingMeta(supabase, pmId);
+  
+  // STOP-guard: check if anything actually changed
+  if (!force) {
+    const newAttempt = patch.verify_attempt as number | undefined;
+    const newNextRetry = patch.verify_next_retry_at as string | undefined;
+    
+    if (newAttempt !== undefined && !shouldUpdatePmMeta(existingMeta, newAttempt, newNextRetry)) {
+      console.log(`[STOP-guard] PM ${pmId}: meta unchanged, skipping update`);
+      return false;
+    }
+  }
+  
+  // Merge only non-null values from patch
+  const cleanPatch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined && value !== null) {
+      cleanPatch[key] = value;
+    }
+  }
+  
+  const { error } = await supabase.from('payment_methods').update({
+    meta: { ...existingMeta, ...cleanPatch },
+  }).eq('id', pmId);
+  
+  if (error) {
+    console.error(`[updatePmVerifyMeta] PM ${pmId} error:`, error);
+    return false;
+  }
+  
+  console.log(`[updatePmVerifyMeta] PM ${pmId} updated:`, Object.keys(cleanPatch).join(', '));
+  return true;
+}
+
 interface VerificationJob {
   id: string;
   payment_method_id: string;
@@ -527,6 +584,19 @@ Deno.serve(async (req) => {
         console.log(`[job ${job.id}] Created ledger payment ${ledgerPayment?.id} for verification`);
       }
 
+      // P0.5: Immediately write verify_* meta to PM after ledger creation (BEFORE charge)
+      const currentAttempt = job.attempt_count + 1;
+      const nowIso = new Date().toISOString();
+      
+      await updatePmVerifyMeta(supabase, pm.id, {
+        verify_tracking_id: trackingId,
+        verify_payment_id: ledgerPayment?.id,
+        verify_job_id: job.id,
+        verify_attempt: currentAttempt,
+        verify_started_at: nowIso,
+        verify_last_status: 'processing',
+      }, true); // force=true for initial write
+
       // ========== SYSTEM ACTOR audit: verification started ==========
       await supabase.from('audit_logs').insert({
         actor_type: 'system',
@@ -539,6 +609,9 @@ Deno.serve(async (req) => {
           job_id: job.id,
           tracking_id: trackingId,
           ledger_payment_id: ledgerPayment?.id,
+          verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+          verify_job_id: job.id,
+          verify_attempt: currentAttempt,
         },
       });
 
@@ -662,6 +735,9 @@ Deno.serve(async (req) => {
             http_status: httpStatus,
             tx_uid: txUid,
             tx_code: txCode,
+            verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+            verify_job_id: job.id,
+            verify_attempt: job.attempt_count + 1,
           },
         });
         
@@ -736,6 +812,9 @@ Deno.serve(async (req) => {
               ledger_payment_id: ledgerPayment?.id,
               tx_uid: txUid,
               tx_code: txCode,
+              verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+              verify_job_id: job.id,
+              verify_attempt: newAttempt,
             },
           });
           
@@ -743,15 +822,25 @@ Deno.serve(async (req) => {
         } else {
           // Schedule retry (but ledger already failed for THIS attempt)
           const backoffMs = calculateBackoff(newAttempt);
-          const nextRetry = new Date(Date.now() + backoffMs).toISOString();
+          const nextRetryISO = new Date(Date.now() + backoffMs).toISOString();
           
           await supabase.from('payment_method_verification_jobs').update({
             status: 'pending',
             attempt_count: newAttempt,
-            next_retry_at: nextRetry,
+            next_retry_at: nextRetryISO,
             last_error: `gateway_error: HTTP ${httpStatus}`,
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
+          
+          // P0.5: Update PM meta with retry info (with STOP-guard)
+          await updatePmVerifyMeta(supabase, pm.id, {
+            verify_last_error_short: txMessage?.slice(0, 120) || `HTTP ${httpStatus}`,
+            verify_last_http_status: httpStatus,
+            verify_next_retry_at: nextRetryISO,
+            verify_last_attempt_at: new Date().toISOString(),
+            verify_attempt: newAttempt,
+            verify_last_status: 'retry_scheduled',
+          });
           
           // SYSTEM ACTOR audit: retry scheduled (PATCH-1: no raw)
           await supabase.from('audit_logs').insert({
@@ -765,9 +854,12 @@ Deno.serve(async (req) => {
               job_id: job.id,
               reason: 'gateway_error',
               attempt: newAttempt,
-              next_retry_at: nextRetry,
+              next_retry_at: nextRetryISO,
               http_status: httpStatus,
               message_short: txMessage?.slice(0, 120),
+              verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+              verify_job_id: job.id,
+              verify_attempt: newAttempt,
             },
           });
           
@@ -892,6 +984,9 @@ Deno.serve(async (req) => {
             refund_http_status: refundHttpStatus,
             refund_code: refundCode,
             ledger_payment_id: ledgerPayment?.id,
+            verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+            verify_job_id: job.id,
+            verify_attempt: job.attempt_count + 1,
           },
         });
 
@@ -1010,6 +1105,9 @@ Deno.serve(async (req) => {
             reason: '3ds_required',
             ledger_payment_id: ledgerPayment?.id,
             http_status: httpStatus,
+            verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+            verify_job_id: job.id,
+            verify_attempt: job.attempt_count + 1,
           },
         });
 
@@ -1044,6 +1142,15 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
+        // P0.5: Update PM meta with rate_limit retry info
+        await updatePmVerifyMeta(supabase, pm.id, {
+          verify_last_error_short: 'Rate limited',
+          verify_last_http_status: httpStatus,
+          verify_next_retry_at: nextRetry,
+          verify_last_attempt_at: new Date().toISOString(),
+          verify_last_status: 'rate_limited',
+        });
+        
         // PATCH-1: no raw in rate_limited audit
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
@@ -1056,6 +1163,9 @@ Deno.serve(async (req) => {
             next_retry_at: nextRetry, 
             http_status: httpStatus,
             tx_code: txCode,
+            payment_method_id: pm.id, // P0.5: add PM reference
+            verify_job_id: job.id,
+            verify_attempt: job.attempt_count + 1,
           },
         });
       }
@@ -1106,6 +1216,9 @@ Deno.serve(async (req) => {
               tx_code: txCode,
               http_status: httpStatus,
               ledger_payment_id: ledgerPayment?.id,
+              verify_payment_id: ledgerPayment?.id, // P0.5: verify_* links
+              verify_job_id: job.id,
+              verify_attempt: newAttempt,
             },
           });
 
@@ -1127,17 +1240,27 @@ Deno.serve(async (req) => {
         } else {
           // Retry with backoff
           const backoffMs = calculateBackoff(newAttempt);
-          const nextRetry = new Date(Date.now() + backoffMs).toISOString();
+          const nextRetryISO = new Date(Date.now() + backoffMs).toISOString();
 
           await supabase.from('payment_method_verification_jobs').update({
             status: 'pending',
             attempt_count: newAttempt,
-            next_retry_at: nextRetry,
+            next_retry_at: nextRetryISO,
             last_error: txMessage,
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
 
-          console.log(`[job ${job.id}] Scheduled retry at ${nextRetry}`);
+          // P0.5: Update PM meta with retry info (with STOP-guard)
+          await updatePmVerifyMeta(supabase, pm.id, {
+            verify_last_error_short: txMessage?.slice(0, 120) || 'Unknown error',
+            verify_last_http_status: httpStatus,
+            verify_next_retry_at: nextRetryISO,
+            verify_last_attempt_at: new Date().toISOString(),
+            verify_attempt: newAttempt,
+            verify_last_status: 'retry_scheduled',
+          });
+
+          console.log(`[job ${job.id}] Scheduled retry at ${nextRetryISO}`);
           results.retried++;
         }
       }
