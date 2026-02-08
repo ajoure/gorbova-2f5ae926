@@ -6,11 +6,62 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+// Build stamp for deployment verification
+const BUILD_STAMP = 'pm-verify-ledger-v2-2026-02-08';
+
 // 3DS-related error codes from bePaid that indicate card requires 3DS for each transaction
 const REQUIRES_3DS_CODES = ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'];
 
 // Rate limit / temporary error codes that should trigger retry
 const RETRIABLE_CODES = ['G.9999', 'N.1001', 'N.1002', 'N.1003'];
+
+// Bank decline messages that indicate card is NOT suitable for MIT (not retryable)
+const BANK_DECLINE_PATTERNS = [
+  'do not honor',
+  'do_not_honor',
+  'decline',
+  'declined',
+  'отказано',
+  'insufficient funds',
+  'недостаточно средств',
+];
+
+// Bank decline codes that are NOT retryable
+const BANK_DECLINE_CODES = ['05', '51', '61', '04', '14'];
+
+// Helper: Check if error is a bank decline (not retryable)
+function isBankDecline(message: string | undefined, code: string | undefined): boolean {
+  if (!message && !code) return false;
+  
+  const msgLower = (message || '').toLowerCase();
+  const codeStr = (code || '').toString();
+  
+  // Check message patterns
+  if (BANK_DECLINE_PATTERNS.some(pattern => msgLower.includes(pattern))) {
+    return true;
+  }
+  
+  // Check decline codes
+  if (BANK_DECLINE_CODES.includes(codeStr)) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Helper: Extract gateway message from various response formats
+function extractGatewayMessage(httpStatus: number, json: any, rawText?: string): string {
+  const txMessage = json?.transaction?.message;
+  const respMessage = json?.message;
+  const respError = json?.error;
+  
+  if (txMessage) return txMessage;
+  if (respMessage) return respMessage;
+  if (respError) return typeof respError === 'string' ? respError : JSON.stringify(respError);
+  if (rawText && rawText.length < 200) return rawText;
+  
+  return `HTTP ${httpStatus}`;
+}
 
 function calculateBackoff(attempt: number): number {
   // Exponential backoff: 1min, 5min, 15min, 30min, 60min
@@ -496,27 +547,48 @@ Deno.serve(async (req) => {
 
       console.log(`[job ${job.id}] Attempting test charge for card ${pm.brand} ****${pm.last4}, testMode=${testMode}`);
 
-      const chargeResp = await fetch('https://gateway.bepaid.by/transactions/payments', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${bepaidAuth}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-API-Version': '2',
-        },
-        body: JSON.stringify(chargePayload),
-      });
+      let chargeResp: Response;
+      let chargeResult: any;
+      let httpStatus: number;
+      let rawChargeText: string;
+      
+      try {
+        chargeResp = await fetch('https://gateway.bepaid.by/transactions/payments', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${bepaidAuth}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-API-Version': '2',
+          },
+          body: JSON.stringify(chargePayload),
+        });
+        
+        httpStatus = chargeResp.status;
+        rawChargeText = await chargeResp.text();
+        
+        // Safe JSON parse
+        try {
+          chargeResult = JSON.parse(rawChargeText);
+        } catch {
+          chargeResult = { message: rawChargeText.slice(0, 200) };
+        }
+      } catch (fetchError) {
+        // Network error - treat as retryable gateway error
+        console.error(`[job ${job.id}] Network error:`, fetchError);
+        httpStatus = 0;
+        chargeResult = { message: fetchError instanceof Error ? fetchError.message : 'Network error' };
+        rawChargeText = '';
+      }
 
-      const httpStatus = chargeResp.status;
-      const chargeResult = await chargeResp.json();
-      const txStatus = chargeResult.transaction?.status;
-      const txCode = chargeResult.transaction?.code;
-      const txUid = chargeResult.transaction?.uid;
-      const txMessage = chargeResult.transaction?.message || chargeResult.message;
+      const txStatus = chargeResult?.transaction?.status;
+      const txCode = chargeResult?.transaction?.code;
+      const txUid = chargeResult?.transaction?.uid;
+      const txMessage = extractGatewayMessage(httpStatus, chargeResult, rawChargeText);
 
-      console.log(`[job ${job.id}] Charge result: http=${httpStatus}, status=${txStatus}, code=${txCode}, uid=${txUid}`);
+      console.log(`[job ${job.id}] Charge result: http=${httpStatus}, status=${txStatus}, code=${txCode}, uid=${txUid}, msg=${txMessage?.slice(0, 100)}`);
 
-      // FIX #5: Build raw response for audit logs
+      // Build raw response for audit logs
       const rawChargeResponse = {
         http_status: httpStatus,
         tx_status: txStatus,
@@ -524,6 +596,161 @@ Deno.serve(async (req) => {
         tx_message: txMessage,
         tx_uid: txUid,
       };
+
+      // ============================================================
+      // PATCH-2: BANK DECLINE CHECK (not retryable) — Do not honor, etc.
+      // ============================================================
+      const bankDecline = isBankDecline(txMessage, txCode);
+      
+      if (bankDecline) {
+        console.log(`[job ${job.id}] Bank decline detected: ${txMessage}`);
+        
+        // Update ledger to failed
+        if (ledgerPayment?.id) {
+          await supabase.from('payments_v2').update({
+            status: 'failed',
+            error_message: `bank_decline: ${txMessage?.slice(0, 100) || 'declined'}`,
+          }).eq('id', ledgerPayment.id);
+        }
+        
+        // Update payment method to rejected (NOT retryable)
+        await supabase.from('payment_methods').update({
+          verification_status: 'rejected',
+          verification_error: `Карта отклонена банком: ${txMessage?.slice(0, 100) || 'отказано'}`,
+          verification_checked_at: new Date().toISOString(),
+          recurring_verified: false,
+          meta: {
+            verify_tracking_id: trackingId,
+            verify_payment_id: ledgerPayment?.id,
+            rejection_reason: 'bank_decline',
+            bank_message: txMessage,
+          },
+        }).eq('id', pm.id);
+        
+        // Close job as failed
+        await supabase.from('payment_method_verification_jobs').update({
+          status: 'failed',
+          last_error: `bank_decline: ${txMessage}`,
+          updated_at: new Date().toISOString(),
+        }).eq('id', job.id);
+        
+        // SYSTEM ACTOR audit: card.verification.rejected
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'payment-method-verify-recurring',
+          action: 'card.verification.rejected',
+          meta: {
+            payment_method_id: pm.id,
+            user_id: pm.user_id,
+            last4: pm.last4,
+            brand: pm.brand,
+            reason: 'bank_decline',
+            message: txMessage,
+            ledger_payment_id: ledgerPayment?.id,
+            raw: rawChargeResponse,
+          },
+        });
+        
+        // Send notification
+        try {
+          await sendNotification(supabaseUrl, supabaseServiceKey, pm.user_id, 
+            'card_not_suitable_for_autopay', { id: pm.id, brand: pm.brand, last4: pm.last4 });
+          results.notified++;
+        } catch (e) {
+          console.error(`[job ${job.id}] Notification failed:`, e);
+        }
+        
+        results.rejected++;
+        continue; // Next job
+      }
+      
+      // ============================================================
+      // PATCH-1: HTTP 500 / GATEWAY ERROR HANDLING (retryable but finalize ledger)
+      // ============================================================
+      if (httpStatus >= 500 || httpStatus === 0 || !chargeResult?.transaction) {
+        console.log(`[job ${job.id}] Gateway error: http=${httpStatus}, no transaction`);
+        
+        // Update ledger to failed IMMEDIATELY (don't leave in processing)
+        if (ledgerPayment?.id) {
+          await supabase.from('payments_v2').update({
+            status: 'failed',
+            error_message: `gateway_error: HTTP ${httpStatus} - ${txMessage?.slice(0, 100) || 'no response'}`,
+          }).eq('id', ledgerPayment.id);
+        }
+        
+        const newAttempt = job.attempt_count + 1;
+        const maxAttempts = job.max_attempts || 5;
+        
+        if (newAttempt >= maxAttempts) {
+          // Max attempts exhausted → finalize as failed
+          await supabase.from('payment_methods').update({
+            verification_status: 'failed',
+            verification_error: `Ошибка шлюза после ${newAttempt} попыток: ${txMessage?.slice(0, 100) || 'нет ответа'}`,
+            verification_checked_at: new Date().toISOString(),
+          }).eq('id', pm.id);
+          
+          await supabase.from('payment_method_verification_jobs').update({
+            status: 'failed',
+            attempt_count: newAttempt,
+            last_error: `gateway_error_max_attempts: HTTP ${httpStatus}`,
+            updated_at: new Date().toISOString(),
+          }).eq('id', job.id);
+          
+          // SYSTEM ACTOR audit
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'payment-method-verify-recurring',
+            action: 'card.verification.failed',
+            meta: {
+              payment_method_id: pm.id,
+              user_id: pm.user_id,
+              reason: 'gateway_error_max_attempts',
+              attempts: newAttempt,
+              http_status: httpStatus,
+              message: txMessage,
+              ledger_payment_id: ledgerPayment?.id,
+              raw: rawChargeResponse,
+            },
+          });
+          
+          results.failed++;
+        } else {
+          // Schedule retry (but ledger already failed for THIS attempt)
+          const backoffMs = calculateBackoff(newAttempt);
+          const nextRetry = new Date(Date.now() + backoffMs).toISOString();
+          
+          await supabase.from('payment_method_verification_jobs').update({
+            status: 'pending',
+            attempt_count: newAttempt,
+            next_retry_at: nextRetry,
+            last_error: `gateway_error: HTTP ${httpStatus}`,
+            updated_at: new Date().toISOString(),
+          }).eq('id', job.id);
+          
+          // SYSTEM ACTOR audit: retry scheduled
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'payment-method-verify-recurring',
+            action: 'card.verification.retry_scheduled',
+            meta: {
+              payment_method_id: pm.id,
+              job_id: job.id,
+              reason: 'gateway_error',
+              attempt: newAttempt,
+              next_retry_at: nextRetry,
+              http_status: httpStatus,
+              raw: rawChargeResponse,
+            },
+          });
+          
+          results.retried++;
+        }
+        
+        continue; // Next job
+      }
 
       // === CASE A: SUCCESS → Refund ===
       if (txStatus === 'successful') {
@@ -910,6 +1137,7 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({
     mode: 'execute',
+    build_stamp: BUILD_STAMP,
     processed: jobs.length,
     results,
     rate_limit_hit: rateLimitHit,
