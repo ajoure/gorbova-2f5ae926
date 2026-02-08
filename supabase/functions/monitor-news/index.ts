@@ -76,20 +76,37 @@ type ErrorClass =
   | "UNKNOWN";
 
 function classifyError(statusCode: string | number | undefined, message?: string): ErrorClass {
-  const code = String(statusCode);
+  const code = String(statusCode || "");
   
+  // P0.9.1-3: Handle RSS prefixed codes (recursive)
+  if (code.startsWith("RSS_HTTP_")) {
+    return classifyError(code.replace("RSS_HTTP_", ""), message);
+  }
+  if (code.startsWith("RSS_") && (code.includes("TIMEOUT") || code.includes("ERROR"))) {
+    return "TIMEOUT_RENDER";
+  }
+  
+  // Handle auth/session codes
+  if (code === "auth_required" || code === "no_session") return "BLOCKED_OR_AUTH";
+  if (code === "no_api_key") return "NO_API_KEY";
+  
+  // HTTP status codes
   if (code === "404" || code === "410") return "URL_INVALID";
   if (code === "400") return "BAD_REQUEST";
   if (code === "401" || code === "403") return "BLOCKED_OR_AUTH";
+  if (code === "408") return "TIMEOUT_RENDER"; // Request Timeout
   if (code === "429") return "RATE_LIMIT";
-  if (code === "500" || code === "502" || code === "503" || code === "504") return "SERVER_ERROR";
+  if (/^5\d{2}$/.test(code)) return "SERVER_ERROR";
+  
+  // Timeout/network patterns
   if (code === "timeout" || message?.toLowerCase().includes("timeout") || message?.toLowerCase().includes("network")) {
     return "TIMEOUT_RENDER";
   }
+  
+  // Parse errors
   if (message?.toLowerCase().includes("parse") || message?.toLowerCase().includes("json") || message?.toLowerCase().includes("xml")) {
     return "PARSER_ERROR";
   }
-  if (code === "no_api_key") return "NO_API_KEY";
   
   return "UNKNOWN";
 }
@@ -285,17 +302,22 @@ async function runScraping(
     // Get iLex session for authenticated sources
     const ilexSession = await getIlexSession();
 
-    // Get active sources
+    // P0.9.1-6: Get active sources with rotation (oldest first, NULL first)
+    // SOURCES_PER_RUN can be configured, default 25, hard cap 50
+    const sourcesPerRun = Math.min(Math.max(limit, 25), 50);
+    
     let query = supabase
       .from("news_sources")
       .select("*")
-      .eq("is_active", true)
-      .order("priority", { ascending: false });
+      .eq("is_active", true);
 
     if (sourceId) {
       query = query.eq("id", sourceId);
     } else {
-      query = query.limit(limit);
+      // P0.9.1-6: Order by oldest last_scraped_at (NULL = never scraped = highest priority)
+      query = query
+        .order("last_scraped_at", { ascending: true, nullsFirst: true })
+        .limit(sourcesPerRun);
     }
 
     const { data: sources, error: sourcesError } = await query;
@@ -577,7 +599,8 @@ async function parseRssFeed(url: string): Promise<{ items: ScrapedItem[]; error?
     const items: ScrapedItem[] = [];
 
     // Parse RSS XML without heavy dependencies
-    const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/gi);
+    // P0.9.1-1: Improved regex with \b to match <item> with attributes
+    const itemMatches = xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi);
     
     let count = 0;
     for (const match of itemMatches) {
@@ -614,23 +637,42 @@ async function parseRssFeed(url: string): Promise<{ items: ScrapedItem[]; error?
   }
 }
 
+// P0.9.1-1: Improved extractXmlField with proper CDATA handling
 function extractXmlField(xml: string, fieldName: string): string | null {
-  // Handle both regular and CDATA content
-  const regex = new RegExp(`<${fieldName}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${fieldName}>`, 'i');
+  // Escape special regex characters in field name (e.g., content:encoded)
+  const escapedName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
+  // Match opening tag with optional attributes, then CDATA or plain content, then closing tag
+  const regex = new RegExp(
+    `<${escapedName}(?:\\s[^>]*)?>` +           // Opening tag with optional attributes
+    `(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|` +    // CDATA content (group 1) OR
+    `([\\s\\S]*?))` +                            // Plain content (group 2)
+    `</${escapedName}>`,
+    'i'
+  );
+  
   const match = xml.match(regex);
-  return match ? match[1].trim() : null;
+  if (!match) return null;
+  
+  // Return CDATA content (group 1) or plain content (group 2)
+  const content = match[1] ?? match[2];
+  return content?.trim() ?? null;
 }
 
+// P0.9.1-1: Improved decodeHtmlEntities with full entity support
 function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
-    .replace(/<[^>]+>/g, "") // Remove HTML tags
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/<[^>]+>/g, "")   // Remove HTML tags
+    .replace(/\s+/g, " ")       // Normalize whitespace
     .trim();
 }
 
@@ -718,7 +760,8 @@ async function scrapeSourceWithFallback(
   const initialProxyMode = config.proxy_mode || "auto";
   
   console.log(`[monitor-news] ${source.name}: STAGE 2 - HTML scrape (proxy: ${initialProxyMode})...`);
-  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, initialProxyMode);
+  // P0.9.1-2: Pass ilexSession to scrapeUrlWithProxy
+  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, initialProxyMode, ilexSession);
   
   await logScrapeAttempt(
     supabase, source, `html_${initialProxyMode}`, source.url, initialProxyMode,
@@ -745,7 +788,8 @@ async function scrapeSourceWithFallback(
   // ===== STAGE 3: HTML enhanced (if auto failed with retryable error) =====
   if (initialProxyMode !== "enhanced" && shouldRetryWithEnhanced(htmlResult1.errorCode)) {
     console.log(`[monitor-news] ${source.name}: STAGE 3 - retrying with enhanced proxy...`);
-    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, "enhanced");
+    // P0.9.1-2: Pass ilexSession to retry
+    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "html_enhanced", source.url, "enhanced",
@@ -775,7 +819,8 @@ async function scrapeSourceWithFallback(
     console.log(`[monitor-news] ${source.name}: STAGE 4 - trying fallback URL...`);
     
     // Try fallback with enhanced proxy directly
-    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey, effectiveCountry, "enhanced");
+    // P0.9.1-2: Pass ilexSession to fallback
+    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "fallback", config.fallback_url, "enhanced",
@@ -800,17 +845,27 @@ async function scrapeSourceWithFallback(
   return { items: [], errorCode: lastError.code, errorDetails: lastError.details, stage: "failed" };
 }
 
+// P0.9.1-4: Fixed shouldRetryWithEnhanced with actual HTTP codes
 function shouldRetryWithEnhanced(errorCode: string | undefined): boolean {
   if (!errorCode) return false;
-  return ["400", "403", "429", "timeout", "BLOCKED_OR_AUTH", "RATE_LIMIT"].includes(errorCode);
+  // Only real HTTP codes that scrapeUrlWithProxy returns
+  return ["400", "401", "403", "408", "429", "timeout", "500", "502", "503", "504"].includes(errorCode);
 }
 
-// Helper to scrape a single URL with Firecrawl
+// P0.9.1-2: Helper to extract just the cookie NAME=VALUE from set-cookie header
+function extractCookieValue(setCookie: string): string {
+  // set-cookie: JSESSIONID=abc123; Path=/; HttpOnly → JSESSIONID=abc123
+  const match = setCookie.match(/^([^;]+)/);
+  return match ? match[1] : setCookie;
+}
+
+// P0.9.1-2: Helper to scrape a single URL with Firecrawl (with sessionCookie support)
 async function scrapeUrlWithProxy(
   url: string,
   firecrawlKey: string,
   country: string,
-  proxyMode: "auto" | "enhanced"
+  proxyMode: "auto" | "enhanced",
+  sessionCookie?: string | null  // P0.9.1-2: Added sessionCookie param
 ): Promise<{ content: string | null; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   try {
     const requestBody: Record<string, unknown> = {
@@ -825,19 +880,25 @@ async function scrapeUrlWithProxy(
       },
     };
 
-    // P0.9.4: Use 'stealth' for enhanced mode (NOT premium which causes 400)
-    // Firecrawl v1 API supports: stealth, residential modes
-    if (proxyMode === "enhanced") {
-      // Don't use premium:true - causes 400 errors
-      // Instead use mobile=false and add stealth headers
-      requestBody.mobile = false;
-      requestBody.headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control": "no-cache",
-      };
+    // Build headers object
+    const headers: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    };
+
+    // P0.9.1-2: Add session cookie if provided (for authenticated sources like iLex)
+    if (sessionCookie) {
+      headers["Cookie"] = extractCookieValue(sessionCookie);
     }
+
+    // P0.9.4: Use stealth headers for enhanced mode (NOT premium which causes 400)
+    if (proxyMode === "enhanced") {
+      headers["Cache-Control"] = "no-cache";
+      requestBody.mobile = false;
+    }
+
+    requestBody.headers = headers;
 
     const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
