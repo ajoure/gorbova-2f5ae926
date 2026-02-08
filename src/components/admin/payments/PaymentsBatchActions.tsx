@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, X, Loader2, AlertTriangle, Link2 } from "lucide-react";
+import { FileText, X, Loader2, AlertTriangle, Link2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
+import { BulkCreateDealsDialog } from "./BulkCreateDealsDialog";
 
 interface PaymentsBatchActionsProps {
   selectedPayments: UnifiedPayment[];
@@ -25,17 +26,19 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
   const [isFetchingReceipts, setIsFetchingReceipts] = useState(false);
   const [isAutoLinking, setIsAutoLinking] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
+  const [createDealsDialogOpen, setCreateDealsDialogOpen] = useState(false);
 
   const handleFetchReceipts = async () => {
-    // Filter: need order_id and no receipt_url
-    const eligiblePayments = selectedPayments.filter(p => p.order_id && !p.receipt_url);
-    const skippedNoOrder = selectedPayments.filter(p => !p.order_id).length;
-    const skippedHasReceipt = selectedPayments.filter(p => p.order_id && p.receipt_url).length;
+    // FIX: No longer require order_id - use uid (provider_payment_id) directly
+    // Only skip if already has receipt
+    const eligiblePayments = selectedPayments.filter(p => !p.receipt_url && p.uid);
+    const skippedNoUid = selectedPayments.filter(p => !p.uid).length;
+    const skippedHasReceipt = selectedPayments.filter(p => p.receipt_url).length;
     
     if (eligiblePayments.length === 0) {
       toast.info(
-        skippedNoOrder > 0 
-          ? `Все выбранные платежи либо без сделки (${skippedNoOrder}), либо уже имеют чеки (${skippedHasReceipt})`
+        skippedNoUid > 0 
+          ? `Все выбранные платежи либо без UID (${skippedNoUid}), либо уже имеют чеки (${skippedHasReceipt})`
           : "Все выбранные платежи уже имеют чеки"
       );
       return;
@@ -63,9 +66,13 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       const payment = toProcess[i];
       
       try {
-        // Call with order_id as per edge function contract
+        // FIX: Call with payment_uid directly (no order_id required)
         const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
-          body: { order_id: payment.order_id, force_refresh: true }
+          body: { 
+            payment_uid: payment.uid,
+            payment_id: payment.rawSource === 'payments_v2' ? payment.id : undefined,
+            force_refresh: true 
+          }
         });
         
         if (error) {
@@ -99,7 +106,7 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       total: toProcess.length,
       success,
       failed,
-      skipped: skippedNoOrder + skippedHasReceipt + (stopped ? eligiblePayments.length - limit : 0),
+      skipped: skippedNoUid + skippedHasReceipt + (stopped ? eligiblePayments.length - limit : 0),
       errors: errors.slice(0, 10), // Show first 10 errors
       operation: 'receipts',
     };
@@ -256,6 +263,15 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
         </div>
         <div className="flex items-center gap-2">
           <Button 
+            variant="default" 
+            size="sm" 
+            onClick={() => setCreateDealsDialogOpen(true)}
+            disabled={isAutoLinking || isFetchingReceipts}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Автосоздать сделки
+          </Button>
+          <Button 
             variant="outline" 
             size="sm" 
             onClick={handleAutoLinkDeals}
@@ -283,6 +299,17 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
           </Button>
         </div>
       </div>
+
+      {/* Bulk Create Deals Dialog */}
+      <BulkCreateDealsDialog
+        open={createDealsDialogOpen}
+        onOpenChange={setCreateDealsDialogOpen}
+        selectedPayments={selectedPayments}
+        onSuccess={() => {
+          setCreateDealsDialogOpen(false);
+          onSuccess();
+        }}
+      />
       
       {/* Batch result display */}
       {batchResult && (

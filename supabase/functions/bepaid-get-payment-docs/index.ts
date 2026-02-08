@@ -60,11 +60,12 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { order_id, force_refresh = false } = body;
+    const { order_id, payment_uid, payment_id, force_refresh = false } = body;
 
-    if (!order_id) {
+    // FIX: Support payment_uid/payment_id directly (no order_id required)
+    if (!order_id && !payment_uid && !payment_id) {
       return new Response(
-        JSON.stringify({ error: 'order_id required' }),
+        JSON.stringify({ error: 'order_id, payment_uid or payment_id required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -73,36 +74,87 @@ Deno.serve(async (req) => {
     await supabase.from('audit_logs').insert({
       actor_user_id: user.id,
       action: 'bepaid_docs_fetch_attempt',
-      meta: { order_id, force_refresh },
+      meta: { order_id, payment_uid, payment_id, force_refresh },
     });
 
-    // Find bePaid payment for this order
-    const { data: payment, error: paymentError } = await supabase
-      .from('payments_v2')
-      .select('*')
-      .eq('order_id', order_id)
-      .eq('provider', 'bepaid')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // Find bePaid payment - support multiple lookup methods
+    let payment: any = null;
+    let paymentError: any = null;
+
+    if (payment_id) {
+      // Direct lookup by payment ID
+      const result = await supabase
+        .from('payments_v2')
+        .select('*')
+        .eq('id', payment_id)
+        .eq('provider', 'bepaid')
+        .maybeSingle();
+      payment = result.data;
+      paymentError = result.error;
+    } else if (payment_uid) {
+      // Lookup by provider_payment_id (UID)
+      const result = await supabase
+        .from('payments_v2')
+        .select('*')
+        .eq('provider_payment_id', payment_uid)
+        .eq('provider', 'bepaid')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      payment = result.data;
+      paymentError = result.error;
+      
+      // If not found in payments_v2, try queue
+      if (!payment && !paymentError) {
+        const queueResult = await supabase
+          .from('payment_reconcile_queue')
+          .select('id, bepaid_uid, receipt_url')
+          .eq('bepaid_uid', payment_uid)
+          .maybeSingle();
+        
+        if (queueResult.data) {
+          // Create a minimal payment-like object for queue items
+          payment = {
+            id: queueResult.data.id,
+            provider_payment_id: queueResult.data.bepaid_uid,
+            receipt_url: queueResult.data.receipt_url,
+            _source: 'queue',
+          };
+        }
+      }
+    } else if (order_id) {
+      // Original lookup by order_id
+      const result = await supabase
+        .from('payments_v2')
+        .select('*')
+        .eq('order_id', order_id)
+        .eq('provider', 'bepaid')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      payment = result.data;
+      paymentError = result.error;
+    }
 
     if (paymentError || !payment) {
       return new Response(
         JSON.stringify({ 
           status: 'failed', 
-          error: 'No bePaid payment found for this order',
+          error: 'No bePaid payment found',
           order_id,
+          payment_uid,
+          payment_id,
         }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (!payment.provider_payment_id) {
+    const providerPaymentId = payment.provider_payment_id;
+    if (!providerPaymentId) {
       return new Response(
         JSON.stringify({ 
           status: 'failed', 
           error: 'Payment has no bePaid transaction UID (provider_payment_id)',
-          order_id,
           payment_id: payment.id,
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -256,16 +308,19 @@ Deno.serve(async (req) => {
       .map(r => new Date(r.created_at).getTime())
       .sort((a, b) => b - a)[0];
 
-    // Update payment record
-    const updateData: Record<string, any> = {
-      provider_response: txData,
-    };
+    // Update payment record - handle both payments_v2 and queue items
+    const isQueueItem = payment._source === 'queue';
+    const updateData: Record<string, any> = {};
+    
+    if (!isQueueItem) {
+      updateData.provider_response = txData;
+    }
     
     if (receiptUrl) {
       updateData.receipt_url = receiptUrl;
     }
     
-    if (newRefunds.length > 0 || allRefunds.length > 0) {
+    if (!isQueueItem && (newRefunds.length > 0 || allRefunds.length > 0)) {
       updateData.refunds = allRefunds;
       updateData.refunded_amount = totalRefunded;
       if (lastRefundAt) {
@@ -273,10 +328,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    await supabase
-      .from('payments_v2')
-      .update(updateData)
-      .eq('id', payment.id);
+    // Only update if there's something to update
+    if (Object.keys(updateData).length > 0) {
+      if (isQueueItem) {
+        await supabase
+          .from('payment_reconcile_queue')
+          .update(updateData)
+          .eq('id', payment.id);
+      } else {
+        await supabase
+          .from('payments_v2')
+          .update(updateData)
+          .eq('id', payment.id);
+      }
+    }
 
     // Log success
     await supabase.from('audit_logs').insert({
