@@ -32,6 +32,28 @@ import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import { useAuth } from "@/contexts/AuthContext";
 import { matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { UnifiedPayment as UnifiedPaymentType } from "@/hooks/useUnifiedPayments";
+
+// P0-guard: Sum by currency helper (one pass O(n))
+function sumByCurrency(payments: UnifiedPaymentType[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const p of payments) {
+    const cur = (p.currency || '—').toUpperCase();
+    const amt = Math.abs(Number(p.amount || 0));
+    map.set(cur, (map.get(cur) || 0) + amt);
+  }
+  return map;
+}
+
+function formatCurrencySums(map: Map<string, number>): string {
+  if (map.size === 0) return '0,00';
+  const parts = Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([cur, amt]) => 
+      `${amt.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`
+    );
+  return parts.join(' + ');
+}
 
 export type PaymentFilters = {
   search: string;
@@ -265,7 +287,15 @@ export function PaymentsTabContent() {
 
       return true;
     });
-  }, [payments, debouncedSearch, statsFilter]);
+  }, [payments, debouncedSearch, statsFilter, filters]);
+
+  // P0-guard: Aggregate sums via useMemo (no recalc on every render)
+  const { scopeSum, matchedSum } = useMemo(() => {
+    return {
+      scopeSum: formatCurrencySums(sumByCurrency(payments)),
+      matchedSum: formatCurrencySums(sumByCurrency(filteredPayments)),
+    };
+  }, [payments, filteredPayments]);
 
   // Open sync dialog
   const handleBepaidSync = () => {
@@ -358,11 +388,17 @@ export function PaymentsTabContent() {
         />
       </div>
       
-      {/* 2. Строка периода + счётчик + лимит - PATCH-5 */}
-      <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground py-1">
+      {/* 2. Строка периода + счётчик + суммы + лимит - PATCH P0.8 */}
+      <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground py-1">
         <span>{dateFilter.from} — {dateFilter.to || 'сегодня'}</span>
         <span>•</span>
-        <span>Показано: {Math.min(pageSize, filteredPayments.length)} из {filteredPayments.length} транзакций</span>
+        <span>
+          Показано: <strong>{filteredPayments.length}</strong> из <strong>{payments.length}</strong>
+        </span>
+        <span>•</span>
+        <span>
+          Σ <strong>{matchedSum}</strong> из Σ {scopeSum}
+        </span>
         <Select value={pageSize.toString()} onValueChange={(v) => setPageSize(parseInt(v, 10))}>
           <SelectTrigger className="h-6 w-[80px] text-xs">
             <SelectValue />
