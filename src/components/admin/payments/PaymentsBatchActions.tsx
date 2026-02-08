@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FileText, X, Loader2, AlertTriangle, Link2, Plus } from "lucide-react";
@@ -27,6 +27,28 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
   const [isAutoLinking, setIsAutoLinking] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [createDealsDialogOpen, setCreateDealsDialogOpen] = useState(false);
+
+  // P0-guard: Calculate selected sum with useMemo (PATCH P0.8)
+  const selectedSum = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of selectedPayments) {
+      const cur = (p.currency || '—').toUpperCase();
+      const amt = Math.abs(Number(p.amount || 0));
+      map.set(cur, (map.get(cur) || 0) + amt);
+    }
+    
+    if (map.size === 0) return '0,00';
+    
+    const parts = Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([cur, amt]) => 
+        `${amt.toLocaleString('ru-RU', { 
+          minimumFractionDigits: 2, 
+          maximumFractionDigits: 2 
+        })} ${cur}`
+      );
+    return parts.join(' + ');
+  }, [selectedPayments]);
 
   const handleFetchReceipts = async () => {
     // FIX: No longer require order_id - use uid (provider_payment_id) directly
@@ -257,6 +279,7 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       <div className="flex items-center justify-between p-3 bg-primary/10 rounded-lg">
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{selectedPayments.length} выбрано</Badge>
+          <span className="text-xs text-muted-foreground">Σ {selectedSum}</span>
           <Button variant="ghost" size="sm" onClick={onClearSelection}>
             <X className="h-4 w-4" />
           </Button>
