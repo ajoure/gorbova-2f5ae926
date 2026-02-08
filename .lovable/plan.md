@@ -1,122 +1,190 @@
-## Что вижу по расследованию (почему "снова не работает видео")
+ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV (ОБЯЗАТЕЛЬНО):
+1) Ничего не ломать и не трогать лишнее. Только изменения из этого плана.
+2) Add-only где возможно. Если замена неизбежна — минимальный diff, точечно.
+3) Dry-run → execute: сначала режим тестового прогона (без записи), затем боевой.
+4) STOP-guards обязательны: лимиты, таймауты, max попыток, max items.
+5) Никаких хардкод-UUID, никаких “магических” значений без конфигов.
+6) Без PII в логах. В meta только source_id/name, стадия, коды, elapsed, items_count.
+7) Финальный отчёт обязателен: список изменённых файлов + diff-summary + SQL-пруфы + audit_logs пруфы + UI-скрины из админки Сергея (7500084@gmail.com).
 
-По скриншоту это **kquest-урок** `/library/buhgalteriya-kak-biznes/test-v-kakoj-roli-vy-nahodites-sejchas`, шаг "Видео", блок типа **`video_unskippable`**.
+================================================================================
+PATCH P0.9: Исправление парсинга BY/RU источников в «Редакции»
+Цель: убрать 400/404 по источникам, добавить RSS, fallback-цепочку, классификацию ошибок,
+и в UI показывать “метод/ошибка/результат” так, чтобы было видно что реально произошло.
+================================================================================
 
-Я проверил данные блока в базе:
-- `lesson_id`: `96c970e6-d530-473c-84ab-06b176d1c98a`
-- `block_type`: `video_unskippable`
-- `url`: `https://kinescope.io/56dt29aFG1S6pFKicF8j9f`
-- `provider`: `kinescope`
-- `threshold_percent`: `95`
-- `duration_seconds`: `600`
+P0.9.0 — FIX: URL + конфиги источников (SQL)
+1) Обновить URL проблемных источников и scrape_config (rss_url/proxy_mode/fallback_url)
+2) Деактивировать Pravo.by - Нац. реестр (без сложного поиска он не живёт)
+3) Очистить last_error поля у исправленных источников
 
-### Главная причина (P0)
-В `VideoUnskippableBlock.tsx` для Kinescope в режиме ученика включается **IframePlayer API режим** (`useKinescopePlayer`) и рисуется **пустой div-контейнер** под плеер:
+SQL (выполнить и приложить SELECT-пруф):
+- ЦБ России:
+  url = https://cbr.ru/press/event/
+  scrape_config.rss_url = https://cbr.ru/rss/RssPress
+  scrape_config.proxy_mode = "auto"
+  scrape_config.country = "RU"
 
-```tsx
-{shouldUseKinescopeHook ? (
-  <div id="kinescope-unskippable-..." />
-) : (
-  <iframe ... />
-)}
-```
+- Pravo.gov.ru:
+  url = http://publication.pravo.gov.ru/documents/block/daily
+  scrape_config.proxy_mode = "enhanced"
+  scrape_config.country = "RU"
 
-Но если IframePlayer API **не смог инициализироваться** (скрипт не загрузился, create() упал, блокировщик/сеть/временный сбой), то:
-- контейнер остаётся пустым → пользователь видит **чёрный прямоугольник**
-- и важное: **fallback-логика (кнопка "Начать просмотр" + таймер на 600с)** сейчас показывается *только* для `iframe`-режима, а для `shouldUseKinescopeHook=true` она не включается  
-→ в итоге пользователь застревает и не может пройти шаг.
+- Pravo.by - Нац. реестр:
+  is_active = false
 
-Это объясняет симптом "видео чёрное / не работает", при этом прогресс 0% и подтверждение недоступно.
+- Нацбанк РБ:
+  url = https://nbrb.by/press/
+  scrape_config.proxy_mode = "enhanced"
+  scrape_config.country = "BY"
+  scrape_config.fallback_url = https://nbrb.by/press/pressrel/
 
-### Второй риск (усиливает "снова")
-В `useKinescopePlayer.ts` загрузка SDK кэшируется глобальной `scriptLoadPromise`.
-Если загрузка однажды завершилась ошибкой, промис может остаться "сломленным" и повторные попытки в рамках SPA-сессии не перезапустят загрузку корректно (нет безопасного retry).
+ПРУФ:
+SELECT name, url, is_active, scrape_config
+FROM news_sources
+WHERE name IN ('ЦБ России','Pravo.gov.ru','Pravo.by - Нац. реестр','Нацбанк РБ');
 
----
+STOP-guard:
+- Если name не совпадает (другая локализация/название) — не “угадывать”, найти по id/slug и зафиксировать в отчёте.
 
-## Цель патча
-Сделать видео "неубиваемым":
-1) Если Kinescope IframePlayer API не поднялся — **автоматически откатиться на iframe embed** (и включить существующий fallback-таймер на 600 сек).
-2) Добавить **retry/устойчивость** в `useKinescopePlayer` для временных ошибок и/или альтернативного URL формата.
+--------------------------------------------------------------------------------
 
----
+P0.9.1 — ADD: Стандартизировать ScrapeConfig (типизация + дефолты)
+Файл: supabase/functions/monitor-news/index.ts
+Добавить интерфейс:
+- rss_url?: string
+- fallback_url?: string
+- proxy_mode?: "auto" | "enhanced"
+- country?: "BY" | "RU" | "AUTO"
+Дефолты:
+- proxy_mode = "auto"
+- country = "AUTO"
 
-## План исправления (точечные правки, без рефакторинга лишнего)
+STOP-guard:
+- Если scrape_config null/пустой — код не падает, использует дефолты.
 
-### A) PATCH-V1 (P0): VideoUnskippableBlock — добавить fallback с IframePlayer → iframe
-**Файл:** `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+--------------------------------------------------------------------------------
 
-1) Добавить локальный флаг режима:
-- `const [kinescopeApiEnabled, setKinescopeApiEnabled] = useState(true);`
+P0.9.2 — ADD: RSS-парсер (первый этап цепочки)
+Файл: supabase/functions/monitor-news/index.ts
+Добавить parseRssFeed(rss_url) (лёгкий парсинг XML без тяжёлых зависимостей):
+- лимит items: 30
+- лимит content на item: 5000
+- timeout fetch RSS: 15000ms
+- нормализация: title/url/content/date(ISO)
 
-2) Уточнить условие `shouldUseKinescopeHook`:
-- было: `... && !isEditing && !isCompleted`
-- станет: `... && !isEditing && !isCompleted && kinescopeApiEnabled`
+Поведение:
+- если RSS вернул items > 0 → это SUCCESS, Firecrawl не вызываем
+- если RSS упал/пустой → логируем попытку и идём дальше в HTML
 
-3) В `onError` у `useKinescopePlayer`:
-- при ошибке: `setKinescopeApiEnabled(false)`
-- (опционально) лог + мягкий toast "Переключили плеер на резервный режим"
+--------------------------------------------------------------------------------
 
-4) Рендер:
-- если `kinescopeApiEnabled=false` → показывать `iframe` (embedUrl) вместо пустого div
-- тем самым включается существующая логика:
-  - postMessage listener (для событий)
-  - автодетекция API (3 сек)
-  - кнопка "Начать просмотр"
-  - fallback-таймер на `duration_seconds` (600)
+P0.9.3 — ADD: Классификация ошибок + audit_logs на каждую попытку
+Файл: supabase/functions/monitor-news/index.ts
+Добавить classifyError(statusCode/message):
+- 404/410 → URL_INVALID
+- 400 → BAD_REQUEST
+- 401/403 → BLOCKED_OR_AUTH
+- 429 → RATE_LIMIT
+- timeout/network → TIMEOUT_RENDER
+- 5xx → SERVER_ERROR
+- parse/json/xml → PARSER_ERROR
+- иначе → UNKNOWN
 
-5) Улучшить построение embedUrl для Kinescope:
-- вместо `url.split('/').pop()` использовать `extractKinescopeVideoId(url)` (чтобы не ломаться на `?t=...` и др.)
-- embedUrl формировать так: `https://kinescope.io/embed/${videoId}?autoplay=0`
+Логирование (после каждой стадии: rss/html_auto/html_enhanced/fallback):
+audit_logs.action = "news_scrape_attempt"
+meta:
+- source_id, source_name
+- stage
+- url_used
+- proxy_mode ("auto"/"enhanced"/"rss")
+- status_code/error_code
+- error_class
+- elapsed_ms
+- items_found
 
-**Guardrails соблюдаем:**
-- не трогаем Input/onBlur, Slider/onValueCommit, addRow/deleteRow, init effect rows→setLocalRows — это про другие блоки
-- меняем только поведение Kinescope-плеера в `video_unskippable` (минимальный diff)
+STOP-guard:
+- Никаких токенов/секретов/HTML в meta. Только короткие поля.
+- errorDetails.body обрезать до 200 символов (и то только если нет PII).
 
----
+--------------------------------------------------------------------------------
 
-### B) PATCH-V2 (P1): useKinescopePlayer — устойчивость загрузки SDK + retry URL
-**Файл:** `src/hooks/useKinescopePlayer.ts`
+P0.9.4 — REWORK: Единая fallback-цепочка (RSS → HTML(auto) → HTML(enhanced) → fallback_url)
+Файл: supabase/functions/monitor-news/index.ts
+Встроить стратегию:
 
-1) Если загрузка SDK (script.onerror) завершилась ошибкой:
-- сбросить `scriptLoadPromise = null`, чтобы следующее открытие урока могло повторить попытку
+STAGE 1: RSS
+- если config.rss_url → parseRssFeed()
+- если items>0 → return SUCCESS
 
-2) При ошибке `IframePlayer.create`:
-- попробовать второй формат URL:
-  - попытка 1: `https://kinescope.io/${videoId}`
-  - попытка 2 (fallback): `https://kinescope.io/embed/${videoId}`
-- если обе неудачны — вызвать `onError` (чтобы `VideoUnskippableBlock` переключился на iframe)
+STAGE 2: HTML auto
+- scrapeUrlWithProxy(url, proxy_mode="auto", location.country из config.country)
+- если items>0 → SUCCESS
+- если ошибка (400/403/429/timeout) → stage 3
 
-Это add-only/guarded поведение: не меняем внешние API хука, только добавляем устойчивость.
+STAGE 3: HTML enhanced
+- scrapeUrlWithProxy(url, proxy_mode="enhanced", waitFor=5000)
+- если items>0 → SUCCESS
 
----
+STAGE 4: fallback_url (если задан)
+- повторить STAGE 1-3 для fallback_url, но максимум 1 проход
 
-## Проверка и доказательства (DoD)
+Ограничения (STOP-guards):
+- max HTML попыток на URL: 2 (auto+enhanced)
+- max общий runtime на источник: 90 секунд
+- max items: 30
+- Если firecrawlKey отсутствует → работаем только через RSS (если есть), иначе корректный error_class.
 
-### 1) UI-пруфы (обязательно, на проде, под админом Сергея 7500084@gmail.com)
-На уроке: **"Тест: В какой роли вы находитесь сейчас"** → шаг "Видео":
+Важно про Firecrawl:
+- НЕ использовать premium:true (вызывает 400 по текущим тестам).
+- Использовать параметр proxy_mode как логический режим:
+  - auto: базовый
+  - enhanced: “дорогой” (residential/premium) согласно текущей реализации scrapeUrlWithProxy
+(если в вашей библиотеке Firecrawl это называется иначе — привести к рабочему синтаксису и приложить пруф request/response в отчёте)
 
-A. Нормальный сценарий:
-- Плеер виден (не чёрный экран), есть интерфейс/видео
-- Прогресс просмотра начинает расти
-- Скрин №1: видео отображается + видно "Просмотрено: X% из 95%"
+--------------------------------------------------------------------------------
 
-B. Резервный сценарий (если API сломан/блокируется):
-- Появляется кнопка "Начать просмотр"
-- Запускается таймер (из 600 секунд)
-- Скрин №2: виден fallback UI (кнопка/таймер) и прогресс
+P1.9.5 — UI (Редакция): показать “Метод”, “ошибка по-человечески”, “результаты”
+Файл: src/pages/admin/AdminEditorial.tsx (или текущий файл Редакции)
+1) В таблице источников добавить колонку “Метод”:
+- если scrape_config.rss_url → badge "RSS"
+- иначе если proxy_mode="enhanced" → badge "Enhanced"
+- иначе → badge "Auto"
 
-### 2) Функционально
-- После достижения порога/таймера кнопка "Я просмотрел(а) видео" становится активной
-- Переход к следующему шагу работает
+2) Ошибки показывать не голым кодом, а меткой:
+- 404 → “URL не найден”
+- 400 → “Неверный запрос/URL”
+- 403 → “Блок/гео/доступ”
+- timeout → “Таймаут/рендер”
+- 5xx → “Ошибка сервера”
+- иначе → “Ошибка: <code>”
 
-### 3) Технические пруфы
-- В консоли (если API падает): лог о переключении в iframe fallback (без красных бесконечных ошибок)
-- Diff-summary: изменены только 2 файла:
-  - `VideoUnskippableBlock.tsx` (fallback режим)
-  - `useKinescopePlayer.ts` (retry)
+3) В scrape_logs (или статус-строке) показать:
+- найдено / сохранено (X/Y)
+- успешных источников / всего
+- completed_at
 
----
+STOP-guard:
+- Никаких новых вкладок/разделов “Уведомления”. Всё внутри существующего UI Редакции/логов.
 
-## Важное про публикацию
-Я также вижу, что последний деплой падал с ошибкой **Cloudflare R2 429** (лимит на загрузку объектов). Это инфраструктурная/временная проблема: даже после фикса кода нужно будет убедиться, что публикация действительно прошла (и при необходимости повторить publish позже, когда лимит отпустит), иначе прод останется на старой версии.
+--------------------------------------------------------------------------------
+
+DoD (ПРУФЫ ОБЯЗАТЕЛЬНЫ):
+A) SQL-пруф:
+- SELECT по 4 источникам показывает новые url + scrape_config + is_active=false для Pravo.by.
+
+B) Логи:
+- В audit_logs есть записи "news_scrape_attempt" по каждому источнику минимум по 1 запуску.
+- В meta видно stage и error_class (а не “просто упало”).
+
+C) UI-пруфы (скрины):
+- Редакция: таблица источников показывает “Метод” и понятную ошибку/OK.
+- Запуск парсинга: по исправленным источникам нет 400/404 из-за старых URL.
+
+D) Функционально:
+- ЦБ России парсится через RSS (items > 0).
+- Pravo.gov.ru и Нацбанк РБ проходят через enhanced (или через RSS/auto если сработало), но с пруфами stage.
+
+================================================================================
+Конец PATCH P0.9
+================================================================================
