@@ -1,103 +1,89 @@
+PATCH P0.9.10 — Фикс прогресса видео + сохранение select в диагностической таблице
 
-PATCH-лист P0.9.8a (7 пунктов)
-	1.	DEPLOY Edge Functions (обязательный): задеплоить обновлённые:
-	•	telegram-grant-access (вставка в telegram_invite_links)
-	•	telegram-webhook (обработка chat_member)
-	•	telegram-bot-actions (action update_webhook)
-	•	telegram-club-members (action reinvite_ghosts)
-	•	telegram-reinvite-ghosts (новая cron-функция)
-	2.	Webhook allowed_updates: сразу после деплоя вызвать telegram-bot-actions → update_webhook для активного бота.
-DoD: getWebhookInfo.allowed_updates содержит chat_member.
-	3.	pg_cron register: создать cron-job на telegram-reinvite-ghosts каждые 6 часов.
-DoD: запись в cron.job + успешный запуск (audit/log).
-	4.	Data-fix: неправильный доступ в “Бухгалтерия как бизнес”: 5 пользователей имеют access_status=ok, но нет подписки/entitlement на buh_business, только на Gorbova Club.
-Действие: поставить им access_status='no_access' (или needs_review) в клубе Бухгалтерии + зааудитить как wrong_club_patch_p098a.
-DoD: SQL-пруф: 0 строк “ok без права” для club_id Бухгалтерии.
-	5.	Нина Осипик: invite_sent_at=NULL при активном entitlement club.
-Действие: поставить в очередь telegram_access_queue action=‘grant’ (или вручную вызвать grant) для её user_id.
-DoD: invite_sent_at стал не null и появилась запись в telegram_invite_links.
-	6.	Smoke-test: отправить инвайт тест-юзеру, зайти по нему.
-DoD: telegram_invite_links.status='used', used_by_telegram_user_id заполнен, telegram_club_members.verified_in_chat_at заполнен.
-	7.	Проверка “пустой таблицы”: после первого реального grant/reinvite telegram_invite_links.count(*) > 0.
-DoD: SQL-пруф.
+Проблема 1: Прогресс видео застревает на низких % (3%, 6%, 13%)
+
+Корневая причина
+
+API Kinescope IframePlayer у многих пользователей ненадёжно отправляет события timeupdate. Логика Math.max(prev, percent) правильная (прогресс монотонно растёт), но когда API не присылает события, прогресс остаётся почти на нуле.
+
+Fallback-таймер есть, но:
+	•	Требует, чтобы пользователь вручную нажал кнопку “Start View”
+	•	Использует захардкоженный duration_seconds, который может не совпадать с реальной длительностью видео
+	•	Не стартует автоматически: если пользователь просто смотрит видео “как обычно”, прогресс не трекается
+
+Исправление
+
+Автоматически запускать fallback-таймер, если Kinescope API не ответил в течение 3 секунд и видео видно на экране. Убрать необходимость ручного клика “Start View” в fallback-сценарии без API.
+
+Файл: src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx
+
+Изменения:
+	1.	После того как apiDetectionDone становится true (таймаут 3 секунды) и API не работает, автоматически стартовать fallback-таймер вместо показа кнопки “Start View”.
+	2.	Если задан duration_seconds и API упал, начинать отсчёт автоматически с момента детекта.
+	3.	Оставить кнопку “Start View” только как вторичное действие (например, если пользователь хочет перезапустить таймер).
 
 ⸻
 
-Копируемый блок для Lovable (вставляй как есть)
+Проблема 2: Поля select в диагностической таблице не сохраняются
 
-# PATCH P0.9.8a — Deploy + Webhook chat_member + Cron + Wrong-club data-fix
+Корневая причина
 
-## Жёсткие правила исполнения
-1) Ничего не ломать и не трогать лишнее
-2) Add-only где возможно, минимальный diff
-3) Dry-run → execute для массовых действий
-4) STOP-guards обязательны (лимиты, батчи, rate-limit)
-5) No-PII в логах (особенно invite_link URL)
-6) DoD только по фактам: SQL + UI-скрин + audit_logs/telegram_access_audit
+В DiagnosticTableBlock.tsx обработчик select (onValueChange) (строки 427–433 для вертикального, 506–513 для горизонтального) вызывает onRowsChange?.(newRows) как сайд-эффект внутри колбэка setLocalRows. Это хрупко в React 18 из-за batching.
 
-## Факты из диагностики
-- telegram_invite_links = 0 rows → записи не пишутся (функции не задеплоены/не триггерились)
-- webhook не принимает chat_member → verified_in_chat_at всегда NULL
-- cron telegram-reinvite-ghosts не зарегистрирован в pg_cron
-- 5 пользователей имеют access_status=ok в клубе “Бухгалтерия как бизнес”, но НЕ имеют подписки/entitlement на buh_business (только Gorbova Club) → неверная выдача доступа
-- Нина Осипик: invite_sent_at=NULL при активном entitlement club → ссылка никогда не отправлялась
+Более критично: onRowsChange вызывает updateState в useLessonProgressState, где запись в БД дебаунсится на 500мс. Если пользователь нажимает “Complete” или уходит со страницы в это окно, данные теряются.
 
-## A) Deploy Edge Functions (обязательное)
-Deploy:
-- telegram-grant-access (writes telegram_invite_links)
-- telegram-webhook (handles chat_member updates)
-- telegram-bot-actions (action update_webhook)
-- telegram-club-members (action reinvite_ghosts)
-- telegram-reinvite-ghosts (new cron function)
+Исправление
 
-## B) Webhook allowed_updates
-После deploy вызвать telegram-bot-actions:
-- action=update_webhook
-- bot_id = активный бот
-Цель: allowed_updates включает ["message","chat_member","my_chat_member","chat_join_request"]
-DoD: getWebhookInfo показывает chat_member в allowed_updates.
+Привести обработку select к тому же паттерну, что у text/number: updateLocalRow + debouncedCommit, чтобы поведение было единообразным и flush гарантированно срабатывал на Complete.
 
-## C) Register pg_cron for telegram-reinvite-ghosts
-Создать cron-job каждые 6 часов (0 */6 * * *).
-DoD: запись в cron.job + лог/аудит выполнения.
+Файл: src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx
 
-## D) Data-fix: wrong club access (Бухгалтерия)
-Найти и исправить 5 пользователей (emails):
-- 447417148@mail.ru
-- finassist.by@gmail.com
-- kazachoknbuh@gmail.com
-- meryloiko@gmail.com
-- silvia_r@mail.ru
+Изменения:
+	1.	Заменить inline select onValueChange (и в horizontal, и в vertical) на вызов updateLocalRow(rowIndex, col.id, v) — как у text/number.
+	2.	Это проведёт изменения через debouncedCommit (300мс), который корректно flush-ится через flushAndCommit при нажатии кнопки “Complete”.
+	3.	Также сохранится корректная логика flush на unmount.
 
-Критерий: club_id = (Бухгалтерия), telegram_club_members.access_status='ok', но has_buh_sub=false AND has_buh_entitlement=false AND no manual access.
-Действие:
-- set access_status='no_access' (или 'needs_review') + audit action 'wrong_club_patch_p098a'
-- НЕ кикать автоматически из Telegram, только исправить внутренний статус + пометка, дальше решим отдельно.
-DoD: SQL: 0 строк “ok without buh access” для club_id Бухгалтерии.
+Конкретные изменения кода
 
-## E) Нина Осипик — отправить ссылку
-Если entitlement club active, но invite_sent_at is NULL:
-- enqueue telegram_access_queue action='grant' for her user_id (source='patch_p098a')
-DoD: invite_sent_at заполнен, telegram_invite_links получил новую запись.
+Horizontal layout select (строки 506–513):
 
-## F) Smoke test
-1) Выполнить grant тестовому TG пользователю
-2) Пользователь входит по ссылке
-DoD:
-- telegram_invite_links.status='used', used_by_telegram_user_id заполнен
-- telegram_club_members.in_chat=true и verified_in_chat_at not null
-- audit_logs/telegram_access_audit содержит JOIN_VERIFIED
+// БЫЛО:
+onValueChange={(v) => {
+  setLocalRows((prev) => {
+    const newRows = [...prev];
+    newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
+    onRowsChange?.(newRows);
+    return newRows;
+  });
+}}
 
-## Final DoD checklist
-1) telegram_invite_links.count(*) > 0
-2) allowed_updates включает chat_member (getWebhookInfo)
-3) cron job существует в cron.job и отрабатывает
-4) 5 wrong-club записей исправлены (SQL proof)
-5) Нина получила invite (invite_sent_at not null + invite_links row)
+// СТАЛО:
+onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
+
+Vertical layout select (строки 427–433):
+То же изменение — заменить inline обработчик на updateLocalRow(rowIndex, col.id, v).
+
+⸻
+
+Файлы для изменения
+
+Файл	Изменения
+src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx	Заменить 2 обработчика select на вызов updateLocalRow
+src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx	Автостарт fallback-таймера при фейле API
 
 
 ⸻
 
-Важное уточнение по твоему плану (чтобы не словить очередной “сюрприз”)
-	•	Если бот не может писать юзеру в ЛС (юзер не стартовал бота или заблокировал), то reinvite через DM будет падать. Это должно помечаться в invite_status/invite_error, иначе ты опять будешь видеть “sent”, а по факту “не доставлено”.
+Что НЕ трогаем
+	•	Логику Math.max для видео (она правильная)
+	•	Дебаунс-таймеры в useLessonProgressState (они работают корректно)
+	•	KvestLessonView.tsx (правки не нужны)
+	•	Другие типы блоков
 
+⸻
+
+DoD
+	1.	Поля select (риски, тип дохода) сохраняются после перезагрузки страницы — SQL-пруф из lesson_progress_state
+	2.	Fallback-таймер для видео запускается автоматически при фейле Kinescope API без ручного клика
+	3.	Нет регрессий для text/number/slider (они уже используют updateLocalRow)
+	4.	Кнопка Complete по-прежнему flush-ит все отложенные изменения перед отметкой завершения
