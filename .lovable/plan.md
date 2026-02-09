@@ -1,89 +1,109 @@
-PATCH P0.9.10 — Фикс прогресса видео + сохранение select в диагностической таблице
-
-Проблема 1: Прогресс видео застревает на низких % (3%, 6%, 13%)
-
-Корневая причина
-
-API Kinescope IframePlayer у многих пользователей ненадёжно отправляет события timeupdate. Логика Math.max(prev, percent) правильная (прогресс монотонно растёт), но когда API не присылает события, прогресс остаётся почти на нуле.
-
-Fallback-таймер есть, но:
-	•	Требует, чтобы пользователь вручную нажал кнопку “Start View”
-	•	Использует захардкоженный duration_seconds, который может не совпадать с реальной длительностью видео
-	•	Не стартует автоматически: если пользователь просто смотрит видео “как обычно”, прогресс не трекается
-
-Исправление
-
-Автоматически запускать fallback-таймер, если Kinescope API не ответил в течение 3 секунд и видео видно на экране. Убрать необходимость ручного клика “Start View” в fallback-сценарии без API.
-
-Файл: src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx
-
-Изменения:
-	1.	После того как apiDetectionDone становится true (таймаут 3 секунды) и API не работает, автоматически стартовать fallback-таймер вместо показа кнопки “Start View”.
-	2.	Если задан duration_seconds и API упал, начинать отсчёт автоматически с момента детекта.
-	3.	Оставить кнопку “Start View” только как вторичное действие (например, если пользователь хочет перезапустить таймер).
-
-⸻
-
-Проблема 2: Поля select в диагностической таблице не сохраняются
-
-Корневая причина
-
-В DiagnosticTableBlock.tsx обработчик select (onValueChange) (строки 427–433 для вертикального, 506–513 для горизонтального) вызывает onRowsChange?.(newRows) как сайд-эффект внутри колбэка setLocalRows. Это хрупко в React 18 из-за batching.
-
-Более критично: onRowsChange вызывает updateState в useLessonProgressState, где запись в БД дебаунсится на 500мс. Если пользователь нажимает “Complete” или уходит со страницы в это окно, данные теряются.
-
-Исправление
-
-Привести обработку select к тому же паттерну, что у text/number: updateLocalRow + debouncedCommit, чтобы поведение было единообразным и flush гарантированно срабатывал на Complete.
-
-Файл: src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx
-
-Изменения:
-	1.	Заменить inline select onValueChange (и в horizontal, и в vertical) на вызов updateLocalRow(rowIndex, col.id, v) — как у text/number.
-	2.	Это проведёт изменения через debouncedCommit (300мс), который корректно flush-ится через flushAndCommit при нажатии кнопки “Complete”.
-	3.	Также сохранится корректная логика flush на unmount.
-
-Конкретные изменения кода
-
-Horizontal layout select (строки 506–513):
-
-// БЫЛО:
-onValueChange={(v) => {
-  setLocalRows((prev) => {
-    const newRows = [...prev];
-    newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
-    onRowsChange?.(newRows);
-    return newRows;
-  });
-}}
-
-// СТАЛО:
-onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
-
-Vertical layout select (строки 427–433):
-То же изменение — заменить inline обработчик на updateLocalRow(rowIndex, col.id, v).
-
-⸻
-
-Файлы для изменения
-
-Файл	Изменения
-src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx	Заменить 2 обработчика select на вызов updateLocalRow
-src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx	Автостарт fallback-таймера при фейле API
 
 
-⸻
+# PATCH P0.9.12b — Fix double-click "next step" bug + video/mobile cleanup
 
-Что НЕ трогаем
-	•	Логику Math.max для видео (она правильная)
-	•	Дебаунс-таймеры в useLessonProgressState (они работают корректно)
-	•	KvestLessonView.tsx (правки не нужны)
-	•	Другие типы блоков
+## Problem
 
-⸻
+### 1. Double-click bug on "Next step" button
+**Root cause**: In `KvestLessonView.tsx`, every completion handler (video, diagnostic table, role description) calls `markBlockCompleted(blockId)` followed immediately by `goToStep(currentStepIndex + 1)`. But `goToStep` checks `isCurrentBlockGateOpen` (line 155), which is a pre-computed value from the previous render. Since React hasn't re-rendered yet after `markBlockCompleted`, the gate check fails, showing the toast error "Сначала завершите текущий шаг". On the second click, React has re-rendered with the new state, so the gate opens.
 
-DoD
-	1.	Поля select (риски, тип дохода) сохраняются после перезагрузки страницы — SQL-пруф из lesson_progress_state
-	2.	Fallback-таймер для видео запускается автоматически при фейле Kinescope API без ручного клика
-	3.	Нет регрессий для text/number/slider (они уже используют updateLocalRow)
-	4.	Кнопка Complete по-прежнему flush-ит все отложенные изменения перед отметкой завершения
+### 2. Video block still calls `onProgress(100)` (unnecessary after P0.9.12)
+### 3. Video gate still checks `videoProgress >= threshold` instead of relying on `isBlockCompleted`
+
+## Changes
+
+### File 1: `src/components/lesson/KvestLessonView.tsx`
+
+**1a. Add `force` parameter to `goToStep`** (line 142)
+
+```
+const goToStep = useCallback((index: number, force = false) => {
+  ...
+  // Check if current block gate is open before moving forward
+  if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
+    toast.error("Сначала завершите текущий шаг");
+    return;
+  }
+  ...
+```
+
+When a completion handler has JUST marked a block as completed, it passes `force: true` to skip the stale gate check.
+
+**1b. Update all completion handlers to pass `force: true`:**
+
+- `handleVideoComplete` (line 233): `goToStep(currentStepIndex + 1, true)`
+- `handleRoleDescriptionComplete` (line 214): `goToStep(currentStepIndex + 1, true)`
+- `handleDiagnosticTableComplete` (line 246): `goToStep(currentStepIndex + 1, true)`
+
+**1c. Simplify `video_unskippable` gate** (lines 100-112):
+
+Remove `videoProgress` check entirely. The block is already gated by `isBlockCompleted(block.id)` at line 87. Replace the body with:
+
+```
+case 'video_unskippable': {
+  const videoUrl = ((block.content as any)?.url || '').trim();
+  if (!videoUrl) {
+    return allowBypassEmptyVideo === true;
+  }
+  // P0.9.12: completion is via manual button, checked by isBlockCompleted above
+  return false;
+}
+```
+
+**1d. Remove `onProgress` call from video handler** (line 360):
+
+Remove the `onProgress` prop entirely from video_unskippable rendering since percent tracking is gone. Only keep `onComplete`.
+
+### File 2: `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+
+**2a. Remove `onProgress(100)` from `handleConfirmWatched`** (line 106):
+
+```
+const handleConfirmWatched = () => {
+  onComplete?.();
+};
+```
+
+**2b. Change button text** (line 255):
+
+From: `Я просмотрел(а) видео`
+To: `Я просмотрел(а) урок`
+
+**2c. Show confirmation button always** (not gated by `content.required !== false`):
+
+The button should always appear since the block is always mandatory by design. Remove the `content.required !== false` condition at line 247.
+
+## What we do NOT touch
+
+- DiagnosticTableBlock.tsx: mobile layout is already correct (verified: `block sm:hidden` / `hidden sm:block` classes are properly applied)
+- useLessonProgressState.tsx: debounce logic is correct
+- No SQL/DB changes
+- No other block types
+
+## Technical Details
+
+```text
+goToStep call flow (BEFORE fix):
+
+  handleVideoComplete()
+    -> markBlockCompleted(blockId)     // updates state (async React batch)
+    -> goToStep(next)                  // checks isCurrentBlockGateOpen (STALE!)
+       -> gate says "closed" -> toast error
+
+goToStep call flow (AFTER fix):
+
+  handleVideoComplete()
+    -> markBlockCompleted(blockId)
+    -> goToStep(next, force=true)      // skips stale gate check
+       -> advances to next step immediately
+```
+
+## DoD
+
+1. Single click on "Я просмотрел(а) урок" immediately advances to next step (no error toast)
+2. Single click on "Диагностика завершена" immediately advances to next step
+3. After reload, completed blocks remain completed
+4. On mobile (375px), diagnostic table renders as vertical cards
+5. No `onProgress` calls remain in video block code
+6. No `videoProgress` threshold checks in gate logic
+
