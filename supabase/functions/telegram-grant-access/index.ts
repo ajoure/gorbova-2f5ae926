@@ -607,10 +607,16 @@ Deno.serve(async (req) => {
           ? '\n\n⏳ <i>После перехода по ссылке твоя заявка будет автоматически одобрена.</i>'
           : '\n\n⚠️ <i>Ссылки одноразовые — переходи сейчас!</i>';
 
+        // PATCH P0.9.8c: DM with product/tariff/club info
+        const dmClubName = club.club_name || 'клуб';
+        const dmProductTitle = product_name || dmClubName;
+        const dmTariffTitle = tariff_name || null;
+        const dmTariffPart = dmTariffTitle ? ` (тариф: ${dmTariffTitle})` : '';
+
         const result = await sendMessage(
           botToken,
           telegramUserId,
-          `✅ <b>Доступ открыт!</b>\n\nЯ подготовил для тебя ссылки для входа в клуб.${validUntilText}${joinRequestNote}`,
+          `✅ <b>Доступ открыт!</b>\n\nТвой доступ к <b>${dmProductTitle}</b>${dmTariffPart} активирован.\nКлуб: <b>${dmClubName}</b>\n\nВот ссылки для входа:${validUntilText}${joinRequestNote}`,
           keyboard
         );
 
@@ -747,7 +753,8 @@ Deno.serve(async (req) => {
       });
 
       // Legacy log - with extended meta for UI display
-      const clubName = club.name || club.slug || 'Клуб';
+      // PATCH P0.9.8c: Fix club_name field (was club.name which is undefined)
+      const clubName = club.club_name || 'Клуб';
       const accessEndDate = activeUntil 
         ? new Date(activeUntil).toLocaleDateString('ru-RU') 
         : null;

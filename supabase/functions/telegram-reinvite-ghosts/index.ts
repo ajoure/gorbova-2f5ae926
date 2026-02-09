@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
     // Get all active clubs with bots
     const { data: clubs } = await supabase
       .from('telegram_clubs')
-      .select('id, chat_id, channel_id, join_request_mode, telegram_bots(bot_token_encrypted, status)')
+      .select('id, chat_id, channel_id, join_request_mode, club_name, telegram_bots(bot_token_encrypted, status)')
       .eq('is_active', true);
 
     if (!clubs?.length) {
@@ -265,9 +265,11 @@ Deno.serve(async (req) => {
           if (chatLink) keyboard.inline_keyboard.push([{ text: '💬 Войти в чат', url: chatLink }]);
           if (channelLink) keyboard.inline_keyboard.push([{ text: '📣 Войти в канал', url: channelLink }]);
 
+          // PATCH P0.9.8c: Add club name to reinvite DM
+          const reinviteClubName = (club as any).club_name || 'клуб';
           const dmResult = await telegramRequest(botToken, 'sendMessage', {
             chat_id: ghost.telegram_user_id,
-            text: '🔔 <b>Напоминание!</b>\n\nВижу, что ты ещё не зашёл по предыдущей ссылке.\nВот новые одноразовые ссылки для входа в клуб:\n\n⚠️ Ссылки действуют 24 часа — переходи сейчас!',
+            text: `🔔 <b>Напоминание!</b>\n\nВижу, что ты ещё не зашёл в <b>${reinviteClubName}</b> по предыдущей ссылке.\nВот новые одноразовые ссылки:\n\n⚠️ Ссылки действуют 24 часа — переходи сейчас!`,
             parse_mode: 'HTML',
             reply_markup: keyboard,
           });
