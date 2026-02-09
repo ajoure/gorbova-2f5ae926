@@ -803,6 +803,141 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ==========================================
+    // Action: REINVITE_GHOSTS — dry_run / execute for "bought but not joined"
+    // ==========================================
+    if (action === 'reinvite_ghosts') {
+      const { scope: reinviteScope, dry_run } = body;
+      // scope: 'bought_not_joined' | 'all_not_in_chat' | 'selected_ids'
+      const isDryRun = dry_run !== false; // default true
+
+      // Build query for candidates
+      let query = supabase
+        .from('telegram_club_members')
+        .select('id, telegram_user_id, profile_id, in_chat, in_channel, invite_sent_at, invite_status, access_status, link_status')
+        .eq('club_id', club_id)
+        .eq('link_status', 'linked')
+        .not('telegram_user_id', 'is', null);
+
+      if (reinviteScope === 'selected_ids' && member_ids?.length > 0) {
+        query = query.in('id', member_ids);
+      } else {
+        query = query.eq('access_status', 'ok').or('in_chat.eq.false,in_channel.eq.false');
+      }
+
+      const { data: candidates } = await query.limit(100);
+
+      if (!candidates?.length) {
+        return new Response(JSON.stringify({
+          success: true,
+          dry_run: isDryRun,
+          will_send: 0,
+          skipped: [],
+          candidates: [],
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Check reinvite limits and filter
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+      const willSend: typeof candidates = [];
+      const skipped: { id: string; telegram_user_id: number; reason: string }[] = [];
+
+      for (const c of candidates) {
+        // Skip if invite sent < 4h ago
+        if (c.invite_sent_at && c.invite_sent_at > fourHoursAgo) {
+          skipped.push({ id: c.id, telegram_user_id: c.telegram_user_id, reason: 'invite_sent_recently' });
+          continue;
+        }
+
+        // Check reinvite count in last 24h
+        const { count } = await supabase
+          .from('telegram_invite_links')
+          .select('*', { count: 'exact', head: true })
+          .eq('club_id', club_id)
+          .eq('profile_id', c.profile_id)
+          .gte('sent_at', twentyFourHoursAgo)
+          .in('source', ['reinvite', 'cron_reinvite']);
+
+        if ((count || 0) >= 3) {
+          skipped.push({ id: c.id, telegram_user_id: c.telegram_user_id, reason: 'max_reinvites_24h' });
+          continue;
+        }
+
+        // Check mismatch count
+        const { count: mismatchCount } = await supabase
+          .from('telegram_invite_links')
+          .select('*', { count: 'exact', head: true })
+          .eq('club_id', club_id)
+          .eq('profile_id', c.profile_id)
+          .eq('status', 'mismatch')
+          .gte('created_at', twentyFourHoursAgo);
+
+        if ((mismatchCount || 0) >= 2) {
+          skipped.push({ id: c.id, telegram_user_id: c.telegram_user_id, reason: 'security_review' });
+          continue;
+        }
+
+        willSend.push(c);
+        if (willSend.length >= 50) break; // Max 50 per batch
+      }
+
+      if (isDryRun) {
+        return new Response(JSON.stringify({
+          success: true,
+          dry_run: true,
+          will_send: willSend.length,
+          will_send_ids: willSend.map(c => c.id),
+          skipped_count: skipped.length,
+          skipped,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Execute: queue items for telegram_access_queue
+      let queuedCount = 0;
+      for (const c of willSend) {
+        // Get user_id from profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('user_id')
+          .eq('id', c.profile_id)
+          .maybeSingle();
+
+        if (profile?.user_id) {
+          await supabase.from('telegram_access_queue').insert({
+            user_id: profile.user_id,
+            club_id: club_id,
+            action: 'grant',
+            source: 'reinvite',
+            priority: 5,
+          });
+          queuedCount++;
+        }
+      }
+
+      await logAudit(supabase, {
+        club_id: club_id,
+        event_type: 'REINVITE_GHOSTS',
+        actor_type: 'admin',
+        actor_id: requesterId,
+        meta: {
+          scope: reinviteScope,
+          queued_count: queuedCount,
+          skipped_count: skipped.length,
+          skipped_reasons: skipped.reduce((acc, s) => { acc[s.reason] = (acc[s.reason] || 0) + 1; return acc; }, {} as Record<string, number>),
+        },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        dry_run: false,
+        queued_count: queuedCount,
+        skipped_count: skipped.length,
+        skipped,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     return new Response(JSON.stringify({ error: 'Unknown action' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

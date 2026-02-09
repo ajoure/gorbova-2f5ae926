@@ -25,6 +25,14 @@ interface TelegramUpdate {
     from: { id: number };
     new_chat_member: { status: string; user: { id: number } };
   };
+  chat_member?: {
+    chat: { id: number; title?: string; type: string };
+    from: { id: number };
+    old_chat_member: { status: string; user: { id: number; first_name?: string; last_name?: string; username?: string } };
+    new_chat_member: { status: string; user: { id: number; first_name?: string; last_name?: string; username?: string } };
+    invite_link?: { invite_link: string; name?: string; creator?: { id: number } };
+    date: number;
+  };
   chat_join_request?: {
     chat: { id: number; title?: string; type: string };
     from: { id: number; first_name: string; last_name?: string; username?: string };
@@ -998,6 +1006,158 @@ Deno.serve(async (req) => {
           console.log(`Saved message ${msg.message_id} for analytics in club ${club.id}`);
         }
       }
+    }
+
+    // ==========================================
+    // Handle chat_member (user joined/left chat) — PATCH P0.9.8
+    // ==========================================
+    if (update.chat_member) {
+      const cm = update.chat_member;
+      const telegramUserId = cm.new_chat_member.user.id;
+      const chatId = cm.chat.id;
+      const chatType = cm.chat.type;
+      const newStatus = cm.new_chat_member.status;
+      const oldStatus = cm.old_chat_member.status;
+
+      console.log(`[chat_member] User ${telegramUserId} in ${chatType} ${chatId}: ${oldStatus} -> ${newStatus}`);
+
+      // Find club by chat_id or channel_id
+      const { data: club } = await supabase
+        .from('telegram_clubs')
+        .select('id')
+        .eq('bot_id', botId)
+        .or(`chat_id.eq.${chatId},channel_id.eq.${chatId}`)
+        .maybeSingle();
+
+      if (club) {
+        // Determine if this is chat or channel
+        const isChat = chatType === 'supergroup' || chatType === 'group';
+        const isJoin = ['member', 'administrator', 'creator'].includes(newStatus) && ['left', 'kicked', 'restricted'].includes(oldStatus);
+        const isLeave = ['left', 'kicked'].includes(newStatus) && ['member', 'administrator', 'creator'].includes(oldStatus);
+
+        if (isJoin) {
+          // User JOINED
+          const updateFields: Record<string, unknown> = {
+            updated_at: new Date().toISOString(),
+            last_verified_at: new Date().toISOString(),
+          };
+          if (isChat) {
+            updateFields.in_chat = true;
+            updateFields.verified_in_chat_at = new Date().toISOString();
+          } else {
+            updateFields.in_channel = true;
+            updateFields.verified_in_channel_at = new Date().toISOString();
+          }
+
+          await supabase.from('telegram_club_members')
+            .update(updateFields)
+            .eq('club_id', club.id)
+            .eq('telegram_user_id', telegramUserId);
+
+          // Try to match invite link
+          if (cm.invite_link?.invite_link) {
+            const inviteUrl = cm.invite_link.invite_link;
+            const plusMatch = inviteUrl.match(/\+([A-Za-z0-9_-]+)$/);
+            const joinMatch = inviteUrl.match(/joinchat\/([A-Za-z0-9_-]+)$/);
+            const inviteCode = plusMatch?.[1] || joinMatch?.[1] || null;
+
+            if (inviteCode) {
+              const { data: inviteRecord } = await supabase
+                .from('telegram_invite_links')
+                .select('id, telegram_user_id, profile_id')
+                .eq('invite_code', inviteCode)
+                .in('status', ['created', 'sent'])
+                .maybeSingle();
+
+              if (inviteRecord) {
+                // MISMATCH check
+                if (inviteRecord.telegram_user_id && inviteRecord.telegram_user_id !== telegramUserId) {
+                  await supabase.from('telegram_invite_links')
+                    .update({ status: 'mismatch', used_at: new Date().toISOString(), used_by_telegram_user_id: telegramUserId })
+                    .eq('id', inviteRecord.id);
+
+                  await logAudit(supabase, {
+                    club_id: club.id,
+                    telegram_user_id: telegramUserId,
+                    event_type: 'INVITE_MISMATCH',
+                    actor_type: 'system',
+                    meta: { invite_id: inviteRecord.id, expected_tg_id: inviteRecord.telegram_user_id, actual_tg_id: telegramUserId },
+                  });
+                } else {
+                  // Successful match
+                  await supabase.from('telegram_invite_links')
+                    .update({ status: 'used', used_at: new Date().toISOString(), used_by_telegram_user_id: telegramUserId })
+                    .eq('id', inviteRecord.id);
+                }
+              }
+            }
+          } else {
+            // No invite_link in update — check profile mapping for weak mismatch
+            const { data: memberRecord } = await supabase
+              .from('telegram_club_members')
+              .select('profile_id')
+              .eq('club_id', club.id)
+              .eq('telegram_user_id', telegramUserId)
+              .maybeSingle();
+
+            // If we have a profile linked to a different TG user, log weak mismatch
+            if (memberRecord?.profile_id) {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('telegram_user_id')
+                .eq('id', memberRecord.profile_id)
+                .maybeSingle();
+
+              if (profile?.telegram_user_id && Number(profile.telegram_user_id) !== telegramUserId) {
+                await logAudit(supabase, {
+                  club_id: club.id,
+                  telegram_user_id: telegramUserId,
+                  event_type: 'INVITE_MISMATCH_WEAK',
+                  actor_type: 'system',
+                  meta: { expected_tg_id: profile.telegram_user_id, actual_tg_id: telegramUserId },
+                });
+              }
+            }
+          }
+
+          await logAudit(supabase, {
+            club_id: club.id,
+            telegram_user_id: telegramUserId,
+            event_type: 'JOIN_VERIFIED',
+            actor_type: 'system',
+            meta: { chat_id: chatId, chat_type: chatType, has_invite_link: !!cm.invite_link },
+          });
+        }
+
+        if (isLeave) {
+          // User LEFT or was KICKED
+          const updateFields: Record<string, unknown> = {
+            updated_at: new Date().toISOString(),
+          };
+          if (isChat) {
+            updateFields.in_chat = false;
+            updateFields.verified_in_chat_at = null;
+          } else {
+            updateFields.in_channel = false;
+            updateFields.verified_in_channel_at = null;
+          }
+
+          await supabase.from('telegram_club_members')
+            .update(updateFields)
+            .eq('club_id', club.id)
+            .eq('telegram_user_id', telegramUserId);
+
+          await logAudit(supabase, {
+            club_id: club.id,
+            telegram_user_id: telegramUserId,
+            event_type: newStatus === 'kicked' ? 'MEMBER_KICKED' : 'MEMBER_LEFT',
+            actor_type: 'system',
+            meta: { chat_id: chatId, chat_type: chatType },
+          });
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ==========================================

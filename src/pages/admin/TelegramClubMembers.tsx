@@ -166,6 +166,11 @@ export default function TelegramClubMembers() {
   const [massActionLoading, setMassActionLoading] = useState(false);
   const [showStats, setShowStats] = useState(false);
   
+  // Reinvite ghosts state
+  const [showReinviteDialog, setShowReinviteDialog] = useState(false);
+  const [reinviteDryRunResult, setReinviteDryRunResult] = useState<any>(null);
+  const [reinviteLoading, setReinviteLoading] = useState(false);
+  
   // Status check state
   const [checkingStatuses, setCheckingStatuses] = useState(false);
   const [checkProgress, setCheckProgress] = useState({ current: 0, total: 0 });
@@ -580,6 +585,58 @@ export default function TelegramClubMembers() {
     }
   };
 
+  // Reinvite ghosts handlers
+  const handleReinviteDryRun = async () => {
+    if (!clubId) return;
+    setReinviteLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'reinvite_ghosts', club_id: clubId, scope: 'bought_not_joined', dry_run: true },
+      });
+      if (error) throw error;
+      setReinviteDryRunResult(data);
+      setShowReinviteDialog(true);
+    } catch (e) {
+      console.error('Reinvite dry run error:', e);
+      toast.error('Ошибка при проверке кандидатов');
+    }
+    setReinviteLoading(false);
+  };
+
+  const handleReinviteExecute = async () => {
+    if (!clubId) return;
+    setReinviteLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'reinvite_ghosts', club_id: clubId, scope: 'bought_not_joined', dry_run: false },
+      });
+      if (error) throw error;
+      toast.success(`В очередь добавлено: ${data.queued_count}. Пропущено: ${data.skipped_count}`);
+      setShowReinviteDialog(false);
+      setReinviteDryRunResult(null);
+      refetch();
+    } catch (e) {
+      console.error('Reinvite execute error:', e);
+      toast.error('Ошибка при переотправке');
+    }
+    setReinviteLoading(false);
+  };
+
+  // Single member reinvite
+  const handleReinviteSingle = async (member: EnrichedClubMember) => {
+    if (!clubId) return;
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'reinvite_ghosts', club_id: clubId, scope: 'selected_ids', member_ids: [member.id], dry_run: false },
+      });
+      if (error) throw error;
+      toast.success(data.queued_count > 0 ? 'Переотправка ссылки поставлена в очередь' : `Пропущено: ${data.skipped?.[0]?.reason || 'лимит'}`);
+      refetch();
+    } catch (e) {
+      toast.error('Ошибка переотправки');
+    }
+  };
+
   // Calculate selected members present in chat/channel
   const selectedPresentMembers = useMemo(() => {
     return selectedMembers.filter(m => m.in_chat || m.in_channel);
@@ -930,6 +987,22 @@ export default function TelegramClubMembers() {
                     <span className="hidden sm:inline ml-1">({counts.violators})</span>
                   </Button>
                 )}
+                {activeTab === 'bought_not_joined' && counts.bought_not_joined > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReinviteDryRun}
+                    disabled={reinviteLoading}
+                  >
+                    {reinviteLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
+                    ) : (
+                      <Send className="h-4 w-4 sm:mr-2" />
+                    )}
+                    <span className="hidden sm:inline">Переотправить ссылки</span>
+                    <span className="sm:hidden">({counts.bought_not_joined})</span>
+                  </Button>
+                )}
               </div>
             </div>
             
@@ -1203,6 +1276,13 @@ export default function TelegramClubMembers() {
                                 Пометить удалённым
                               </DropdownMenuItem>
                             )}
+                            {/* Reinvite for bought_not_joined */}
+                            {!member.in_any && member.link_status === 'linked' && member.has_active_access && (
+                              <DropdownMenuItem onClick={() => handleReinviteSingle(member)}>
+                                <Send className="h-4 w-4 mr-2" />
+                                Переотправить ссылку
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -1444,6 +1524,48 @@ export default function TelegramClubMembers() {
                 {sendingMessage && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 <Send className="h-4 w-4 mr-2" />
                 Отправить
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reinvite Ghosts Dialog */}
+        <Dialog open={showReinviteDialog} onOpenChange={setShowReinviteDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Переотправить ссылки</DialogTitle>
+              <DialogDescription>
+                {reinviteDryRunResult ? (
+                  <>
+                    Будет отправлено: <strong>{reinviteDryRunResult.will_send}</strong> пользователям.
+                    {reinviteDryRunResult.skipped_count > 0 && (
+                      <> Пропущено: <strong>{reinviteDryRunResult.skipped_count}</strong> (лимиты/недавно отправлено).</>
+                    )}
+                  </>
+                ) : 'Загрузка...'}
+              </DialogDescription>
+            </DialogHeader>
+            {reinviteDryRunResult?.skipped?.length > 0 && (
+              <div className="text-sm space-y-1 max-h-32 overflow-y-auto">
+                <p className="font-medium text-muted-foreground">Причины пропуска:</p>
+                {reinviteDryRunResult.skipped.map((s: any, i: number) => (
+                  <div key={i} className="text-xs text-muted-foreground">
+                    TG {s.telegram_user_id}: {s.reason === 'invite_sent_recently' ? 'отправлено менее 4ч назад' : s.reason === 'max_reinvites_24h' ? 'лимит переотправок (3/24ч)' : s.reason === 'security_review' ? '⚠️ Security review' : s.reason}
+                  </div>
+                ))}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setShowReinviteDialog(false); setReinviteDryRunResult(null); }}>
+                Отмена
+              </Button>
+              <Button 
+                onClick={handleReinviteExecute} 
+                disabled={reinviteLoading || !reinviteDryRunResult?.will_send}
+              >
+                {reinviteLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                <Send className="h-4 w-4 mr-2" />
+                Отправить ({reinviteDryRunResult?.will_send || 0})
               </Button>
             </DialogFooter>
           </DialogContent>
