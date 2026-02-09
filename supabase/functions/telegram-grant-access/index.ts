@@ -114,7 +114,7 @@ async function createInviteLink(
   const result = await telegramRequest(botToken, 'createChatInviteLink', params);
 
   if (result.ok) {
-    return { link: result.result.invite_link };
+    return { link: result.result.invite_link, invite_link_obj: result.result };
   }
   console.error('Failed to create invite link:', result);
   return { error: result.description || 'Failed to create invite link' };
@@ -531,6 +531,61 @@ Deno.serve(async (req) => {
         invite_retry_after: null,
         last_invite_link: chatInviteLink || channelInviteLink || null,
       };
+
+      // PATCH P0.9.8: Save invite links to telegram_invite_links
+      const extractInviteCode = (link: string): string => {
+        // https://t.me/+XXXXXX or https://t.me/joinchat/XXXXXX
+        const plusMatch = link.match(/\+([A-Za-z0-9_-]+)$/);
+        if (plusMatch) return plusMatch[1];
+        const joinMatch = link.match(/joinchat\/([A-Za-z0-9_-]+)$/);
+        if (joinMatch) return joinMatch[1];
+        return link.split('/').pop() || link;
+      };
+
+      const inviteSource = is_manual ? 'manual_grant' : 'auto_grant';
+      const now24h = new Date(Date.now() + 86400 * 1000).toISOString();
+
+      if (chatInviteLink && club.chat_id) {
+        const code = extractInviteCode(chatInviteLink);
+        const { data: inviteRecord } = await supabase.from('telegram_invite_links').insert({
+          club_id: club.id,
+          profile_id: profile.id,
+          telegram_user_id: telegramUserId,
+          invite_link: chatInviteLink,
+          invite_code: code,
+          target_type: 'chat',
+          target_chat_id: club.chat_id,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          expires_at: now24h,
+          member_limit: 1,
+          source: inviteSource,
+          source_id: source_id || null,
+        }).select('id').maybeSingle();
+        
+        if (inviteRecord) {
+          inviteTrackingUpdate.last_invite_id = inviteRecord.id;
+        }
+      }
+
+      if (channelInviteLink && club.channel_id) {
+        const code = extractInviteCode(channelInviteLink);
+        await supabase.from('telegram_invite_links').insert({
+          club_id: club.id,
+          profile_id: profile.id,
+          telegram_user_id: telegramUserId,
+          invite_link: channelInviteLink,
+          invite_code: code,
+          target_type: 'channel',
+          target_chat_id: club.channel_id,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          expires_at: now24h,
+          member_limit: 1,
+          source: inviteSource,
+          source_id: source_id || null,
+        });
+      }
       
       await supabase.from('telegram_club_members').update(inviteTrackingUpdate)
         .eq('telegram_user_id', telegramUserId).eq('club_id', club.id);

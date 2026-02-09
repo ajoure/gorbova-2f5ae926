@@ -7604,10 +7604,12 @@ export type Database = {
           invite_status: string | null
           joined_channel_at: string | null
           joined_chat_at: string | null
+          last_invite_id: string | null
           last_invite_link: string | null
           last_synced_at: string | null
           last_telegram_check_at: string | null
           last_telegram_check_result: Json | null
+          last_verified_at: string | null
           link_status: string
           profile_id: string | null
           telegram_first_name: string | null
@@ -7615,6 +7617,8 @@ export type Database = {
           telegram_user_id: number
           telegram_username: string | null
           updated_at: string
+          verified_in_channel_at: string | null
+          verified_in_chat_at: string | null
         }
         Insert: {
           access_status?: string
@@ -7630,10 +7634,12 @@ export type Database = {
           invite_status?: string | null
           joined_channel_at?: string | null
           joined_chat_at?: string | null
+          last_invite_id?: string | null
           last_invite_link?: string | null
           last_synced_at?: string | null
           last_telegram_check_at?: string | null
           last_telegram_check_result?: Json | null
+          last_verified_at?: string | null
           link_status?: string
           profile_id?: string | null
           telegram_first_name?: string | null
@@ -7641,6 +7647,8 @@ export type Database = {
           telegram_user_id: number
           telegram_username?: string | null
           updated_at?: string
+          verified_in_channel_at?: string | null
+          verified_in_chat_at?: string | null
         }
         Update: {
           access_status?: string
@@ -7656,10 +7664,12 @@ export type Database = {
           invite_status?: string | null
           joined_channel_at?: string | null
           joined_chat_at?: string | null
+          last_invite_id?: string | null
           last_invite_link?: string | null
           last_synced_at?: string | null
           last_telegram_check_at?: string | null
           last_telegram_check_result?: Json | null
+          last_verified_at?: string | null
           link_status?: string
           profile_id?: string | null
           telegram_first_name?: string | null
@@ -7667,6 +7677,8 @@ export type Database = {
           telegram_user_id?: number
           telegram_username?: string | null
           updated_at?: string
+          verified_in_channel_at?: string | null
+          verified_in_chat_at?: string | null
         }
         Relationships: [
           {
@@ -7674,6 +7686,13 @@ export type Database = {
             columns: ["club_id"]
             isOneToOne: false
             referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_club_members_last_invite_id_fkey"
+            columns: ["last_invite_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_invite_links"
             referencedColumns: ["id"]
           },
           {
@@ -7780,6 +7799,84 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_invite_links: {
+        Row: {
+          club_id: string
+          created_at: string | null
+          expires_at: string
+          id: string
+          invite_code: string
+          invite_link: string
+          member_limit: number
+          note: string | null
+          profile_id: string
+          sent_at: string | null
+          source: string | null
+          source_id: string | null
+          status: string
+          target_chat_id: number
+          target_type: string
+          telegram_user_id: number | null
+          used_at: string | null
+          used_by_telegram_user_id: number | null
+        }
+        Insert: {
+          club_id: string
+          created_at?: string | null
+          expires_at: string
+          id?: string
+          invite_code: string
+          invite_link: string
+          member_limit?: number
+          note?: string | null
+          profile_id: string
+          sent_at?: string | null
+          source?: string | null
+          source_id?: string | null
+          status?: string
+          target_chat_id: number
+          target_type?: string
+          telegram_user_id?: number | null
+          used_at?: string | null
+          used_by_telegram_user_id?: number | null
+        }
+        Update: {
+          club_id?: string
+          created_at?: string | null
+          expires_at?: string
+          id?: string
+          invite_code?: string
+          invite_link?: string
+          member_limit?: number
+          note?: string | null
+          profile_id?: string
+          sent_at?: string | null
+          source?: string | null
+          source_id?: string | null
+          status?: string
+          target_chat_id?: number
+          target_type?: string
+          telegram_user_id?: number | null
+          used_at?: string | null
+          used_by_telegram_user_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_invite_links_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_invite_links_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -9379,6 +9476,10 @@ export type Database = {
       expire_stale_entitlements: {
         Args: { p_batch_limit?: number }
         Returns: Json
+      }
+      expire_stale_invite_links: {
+        Args: { batch_limit?: number }
+        Returns: number
       }
       find_bought_not_joined_users: {
         Args: never

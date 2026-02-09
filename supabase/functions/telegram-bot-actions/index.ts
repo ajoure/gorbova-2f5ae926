@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 interface BotAction {
-  action: 'check_connection' | 'set_webhook' | 'delete_webhook' | 'get_me' | 'check_chat_rights';
+  action: 'check_connection' | 'set_webhook' | 'delete_webhook' | 'get_me' | 'check_chat_rights' | 'update_webhook';
   bot_id?: string;
   bot_token?: string;
   chat_id?: number;
@@ -222,6 +222,66 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({
           success: result.ok,
           result,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      case 'update_webhook': {
+        if (!bot_id) {
+          return new Response(JSON.stringify({ error: 'bot_id required for webhook update' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Idempotent: check current webhook info first
+        const webhookInfo = await telegramRequest(botToken, 'getWebhookInfo', {});
+        const currentUpdates: string[] = webhookInfo.result?.allowed_updates || [];
+        const requiredUpdates = ['message', 'chat_member', 'my_chat_member', 'chat_join_request', 'callback_query'];
+        const missingUpdates = requiredUpdates.filter(u => !currentUpdates.includes(u));
+
+        if (missingUpdates.length === 0) {
+          return new Response(JSON.stringify({
+            success: true,
+            no_op: true,
+            message: 'Webhook already has all required allowed_updates',
+            current_updates: currentUpdates,
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const currentUrl = webhookInfo.result?.url;
+        if (!currentUrl) {
+          return new Response(JSON.stringify({ error: 'No webhook URL set. Use set_webhook first.' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const updateResult = await telegramRequest(botToken, 'setWebhook', {
+          url: currentUrl,
+          allowed_updates: requiredUpdates,
+        });
+
+        if (updateResult.ok) {
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.webhook.updated',
+            actor_user_id: user.id,
+            meta: {
+              bot_id,
+              added_updates: missingUpdates,
+              all_updates: requiredUpdates,
+            },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          success: updateResult.ok,
+          added_updates: missingUpdates,
+          all_updates: requiredUpdates,
+          result: updateResult,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
