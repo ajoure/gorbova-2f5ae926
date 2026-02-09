@@ -98,17 +98,12 @@ export function KvestLessonView({
         return isBlockCompleted(block.id);
       
       case 'video_unskippable': {
-        // PATCH-V1: Если URL пустой — bypass ТОЛЬКО для admin + preview
         const videoUrl = ((block.content as any)?.url || '').trim();
         if (!videoUrl) {
-          // Admin + preview mode = bypass allowed
-          // Regular user = blocked (gate closed)
           return allowBypassEmptyVideo === true;
         }
-        
-        const videoProgress = state?.videoProgress?.[block.id] ?? 0;
-        const threshold = (block.content as any)?.threshold_percent ?? 95;
-        return videoProgress >= threshold;
+        // P0.9.12: completion is via manual button, checked by isBlockCompleted above
+        return false;
       }
       
       case 'video':
@@ -139,7 +134,7 @@ export function KvestLessonView({
   }, []);
 
   // Navigate to step
-  const goToStep = useCallback((index: number) => {
+  const goToStep = useCallback((index: number, force = false) => {
     if (index < 0 || index >= totalSteps) return;
     
     // Can go back freely
@@ -152,7 +147,8 @@ export function KvestLessonView({
     }
     
     // Check if current block gate is open before moving forward
-    if (index > currentStepIndex && !isCurrentBlockGateOpen) {
+    // force=true skips this check (used when completion handler just marked the block)
+    if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
       toast.error("Сначала завершите текущий шаг");
       return;
     }
@@ -213,28 +209,19 @@ export function KvestLessonView({
   // Handler for role_description block completion
   const handleRoleDescriptionComplete = useCallback((blockId: string) => {
     markBlockCompleted(blockId);
-    // Auto-advance to next step
+    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
-      goToStep(currentStepIndex + 1);
+      goToStep(currentStepIndex + 1, true);
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for video progress (memoized to prevent re-renders)
-  const handleVideoProgress = useCallback((blockId: string, percent: number) => {
-    updateState({
-      videoProgress: {
-        ...(state?.videoProgress || {}),
-        [blockId]: percent
-      }
-    });
-  }, [state?.videoProgress, updateState]);
 
   // Handler for video completion
   const handleVideoComplete = useCallback((blockId: string) => {
     markBlockCompleted(blockId);
-    // Auto-advance to next step
+    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
-      goToStep(currentStepIndex + 1);
+      goToStep(currentStepIndex + 1, true);
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
@@ -246,9 +233,9 @@ export function KvestLessonView({
   const handleDiagnosticTableComplete = useCallback((blockId: string) => {
     updateState({ pointA_completed: true });
     markBlockCompleted(blockId);
-    // Auto-advance to next step
+    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
-      goToStep(currentStepIndex + 1);
+      goToStep(currentStepIndex + 1, true);
     }
   }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
@@ -347,17 +334,12 @@ export function KvestLessonView({
         );
       
       case 'video_unskippable': {
-        const videoProgress = state?.videoProgress?.[blockId] ?? 0;
-        // PATCH-2: Use unique key based on isCompleted to force full remount
-        // This isolates Kinescope's DOM from React reconciliation
         const stableKey = `${blockId}-${isCompleted ? 'completed' : 'active'}`;
         return (
           <div key={stableKey} className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
-                watchedPercent: videoProgress,
-                onProgress: isReadOnly ? undefined : (percent: number) => handleVideoProgress(blockId, percent),
                 onComplete: isReadOnly ? undefined : () => handleVideoComplete(blockId),
                 isCompleted: isCompleted,
                 allowBypassEmptyVideo: allowBypassEmptyVideo,
@@ -418,7 +400,7 @@ export function KvestLessonView({
     handleRoleSelected,
     handleQuizSurveyReset,
     handleRoleDescriptionComplete,
-    handleVideoProgress,
+    
     handleVideoComplete,
     handleDiagnosticTableUpdate,
     handleDiagnosticTableComplete,

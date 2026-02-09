@@ -103,7 +103,6 @@ export function VideoUnskippableBlock({
 
   // Handle confirmation button click
   const handleConfirmWatched = () => {
-    onProgress?.(100);
     onComplete?.();
   };
 
@@ -244,16 +243,15 @@ export function VideoUnskippableBlock({
       )}
 
       {/* P0.9.12: Simple confirmation button — no percent tracking */}
-      {content.required !== false && (
-        <div className="space-y-3">
-          <Button
-            onClick={handleConfirmWatched}
-            className="w-full"
-            size="lg"
-          >
-            <CheckCircle2 className="mr-2 h-5 w-5" />
-            Я просмотрел(а) видео
-          </Button>
+      <div className="space-y-3">
+        <Button
+          onClick={handleConfirmWatched}
+          className="w-full"
+          size="lg"
+        >
+          <CheckCircle2 className="mr-2 h-5 w-5" />
+          Я просмотрел(а) урок
+        </Button>
           
           {/* Admin bypass */}
           {allowBypassEmptyVideo && (
@@ -265,10 +263,9 @@ export function VideoUnskippableBlock({
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
               Пропустить (админ preview)
-            </Button>
-          )}
-        </div>
-      )}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
