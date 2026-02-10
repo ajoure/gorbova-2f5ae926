@@ -1,136 +1,157 @@
-# PATCH P1.0.2 — Support UI Fixes + Client Notifications + Reactions + Telegram Bridge
 
-## Жёсткие правила исполнения для Lovable.dev (обязательно)
-1) Ничего не ломать и не трогать лишнее. Только изменения из списка ниже.
-2) Add-only где возможно. Минимальный diff. Без рефакторинга “заодно”.
-3) Все рискованные операции: dry-run → execute. Везде STOP-guards (лимиты/батчи/таймауты).
-4) Никаких хардкод-UUID/магии. Только доказуемые связи.
-5) Безопасность: internal notes никогда не показывать клиенту и никогда не слать в Telegram.
-6) Финальный DoD только по фактам: UI-скрины + логи + SQL-проверки. Если “сделано” без пруфов — считается НЕ сделано.
+# PATCH P1.0.2.1 — Fix Regressions and Missing Features
+
+## Summary of All Changes (7 items)
 
 ---
 
-## P0 (TEST-ONLY HARDEN)
-Цель: убедиться, что на клиентском маршруте /support/{ticketId} внутренние заметки не видны даже админу (route client).
-- Код менять не нужно, только проверить.
-DoD: под admin-аккаунтом зайти на /support/{ticketId} → internal notes не видны.
+### P1 — Client realtime: new messages without F5
+**File: `src/hooks/useTickets.ts` (useTicketMessages, lines 164-186)**
+
+Current `useTicketMessages` is a plain `useQuery` with no realtime subscription. When admin replies, client sees nothing until refresh.
+
+**Fix:** Convert to a custom hook that adds a `useEffect` with supabase channel subscription:
+- Channel: `ticket-messages-rt-{ticketId}`
+- Filter: `ticket_id=eq.${ticketId}` on `ticket_messages` table
+- Events: `*` (INSERT/UPDATE/DELETE)
+- On change: `queryClient.invalidateQueries({ queryKey: ["ticket-messages", ticketId, isAdmin] })`
+- Cleanup: `supabase.removeChannel(channel)` on unmount
+- Dependencies: `[ticketId, isAdmin, queryClient]`
+
+This requires adding `useQueryClient` and `useEffect` to the hook (useEffect already imported at file level).
 
 ---
 
-## P1/P2 (UI) — убрать клип статусов в TicketCard
-Файл: src/components/support/TicketCard.tsx
-Сделать так, чтобы статус-бейдж НЕ конкурировал по ширине с заголовком:
-- Перестроить layout: бейдж на отдельную строку (ниже subject) или в отдельную “колонку” с гарантированным местом.
-- Unread-dot остаётся на аватаре (не absolute в правом верхнем углу карточки).
-DoD:
-- На ширине панели 15%–40% бейдж всегда полностью видим.
-- Текст карточки трюнкейтится, а не бейдж.
-- Open/Closed визуально одинаковые по paddings/высоте/гуттерам.
+### P2 — Client realtime: ticket list + unread badge without F5
+**File: `src/hooks/useTickets.ts` (useUserTickets, lines 65-88)**
 
-(Опционально) TicketStatusBadge compact-лейблы только если нужно.
+`useUserTickets` has no realtime subscription. Client ticket list and status changes require F5.
 
----
+**Fix:** Add `useEffect` with supabase channel:
+- Channel: `user-tickets-rt`
+- Filter: `user_id=eq.${user.id}` on `support_tickets` table
+- On change: invalidate both `["user-tickets", user.id]` and `["unread-tickets-count", user.id]`
+- Cleanup on unmount
 
-## P2 (CLIENT NOTIFICATIONS) — бейдж “непрочитано” в боковом меню клиента
-Файл: компонент сайдбара клиента (найти реальный файл: AppSidebar.tsx/Sidebar.tsx/…)
-- Использовать useUnreadTicketsCount (client, has_unread_user).
-- Показать красную точку или count рядом с “Техподдержка” при count > 0.
-- Добавить realtime обновление count без refresh:
-  - подписка на support_tickets (или ticket_messages) по текущему user_id
-  - обязательный cleanup канала при unmount
-DoD:
-- Админ отвечает в тикете → у клиента появляется индикатор в меню.
-- Клиент открывает тикет → индикатор исчезает.
+Note: `useUnreadTicketsCount` (line 189) already has a realtime subscription on `support_tickets`, so only `useUserTickets` needs it for the ticket list to update.
 
 ---
 
-## P2.1 (READ/UNREAD)
-Проверить, что на клиенте при открытии тикета вызывается markRead и сбрасывается has_unread_user=false.
-Код менять только если сейчас не работает.
-DoD: после открытия тикета клиентом count=0.
+### P3 — Unread indicator always visible (not just in dropdown)
+**File: `src/components/layout/AppSidebar.tsx` (lines 288-321)**
+
+Currently the unread badge is inside the `DropdownMenuContent` on the "Техподдержка" item (line 357-361). User never sees it without clicking the profile avatar.
+
+**Fix:** Add a small red dot on the profile trigger button (the avatar area, line 294):
+- After the `Avatar` component (line 294-301), add an absolutely positioned red dot when `unreadTicketsCount > 0`
+- The dot sits on the top-right corner of the avatar, similar to the unread dot on TicketCard
+- Wrap the Avatar in a `relative` container and add `absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-destructive ring-2 ring-background`
 
 ---
 
-## P2.2 (REACTIONS) — реакции на сообщения
-### Миграция (ВАЖНО: без DEFAULT auth.uid())
-Создать таблицу:
-- ticket_message_reactions(
-  id uuid PK default gen_random_uuid(),
-  message_id uuid NOT NULL references ticket_messages(id) on delete cascade,
-  user_id uuid NOT NULL,
-  emoji text NOT NULL,
-  created_at timestamptz default now(),
-  UNIQUE(message_id, user_id, emoji)
-)
-Индекс: (message_id)
+### P4 — Fix compact badge labels
+**File: `src/components/support/TicketStatusBadge.tsx` (lines 16 and 40)**
 
-RLS:
-- SELECT: разрешить тем, кто имеет доступ к сообщению/тикету (владелец тикета) + админы.
-- INSERT: WITH CHECK (user_id = auth.uid()).
-- DELETE: USING (user_id = auth.uid()).
-Добавить в supabase_realtime publication.
-
-### UI/хуки
-Новый хук: src/hooks/useTicketReactions.ts
-- bulk fetch реакций по message_ids
-- toggle reaction (insert/delete)
-- realtime на reactions
-
-Файл: src/components/support/TicketMessage.tsx
-- Показ сгруппированных реакций (emoji + count)
-- Быстрые emoji (👍❤️😂😮😢👎) + “ещё”
-- Клик по своей реакции убирает
-
-DoD:
-- Клиент и админ видят реакции одинаково.
-- Повторный клик по реакции toggles.
-- Реакции обновляются realtime без refresh.
+- Line 16: `compactLabel: "Откр."` --> `compactLabel: "Открыт"`
+- Line 40: `compactLabel: "Закр."` --> `compactLabel: "Закрыт"`
 
 ---
 
-## P0/P2 (TELEGRAM BRIDGE) — двусторонний мост Support ↔ Telegram
-### Миграция
-support_tickets:
-- telegram_bridge_enabled boolean default false
-- telegram_user_id bigint null
+### P5 — Reactions: scoped queryKey + correct invalidation
+**File: `src/hooks/useTicketReactions.ts`**
 
-ticket_telegram_sync:
-- ticket_id uuid NOT NULL FK support_tickets
-- ticket_message_id uuid FK ticket_messages
-- telegram_message_id bigint
-- direction ('to_telegram'|'from_telegram')
-- created_at
-- UNIQUE(ticket_message_id, direction)
-RLS: admin/superadmin only.
+Current issues:
+- `queryKey: ["ticket-reactions", messageIds]` -- uses the full messageIds array. When messages change (new message added), the key changes and old reactions data is orphaned
+- Realtime invalidation uses `queryKey: ["ticket-reactions"]` (too broad, but actually this is fine -- it matches all queries starting with "ticket-reactions")
+- The `useToggleReaction` also invalidates `["ticket-reactions"]` which is correct (prefix match)
 
-### Edge Functions (add-only)
-1) telegram-admin-chat: action bridge_ticket_message
-- Guards: bridge_enabled=true, telegram_user_id not null
-- Idempotency: если sync уже есть — не слать повторно
-- НИКОГДА не слать internal notes
-- Лог в audit_logs (actor_type='system', actor_user_id=null)
+The actual bug risk: `messageIds` in the queryKey changes reference on every render if `visibleMessages` changes. This is handled by `useMemo` in TicketChat (line 35-38), so it should be stable. However, when a new message arrives via realtime, `visibleMessages` changes, `messageIds` changes, and a new query is created with the new key while the old cached data doesn't apply.
 
-2) telegram-webhook:
-- входящее TG сообщение → найти активный bridged ticket по telegram_user_id
-- создать ticket_message author_type='user'
-- записать ticket_telegram_sync direction='from_telegram'
-- НЕ создавать internal
+**Fix:** Add `ticketId` as a parameter to `useTicketReactions` for scoped caching:
+- Change signature: `useTicketReactions(ticketId: string, messageIds: string[])`
+- queryKey: `["ticket-reactions", ticketId, messageIds]`
+- Realtime invalidation: `queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] })`
+- Channel name: `ticket-reactions-rt-{ticketId}` (unique per ticket)
 
-### UI
-Admin TicketChat:
-- чекбокс “Отправить в Telegram” (только isAdmin=true и есть telegram_user_id)
-- после insert сообщения → вызов bridge_ticket_message
+**File: `src/hooks/useTicketReactions.ts` (useToggleReaction)**
+- Add `ticketId` param: `useToggleReaction(ticketId: string)`
+- onSuccess invalidation: `queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] })`
 
-DoD:
-- Admin UI → TG доставлено (1 раз, без дублей).
-- TG → ticket_messages появилось в тикете.
-- internal notes не уходят в TG никогда.
+**File: `src/components/support/TicketChat.tsx` (lines 39-40)**
+- Pass ticketId: `useTicketReactions(ticketId, messageIds)` and `useToggleReaction(ticketId)`
 
 ---
 
-## Финальный DoD (обязателен)
-1) Badge не клипается при 15–40% ширине панели.
-2) На клиенте есть индикатор непрочитанных в меню и он исчезает после открытия тикета.
-3) Реакции работают (insert/delete, count, realtime).
-4) TG bridge работает в обе стороны, без дублей, без internal notes.
-5) Пруфы: скрины UI + SQL select’ы + логи edge/audit.
+### P6 — Telegram Bridge: explicit toggle + auto-prefill
+**File: `src/components/admin/communication/SupportTabContent.tsx` (lines 101-114)**
+
+Current: resolves `telegram_user_id` from profile into local state but never writes it to the ticket or toggles `telegram_bridge_enabled`.
+
+**Fix (add-only):**
+1. After fetching `telegram_user_id` from profile (line 111-113), check if ticket needs updating:
+   - If `selectedTicket.telegram_user_id` is null AND profile has `telegram_user_id`: auto-update ticket with `telegram_user_id` and `telegram_bridge_enabled=true`
+   - Use `updateTicket.mutate()` (already available)
+
+2. Add a visible toggle in the ticket header (between Info button and Status/Priority selects, around line 390):
+   - Small Switch or toggle button labeled "TG" or with a Telegram icon
+   - Reads from `(selectedTicket as any).telegram_bridge_enabled`
+   - On toggle: `updateTicket.mutate({ ticketId, updates: { telegram_bridge_enabled: !current } })`
+   - Only visible when `ticketTelegramUserId` is set
+
+---
+
+### P7 — Better error diagnostics for send message
+**File: `src/hooks/useTickets.ts` (useSendMessage, lines 352-359)**
+
+Current error handler:
+```typescript
+onError: (error) => {
+  console.error("Error sending message:", error);
+  toast({ title: "Ошибка", description: "Не удалось отправить сообщение" });
+}
+```
+
+**Fix:** Show actual error message and log context:
+```typescript
+onError: (error: any, variables) => {
+  console.error("[useSendMessage] Error:", {
+    ticketId: variables.ticket_id,
+    authorType: variables.author_type,
+    isInternal: variables.is_internal,
+    error: error?.message || error,
+  });
+  toast({
+    title: "Ошибка",
+    description: error?.message || "Не удалось отправить сообщение",
+    variant: "destructive",
+  });
+}
+```
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/hooks/useTickets.ts` | P1: realtime in useTicketMessages; P2: realtime in useUserTickets; P7: better error in useSendMessage |
+| `src/components/layout/AppSidebar.tsx` | P3: red dot on avatar trigger |
+| `src/components/support/TicketStatusBadge.tsx` | P4: "Открыт"/"Закрыт" labels |
+| `src/hooks/useTicketReactions.ts` | P5: scoped queryKey with ticketId |
+| `src/components/support/TicketChat.tsx` | P5: pass ticketId to reaction hooks |
+| `src/components/admin/communication/SupportTabContent.tsx` | P6: auto-prefill + TG bridge toggle UI |
+
+## Files NOT Touched
+- `TicketMessage.tsx` -- rendering is correct
+- `TicketCard.tsx` -- layout already fixed
+- Edge functions -- bridge logic already exists
+- DB/RLS -- no changes needed
+
+## DoD
+1. Client `/support/{ticketId}`: admin sends message --> client sees it without F5
+2. Client ticket list updates without F5 (status changes, new messages)
+3. Red dot on avatar visible when unread > 0 (without opening dropdown)
+4. Badge labels: "Открыт" / "Закрыт" (full words)
+5. Reactions from admin visible to client without F5 (scoped invalidation)
+6. TG Bridge: toggle visible in admin header, auto-prefill works
+7. Send error: toast shows actual error reason, console logs context
