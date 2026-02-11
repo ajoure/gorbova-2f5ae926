@@ -348,17 +348,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Fetch Telegram user info (bio, etc.) from Telegram API
   const { data: telegramUserInfo } = useQuery({
-    queryKey: ["contact-telegram-info", contact?.user_id],
+    queryKey: ["contact-telegram-info", resolvedUserId],
     queryFn: async () => {
-      if (!contact?.user_id || !contact?.telegram_user_id) return null;
+      if (!resolvedUserId || !resolvedTelegramUserId) return null;
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { action: "get_user_info", user_id: contact.user_id },
+        body: { action: "get_user_info", user_id: resolvedUserId },
       });
       if (error) throw error;
       if (!data.success) return null;
       return data.user_info;
     },
-    enabled: !!contact?.user_id && !!contact?.telegram_user_id,
+    enabled: !!resolvedUserId && !!resolvedTelegramUserId,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
@@ -1331,7 +1331,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 avatarUrl={contact.avatar_url}
                 fallbackText={formatContactName(contact)?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
                 name={formatContactName(contact)}
-                onFetchFromTelegram={contact.telegram_user_id ? fetchPhotoFromTelegram : undefined}
+                onFetchFromTelegram={resolvedTelegramUserId ? fetchPhotoFromTelegram : undefined}
                 isFetchingPhoto={isFetchingPhoto}
                 size="md"
               />
@@ -1476,17 +1476,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <MessageCircle className="w-4 h-4 text-blue-500" />
-                      {contact.telegram_username ? (
-                        <span>@{contact.telegram_username}</span>
-                      ) : contact.telegram_user_id ? (
-                        <span className="text-muted-foreground">ID: {contact.telegram_user_id}</span>
+                      {resolvedTelegramUsername ? (
+                        <span>@{resolvedTelegramUsername}</span>
+                      ) : resolvedTelegramUserId ? (
+                        <span className="text-muted-foreground">ID: {resolvedTelegramUserId}</span>
                       ) : (
                         <span className="text-muted-foreground">Не привязан</span>
                       )}
                     </div>
-                    {contact.telegram_username && (
+                    {resolvedTelegramUsername && (
                       <Button variant="ghost" size="sm" asChild>
-                        <a href={`https://t.me/${contact.telegram_username}`} target="_blank" rel="noopener noreferrer">
+                        <a href={`https://t.me/${resolvedTelegramUsername}`} target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       </Button>
@@ -1557,7 +1557,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Card>
 
               {/* Telegram Info Card */}
-              {contact.telegram_user_id && (
+              {resolvedTelegramUserId && (
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -1568,19 +1568,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   <CardContent className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">ID пользователя</span>
-                      <span className="text-sm font-mono">{contact.telegram_user_id}</span>
+                      <span className="text-sm font-mono">{resolvedTelegramUserId}</span>
                     </div>
                     <Separator />
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Username</span>
-                      {contact.telegram_username ? (
+                      {resolvedTelegramUsername ? (
                         <a 
-                          href={`https://t.me/${contact.telegram_username}`} 
+                          href={`https://t.me/${resolvedTelegramUsername}`} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-sm text-blue-500 hover:underline flex items-center gap-1"
                         >
-                          @{contact.telegram_username}
+                          @{resolvedTelegramUsername}
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       ) : (
