@@ -331,7 +331,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (!contact?.id) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
+        .select("user_id, status, telegram_user_id, telegram_username, telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
         .eq("id", contact.id)
         .single();
       if (error) throw error;
@@ -339,6 +339,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
     enabled: !!contact?.id,
   });
+
+  // Reliable contact fields: prefer DB data (profileData) over potentially stale props
+  const resolvedUserId = profileData?.user_id ?? contact?.user_id ?? null;
+  const resolvedStatus = profileData?.status ?? contact?.status ?? "active";
+  const resolvedTelegramUserId = profileData?.telegram_user_id ?? contact?.telegram_user_id ?? null;
+  const resolvedTelegramUsername = profileData?.telegram_username ?? contact?.telegram_username ?? null;
 
   // Fetch Telegram user info (bio, etc.) from Telegram API
   const { data: telegramUserInfo } = useQuery({
@@ -1339,24 +1345,24 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               {profileData?.loyalty_score && (
                 <LoyaltyPulse score={profileData.loyalty_score} size="sm" />
               )}
-              {!contact.user_id && (
+              {!resolvedUserId && (
                 <Badge variant="outline" className="text-xs gap-1">
                   <Ghost className="w-3 h-3" />
                   Ghost
                 </Badge>
               )}
               <Badge 
-                variant={!contact.user_id ? "secondary" : contact.status === "active" ? "default" : "secondary"} 
+                variant={!resolvedUserId ? "secondary" : resolvedStatus === "active" ? "default" : "secondary"} 
                 className="text-xs"
               >
-                {!contact.user_id ? (
+                {!resolvedUserId ? (
                   <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
-                ) : contact.status === "active" ? (
+                ) : resolvedStatus === "active" ? (
                   <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
-                ) : contact.status === "blocked" ? (
+                ) : resolvedStatus === "blocked" ? (
                   <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
                 ) : (
-                  <><XCircle className="w-3 h-3 mr-1" />{contact.status}</>
+                  <><XCircle className="w-3 h-3 mr-1" />{resolvedStatus}</>
                 )}
               </Badge>
             </div>
@@ -1953,36 +1959,36 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Telegram Chat Tab */}
             <TabsContent value="telegram" className="m-0 space-y-4">
               {/* Telegram Profile Info Card */}
-              {contact.telegram_user_id ? (
+              {resolvedTelegramUserId ? (
                 <Card>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-sm">
                           <span className="text-muted-foreground">ID:</span>
-                          <span className="font-mono">{contact.telegram_user_id}</span>
+                          <span className="font-mono">{resolvedTelegramUserId}</span>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6"
                             onClick={() => {
-                              navigator.clipboard.writeText(String(contact.telegram_user_id));
+                              navigator.clipboard.writeText(String(resolvedTelegramUserId));
                               toast.success("ID скопирован");
                             }}
                           >
                             <Copy className="h-3 w-3" />
                           </Button>
                         </div>
-                        {contact.telegram_username && (
+                        {resolvedTelegramUsername && (
                           <div className="flex items-center gap-2 text-sm">
                             <span className="text-muted-foreground">Username:</span>
                             <a
-                              href={`https://t.me/${contact.telegram_username}`}
+                              href={`https://t.me/${resolvedTelegramUsername}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-primary hover:underline flex items-center gap-1"
                             >
-                              @{contact.telegram_username}
+                              @{resolvedTelegramUsername}
                               <ExternalLink className="h-3 w-3" />
                             </a>
                           </div>
@@ -2069,9 +2075,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               {/* Chat - flex-1 to fill remaining space */}
               <div className="flex-1 min-h-0 overflow-hidden">
                 <ContactTelegramChat
-                  userId={contact.user_id || ""}
-                  telegramUserId={contact.telegram_user_id}
-                  telegramUsername={contact.telegram_username}
+                  userId={resolvedUserId || ""}
+                  telegramUserId={resolvedTelegramUserId}
+                  telegramUsername={resolvedTelegramUsername}
                   clientName={contact.full_name}
                 />
               </div>
