@@ -120,14 +120,14 @@ async function readErrorBody(resp: Response): Promise<string> {
 
 async function fetchBeyagTransactionByUid(
   host: string,
-  auth: string,
+  authHeader: string,
   uid: string
 ): Promise<{ ok: boolean; status: number; data?: any; errorBody?: string }>{
   const url = `${host}/beyag/transactions/${encodeURIComponent(uid)}`;
   const resp = await fetch(url, {
     method: 'GET',
     headers: {
-      Authorization: `Basic ${auth}`,
+      Authorization: authHeader,
       Accept: 'application/json',
       'X-API-Version': '3',
     },
@@ -142,7 +142,7 @@ async function fetchBeyagTransactionByUid(
 }
 
 async function pickWorkingBeyagHost(
-  auth: string,
+  authHeader: string,
   sampleUids: string[],
   startTime: number
 ): Promise<{ selected_host: string | null; attempts: SyncStats['uid_probe_attempts'] }>{
@@ -157,7 +157,7 @@ async function pickWorkingBeyagHost(
       if (Date.now() - startTime > 25000) break;
 
       try {
-        const res = await fetchBeyagTransactionByUid(host, auth, uid);
+        const res = await fetchBeyagTransactionByUid(host, authHeader, uid);
         attempts.push({
           host,
           uid,
@@ -293,7 +293,7 @@ function normalizeTx(raw: any): { tx: NormalizedTx | null; error?: string } {
 // ============ 8-ENDPOINT PROBING (API LIST → DB strategy) ============
 
 async function fetchFromBepaidWithProbing(
-  auth: string,
+  authHeader: string,
   shopId: string,
   fromDate: Date,
   toDate: Date,
@@ -384,7 +384,7 @@ async function fetchFromBepaidWithProbing(
         const response = await fetch(ep.url, {
           method: 'POST',
           headers: {
-            Authorization: `Basic ${auth}`,
+            Authorization: authHeader,
             'Content-Type': 'application/json',
             Accept: 'application/json',
             // Reports API in our codebase uses v2.
@@ -461,7 +461,7 @@ async function fetchFromBepaidWithProbing(
       const response = await fetch(url, {
         method: "GET",
         headers: {
-          "Authorization": `Basic ${auth}`,
+          "Authorization": authHeader,
           "Accept": "application/json",
           "X-API-Version": "3",
         },
@@ -525,9 +525,9 @@ async function fetchFromBepaidWithProbing(
         const nextResp = await fetch(nextUrl, {
           method: "GET",
           headers: {
-            "Authorization": `Basic ${auth}`,
-            "Accept": "application/json",
-            "X-API-Version": "3",
+             "Authorization": authHeader,
+             "Accept": "application/json",
+             "X-API-Version": "3",
           },
         });
 
@@ -664,13 +664,14 @@ serve(async (req) => {
       });
     }
     const shopId = credsResult.shop_id;
-    const auth = btoa(`${shopId}:${credsResult.secret_key}`);
     const testMode = !!credsResult.test_mode;
+    // ✅ единый стандарт: готовый заголовок Authorization ("Basic xxx")
+    const bepaidAuthHeader = createBepaidAuthHeader(credsResult);
     const authMode = `basic ${String(shopId).slice(0, 4)}***:***`;
 
     console.log(`[Sync] Credentials: shopId=found, secretKey=found, source=integration_instances`);
 
-    // PATCH-P0.9.1: audit marker before bePaid sync requests
+    // PATCH-P0.9.1b: audit marker — stage: probing (before host probe + list)
     await supabase.from('audit_logs').insert({
       action: 'bepaid.request.attempt',
       actor_type: 'system',
@@ -678,7 +679,8 @@ serve(async (req) => {
       actor_label: 'bepaid-sync-orchestrator',
       meta: {
         fn: 'bepaid-sync-orchestrator',
-        endpoint: '/beyag/transactions (sync)',
+        stage: 'probing',
+        endpoint: '/sync-probing',
         shop_id_last4: String(shopId).slice(-4),
         test_mode: testMode,
       }
@@ -751,7 +753,7 @@ serve(async (req) => {
 
       stats.sample_uids = sampleUids;
 
-      const hostProbe = await pickWorkingBeyagHost(auth, sampleUids, startTime);
+      const hostProbe = await pickWorkingBeyagHost(bepaidAuthHeader, sampleUids, startTime);
       stats.selected_host = hostProbe.selected_host || 'https://merchant.bepaid.by';
       stats.uid_probe_attempts = hostProbe.attempts;
 
@@ -768,7 +770,7 @@ serve(async (req) => {
       const toDate = new Date(`${to_date}T23:59:59Z`);
 
       const listResult = await fetchFromBepaidWithProbing(
-        auth,
+        bepaidAuthHeader,
         shopId,
         fromDate,
         toDate,
@@ -892,6 +894,22 @@ serve(async (req) => {
           other_4xx: 0,
         };
 
+        // PATCH-P0.9.1b: audit marker — stage: sync (before real UID reconcile fetch loop)
+        await supabase.from('audit_logs').insert({
+          action: 'bepaid.request.attempt',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-sync-orchestrator',
+          meta: {
+            fn: 'bepaid-sync-orchestrator',
+            stage: 'sync',
+            endpoint: `${host}/beyag/transactions/{uid}`,
+            shop_id_last4: String(shopId).slice(-4),
+            test_mode: testMode,
+            uid_count: uids.length,
+          },
+        });
+
         for (let i = 0; i < uids.length; i++) {
           if (stopped) break;
 
@@ -904,7 +922,7 @@ serve(async (req) => {
           // Fetch transaction by UID
           let rawTx: any | null = null;
           try {
-            const res = await fetchBeyagTransactionByUid(host, auth, uid);
+            const res = await fetchBeyagTransactionByUid(host, bepaidAuthHeader, uid);
             if (!res.ok) {
               // Task D: Classify errors properly - 404 ≠ consecutive error
               if (res.status === 404) {
@@ -914,7 +932,7 @@ serve(async (req) => {
                   if (altHost === host) continue;
                   stats.retries_performed_count = (stats.retries_performed_count || 0) + 1;
                   try {
-                    const altRes = await fetchBeyagTransactionByUid(altHost, auth, uid);
+                    const altRes = await fetchBeyagTransactionByUid(altHost, bepaidAuthHeader, uid);
                     if (altRes.ok) {
                       rawTx = altRes.data?.transaction || altRes.data?.data?.transaction || altRes.data;
                       foundOnOtherHost = true;
