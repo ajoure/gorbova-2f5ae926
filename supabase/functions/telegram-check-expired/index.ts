@@ -245,11 +245,106 @@ Deno.serve(async (req) => {
 
       if (!violators || violators.length === 0) continue;
 
-      console.log(`Club ${club.club_name}: ${violators.length} violators found`);
+      console.log(`Club ${club.club_name}: ${violators.length} violator candidates found`);
       
       const botToken = bot.bot_token_encrypted;
 
+      // PATCH 2: Collect profile_ids to batch-resolve user_ids for access check
+      const profileIds = violators
+        .map((v: any) => v.profile_id)
+        .filter((pid: string | null): pid is string => !!pid);
+      
+      // Batch resolve profile_id -> user_id
+      const profileUserMap = new Map<string, string>();
+      if (profileIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, user_id')
+          .in('id', profileIds);
+        for (const p of profiles || []) {
+          profileUserMap.set(p.id, p.user_id);
+        }
+      }
+
+      // Batch check access for all candidate violators
+      const userIds = [...new Set(Array.from(profileUserMap.values()))];
+      
+      // Import-free: inline batch check using subscriptions_v2
+      const accessValidMap = new Map<string, boolean>();
+      if (userIds.length > 0) {
+        const { data: activeSubs } = await supabase
+          .from('subscriptions_v2')
+          .select('user_id, access_end_at')
+          .in('user_id', userIds)
+          .in('status', ['active', 'trial', 'past_due'])
+          .or(`access_end_at.is.null,access_end_at.gt.${now}`);
+        
+        for (const sub of activeSubs || []) {
+          accessValidMap.set(sub.user_id, true);
+        }
+
+        // Also check entitlements
+        const remainingIds = userIds.filter(uid => !accessValidMap.get(uid));
+        if (remainingIds.length > 0) {
+          const { data: activeEnts } = await supabase
+            .from('entitlements')
+            .select('user_id')
+            .in('user_id', remainingIds)
+            .eq('status', 'active')
+            .or(`expires_at.is.null,expires_at.gt.${now}`);
+          
+          for (const ent of activeEnts || []) {
+            accessValidMap.set(ent.user_id, true);
+          }
+        }
+
+        // Also check manual access
+        const stillRemaining = userIds.filter(uid => !accessValidMap.get(uid));
+        if (stillRemaining.length > 0) {
+          const { data: manualList } = await supabase
+            .from('telegram_manual_access')
+            .select('user_id')
+            .in('user_id', stillRemaining)
+            .eq('club_id', club.id)
+            .eq('is_active', true)
+            .or(`valid_until.is.null,valid_until.gt.${now}`);
+          
+          for (const ma of manualList || []) {
+            accessValidMap.set(ma.user_id, true);
+          }
+        }
+      }
+
       for (const violator of violators) {
+        const userId = violator.profile_id ? profileUserMap.get(violator.profile_id) : null;
+        const hasValidAccessResult = userId ? (accessValidMap.get(userId) ?? false) : false;
+
+        // PATCH 2: If user has valid access, fix status instead of kicking
+        if (hasValidAccessResult) {
+          console.log(`GUARD_SKIP violator ${violator.telegram_user_id} - has valid access, fixing status`);
+          
+          await supabase
+            .from('telegram_club_members')
+            .update({ access_status: 'ok', updated_at: now })
+            .eq('id', violator.id);
+
+          // Audit log
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.autokick.guard_skip',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'telegram-check-expired',
+            meta: {
+              reason: 'valid_access_detected',
+              tg_user_id: violator.telegram_user_id,
+              club_id: club.id,
+            },
+          });
+
+          results.violators_kicked--; // Not actually kicked
+          continue;
+        }
+
         let chatKicked = false;
         let channelKicked = false;
 
@@ -279,11 +374,23 @@ Deno.serve(async (req) => {
             })
             .eq('id', violator.id);
 
+          // Audit log for actual kick
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.autokick.attempt',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'telegram-check-expired',
+            meta: {
+              reason: 'no_valid_access',
+              access_valid: false,
+              tg_user_id: violator.telegram_user_id,
+              club_id: club.id,
+            },
+          });
+
           // Log the action
           await supabase.from('telegram_logs').insert({
-            user_id: violator.profile_id ? 
-              (await supabase.from('profiles').select('user_id').eq('id', violator.profile_id).single()).data?.user_id 
-              : null,
+            user_id: userId || null,
             club_id: club.id,
             action: 'AUTO_KICK_VIOLATOR',
             status: 'ok',

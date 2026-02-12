@@ -483,14 +483,30 @@ Deno.serve(async (req) => {
         // Check if grant already exists for this source_id (prevents duplicates on retries)
         const { data: existingGrant } = await supabase
           .from('telegram_access_grants')
-          .select('id')
+          .select('id, end_at')
           .eq('user_id', user_id)
           .eq('club_id', club.id)
           .eq('source_id', source_id)
           .maybeSingle();
         
         if (existingGrant) {
-          console.log(`[grant-access] Skip duplicate grant for source_id=${source_id}, existing grant=${existingGrant.id}`);
+          // PATCH 5 (TG-P0.9.2): Update end_at if new date is later (renewal case)
+          const existingEnd = existingGrant.end_at ? new Date(existingGrant.end_at).getTime() : 0;
+          const newEnd = activeUntil ? new Date(activeUntil).getTime() : Infinity;
+          
+          if (newEnd > existingEnd) {
+            console.log(`[grant-access] Updating grant ${existingGrant.id} end_at: ${existingGrant.end_at} -> ${activeUntil}`);
+            await supabase
+              .from('telegram_access_grants')
+              .update({ 
+                end_at: activeUntil, 
+                updated_at: new Date().toISOString(),
+                meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, renewed: true },
+              })
+              .eq('id', existingGrant.id);
+          } else {
+            console.log(`[grant-access] Skip duplicate grant for source_id=${source_id}, existing grant=${existingGrant.id} (end_at already up to date)`);
+          }
           skipGrant = true;
         }
       }
