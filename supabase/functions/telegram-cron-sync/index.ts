@@ -1,4 +1,5 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,7 +39,6 @@ async function checkMembership(botToken: string, chatId: number, userId: number)
     }
 
     const memberStatus = result.result?.status;
-    // Statuses: creator, administrator, member, restricted, left, kicked
     const isMember = ['creator', 'administrator', 'member', 'restricted'].includes(memberStatus);
     
     return { isMember, status: memberStatus };
@@ -63,40 +63,6 @@ async function banUser(botToken: string, chatId: number, userId: number): Promis
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
-}
-
-// Calculate access status from database records
-function hasActiveAccess(
-  userId: string | undefined,
-  accessMap: Map<string, any>,
-  manualAccessMap: Map<string, any>,
-  grantsMap: Map<string, any>,
-): boolean {
-  if (!userId) return false;
-  const now = new Date();
-
-  const access = accessMap.get(userId);
-  if (access) {
-    if (access.state_chat === 'revoked' || access.state_channel === 'revoked') {
-      return false;
-    }
-    const activeUntil = access.active_until ? new Date(access.active_until) : null;
-    if (!activeUntil || activeUntil > now) return true;
-  }
-
-  const manual = manualAccessMap.get(userId);
-  if (manual && manual.is_active) {
-    const validUntil = manual.valid_until ? new Date(manual.valid_until) : null;
-    if (!validUntil || validUntil > now) return true;
-  }
-
-  const grant = grantsMap.get(userId);
-  if (grant && grant.status === 'active') {
-    const endAt = grant.end_at ? new Date(grant.end_at) : null;
-    if (!endAt || endAt > now) return true;
-  }
-
-  return false;
 }
 
 // Log audit event
@@ -133,7 +99,7 @@ Deno.serve(async (req) => {
     console.log(`Found ${clubs?.length || 0} clubs with auto_resync enabled`);
 
     const results: any[] = [];
-    const BATCH_SIZE = 25; // Process 25 members at a time to avoid rate limits
+    const BATCH_SIZE = 25;
 
     for (const club of clubs || []) {
       const bot = club.telegram_bots;
@@ -147,25 +113,6 @@ Deno.serve(async (req) => {
 
       console.log(`Processing club: ${club.club_name} (autokick: ${autokick})`);
 
-      // Get access records for this club
-      const { data: accessRecords } = await supabase
-        .from('telegram_access')
-        .select('user_id, state_chat, state_channel, active_until')
-        .eq('club_id', club.id);
-      const accessMap = new Map(accessRecords?.map((a: any) => [a.user_id, a]) || []);
-
-      const { data: manualAccess } = await supabase
-        .from('telegram_manual_access')
-        .select('user_id, is_active, valid_until')
-        .eq('club_id', club.id);
-      const manualAccessMap = new Map(manualAccess?.map((a: any) => [a.user_id, a]) || []);
-
-      const { data: accessGrants } = await supabase
-        .from('telegram_access_grants')
-        .select('user_id, status, end_at')
-        .eq('club_id', club.id);
-      const grantsMap = new Map(accessGrants?.map((a: any) => [a.user_id, a]) || []);
-
       // Get members with linked profiles (have telegram_user_id)
       const { data: members } = await supabase
         .from('telegram_club_members')
@@ -178,8 +125,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // PATCH 1: Collect all user_ids and batch-check access via shared validator
+      const userIds = members
+        .map((m: any) => m.profiles?.user_id)
+        .filter((uid: string | undefined): uid is string => !!uid);
+
+      const accessMap = userIds.length > 0 
+        ? await hasValidAccessBatch(supabase, userIds, club.id)
+        : new Map();
+
       let checkedCount = 0;
       let kickedCount = 0;
+      let guardSkipCount = 0;
       let errorCount = 0;
 
       // Process in batches
@@ -193,19 +150,16 @@ Deno.serve(async (req) => {
             
             if (club.chat_id) {
               chatResult = await checkMembership(botToken, club.chat_id, member.telegram_user_id);
-              
-              // Small delay to avoid rate limits
               await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             const inChat = chatResult?.isMember ?? null;
-            // Channel status is derived from chat (master)
             const inChannel = inChat;
 
             // Update member record
             await supabase.from('telegram_club_members').update({
               in_chat: inChat,
-              in_channel: inChannel, // Derived from chat
+              in_channel: inChannel,
               last_telegram_check_at: new Date().toISOString(),
               last_telegram_check_result: { chat: chatResult, channel: 'derived_from_chat' },
               updated_at: new Date().toISOString(),
@@ -213,12 +167,47 @@ Deno.serve(async (req) => {
 
             checkedCount++;
 
-            // Check if should kick (autokick enabled + in chat but no access)
+            // PATCH 1: Use shared hasValidAccessBatch result instead of local function
             const userId = member.profiles?.user_id;
-            const hasAccess = hasActiveAccess(userId, accessMap, manualAccessMap, grantsMap);
+            const accessResult = userId ? accessMap.get(userId) : undefined;
+            const hasAccess = accessResult?.valid ?? false;
 
             if (autokick && inChat && !hasAccess) {
-              console.log(`Autokicking user ${member.telegram_user_id} - no access but in chat`);
+              // STOP-guard: if access check returned undefined/error, don't kick
+              if (!accessResult) {
+                console.log(`GUARD_SKIP: user ${member.telegram_user_id} - access check returned undefined, skipping kick`);
+                guardSkipCount++;
+
+                // Audit log for guard skip
+                await supabase.from('audit_logs').insert({
+                  action: 'telegram.autokick.guard_skip',
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'telegram-cron-sync',
+                  meta: {
+                    reason: 'access_check_undefined',
+                    tg_user_id: member.telegram_user_id,
+                    club_id: club.id,
+                  },
+                });
+                continue;
+              }
+
+              console.log(`Autokicking user ${member.telegram_user_id} - no valid access (source check complete)`);
+
+              // Audit log for kick attempt
+              await supabase.from('audit_logs').insert({
+                action: 'telegram.autokick.attempt',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'telegram-cron-sync',
+                meta: {
+                  reason: 'no_valid_access',
+                  access_valid: false,
+                  tg_user_id: member.telegram_user_id,
+                  club_id: club.id,
+                },
+              });
 
               let chatKickResult = null;
               let channelKickResult = null;
@@ -245,12 +234,20 @@ Deno.serve(async (req) => {
                 telegram_user_id: member.telegram_user_id,
                 event_type: 'AUTOKICK',
                 actor_type: 'cron',
-                reason: 'No active access - removed by cron',
+                reason: 'No active access - removed by cron (shared validator)',
                 telegram_chat_result: chatKickResult,
                 telegram_channel_result: channelKickResult,
               });
 
               kickedCount++;
+            } else if (autokick && inChat && hasAccess) {
+              // User has valid access and is in chat - ensure access_status is ok
+              if (member.access_status !== 'ok') {
+                await supabase.from('telegram_club_members').update({
+                  access_status: 'ok',
+                  updated_at: new Date().toISOString(),
+                }).eq('id', member.id);
+              }
             }
           } catch (error) {
             console.error(`Error processing member ${member.telegram_user_id}:`, error);
@@ -258,7 +255,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Delay between batches to avoid rate limits
+        // Delay between batches
         if (i + BATCH_SIZE < members.length) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
@@ -274,7 +271,7 @@ Deno.serve(async (req) => {
         club_id: club.id,
         event_type: 'CRON_SYNC',
         actor_type: 'cron',
-        meta: { checked_count: checkedCount, kicked_count: kickedCount, error_count: errorCount },
+        meta: { checked_count: checkedCount, kicked_count: kickedCount, guard_skip_count: guardSkipCount, error_count: errorCount },
       });
 
       results.push({
@@ -282,10 +279,11 @@ Deno.serve(async (req) => {
         club_name: club.club_name,
         checked: checkedCount,
         kicked: kickedCount,
+        guard_skips: guardSkipCount,
         errors: errorCount,
       });
 
-      console.log(`Club ${club.club_name}: checked ${checkedCount}, kicked ${kickedCount}, errors ${errorCount}`);
+      console.log(`Club ${club.club_name}: checked ${checkedCount}, kicked ${kickedCount}, guard_skips ${guardSkipCount}, errors ${errorCount}`);
     }
 
     console.log('Cron sync completed');
