@@ -660,10 +660,12 @@ export function AutoRenewalsTabContent() {
         result = result.filter(r => !r.next_charge_at);
         break;
       case 'no_card':
-        result = result.filter(r => !r.payment_method_id);
+        // AR-P0.9.6: exclude provider_managed (card not needed)
+        result = result.filter(r => !r.payment_method_id && r.billing_type !== 'provider_managed');
         break;
       case 'no_token':
-        result = result.filter(r => !r.has_payment_token);
+        // AR-P0.9.6: exclude provider_managed (token managed by provider)
+        result = result.filter(r => !r.has_payment_token && r.billing_type !== 'provider_managed');
         break;
       case 'pm_inactive':
         result = result.filter(r => r.pm_status && r.pm_status !== 'active');
@@ -730,7 +732,8 @@ export function AutoRenewalsTabContent() {
     
     const dueTodayList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)));
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
-    const noCardList = renewals.filter(r => !r.payment_method_id);
+    // AR-P0.9.6: exclude provider_managed from "no card" stat
+    const noCardList = renewals.filter(r => !r.payment_method_id && r.billing_type !== 'provider_managed');
     
     // PATCH-6: Count subscriptions with NULL next_charge_at
     const noChargeDateList = renewals.filter(r => !r.next_charge_at);
@@ -1017,12 +1020,28 @@ export function AutoRenewalsTabContent() {
           </Badge>
         );
       case 'card':
+        // AR-P0.9.6: provider_managed doesn't need a local card
+        if (renewal.billing_type === 'provider_managed') {
+          return (
+            <Badge variant="outline" className="text-[10px] mx-auto border-blue-400 text-blue-600">
+              bePaid
+            </Badge>
+          );
+        }
         return renewal.payment_method_id ? (
           <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
         ) : (
           <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
         );
       case 'pm':
+        // AR-P0.9.6: provider_managed shows "bePaid" instead of dash
+        if (renewal.billing_type === 'provider_managed') {
+          return (
+            <Badge variant="outline" className="text-[10px] border-blue-400 text-blue-600">
+              bePaid
+            </Badge>
+          );
+        }
         return renewal.pm_status ? (
           <Badge 
             variant={renewal.pm_status === 'active' ? 'default' : 'secondary'}
