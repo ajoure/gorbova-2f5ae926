@@ -22,6 +22,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Search, UserPlus, Mail, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { InviteUserForm } from "./InviteUserDialog";
+import { getRoleDisplayName } from "@/lib/roles";
 
 interface Role {
   id: string;
@@ -45,19 +46,6 @@ interface AddEmployeeDialogProps {
   currentUserId?: string;
   isSuperAdmin: boolean;
 }
-
-// Role display names
-const getRoleDisplayName = (code: string) => {
-  const displayNames: Record<string, string> = {
-    super_admin: "Владелец",
-    admin: "Администратор",
-    editor: "Редактор",
-    support: "Поддержка",
-    staff: "Сотрудник",
-    user: "Пользователь",
-  };
-  return displayNames[code] || code;
-};
 
 // Error messages mapping
 const errorMap: Record<string, string> = {
