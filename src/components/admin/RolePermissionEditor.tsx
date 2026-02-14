@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
@@ -262,17 +262,16 @@ export function RolePermissionEditor({
         </div>
 
         {/* ── Body zone (scrollable, flex-1 min-h-0) ── */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="px-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6">
             {/* Sticky search */}
-            <div className="sticky top-0 z-10 pt-3 pb-2 bg-card/80 backdrop-blur-xl border-b border-border/20">
+            <div className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-background/70 backdrop-blur-xl border-b border-border/20">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
                 <Input
                   placeholder="Поиск прав..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 h-9 bg-muted/30 border-border/30 rounded-xl text-sm"
+                  className="pl-9 h-9 bg-transparent border-border/30 rounded-xl text-sm"
                 />
               </div>
             </div>
@@ -364,8 +363,7 @@ export function RolePermissionEditor({
                 })}
               </TooltipProvider>
             </div>
-          </div>
-        </ScrollArea>
+        </div>
 
         {/* ── Footer zone (shrink-0, не скроллится) ── */}
         <DialogFooter className="shrink-0 px-6 py-4 border-t border-border/30 bg-card/60 backdrop-blur-xl">
