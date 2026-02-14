@@ -78,6 +78,38 @@ const ROLE_TABLE_ICONS: Record<string, React.ElementType> = {
   manager: UserCog,
 };
 
+const RESERVED_CODES = new Set([
+  "super_admin", "admin", "user", "support", "editor",
+  "admin_gost", "news_editor", "staff",
+  "roles", "permissions", "admins", "system", "root",
+]);
+
+const TRANSLIT_SIMPLE: Record<string, string> = {
+  а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',
+  н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',
+  ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
+};
+
+function generateRoleCode(name: string, existingCodes: string[]): string {
+  const slug = name.toLowerCase()
+    .split('')
+    .map(ch => TRANSLIT_SIMPLE[ch] ?? ch)
+    .join('')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  if (!slug) return '';
+  const allCodesLower = [
+    ...Array.from(RESERVED_CODES),
+    ...existingCodes.map(c => c.toLowerCase()),
+  ];
+  if (!allCodesLower.includes(slug)) return slug;
+  let i = 2;
+  while (allCodesLower.includes(`${slug}_${i}`)) i++;
+  return `${slug}_${i}`;
+}
+
 // System roles that cannot be deleted
 const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
 
@@ -120,30 +152,7 @@ export default function AdminRoles() {
   const [newRolePermissions, setNewRolePermissions] = useState<string[]>([]);
 
   // Auto-generate role code from name
-  const RESERVED_CODES = ["super_admin", "admin", "user", "support", "editor", "admin_gost", "news_editor", "staff"];
-  const TRANSLIT_SIMPLE: Record<string, string> = {
-    а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',
-    н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',
-    ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
-  };
-  const generateRoleCode = (name: string): string => {
-    const slug = name.toLowerCase()
-      .split('')
-      .map(ch => TRANSLIT_SIMPLE[ch] ?? ch)
-      .join('')
-      .replace(/\s+/g, '_')
-      .replace(/[^a-z0-9_]/g, '')
-      .replace(/_+/g, '_')
-      .replace(/^_|_$/g, '');
-    if (!slug) return '';
-    const existingCodes = roles.map(r => r.code);
-    const allCodes = [...RESERVED_CODES, ...existingCodes];
-    if (!allCodes.includes(slug)) return slug;
-    let i = 2;
-    while (allCodes.includes(`${slug}_${i}`)) i++;
-    return `${slug}_${i}`;
-  };
-  const generatedCode = useMemo(() => generateRoleCode(newRoleName), [newRoleName, roles]);
+  const generatedCode = useMemo(() => generateRoleCode(newRoleName, roles.map(r => r.code)), [newRoleName, roles]);
 
   // Delete role dialog
   const [deleteRoleDialog, setDeleteRoleDialog] = useState<{
@@ -278,14 +287,11 @@ export default function AdminRoles() {
 
   const handleCreateRole = async () => {
     if (!newRoleName.trim() || !generatedCode) return;
-    const success = await createRole(generatedCode, newRoleName, newRoleDescription);
-    if (success && newRolePermissions.length > 0) {
-      await refetch();
-      const newRole = roles.find(r => r.code === generatedCode);
-      if (newRole) {
-        await setRolePermissions(newRole.id, newRolePermissions);
-      }
+    const roleId = await createRole(generatedCode, newRoleName, newRoleDescription);
+    if (roleId && newRolePermissions.length > 0) {
+      await setRolePermissions(roleId, newRolePermissions);
     }
+    await refetch();
     setCreateRoleDialog(false);
     setNewRoleName("");
     setNewRoleDescription("");
@@ -796,6 +802,11 @@ export default function AdminRoles() {
               {newRoleName.trim() && generatedCode && (
                 <p className="text-xs text-muted-foreground/60 pl-1">
                   Код: <span className="font-mono text-muted-foreground/80">{generatedCode}</span>
+                </p>
+              )}
+              {newRoleName.trim() && !generatedCode && (
+                <p className="text-xs text-destructive pl-1">
+                  Некорректное название — используйте буквы/цифры (RU/EN).
                 </p>
               )}
             </div>

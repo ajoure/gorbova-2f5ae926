@@ -179,7 +179,7 @@ export function useAdminRoles() {
     code: string,
     name: string,
     description?: string
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     try {
       const response = await supabase.functions.invoke("roles-admin", {
         body: { action: "create_role", roleCode: code, roleName: name, roleDescription: description },
@@ -188,16 +188,27 @@ export function useAdminRoles() {
       if (response.error) {
         console.error("Create role error:", response.error);
         toast.error("Ошибка создания роли");
-        return false;
+        return null;
+      }
+
+      if (response.data?.error) {
+        console.error("Create role app error:", response.data.error);
+        toast.error(response.data.error);
+        return null;
       }
 
       toast.success("Роль создана");
+      // Edge function returns { success, role: { id, code, name, ... } }
+      const roleId = response.data?.role?.id ?? null;
+      if (!roleId) {
+        console.warn("create_role response missing roleId, refetching...");
+      }
       await fetchRoles();
-      return true;
+      return roleId;
     } catch (error) {
       console.error("Create role error:", error);
       toast.error("Ошибка создания роли");
-      return false;
+      return null;
     }
   };
 
