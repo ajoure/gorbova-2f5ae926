@@ -248,13 +248,18 @@ Deno.serve(async (req) => {
     
     const user = { id: claimsData.claims.sub as string };
 
-    // Check admin role
+    // Check admin role (admin OR superadmin via app_role enum)
     const { data: hasAdmin } = await supabase.rpc("has_role", {
       _user_id: user.id,
       _role: "admin",
     });
+    const { data: hasSuperAdmin } = await supabase.rpc("has_role", {
+      _user_id: user.id,
+      _role: "superadmin",
+    });
 
-    if (!hasAdmin) {
+    if (!hasAdmin && !hasSuperAdmin) {
+      console.error(`[telegram-admin-chat] Access denied for user ${user.id}: admin=${hasAdmin}, superadmin=${hasSuperAdmin}`);
       return new Response(JSON.stringify({ error: "Admin access required" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
