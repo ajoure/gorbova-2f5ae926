@@ -43,7 +43,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, UserPlus, Plus, Search, LayoutGrid, List } from "lucide-react";
+import { Loader2, UserPlus, Plus, Search, LayoutGrid, List, MoreVertical, Pencil, Trash2, Shield, Crown, ShieldCheck, Eye, Newspaper, UserCog } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { AddEmployeeDialog } from "@/components/admin/AddEmployeeDialog";
@@ -52,7 +58,25 @@ import { RolePermissionEditor } from "@/components/admin/RolePermissionEditor";
 import { RoleTemplateSelector } from "@/components/admin/RoleTemplateSelector";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
-import { getRoleDisplayName } from "@/lib/roles";
+import { getRoleDisplayName, getRoleIconColors } from "@/lib/roles";
+
+// Fixed order for system roles
+const SYSTEM_ROLE_ORDER: Record<string, number> = {
+  super_admin: 0,
+  admin: 1,
+  support: 2,
+  editor: 3,
+  user: 4,
+};
+
+// Icons for role table
+const ROLE_TABLE_ICONS: Record<string, React.ElementType> = {
+  super_admin: Crown,
+  admin: ShieldCheck,
+  admin_gost: Eye,
+  news_editor: Newspaper,
+  manager: UserCog,
+};
 
 // System roles that cannot be deleted
 const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
@@ -145,6 +169,18 @@ export default function AdminRoles() {
       return true;
     });
   }, [users, staffSearch]);
+
+  // Sorted roles: system first (fixed order), then alphabetical by display name
+  const sortedRoles = useMemo(() => {
+    return [...roles].sort((a, b) => {
+      const aOrder = SYSTEM_ROLE_ORDER[a.code] ?? 99;
+      const bOrder = SYSTEM_ROLE_ORDER[b.code] ?? 99;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      // Both same priority (both system at same slot, or both custom)
+      const cmp = getRoleDisplayName(a).localeCompare(getRoleDisplayName(b), "ru", { sensitivity: "base" });
+      return cmp !== 0 ? cmp : a.code.localeCompare(b.code);
+    });
+  }, [roles]);
 
   const handleEditPermissions = (roleId: string) => {
     const role = roles.find((r) => r.id === roleId);
@@ -489,7 +525,7 @@ export default function AdminRoles() {
           {/* Cards view */}
           {rolesViewMode === "cards" && (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {roles.map((role) => {
+              {sortedRoles.map((role) => {
                 const isSystemRole = SYSTEM_ROLES.includes(role.code);
                 const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
                 const canDelete = hasPermission("roles.manage") && !isSystemRole;
@@ -515,70 +551,102 @@ export default function AdminRoles() {
             </div>
           )}
 
-          {/* Table view */}
+          {/* Table view — glass-table */}
           {rolesViewMode === "table" && (
             <div
-              className="rounded-2xl border border-border/30 overflow-hidden backdrop-blur-xl"
+              className="rounded-2xl border border-border/30 backdrop-blur-xl max-h-[70vh] overflow-auto"
               style={{
                 background: "linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.25))",
               }}
             >
               <Table>
                 <TableHeader>
-                  <TableRow className="border-border/20 hover:bg-transparent">
-                    <TableHead className="text-muted-foreground/70 font-medium">Роль</TableHead>
-                    <TableHead className="text-muted-foreground/70 font-medium">Описание</TableHead>
-                    <TableHead className="text-muted-foreground/70 font-medium">Права</TableHead>
-                    <TableHead className="text-muted-foreground/70 font-medium">Пользователи</TableHead>
-                    <TableHead className="w-[150px]"></TableHead>
+                  <TableRow className="border-border/20 hover:bg-transparent sticky top-0 z-20 backdrop-blur-xl bg-white/[0.04]">
+                    <TableHead className="text-xs font-medium text-muted-foreground/80 uppercase tracking-wide">Роль</TableHead>
+                    <TableHead className="text-xs font-medium text-muted-foreground/80 uppercase tracking-wide">Описание</TableHead>
+                    <TableHead className="text-xs font-medium text-muted-foreground/80 uppercase tracking-wide text-center">Права</TableHead>
+                    <TableHead className="text-xs font-medium text-muted-foreground/80 uppercase tracking-wide text-center">Пользователи</TableHead>
+                    <TableHead className="w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {roles.map((role) => {
+                  {sortedRoles.map((role, index) => {
                     const isSystemRole = SYSTEM_ROLES.includes(role.code);
                     const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
                     const canDelete = hasPermission("roles.manage") && !isSystemRole;
+                    const RoleIcon = ROLE_TABLE_ICONS[role.code] || Shield;
+                    const iconColors = getRoleIconColors(role.code);
+                    const isZebra = index % 2 === 1;
 
                     return (
-                      <TableRow key={role.id} className="border-border/15 transition-colors">
-                        <TableCell>
-                          <div className="font-medium">{getRoleDisplayName(role)}</div>
-                          {isSystemRole && (
-                            <Badge variant="outline" className="text-[10px] mt-1 border-border/30">Системная</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                          {role.description || "—"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="border-border/30">{role.permissions.length} прав</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="border-border/30">{userCountByRole[role.code] || 0}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            {canEdit && (
-                              <Button size="sm" variant="ghost" className="rounded-lg" onClick={() => handleEditPermissions(role.id)}>
-                                Изменить
-                              </Button>
-                            )}
-                            {canDelete && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="text-destructive hover:text-destructive rounded-lg"
-                                onClick={() => setDeleteRoleDialog({
-                                  open: true,
-                                  roleId: role.id,
-                                  roleName: role.name,
-                                  roleCode: role.code
-                                })}
-                              >
-                                Удалить
-                              </Button>
-                            )}
+                      <TableRow
+                        key={role.id}
+                        className={cn(
+                          "group border-border/10 transition-colors transition-shadow duration-200",
+                          "hover:bg-white/[0.03] hover:shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]",
+                          isZebra && "bg-white/[0.015]"
+                        )}
+                      >
+                        <TableCell className="py-3">
+                          <div className="flex items-center gap-3">
+                            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", iconColors.bg)}>
+                              <RoleIcon className={cn("h-4 w-4", iconColors.text)} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-medium text-sm">{getRoleDisplayName(role)}</div>
+                              {isSystemRole && (
+                                <Badge variant="outline" className="text-[10px] mt-0.5 h-4 px-1.5 border-border/30 text-muted-foreground/70 rounded-full">
+                                  Системная
+                                </Badge>
+                              )}
+                            </div>
                           </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[250px] truncate py-3">
+                          {role.description || <span className="text-muted-foreground/40">—</span>}
+                        </TableCell>
+                        <TableCell className="text-center py-3">
+                          <Badge variant="outline" className="border-border/30 rounded-full h-6 text-xs">{role.permissions.length}</Badge>
+                        </TableCell>
+                        <TableCell className="text-center py-3">
+                          <Badge variant="outline" className="border-border/30 rounded-full h-6 text-xs">{userCountByRole[role.code] || 0}</Badge>
+                        </TableCell>
+                        <TableCell className="py-3">
+                          {(canEdit || canDelete) && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="backdrop-blur-xl bg-popover/90 border-border/40">
+                                {canEdit && (
+                                  <DropdownMenuItem onClick={() => handleEditPermissions(role.id)}>
+                                    <Pencil className="h-4 w-4 mr-2" />
+                                    Редактировать права
+                                  </DropdownMenuItem>
+                                )}
+                                {canDelete && (
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setDeleteRoleDialog({
+                                      open: true,
+                                      roleId: role.id,
+                                      roleName: role.name,
+                                      roleCode: role.code
+                                    })}
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Удалить роль
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
