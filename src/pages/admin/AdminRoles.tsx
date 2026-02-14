@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { cn } from "@/lib/utils";
 import { useAdminRoles } from "@/hooks/useAdminRoles";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -51,23 +52,10 @@ import { RolePermissionEditor } from "@/components/admin/RolePermissionEditor";
 import { RoleTemplateSelector } from "@/components/admin/RoleTemplateSelector";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
+import { getRoleDisplayName } from "@/lib/roles";
 
 // System roles that cannot be deleted
 const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
-
-// Role display names
-const getRoleDisplayName = (code: string) => {
-  const displayNames: Record<string, string> = {
-    super_admin: "Владелец",
-    admin: "Администратор",
-    admin_gost: "Администратор-гость",
-    editor: "Редактор",
-    support: "Поддержка",
-    staff: "Сотрудник",
-    user: "Пользователь",
-  };
-  return displayNames[code] || code;
-};
 
 export default function AdminRoles() {
   const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
@@ -309,13 +297,30 @@ export default function AdminRoles() {
       </div>
 
       <Tabs defaultValue="staff">
-        <TabsList>
-          <TabsTrigger value="staff">Сотрудники</TabsTrigger>
-          <TabsTrigger value="roles">Роли и права</TabsTrigger>
-        </TabsList>
+        <div
+          className="inline-flex rounded-xl p-1 border border-border/30 backdrop-blur-xl"
+          style={{
+            background: "linear-gradient(135deg, hsl(var(--card) / 0.4), hsl(var(--card) / 0.2))",
+          }}
+        >
+          <TabsList className="bg-transparent p-0 h-auto gap-1">
+            <TabsTrigger
+              value="staff"
+              className="data-[state=active]:bg-primary/15 data-[state=active]:text-primary rounded-lg px-4 py-2 text-sm transition-all"
+            >
+              Сотрудники
+            </TabsTrigger>
+            <TabsTrigger
+              value="roles"
+              className="data-[state=active]:bg-primary/15 data-[state=active]:text-primary rounded-lg px-4 py-2 text-sm transition-all"
+            >
+              Роли и права
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="staff" className="mt-4">
-          {/* Staff header with search and invite */}
+          {/* Staff header */}
           <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -323,23 +328,28 @@ export default function AdminRoles() {
                 placeholder="Поиск по имени или email..."
                 value={staffSearch}
                 onChange={(e) => setStaffSearch(e.target.value)}
-                className="pl-9"
+                className="pl-9 rounded-xl border-border/30 bg-card/30 backdrop-blur-sm"
               />
             </div>
             {hasPermission("admins.manage") && (
-              <Button onClick={() => setAddEmployeeDialogOpen(true)}>
+              <Button onClick={() => setAddEmployeeDialogOpen(true)} className="rounded-xl">
                 <UserPlus className="w-4 h-4 mr-2" />
                 Добавить сотрудника
               </Button>
             )}
           </div>
 
-          <GlassCard>
+          <div
+            className="rounded-2xl border border-border/30 overflow-hidden backdrop-blur-xl"
+            style={{
+              background: "linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.25))",
+            }}
+          >
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Сотрудник</TableHead>
-                  <TableHead>Роль</TableHead>
+                <TableRow className="border-border/20 hover:bg-transparent">
+                  <TableHead className="text-muted-foreground/70 font-medium">Сотрудник</TableHead>
+                  <TableHead className="text-muted-foreground/70 font-medium">Роль</TableHead>
                   <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -353,11 +363,25 @@ export default function AdminRoles() {
                   const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin());
 
                   return (
-                    <TableRow key={user.user_id}>
+                    <TableRow
+                      key={user.user_id}
+                      className={cn(
+                        "border-border/15 transition-colors",
+                        isCurrentUser && "bg-primary/5"
+                      )}
+                    >
                       <TableCell>
-                        <div>
-                          <div className="font-medium">{user.full_name || "—"}</div>
-                          <div className="text-sm text-muted-foreground">{user.email}</div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium text-primary shrink-0">
+                            {(user.full_name || user.email || "?").charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">
+                              {user.full_name || "—"}
+                              {isCurrentUser && <span className="text-xs text-muted-foreground ml-2">(вы)</span>}
+                            </div>
+                            <div className="text-sm text-muted-foreground truncate">{user.email}</div>
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -367,15 +391,15 @@ export default function AdminRoles() {
                             onValueChange={(newRole) => handleInlineRoleChange(user.user_id, effectiveRole.code, newRole)}
                             disabled={isCurrentUser}
                           >
-                            <SelectTrigger className="w-[200px]">
+                            <SelectTrigger className="w-[200px] rounded-lg border-border/30 bg-card/30">
                               <SelectValue />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="backdrop-blur-xl bg-popover/95 border-border/40">
                               {roles
                                 .filter(r => r.code !== "super_admin" || isSuperAdmin())
                                 .map(role => (
                                   <SelectItem key={role.code} value={role.code}>
-                                    {getRoleDisplayName(role.code)}
+                                    {getRoleDisplayName(role)}
                                   </SelectItem>
                                 ))}
                               <SelectItem value="user">Пользователь (снять роль)</SelectItem>
@@ -400,6 +424,7 @@ export default function AdminRoles() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="rounded-lg"
                             onClick={() => setAssignDialog({ open: true, userId: user.user_id, email: user.email || "" })}
                           >
                             <UserPlus className="w-4 h-4" />
@@ -418,30 +443,43 @@ export default function AdminRoles() {
                 )}
               </TableBody>
             </Table>
-          </GlassCard>
+          </div>
         </TabsContent>
 
         <TabsContent value="roles" className="mt-4">
           {/* Header with view toggle and create button */}
           <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
+            <div
+              className="inline-flex rounded-xl p-1 border border-border/30 backdrop-blur-sm"
+              style={{
+                background: "linear-gradient(135deg, hsl(var(--card) / 0.3), hsl(var(--card) / 0.15))",
+              }}
+            >
               <Button
-                variant={rolesViewMode === "cards" ? "default" : "outline"}
+                variant="ghost"
                 size="sm"
                 onClick={() => setRolesViewMode("cards")}
+                className={cn(
+                  "rounded-lg px-3",
+                  rolesViewMode === "cards" && "bg-primary/15 text-primary"
+                )}
               >
                 <LayoutGrid className="w-4 h-4" />
               </Button>
               <Button
-                variant={rolesViewMode === "table" ? "default" : "outline"}
+                variant="ghost"
                 size="sm"
                 onClick={() => setRolesViewMode("table")}
+                className={cn(
+                  "rounded-lg px-3",
+                  rolesViewMode === "table" && "bg-primary/15 text-primary"
+                )}
               >
                 <List className="w-4 h-4" />
               </Button>
             </div>
             {hasPermission("roles.manage") && (
-              <Button onClick={() => setTemplateSelectorOpen(true)}>
+              <Button onClick={() => setTemplateSelectorOpen(true)} className="rounded-xl">
                 <Plus className="w-4 h-4 mr-2" />
                 Создать роль
               </Button>
@@ -450,7 +488,7 @@ export default function AdminRoles() {
 
           {/* Cards view */}
           {rolesViewMode === "cards" && (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {roles.map((role) => {
                 const isSystemRole = SYSTEM_ROLES.includes(role.code);
                 const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
@@ -479,14 +517,19 @@ export default function AdminRoles() {
 
           {/* Table view */}
           {rolesViewMode === "table" && (
-            <GlassCard>
+            <div
+              className="rounded-2xl border border-border/30 overflow-hidden backdrop-blur-xl"
+              style={{
+                background: "linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.25))",
+              }}
+            >
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Роль</TableHead>
-                    <TableHead>Описание</TableHead>
-                    <TableHead>Права</TableHead>
-                    <TableHead>Пользователи</TableHead>
+                  <TableRow className="border-border/20 hover:bg-transparent">
+                    <TableHead className="text-muted-foreground/70 font-medium">Роль</TableHead>
+                    <TableHead className="text-muted-foreground/70 font-medium">Описание</TableHead>
+                    <TableHead className="text-muted-foreground/70 font-medium">Права</TableHead>
+                    <TableHead className="text-muted-foreground/70 font-medium">Пользователи</TableHead>
                     <TableHead className="w-[150px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -497,26 +540,26 @@ export default function AdminRoles() {
                     const canDelete = hasPermission("roles.manage") && !isSystemRole;
 
                     return (
-                      <TableRow key={role.id}>
+                      <TableRow key={role.id} className="border-border/15 transition-colors">
                         <TableCell>
-                          <div className="font-medium">{getRoleDisplayName(role.code)}</div>
+                          <div className="font-medium">{getRoleDisplayName(role)}</div>
                           {isSystemRole && (
-                            <Badge variant="outline" className="text-xs mt-1">Системная</Badge>
+                            <Badge variant="outline" className="text-[10px] mt-1 border-border/30">Системная</Badge>
                           )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                           {role.description || "—"}
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{role.permissions.length} прав</Badge>
+                          <Badge variant="outline" className="border-border/30">{role.permissions.length} прав</Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{userCountByRole[role.code] || 0}</Badge>
+                          <Badge variant="outline" className="border-border/30">{userCountByRole[role.code] || 0}</Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
                             {canEdit && (
-                              <Button size="sm" variant="ghost" onClick={() => handleEditPermissions(role.id)}>
+                              <Button size="sm" variant="ghost" className="rounded-lg" onClick={() => handleEditPermissions(role.id)}>
                                 Изменить
                               </Button>
                             )}
@@ -524,7 +567,7 @@ export default function AdminRoles() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="text-destructive hover:text-destructive"
+                                className="text-destructive hover:text-destructive rounded-lg"
                                 onClick={() => setDeleteRoleDialog({
                                   open: true,
                                   roleId: role.id,
@@ -542,7 +585,7 @@ export default function AdminRoles() {
                   })}
                 </TableBody>
               </Table>
-            </GlassCard>
+            </div>
           )}
         </TabsContent>
       </Tabs>
