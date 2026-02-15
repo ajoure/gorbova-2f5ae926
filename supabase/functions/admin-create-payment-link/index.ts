@@ -309,7 +309,7 @@ Deno.serve(async (req) => {
       };
 
       console.log('[create-payment-link] Creating bePaid subscription:', {
-        subscription_id: subscription.id,
+        order_id: order.id,
         order_id: order.id,
         amount,
       });
