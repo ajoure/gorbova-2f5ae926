@@ -26,6 +26,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface GrantAccessFromDealDialogProps {
   open: boolean;
@@ -166,7 +167,7 @@ export function GrantAccessFromDealDialog({
     },
     onError: (error: any) => {
       toast.error("Ошибка выдачи доступа", {
-        description: error.message,
+        description: normalizeEdgeFunctionError(error),
       });
     },
   });

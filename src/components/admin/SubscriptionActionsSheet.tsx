@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { InstallmentSchedule } from "./InstallmentSchedule";
 import { AdminChargeDialog } from "./AdminChargeDialog";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface SubscriptionActionsSheetProps {
   open: boolean;
@@ -104,7 +105,7 @@ export function SubscriptionActionsSheet({
       onOpenChange(false);
     },
     onError: (error) => {
-      toast.error("Ошибка: " + (error as Error).message);
+      toast.error(normalizeEdgeFunctionError(error));
     },
   });
 

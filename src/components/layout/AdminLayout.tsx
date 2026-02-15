@@ -6,6 +6,7 @@ import { AdminSidebar } from "./AdminSidebar";
 import { PullToRefresh } from "./PullToRefresh";
 import { Loader2, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import { PushNotificationToggle } from "@/components/admin/PushNotificationToggle";
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -132,22 +133,25 @@ export function AdminLayout({ children }: AdminLayoutProps) {
                 </h1>
               )}
             </div>
-            {/* Contextual help link */}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Link 
-                    to={`/help#${helpAnchor}`}
-                    className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                  >
-                    <HelpCircle className="h-4 w-4" />
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Помощь по текущему разделу
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="flex items-center gap-1">
+              <PushNotificationToggle />
+              {/* Contextual help link */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link 
+                      to={`/help#${helpAnchor}`}
+                      className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                    >
+                      <HelpCircle className="h-4 w-4" />
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Помощь по текущему разделу
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </header>
           <PullToRefresh>
             <div 

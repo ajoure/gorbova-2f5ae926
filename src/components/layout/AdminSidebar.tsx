@@ -56,7 +56,7 @@ export function AdminSidebar() {
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
   const { data: unmappedProductsCount = 0 } = useUnmappedProductsCount();
-  const totalUnread = unreadMessagesCount + unreadEmailCount;
+  const totalUnread = (unreadMessagesCount || 0) + (unreadEmailCount || 0);
   const collapsed = state === "collapsed";
   
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);

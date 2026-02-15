@@ -15,10 +15,14 @@ export function useUnreadMessagesCount() {
         .eq("direction", "incoming")
         .eq("is_read", false);
 
-      if (error) return 0;
+      if (error) {
+        console.warn("[useUnreadMessagesCount] Query error:", error.message);
+        return 0;
+      }
       return count || 0;
     },
-    refetchInterval: visibilityInterval, // Pause when tab hidden
+    refetchInterval: visibilityInterval,
+    retry: 3,
   });
 
   // Subscribe to realtime updates

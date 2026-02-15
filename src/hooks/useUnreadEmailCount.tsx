@@ -15,10 +15,14 @@ export function useUnreadEmailCount() {
         .eq("is_read", false)
         .eq("is_archived", false);
 
-      if (error) return 0;
+      if (error) {
+        console.warn("[useUnreadEmailCount] Query error:", error.message);
+        return 0;
+      }
       return count || 0;
     },
-    refetchInterval: visibilityInterval, // Pause when tab hidden
+    refetchInterval: visibilityInterval,
+    retry: 3,
   });
 
   // Subscribe to realtime updates
