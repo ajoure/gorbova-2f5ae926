@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { user_id, message_type, custom_message, payment_method_meta } = body;
+    const { user_id, message_type, custom_message, payment_method_meta, reply_markup } = body;
 
     console.log(`[telegram-send-notification] Starting: user_id=${user_id}, type=${message_type}, isService=${isServiceInvocation}`);
 
@@ -536,10 +536,12 @@ Deno.serve(async (req) => {
       message = messageTemplates[message_type] || messageTemplates.custom;
     }
 
-    // Prepare keyboard
-    const keyboard = message_type === 'access_revoked' || message_type === 'reminder_3_days' || message_type === 'reminder_1_day'
-      ? { inline_keyboard: [[{ text: '💳 Продлить подписку', url: pricingUrl }]] }
-      : undefined;
+    // Prepare keyboard — use reply_markup from body if provided, otherwise default logic
+    const keyboard = reply_markup
+      ? reply_markup
+      : (message_type === 'access_revoked' || message_type === 'reminder_3_days' || message_type === 'reminder_1_day')
+        ? { inline_keyboard: [[{ text: '💳 Продлить подписку', url: pricingUrl }]] }
+        : undefined;
 
     // Send message
     const sendResult = await telegramRequest(botToken, 'sendMessage', {
