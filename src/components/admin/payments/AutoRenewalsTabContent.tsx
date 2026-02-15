@@ -10,7 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogClose } from "@/components/ui/dialog";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2, FileText } from "lucide-react";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2, FileText, HelpCircle, ShieldAlert } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
@@ -56,17 +57,19 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'errors' | 'bad_card';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
+  { value: 'errors', label: 'Ошибки списаний', icon: AlertTriangle },
+  { value: 'bad_card', label: 'Проблемные карты', icon: ShieldAlert },
   { value: 'due_today', label: 'К списанию сегодня', icon: Clock },
   { value: 'due_week', label: 'К списанию за неделю' },
   { value: 'overdue', label: 'Просрочено', icon: AlertTriangle },
   { value: 'in_grace', label: 'В grace (72ч)', icon: Clock },
   { value: 'expired_reentry', label: 'Удалённые', icon: XCircle },
   { value: 'no_charge_date', label: 'Нет даты списания', icon: AlertTriangle },
-  { value: 'no_card', label: 'Без карты', icon: CreditCard },
+  { value: 'no_card', label: 'Без карты (MIT)', icon: CreditCard },
   { value: 'no_token', label: 'Без токена' },
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
@@ -266,6 +269,10 @@ interface AutoRenewal {
   billing_type: 'mit' | 'provider_managed';
   // PATCH 3.1: BePaid flag from provider_subscriptions (source of truth)
   is_bepaid: boolean;
+  // PATCH 3.2: Card verification fields
+  pm_verification_status: string | null;
+  pm_verification_error: string | null;
+  pm_recurring_verified: boolean | null;
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -439,7 +446,7 @@ export function AutoRenewalsTabContent() {
             products_v2 (name, category),
             tariff_offers (requires_card_tokenization)
           ),
-          payment_methods (status, last4, brand),
+          payment_methods (status, last4, brand, verification_status, verification_error, recurring_verified),
           orders_v2 (final_price, currency)
         `)
         .eq('auto_renew', true)
@@ -533,6 +540,10 @@ export function AutoRenewalsTabContent() {
           pm_status: pm?.status || null,
           pm_last4: pm?.last4 || null,
           pm_brand: pm?.brand || null,
+          // PATCH 3.2: Card verification fields
+          pm_verification_status: pm?.verification_status || null,
+          pm_verification_error: pm?.verification_error || null,
+          pm_recurring_verified: pm?.recurring_verified ?? null,
           order_final_price: order?.final_price || null,
           order_currency: order?.currency || null,
           // PATCH-2: subscription filter
@@ -616,6 +627,10 @@ export function AutoRenewalsTabContent() {
           grace_period_ends_at: null,
           billing_type: 'provider_managed',
           is_bepaid: true,
+          // PATCH 3.2
+          pm_verification_status: null,
+          pm_verification_error: null,
+          pm_recurring_verified: null,
         });
       }
 
@@ -755,6 +770,21 @@ export function AutoRenewalsTabContent() {
         // PATCH 3.1: filter by is_bepaid (source of truth from provider_subscriptions)
         result = result.filter(r => r.is_bepaid);
         break;
+      // PATCH 3.2: Error and bad card filters
+      case 'errors':
+        result = result.filter(r => {
+          const lastStatus = r.meta?.last_charge_attempt_success;
+          const lastError = r.meta?.last_charge_attempt_error;
+          return lastStatus === false || (lastError != null && lastError !== '');
+        });
+        break;
+      case 'bad_card':
+        result = result.filter(r => 
+          !r.is_bepaid && 
+          r.payment_method_id && 
+          (r.pm_verification_status !== 'verified' || r.pm_recurring_verified !== true)
+        );
+        break;
     }
     
     // Apply search
@@ -823,6 +853,18 @@ export function AutoRenewalsTabContent() {
     const mitDueToday = dueTodayList.filter(r => !r.is_bepaid).length;
     const bepaidDueToday = dueTodayList.filter(r => r.is_bepaid).length;
 
+    // PATCH 3.2: Error and bad card counts
+    const errorsList = renewals.filter(r => {
+      const lastStatus = r.meta?.last_charge_attempt_success;
+      const lastError = r.meta?.last_charge_attempt_error;
+      return lastStatus === false || (lastError != null && lastError !== '');
+    });
+    const badCardList = renewals.filter(r => 
+      !r.is_bepaid && 
+      r.payment_method_id && 
+      (r.pm_verification_status !== 'verified' || r.pm_recurring_verified !== true)
+    );
+
     return {
       total: { count: renewals.length, sum: sumAmount(renewals) },
       dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
@@ -834,6 +876,9 @@ export function AutoRenewalsTabContent() {
       mitTotal,
       mitDueToday,
       bepaidDueToday,
+      // PATCH 3.2
+      errors: errorsList.length,
+      badCard: badCardList.length,
     };
   }, [renewals]);
 
@@ -1097,8 +1142,10 @@ export function AutoRenewalsTabContent() {
             {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
           </span>
         );
-      case 'attempts':
-        return (
+      case 'attempts': {
+        const isBadCard = !renewal.is_bepaid && renewal.payment_method_id && 
+          (renewal.pm_verification_status !== 'verified' || renewal.pm_recurring_verified !== true);
+        const badge = (
           <Badge 
             variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
             className="text-xs"
@@ -1106,6 +1153,19 @@ export function AutoRenewalsTabContent() {
             {renewal.charge_attempts}/3
           </Badge>
         );
+        if (renewal.charge_attempts === 0 && isBadCard) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>{badge}</TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                Списание не запускалось: карта не пригодна
+                {renewal.pm_verification_error && ` (${renewal.pm_verification_error})`}
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+        return badge;
+      }
       case 'card':
         // AR-P0.9.6: provider_managed doesn't need a local card
         if (renewal.billing_type === 'provider_managed') {
@@ -1115,11 +1175,50 @@ export function AutoRenewalsTabContent() {
             </Badge>
           );
         }
-        return renewal.payment_method_id ? (
-          <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
-        ) : (
-          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
-        );
+        if (renewal.payment_method_id) {
+          // PATCH 3.2: Check verification status
+          const vs = renewal.pm_verification_status;
+          const rv = renewal.pm_recurring_verified;
+          if (vs === 'failed' || vs === 'rejected') {
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertTriangle className="h-4 w-4 text-destructive mx-auto" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">
+                  <p className="font-medium">Карта не пригодна для списаний</p>
+                  {renewal.pm_verification_error && <p className="text-muted-foreground">{renewal.pm_verification_error}</p>}
+                  <p className="text-muted-foreground">Статус: {vs} · Recurring: {rv ? 'да' : 'нет'}</p>
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+          if (vs === 'pending' || vs === 'processing') {
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Clock className="h-4 w-4 text-blue-500 mx-auto animate-pulse" />
+                </TooltipTrigger>
+                <TooltipContent className="text-xs">Проверка карты в процессе</TooltipContent>
+              </Tooltip>
+            );
+          }
+          if (vs === 'verified' && rv === true) {
+            return <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />;
+          }
+          // Card exists but not verified yet
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <HelpCircle className="h-4 w-4 text-amber-500 mx-auto" />
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">
+                Карта не проверена (статус: {vs || 'нет'})
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+        return <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />;
       case 'pm':
         // AR-P0.9.6: provider_managed shows "bePaid" instead of dash
         if (renewal.billing_type === 'provider_managed') {
@@ -1144,22 +1243,38 @@ export function AutoRenewalsTabContent() {
           <span className="text-xs text-muted-foreground">—</span>
         );
       case 'last_attempt':
-        return lastAttempt ? (
-          <div className="flex items-center gap-1">
-            {lastAttempt.success ? (
-              <CheckCircle className="h-3 w-3 text-green-600" />
-            ) : (
-              <AlertTriangle className="h-3 w-3 text-red-600" />
-            )}
-            <span className={cn(
-              'text-[10px] truncate max-w-[80px]',
-              lastAttempt.success ? 'text-green-600' : 'text-red-600'
-            )}>
-              {lastAttempt.success ? 'OK' : lastAttempt.error?.slice(0, 20)}
-            </span>
-          </div>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
+        if (!lastAttempt) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        // PATCH 3.2: Tooltip with normalized error for unknown/failed
+        const errorText = lastAttempt.error || '';
+        const normalizedError = errorText.toLowerCase().includes('unknown') 
+          ? 'Неизвестная ошибка (gateway/network/invalid token)'
+          : errorText;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1 cursor-default">
+                {lastAttempt.success ? (
+                  <CheckCircle className="h-3 w-3 text-green-600" />
+                ) : (
+                  <AlertTriangle className="h-3 w-3 text-destructive" />
+                )}
+                <span className={cn(
+                  'text-[10px] truncate max-w-[80px]',
+                  lastAttempt.success ? 'text-green-600' : 'text-destructive'
+                )}>
+                  {lastAttempt.success ? 'OK' : errorText.slice(0, 20) || 'Ошибка'}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p>{lastAttempt.success ? 'Успешное списание' : normalizedError || 'Ошибка списания'}</p>
+              <p className="text-muted-foreground">
+                {format(new Date(lastAttempt.at), 'dd.MM.yy HH:mm', { locale: ru })}
+              </p>
+            </TooltipContent>
+          </Tooltip>
         );
       case 'tg_status':
         // PATCH-6: Don't show indicators for NULL next_charge_at
@@ -1268,6 +1383,54 @@ export function AutoRenewalsTabContent() {
                 {stats.noCard.sum.toFixed(2)} BYN
               </div>
             </Card>
+          </div>
+        )}
+
+        {/* PATCH 3.2: Summary bar with clickable indicators */}
+        {stats && (stats.errors > 0 || stats.badCard > 0 || stats.noCard.count > 0) && (
+          <div className="flex flex-wrap items-center gap-3 px-3 py-2 rounded-lg bg-muted/40 border border-border/50">
+            {stats.errors > 0 && (
+              <button
+                onClick={() => handleStatClick('errors')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                  filter === 'errors' 
+                    ? "bg-destructive/15 text-destructive ring-1 ring-destructive/30" 
+                    : "hover:bg-destructive/10 text-destructive/80"
+                )}
+              >
+                <AlertTriangle className="h-3 w-3" />
+                Ошибки: {stats.errors}
+              </button>
+            )}
+            {stats.badCard > 0 && (
+              <button
+                onClick={() => handleStatClick('bad_card')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                  filter === 'bad_card' 
+                    ? "bg-amber-500/15 text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-400" 
+                    : "hover:bg-amber-500/10 text-amber-600/80 dark:text-amber-400/80"
+                )}
+              >
+                <ShieldAlert className="h-3 w-3" />
+                Проблемные карты: {stats.badCard}
+              </button>
+            )}
+            {stats.noCard.count > 0 && (
+              <button
+                onClick={() => handleStatClick('no_card')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                  filter === 'no_card' 
+                    ? "bg-muted text-foreground ring-1 ring-border" 
+                    : "hover:bg-muted text-muted-foreground"
+                )}
+              >
+                <CreditCard className="h-3 w-3" />
+                Без карты (MIT): {stats.noCard.count}
+              </button>
+            )}
           </div>
         )}
 
