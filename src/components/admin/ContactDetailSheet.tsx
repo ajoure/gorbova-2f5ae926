@@ -3052,6 +3052,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             userId={contact.user_id}
             userName={contact.full_name || undefined}
             userEmail={contact.email || undefined}
+            telegramUserId={resolvedTelegramUserId}
           />
         )}
 
