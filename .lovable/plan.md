@@ -1,133 +1,137 @@
-# TG-P0.9.2 — Follow-up RESULT (24h) + Next PATCHES
 
-## STATUS
 
-TG-P0.9.2 = CLOSED ✅ (подтверждено follow-up проверками)
+# PATCH: Исправление ошибок и добавление push-уведомлений
 
----
+## Выявленные проблемы
 
-## A) FOLLOW-UP CHECKS (ФАКТЫ)
+### 1. Ошибка "Edge Function returned a non-2xx status code"
+На скриншоте видно красное сообщение об ошибке при работе с подпиской контакта. По логам Edge-функций ошибок нет - скорее всего это был транзиентный (временный) сбой сети или таймаут. Однако сообщение об ошибке не информативно для администратора. Нужно улучшить обработку ошибок edge-функций в компонентах подписок, чтобы показывать нормализованные сообщения вместо технических.
 
-### A1) Audit logs (24h)
+### 2. Исчезли бейджи непрочитанных сообщений в сайдбаре
+Код бейджей работает корректно: хук `useUnreadMessagesCount` запрашивает `telegram_messages` (сейчас 8 непрочитанных), а пункт меню "Контакт-центр" настроен с `badge: "unread"`. Проверка показала, что рендеринг бейджа зависит от `totalUnread = unreadMessagesCount + unreadEmailCount`. Если один из хуков возвращает ошибку молча (возврат 0), бейдж может не показываться. Нужно проверить и исправить отказоустойчивость.
 
-- telegram.autokick.attempt: 1 запись → natalya_grinkevich, access_valid=false (легитимно: подписка истекла до крона)
+**Возможная причина**: хук `useUnreadEmailCount` запрашивает таблицу `email_inbox` - если таблица не существует или RLS блокирует доступ, запрос возвращает 0 без ошибки, но может вызвать сбой реактивности. Кроме того, нужно убедиться, что realtime-подписки активны.
 
-- telegram.autokick.guard_skip: 0
-
-- false kicks: 0 ✅
-
-### A2) Почему “117 at-risk” из SQL — ложный сигнал
-
-1) **115 no_grant** относятся к клубу **“Бухгалтерия как бизнес” (club_id=4f8f9d8f)**, но **product_club_mapping указывает на “Gorbova Club” (club_id=fa547c41)** → гранты создаются для fa547c41, а SQL искал для 4f8f9d8f.
-
-   - Риск кика: НЕТ ✅ (hasValidAccessBatch видит active subscription и возвращает valid=true)
-
-2) **lori-30**: есть актуальный грант `5d468c1d` end_at=2026-03-14; старые активные гранты с end_at=2026-02-12 — артефакты.
-
-   - Риск кика: НЕТ ✅
-
-3) **slmmls**: актуальный грант на нужный клуб end_at=2026-03-11 = sub.access_end_at; другой грант — артефакт.
-
-   - Риск кика: НЕТ ✅
-
-### A3) Реальный at-risk для кика
-
-- 0 ✅ (TG linked active + in club + active sub + отсутствует актуальный grant) = 0
+### 3. Push-уведомления (новый функционал)
+Сейчас нет ни Service Worker, ни push-уведомлений. `manifest.json` есть, но без service worker push невозможен.
 
 ---
 
-## B) DO D — итог
+## План реализации
 
-| Criterion | Result |
+### Шаг 1: Улучшить обработку ошибок Edge-функций в подписках
 
-|---|---|
+**Файлы:** `src/components/admin/SubscriptionActionsSheet.tsx`, `src/components/admin/EditSubscriptionDialog.tsx`, `src/components/admin/GrantAccessFromDealDialog.tsx`
 
-| 0 false kicks после деплоя | PASS ✅ |
+- Перехватывать ошибку "Edge Function returned a non-2xx status code" и показывать понятное сообщение:
+  - "Функция временно недоступна, попробуйте через 10 секунд"
+  - Добавить кнопку "Повторить" в тост-уведомление
+- Не менять логику вызовов - только обработку ответов
 
-| 0 truly_at_risk (валидные TG+club+sub без grant) | PASS ✅ |
+### Шаг 2: Исправить бейджи непрочитанных сообщений
 
-| Легитимный кик expired работает | PASS ✅ |
+**Файл:** `src/hooks/useUnreadMessagesCount.tsx`
 
-| trig_subscription_grant_telegram fire on access_end_at change | PASS ✅ |
+- Добавить error-handling: если запрос к `telegram_messages` возвращает ошибку, не глушить её, а логировать в консоль
+- Обеспечить, что realtime-подписка всегда переподключается при потере соединения
 
-| telegram-grant-access обновляет end_at при renewal | PASS ✅ |
+**Файл:** `src/hooks/useUnreadEmailCount.tsx`
 
-| telegram-cron-sync использует hasValidAccessBatch | PASS ✅ |
+- Аналогичные улучшения error-handling
+- Добавить `enabled: true` явно и `retry: 3` для устойчивости
 
-| telegram-check-expired проверяет access перед kick | PASS ✅ |
+**Файл:** `src/components/layout/AdminSidebar.tsx`
 
-=> TG-P0.9.2: CLOSED ✅
+- Проверить, что `totalUnread` корректно вычисляется даже если один из хуков возвращает undefined/null
+- Добавить fallback: `(unreadMessagesCount || 0) + (unreadEmailCount || 0)`
+
+### Шаг 3: Реализовать браузерные push-уведомления
+
+Push-уведомления будут работать в браузере на ПК и мобильных устройствах без необходимости устанавливать приложение из магазина. Это стандартные Web Push уведомления.
+
+#### 3.1 Создать Service Worker
+
+**Файл (новый):** `public/sw.js`
+
+- Обработка push-событий: показ уведомления с текстом, иконкой и кликабельной ссылкой
+- Обработка клика: открытие/фокус на нужной вкладке (контакт-центр)
+- `navigateFallbackDenylist` для `/~oauth`
+
+#### 3.2 Регистрация Service Worker и запрос разрешения
+
+**Файл (новый):** `src/hooks/usePushNotifications.ts`
+
+- Регистрация SW при загрузке приложения
+- Запрос разрешения на уведомления (`Notification.requestPermission`)
+- Подписка на push через VAPID ключ
+- Сохранение `push_subscription` в таблицу БД
+
+#### 3.3 Таблица для push-подписок
+
+**Миграция БД:** создать таблицу `push_subscriptions`
+
+```
+id, user_id, endpoint, p256dh, auth, created_at, updated_at
+```
+
+- RLS: пользователь может CRUD только свои записи
+- Уникальность по `endpoint`
+
+#### 3.4 Edge-функция для отправки push
+
+**Файл (новый):** `supabase/functions/send-push-notification/index.ts`
+
+- Принимает `user_id`, `title`, `body`, `url`
+- Получает все `push_subscriptions` пользователя
+- Отправляет Web Push через `web-push` библиотеку
+- Обрабатывает expired subscriptions (удаление при 410 Gone)
+
+#### 3.5 Вызов push из Telegram-вебхука
+
+**Файл:** `supabase/functions/telegram-webhook/index.ts` (точечное дополнение)
+
+- При получении нового входящего сообщения в Telegram, вызвать `send-push-notification` для всех администраторов с ролью `super_admin` или `support.view` правом
+- Минимальное изменение: добавить вызов после сохранения сообщения
+
+#### 3.6 UI для включения/выключения push
+
+**Файл (новый):** `src/components/admin/PushNotificationToggle.tsx`
+
+- Кнопка-переключатель в шапке админки или в настройках
+- Показывает статус: "Уведомления включены" / "Включить уведомления"
+- При нажатии запрашивает разрешение и подписывает на push
+
+#### 3.7 Секреты
+
+- Потребуется VAPID ключ (публичный и приватный). Будет создан и сохранён через secrets tool:
+  - `VAPID_PUBLIC_KEY`
+  - `VAPID_PRIVATE_KEY`
+  - `VAPID_SUBJECT` (email администратора)
 
 ---
 
-## C) NEXT PATCHES (добавить в backlog, не блокируют закрытие)
+## Технические детали
 
-### PATCH TG-P0.9.3 (P2) — Cleanup “active but expired grants” (шум в аналитике)
+### Безопасность
+- Push-подписки защищены RLS: только владелец может управлять
+- Edge-функция отправки доступна только с `service_role` или `X-Cron-Secret`
+- VAPID ключи хранятся в секретах, не в коде
 
-**Goal:** убрать артефакты, чтобы SQL-gates не ловили старые активные гранты.
+### Без изменений
+- Визуальный дизайн сайдбара и контакт-центра
+- Логика автопродлений и подписок
+- Существующая палитра и стили
 
-- UPDATE telegram_access_grants
+### Измененные файлы (итого)
+1. `src/hooks/useUnreadMessagesCount.tsx` - улучшение error-handling
+2. `src/hooks/useUnreadEmailCount.tsx` - улучшение error-handling
+3. `src/components/layout/AdminSidebar.tsx` - fallback для бейджа
+4. `src/components/admin/SubscriptionActionsSheet.tsx` - нормализация ошибок EF
+5. `src/components/admin/EditSubscriptionDialog.tsx` - нормализация ошибок EF
+6. `src/components/admin/GrantAccessFromDealDialog.tsx` - нормализация ошибок EF
+7. `public/sw.js` - **новый** Service Worker
+8. `src/hooks/usePushNotifications.ts` - **новый** хук
+9. `src/components/admin/PushNotificationToggle.tsx` - **новый** UI-компонент
+10. `supabase/functions/send-push-notification/index.ts` - **новая** edge-функция
+11. Миграция БД: таблица `push_subscriptions`
 
-  - SET status='expired', updated_at=now()
-
-  - WHERE status='active' AND end_at IS NOT NULL AND end_at < now()
-
-- Audit: action='telegram.grants.cleanup_expired_active', actor_type='system', actor_label='tg-grants-cleanup'
-
-**DoD:**
-
-- count(*) WHERE status='active' AND end_at < now() = 0
-
-### PATCH TG-P0.9.4 (P3) — Club mapping mismatch clarification / fix
-
-**Problem:** продукт(ы) подписки ведут гранты в fa547c41, а участники состоят в 4f8f9d8f.
-
-**Options (choose 1):**
-
-1) Добавить второй mapping product_id → club_id=4f8f9d8f (если действительно должны быть в “Бухгалтерия”)
-
-2) Оставить как есть, но:
-
-   - Обновить UI/админ-отчёты и SQL-gates, чтобы проверять grants по фактическому club_id из product_club_mappings
-
-   - Явно документировать что “Бухгалтерия” и “Gorbova Club” — разные клубы
-
-**DoD:**
-
-- agreed rule for mapping + SQL gate updated accordingly (no false “at-risk”)
-
-### PATCH TG-P0.9.5 (P1) — Renewal monitoring (операционный гейт)
-
-**On next successful renewal:**
-
-- s.access_end_at увеличился
-
-- trigger → telegram_access_queue (если tg linked + mapping)
-
-- grant-access обновил end_at (или создал новый)
-
-- 0 autokick.attempt для этого user_id в течение 24h после renewal
-
-SQL шаблон:
-
-SELECT s.access_end_at, g.end_at, g.source, g.updated_at
-
-FROM subscriptions_v2 s
-
-LEFT JOIN telegram_access_grants g ON g.user_id=s.user_id AND g.status='active'
-
-WHERE s.user_id = '<USER_ID>'
-
-ORDER BY g.updated_at DESC
-
-LIMIT 10;
-
----
-
-## D) NOTE (важное правило)
-
-Если появится хоть 1 кейс:
-
-- autokick.attempt для user_id с s.access_end_at > now()
-
-→ немедленно reopen TG-P0.9.2 как REGRESSION (P0).
