@@ -117,6 +117,7 @@ import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 import { EditDealDialog } from "./EditDealDialog";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { AdminChargeDialog } from "./AdminChargeDialog";
+import { AdminPaymentLinkDialog } from "./AdminPaymentLinkDialog";
 import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
@@ -196,6 +197,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [dealToEdit, setDealToEdit] = useState<any>(null);
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
+  const [paymentLinkDialogOpen, setPaymentLinkDialogOpen] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
@@ -1647,14 +1649,24 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         ))}
                         {/* Charge button for super admin */}
                         {isSuperAdmin() && (
-                          <Button
-                            variant="outline"
-                            className="w-full gap-2 mt-2"
-                            onClick={() => setChargeDialogOpen(true)}
-                          >
-                            <CreditCard className="w-4 h-4" />
-                            Списать деньги
-                          </Button>
+                          <div className="flex gap-2 mt-2">
+                            <Button
+                              variant="outline"
+                              className="flex-1 gap-2"
+                              onClick={() => setChargeDialogOpen(true)}
+                            >
+                              <CreditCard className="w-4 h-4" />
+                              Списать деньги
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="flex-1 gap-2"
+                              onClick={() => setPaymentLinkDialogOpen(true)}
+                            >
+                              <Link2 className="w-4 h-4" />
+                              Ссылка на оплату
+                            </Button>
+                          </div>
                         )}
                       </>
                     ) : (
@@ -3026,6 +3038,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <AdminChargeDialog
             open={chargeDialogOpen}
             onOpenChange={setChargeDialogOpen}
+            userId={contact.user_id}
+            userName={contact.full_name || undefined}
+            userEmail={contact.email || undefined}
+          />
+        )}
+
+        {/* Admin Payment Link Dialog */}
+        {contact.user_id && (
+          <AdminPaymentLinkDialog
+            open={paymentLinkDialogOpen}
+            onOpenChange={setPaymentLinkDialogOpen}
             userId={contact.user_id}
             userName={contact.full_name || undefined}
             userEmail={contact.email || undefined}

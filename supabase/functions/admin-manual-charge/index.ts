@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
       const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
         method: 'POST',
         headers: {
-          'Authorization': `Basic ${bepaidAuth}`,
+          'Authorization': bepaidAuth,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'X-API-Version': '2',
