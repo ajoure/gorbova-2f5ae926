@@ -1312,6 +1312,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     if (sub.status === "active") {
       return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Активна</Badge>;
     }
+    if (sub.status === "past_due") {
+      return <Badge variant="destructive">Просрочена</Badge>;
+    }
+    if (sub.status === "superseded") {
+      return <Badge variant="secondary">Заменена</Badge>;
+    }
+    if (sub.status === "pending") {
+      return <Badge variant="outline" className="text-amber-600 border-amber-300">Ожидает оплаты</Badge>;
+    }
+    if (sub.status === "paused") {
+      return <Badge variant="outline" className="text-amber-600 border-amber-300">Приостановлена</Badge>;
+    }
     return <Badge variant="outline">{sub.status}</Badge>;
   };
 
