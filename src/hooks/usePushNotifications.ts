@@ -34,7 +34,6 @@ async function fetchVapidKey(): Promise<string | null> {
     const res = await fetch(`${supabaseUrl}/functions/v1/get-vapid-key`, {
       headers: {
         'apikey': anonKey,
-        'Content-Type': 'application/json',
       },
     });
 
