@@ -1,137 +1,84 @@
 
+# Исправление push-уведомлений, звука и обновления в реальном времени
 
-# PATCH: Исправление ошибок и добавление push-уведомлений
+## Выявленные корневые причины
 
-## Выявленные проблемы
+### 1. Push-уведомления не работают
+**Причина**: Таблица `push_subscriptions` пуста — ни одна подписка не сохранена. На скриншоте видно "Уведомления заблокированы в настройках браузера" — это значит, что на сайте lovable.dev пользователь заблокировал уведомления. Однако проблема глубже:
+- Хук `usePushNotifications.ts` использует `supabase.from("push_subscriptions" as any)` — каст `as any` обходит проверку типов, но при этом если тип не совпадает с реальной схемой, Supabase может молча отклонить запись
+- Отсутствует подробное логирование — ошибки проглатываются
+- На published-версии (gorbova.lovable.app) нужно заново разрешить уведомления в браузере
 
-### 1. Ошибка "Edge Function returned a non-2xx status code"
-На скриншоте видно красное сообщение об ошибке при работе с подпиской контакта. По логам Edge-функций ошибок нет - скорее всего это был транзиентный (временный) сбой сети или таймаут. Однако сообщение об ошибке не информативно для администратора. Нужно улучшить обработку ошибок edge-функций в компонентах подписок, чтобы показывать нормализованные сообщения вместо технических.
+### 2. Нет значка уведомлений на мобильной версии
+**Причина**: На скриншоте с iPhone виден экран "Сделки" — это пользовательский интерфейс (`AppSidebar`), а не админский. Кнопка `PushNotificationToggle` добавлена только в `AdminLayout.tsx`. На мобильном экране она видима, но маленькая (32x32px), что меньше рекомендуемого touch-target (44x44px).
 
-### 2. Исчезли бейджи непрочитанных сообщений в сайдбаре
-Код бейджей работает корректно: хук `useUnreadMessagesCount` запрашивает `telegram_messages` (сейчас 8 непрочитанных), а пункт меню "Контакт-центр" настроен с `badge: "unread"`. Проверка показала, что рендеринг бейджа зависит от `totalUnread = unreadMessagesCount + unreadEmailCount`. Если один из хуков возвращает ошибку молча (возврат 0), бейдж может не показываться. Нужно проверить и исправить отказоустойчивость.
+### 3. Нет обновления в реальном времени
+**Причина**: Realtime-подписки на `telegram_messages` в `InboxTabContent.tsx` уже настроены и работают — INSERT и UPDATE прослушиваются. Однако:
+- Таблица `email_inbox` **не добавлена** в `supabase_realtime` publication — поэтому email-бейджи не обновляются в реальном времени
+- Если пользователь находится НЕ на странице контакт-центра, обновление происходит только через polling (60 сек)
 
-**Возможная причина**: хук `useUnreadEmailCount` запрашивает таблицу `email_inbox` - если таблица не существует или RLS блокирует доступ, запрос возвращает 0 без ошибки, но может вызвать сбой реактивности. Кроме того, нужно убедиться, что realtime-подписки активны.
-
-### 3. Push-уведомления (новый функционал)
-Сейчас нет ни Service Worker, ни push-уведомлений. `manifest.json` есть, но без service worker push невозможен.
+### 4. Звук не работает
+**Причина**: Звук через Web Audio API (`playNotificationSound`) работает только когда страница контакт-центра открыта И включена кнопка звука. Если пользователь на другой странице — звука нет.
 
 ---
 
-## План реализации
+## План изменений
 
-### Шаг 1: Улучшить обработку ошибок Edge-функций в подписках
+### Шаг 1: Миграция БД — добавить email_inbox в realtime
 
-**Файлы:** `src/components/admin/SubscriptionActionsSheet.tsx`, `src/components/admin/EditSubscriptionDialog.tsx`, `src/components/admin/GrantAccessFromDealDialog.tsx`
-
-- Перехватывать ошибку "Edge Function returned a non-2xx status code" и показывать понятное сообщение:
-  - "Функция временно недоступна, попробуйте через 10 секунд"
-  - Добавить кнопку "Повторить" в тост-уведомление
-- Не менять логику вызовов - только обработку ответов
-
-### Шаг 2: Исправить бейджи непрочитанных сообщений
-
-**Файл:** `src/hooks/useUnreadMessagesCount.tsx`
-
-- Добавить error-handling: если запрос к `telegram_messages` возвращает ошибку, не глушить её, а логировать в консоль
-- Обеспечить, что realtime-подписка всегда переподключается при потере соединения
-
-**Файл:** `src/hooks/useUnreadEmailCount.tsx`
-
-- Аналогичные улучшения error-handling
-- Добавить `enabled: true` явно и `retry: 3` для устойчивости
-
-**Файл:** `src/components/layout/AdminSidebar.tsx`
-
-- Проверить, что `totalUnread` корректно вычисляется даже если один из хуков возвращает undefined/null
-- Добавить fallback: `(unreadMessagesCount || 0) + (unreadEmailCount || 0)`
-
-### Шаг 3: Реализовать браузерные push-уведомления
-
-Push-уведомления будут работать в браузере на ПК и мобильных устройствах без необходимости устанавливать приложение из магазина. Это стандартные Web Push уведомления.
-
-#### 3.1 Создать Service Worker
-
-**Файл (новый):** `public/sw.js`
-
-- Обработка push-событий: показ уведомления с текстом, иконкой и кликабельной ссылкой
-- Обработка клика: открытие/фокус на нужной вкладке (контакт-центр)
-- `navigateFallbackDenylist` для `/~oauth`
-
-#### 3.2 Регистрация Service Worker и запрос разрешения
-
-**Файл (новый):** `src/hooks/usePushNotifications.ts`
-
-- Регистрация SW при загрузке приложения
-- Запрос разрешения на уведомления (`Notification.requestPermission`)
-- Подписка на push через VAPID ключ
-- Сохранение `push_subscription` в таблицу БД
-
-#### 3.3 Таблица для push-подписок
-
-**Миграция БД:** создать таблицу `push_subscriptions`
-
-```
-id, user_id, endpoint, p256dh, auth, created_at, updated_at
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE public.email_inbox;
 ```
 
-- RLS: пользователь может CRUD только свои записи
-- Уникальность по `endpoint`
+Это позволит бейджам email обновляться в реальном времени без polling.
 
-#### 3.4 Edge-функция для отправки push
+### Шаг 2: Исправить сохранение push-подписки
 
-**Файл (новый):** `supabase/functions/send-push-notification/index.ts`
+**Файл:** `src/hooks/usePushNotifications.ts`
 
-- Принимает `user_id`, `title`, `body`, `url`
-- Получает все `push_subscriptions` пользователя
-- Отправляет Web Push через `web-push` библиотеку
-- Обрабатывает expired subscriptions (удаление при 410 Gone)
+- Добавить подробное логирование на каждом этапе (проверка VAPID, запрос разрешения, подписка, сохранение)
+- Показывать toast с причиной ошибки если что-то не так
+- Убрать `as any` и использовать правильную типизацию или explicit type assertion
+- Добавить проверку: если `VITE_VAPID_PUBLIC_KEY` пуст — показать toast с предупреждением
+- При ошибке сохранения в БД показать конкретную причину
 
-#### 3.5 Вызов push из Telegram-вебхука
+### Шаг 3: Увеличить кнопку push на мобильном
 
-**Файл:** `supabase/functions/telegram-webhook/index.ts` (точечное дополнение)
+**Файл:** `src/components/admin/PushNotificationToggle.tsx`
 
-- При получении нового входящего сообщения в Telegram, вызвать `send-push-notification` для всех администраторов с ролью `super_admin` или `support.view` правом
-- Минимальное изменение: добавить вызов после сохранения сообщения
+- Увеличить touch target до 44x44px на мобильных экранах
+- Добавить пульсирующую точку если уведомления ещё не включены (state="prompt")
+- Убрать `return null` для state="unsupported" на мобильном — вместо этого показать кнопку с пояснением
 
-#### 3.6 UI для включения/выключения push
+### Шаг 4: Глобальный звук уведомлений
 
-**Файл (новый):** `src/components/admin/PushNotificationToggle.tsx`
+**Файл:** `src/components/admin/PushNotificationToggle.tsx` или новый `src/hooks/useIncomingMessageAlert.ts`
 
-- Кнопка-переключатель в шапке админки или в настройках
-- Показывает статус: "Уведомления включены" / "Включить уведомления"
-- При нажатии запрашивает разрешение и подписывает на push
+- Добавить глобальный realtime-listener на `telegram_messages` INSERT
+- При получении нового входящего сообщения (direction='incoming') воспроизводить звук уведомления
+- Этот хук подключить в `AdminLayout.tsx` — так он будет работать на любой странице админки, не только на контакт-центре
 
-#### 3.7 Секреты
+### Шаг 5: Улучшить Service Worker
 
-- Потребуется VAPID ключ (публичный и приватный). Будет создан и сохранён через secrets tool:
-  - `VAPID_PUBLIC_KEY`
-  - `VAPID_PRIVATE_KEY`
-  - `VAPID_SUBJECT` (email администратора)
+**Файл:** `public/sw.js`
+
+- Добавить звук в options уведомления (`vibrate` для мобильных)
+- Убедиться что `tag` + `renotify: true` позволяют множественные уведомления
 
 ---
 
 ## Технические детали
 
-### Безопасность
-- Push-подписки защищены RLS: только владелец может управлять
-- Edge-функция отправки доступна только с `service_role` или `X-Cron-Secret`
-- VAPID ключи хранятся в секретах, не в коде
+### Изменяемые файлы
+1. Миграция БД: `ALTER PUBLICATION supabase_realtime ADD TABLE public.email_inbox`
+2. `src/hooks/usePushNotifications.ts` — логирование + диагностика + toast ошибок
+3. `src/components/admin/PushNotificationToggle.tsx` — мобильный touch target + пульс
+4. `src/hooks/useIncomingMessageAlert.ts` — **новый** глобальный звук уведомлений
+5. `src/components/layout/AdminLayout.tsx` — подключение `useIncomingMessageAlert`
+6. `public/sw.js` — вибрация для мобильных
 
 ### Без изменений
-- Визуальный дизайн сайдбара и контакт-центра
-- Логика автопродлений и подписок
-- Существующая палитра и стили
-
-### Измененные файлы (итого)
-1. `src/hooks/useUnreadMessagesCount.tsx` - улучшение error-handling
-2. `src/hooks/useUnreadEmailCount.tsx` - улучшение error-handling
-3. `src/components/layout/AdminSidebar.tsx` - fallback для бейджа
-4. `src/components/admin/SubscriptionActionsSheet.tsx` - нормализация ошибок EF
-5. `src/components/admin/EditSubscriptionDialog.tsx` - нормализация ошибок EF
-6. `src/components/admin/GrantAccessFromDealDialog.tsx` - нормализация ошибок EF
-7. `public/sw.js` - **новый** Service Worker
-8. `src/hooks/usePushNotifications.ts` - **новый** хук
-9. `src/components/admin/PushNotificationToggle.tsx` - **новый** UI-компонент
-10. `supabase/functions/send-push-notification/index.ts` - **новая** edge-функция
-11. Миграция БД: таблица `push_subscriptions`
-
+- Edge-функция `send-push-notification` — работает корректно
+- Edge-функция `telegram-webhook` — push-интеграция уже есть
+- Realtime-подписки в `InboxTabContent.tsx` — уже работают
+- RLS на `push_subscriptions` — политики корректны
