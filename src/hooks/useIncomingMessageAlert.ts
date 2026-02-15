@@ -1,0 +1,74 @@
+import { useEffect, useRef } from "react";
+import { supabase } from "@/integrations/supabase/client";
+
+/**
+ * Global hook: plays a notification sound when a new incoming telegram message arrives.
+ * Should be mounted once in AdminLayout so it works on any admin page.
+ */
+export function useIncomingMessageAlert() {
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("global-incoming-alert")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "telegram_messages",
+          filter: "direction=eq.incoming",
+        },
+        (payload) => {
+          console.log("[Alert] New incoming message detected:", payload.new?.id);
+          playNotificationSound();
+        }
+      )
+      .subscribe((status) => {
+        console.log("[Alert] Global incoming alert channel:", status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  function playNotificationSound() {
+    try {
+      // Reuse or create AudioContext
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioContextRef.current;
+
+      // Simple two-tone notification sound
+      const now = ctx.currentTime;
+
+      // First tone
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(880, now);
+      gain1.gain.setValueAtTime(0.3, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      // Second tone
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(1200, now + 0.15);
+      gain2.gain.setValueAtTime(0.3, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.35);
+    } catch (err) {
+      console.warn("[Alert] Could not play notification sound:", err);
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { PullToRefresh } from "./PullToRefresh";
 import { Loader2, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { PushNotificationToggle } from "@/components/admin/PushNotificationToggle";
+import { useIncomingMessageAlert } from "@/hooks/useIncomingMessageAlert";
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -69,6 +70,9 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasAdminAccess, loading } = usePermissions();
+  
+  // Global sound alert for incoming messages on any admin page
+  useIncomingMessageAlert();
 
   // Get the page title for the current route
   const pageTitle = useMemo(() => {

@@ -16,8 +16,10 @@ self.addEventListener('push', function(event) {
     body: data.body,
     icon: '/favicon.png',
     badge: '/favicon.png',
-    tag: data.tag || 'default',
+    tag: data.tag || 'msg-' + Date.now(),
     renotify: true,
+    requireInteraction: true,
+    vibrate: [200, 100, 200, 100, 200],
     data: { url: data.url || '/admin/communication' },
     actions: [
       { action: 'open', title: 'Открыть' },

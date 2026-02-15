@@ -3,12 +3,12 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
-// Extend ServiceWorkerRegistration type for PushManager
 declare global {
   interface ServiceWorkerRegistration {
     pushManager: PushManager;
   }
 }
+import { toast } from "sonner";
 
 type PushState = "unsupported" | "denied" | "prompt" | "subscribed" | "loading";
 
@@ -19,16 +19,19 @@ export function usePushNotifications() {
   // Check current state on mount
   useEffect(() => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      console.warn("[Push] Service Worker or PushManager not supported");
       setState("unsupported");
       return;
     }
 
     if (!("Notification" in window)) {
+      console.warn("[Push] Notification API not supported");
       setState("unsupported");
       return;
     }
 
     if (Notification.permission === "denied") {
+      console.warn("[Push] Notifications denied by user");
       setState("denied");
       return;
     }
@@ -36,6 +39,7 @@ export function usePushNotifications() {
     // Check if already subscribed
     navigator.serviceWorker.ready.then((reg) => {
       reg.pushManager.getSubscription().then((sub) => {
+        console.log("[Push] Current subscription:", sub ? "active" : "none");
         setState(sub ? "subscribed" : "prompt");
       });
     });
@@ -44,41 +48,68 @@ export function usePushNotifications() {
   // Register SW on mount
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("[Push] SW registration failed:", err);
-      });
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((reg) => {
+          console.log("[Push] SW registered, scope:", reg.scope);
+        })
+        .catch((err) => {
+          console.error("[Push] SW registration failed:", err);
+        });
+    }
+  }, []);
+
+  // Log VAPID key availability
+  useEffect(() => {
+    const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+    console.log("[Push] VAPID key available:", !!vapidKey);
+    if (!vapidKey) {
+      console.warn("[Push] VITE_VAPID_PUBLIC_KEY is not set — push subscriptions will fail");
     }
   }, []);
 
   const subscribe = useCallback(async () => {
-    if (!user?.id) return false;
+    if (!user?.id) {
+      console.warn("[Push] No user ID, cannot subscribe");
+      toast.error("Необходимо авторизоваться");
+      return false;
+    }
 
     setState("loading");
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        setState("denied");
-        return false;
-      }
-
-      const reg = await navigator.serviceWorker.ready;
-
-      // Get VAPID public key from env
+      // Step 1: Check VAPID key
       const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
       if (!vapidKey) {
         console.error("[Push] VITE_VAPID_PUBLIC_KEY not set");
+        toast.error("Push-уведомления не настроены: отсутствует VAPID ключ");
         setState("prompt");
         return false;
       }
+      console.log("[Push] Step 1: VAPID key found");
 
+      // Step 2: Request permission
+      const permission = await Notification.requestPermission();
+      console.log("[Push] Step 2: Permission result:", permission);
+      if (permission !== "granted") {
+        setState("denied");
+        toast.error("Разрешите уведомления в настройках браузера");
+        return false;
+      }
+
+      // Step 3: Get SW registration
+      const reg = await navigator.serviceWorker.ready;
+      console.log("[Push] Step 3: SW ready");
+
+      // Step 4: Subscribe to push
       const subscription = await (reg as any).pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapidKey),
       });
+      console.log("[Push] Step 4: Push subscription created:", subscription.endpoint);
 
       const json = subscription.toJSON();
 
-      // Save to DB
+      // Step 5: Save to DB
       const { error } = await supabase.from("push_subscriptions" as any).upsert(
         {
           user_id: user.id,
@@ -90,15 +121,18 @@ export function usePushNotifications() {
       );
 
       if (error) {
-        console.error("[Push] DB save error:", error);
+        console.error("[Push] Step 5: DB save error:", error.message, error.details, error.hint);
+        toast.error(`Ошибка сохранения подписки: ${error.message}`);
         setState("prompt");
         return false;
       }
 
+      console.log("[Push] Step 5: Subscription saved to DB successfully");
       setState("subscribed");
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Push] Subscribe error:", err);
+      toast.error(`Ошибка подписки: ${err?.message || "неизвестная ошибка"}`);
       setState("prompt");
       return false;
     }
@@ -109,13 +143,13 @@ export function usePushNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        // Delete from DB
         await supabase
           .from("push_subscriptions" as any)
           .delete()
           .eq("endpoint", sub.endpoint);
 
         await sub.unsubscribe();
+        console.log("[Push] Unsubscribed successfully");
       }
       setState("prompt");
     } catch (err) {
