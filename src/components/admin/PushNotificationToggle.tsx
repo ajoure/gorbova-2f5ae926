@@ -1,4 +1,4 @@
-import { Bell, BellOff, BellRing } from "lucide-react";
+import { Bell, BellOff, BellRing, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -11,10 +11,13 @@ import { toast } from "sonner";
 export function PushNotificationToggle() {
   const { state, subscribe, unsubscribe } = usePushNotifications();
 
-  // Don't hide on unsupported — show disabled state instead
   const handleClick = async () => {
     if (state === "unsupported") {
       toast.error("Push-уведомления не поддерживаются в этом браузере");
+      return;
+    }
+    if (state === "ios-safari") {
+      toast.info("Добавьте сайт на главный экран: Поделиться → На экран «Домой»");
       return;
     }
     if (state === "subscribed") {
@@ -33,6 +36,8 @@ export function PushNotificationToggle() {
   const icon =
     state === "subscribed" ? (
       <BellRing className="h-4 w-4" />
+    ) : state === "ios-safari" ? (
+      <Smartphone className="h-4 w-4" />
     ) : state === "denied" || state === "unsupported" ? (
       <BellOff className="h-4 w-4" />
     ) : (
@@ -44,13 +49,15 @@ export function PushNotificationToggle() {
       ? "Уведомления включены"
       : state === "denied"
         ? "Уведомления заблокированы"
-        : state === "unsupported"
-          ? "Не поддерживается"
-          : state === "loading"
-            ? "Загрузка..."
-            : "Включить уведомления";
+        : state === "ios-safari"
+          ? "Добавьте сайт на главный экран для уведомлений"
+          : state === "unsupported"
+            ? "Не поддерживается"
+            : state === "loading"
+              ? "Загрузка..."
+              : "Включить уведомления";
 
-  const showPulse = state === "prompt";
+  const showPulse = state === "prompt" || state === "ios-safari";
 
   return (
     <Tooltip>
