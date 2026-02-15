@@ -2,6 +2,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
 import { CreditCard, ClipboardList, BarChart3, RefreshCw, FileSpreadsheet, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 
 // Tab content components
 import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabContent";
@@ -23,6 +24,7 @@ const tabs = [
 export default function AdminPaymentsHub() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { data: renewalAlerts } = useAutoRenewalAlerts();
   
   // Determine active tab from path
   const getActiveTab = () => {
@@ -60,6 +62,13 @@ export default function AdminPaymentsHub() {
                 >
                   <Icon className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">{tab.label}</span>
+                  {/* PATCH 3.2: Alert dot for auto-renewals tab */}
+                  {tab.id === 'auto-renewals' && renewalAlerts?.hasProblems && !isActive && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive" />
+                    </span>
+                  )}
                 </button>
               );
             })}
