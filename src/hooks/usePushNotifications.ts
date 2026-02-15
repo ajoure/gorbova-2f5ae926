@@ -2,15 +2,60 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 declare global {
   interface ServiceWorkerRegistration {
     pushManager: PushManager;
   }
 }
-import { toast } from "sonner";
 
-type PushState = "unsupported" | "denied" | "prompt" | "subscribed" | "loading";
+type PushState = "unsupported" | "ios-safari" | "denied" | "prompt" | "subscribed" | "loading";
+
+// In-memory cache for VAPID key
+let cachedVapidKey: string | null = null;
+
+function isIOSSafari(): boolean {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = (window.navigator as any).standalone === true;
+  // In standalone (PWA) mode, Push may be available on iOS 16.4+
+  if (isStandalone) return false;
+  return isIOS;
+}
+
+async function fetchVapidKey(): Promise<string | null> {
+  if (cachedVapidKey) return cachedVapidKey;
+
+  try {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/get-vapid-key`, {
+      headers: {
+        'apikey': anonKey,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      console.error("[Push] Failed to fetch VAPID key, status:", res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data.key) {
+      cachedVapidKey = data.key;
+      console.log("[Push] VAPID key fetched successfully");
+      return data.key;
+    }
+    console.error("[Push] VAPID key response missing 'key' field");
+    return null;
+  } catch (err) {
+    console.error("[Push] Error fetching VAPID key:", err);
+    return null;
+  }
+}
 
 export function usePushNotifications() {
   const { user } = useAuth();
@@ -18,6 +63,13 @@ export function usePushNotifications() {
 
   // Check current state on mount
   useEffect(() => {
+    // iOS Safari (not standalone PWA) — special state
+    if (isIOSSafari()) {
+      console.log("[Push] iOS Safari detected (not standalone PWA)");
+      setState("ios-safari");
+      return;
+    }
+
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.warn("[Push] Service Worker or PushManager not supported");
       setState("unsupported");
@@ -59,15 +111,6 @@ export function usePushNotifications() {
     }
   }, []);
 
-  // Log VAPID key availability
-  useEffect(() => {
-    const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-    console.log("[Push] VAPID key available:", !!vapidKey);
-    if (!vapidKey) {
-      console.warn("[Push] VITE_VAPID_PUBLIC_KEY is not set — push subscriptions will fail");
-    }
-  }, []);
-
   const subscribe = useCallback(async () => {
     if (!user?.id) {
       console.warn("[Push] No user ID, cannot subscribe");
@@ -77,15 +120,15 @@ export function usePushNotifications() {
 
     setState("loading");
     try {
-      // Step 1: Check VAPID key
-      const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      // Step 1: Fetch VAPID key from edge function
+      const vapidKey = await fetchVapidKey();
       if (!vapidKey) {
-        console.error("[Push] VITE_VAPID_PUBLIC_KEY not set");
-        toast.error("Push-уведомления не настроены: отсутствует VAPID ключ");
+        console.error("[Push] VAPID key not available");
+        toast.error("Push-уведомления не настроены: не удалось получить VAPID ключ");
         setState("prompt");
         return false;
       }
-      console.log("[Push] Step 1: VAPID key found");
+      console.log("[Push] Step 1: VAPID key obtained");
 
       // Step 2: Request permission
       const permission = await Notification.requestPermission();
