@@ -8,6 +8,24 @@ import { supabase } from "@/integrations/supabase/client";
 export function useIncomingMessageAlert() {
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  // Initialize AudioContext on first user gesture to comply with browser autoplay policy
+  useEffect(() => {
+    const initAudio = () => {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      audioContextRef.current.resume();
+      document.removeEventListener('click', initAudio);
+      document.removeEventListener('touchstart', initAudio);
+    };
+    document.addEventListener('click', initAudio, { once: true });
+    document.addEventListener('touchstart', initAudio, { once: true });
+    return () => {
+      document.removeEventListener('click', initAudio);
+      document.removeEventListener('touchstart', initAudio);
+    };
+  }, []);
+
   useEffect(() => {
     const channel = supabase
       .channel("global-incoming-alert")
@@ -33,13 +51,18 @@ export function useIncomingMessageAlert() {
     };
   }, []);
 
-  function playNotificationSound() {
+  async function playNotificationSound() {
     try {
       // Reuse or create AudioContext
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
       const ctx = audioContextRef.current;
+
+      // Resume if suspended (browser autoplay policy)
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
 
       // Simple two-tone notification sound
       const now = ctx.currentTime;
