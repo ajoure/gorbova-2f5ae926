@@ -67,8 +67,8 @@ Deno.serve(async (req) => {
 
     // Get product and tariff info
     const [productResult, tariffResult, profileResult] = await Promise.all([
-      supabase.from('products_v2').select('id, name, code').eq('id', product_id).single(),
-      supabase.from('tariffs').select('id, name, code, access_days, duration_days, access_duration_days').eq('id', tariff_id).single(),
+      supabase.from('products_v2').select('id, name, code').eq('id', product_id).maybeSingle(),
+      supabase.from('tariffs').select('id, name, code, access_days').eq('id', tariff_id).maybeSingle(),
       supabase.from('profiles').select('id, email, full_name').eq('user_id', user_id).maybeSingle(),
     ]);
 
@@ -274,7 +274,7 @@ Deno.serve(async (req) => {
       }
 
       // Create subscription record (past_due until payment confirmed)
-      const accessDays = tariff.access_days || tariff.access_duration_days || tariff.duration_days || 30;
+      const accessDays = tariff.access_days || 30;
       const { data: subscription, error: subError } = await supabase
         .from('subscriptions_v2')
         .insert({
