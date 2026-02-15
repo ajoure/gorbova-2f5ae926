@@ -273,39 +273,10 @@ Deno.serve(async (req) => {
         return errorResponse('Failed to create order', 500);
       }
 
-      // Create subscription record (past_due until payment confirmed)
       const accessDays = tariff.access_days || 30;
-      const { data: subscription, error: subError } = await supabase
-        .from('subscriptions_v2')
-        .insert({
-          user_id,
-          profile_id: profileId,
-          product_id,
-          tariff_id,
-          status: 'past_due',
-          billing_type: 'provider_managed',
-          auto_renew: true,
-          is_trial: false,
-          meta: {
-            pending_provider_managed: true,
-            checkout_order_id: order.id,
-            offer_id: offer_id || null,
-            access_days: accessDays,
-            created_by_admin: user.id,
-          },
-        })
-        .select('id')
-        .single();
-
-      if (subError) {
-        console.error('[create-payment-link] Subscription creation error:', subError);
-        await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        return errorResponse('Failed to create subscription', 500);
-      }
-
       const intervalDays = 30;
-      const trackingId = `subv2:${subscription.id}:order:${order.id}`;
-      const successReturnUrl = `${origin}/purchases?bepaid_sub=success&sub_id=${subscription.id}&order=${order.id}`;
+      const trackingId = `link:order:${order.id}`;
+      const successReturnUrl = `${origin}/purchases?bepaid_sub=success&order=${order.id}`;
 
       const planTitle = `${product.name} — ${tariff.name}`;
       const planDescription = `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
@@ -361,7 +332,6 @@ Deno.serve(async (req) => {
           errors: bepaidResult.errors || bepaidResult.message,
         });
         await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        await supabase.from('subscriptions_v2').update({ status: 'canceled' }).eq('id', subscription.id);
         return errorResponse(
           bepaidResult.message || bepaidResult.errors?.base?.[0] || 'bePaid subscription creation failed',
           500
@@ -375,15 +345,14 @@ Deno.serve(async (req) => {
       if (!bepaidSubId || !redirectUrl) {
         console.error('[create-payment-link] No subscription ID or redirect URL in bePaid response');
         await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        await supabase.from('subscriptions_v2').update({ status: 'canceled' }).eq('id', subscription.id);
         return errorResponse('bePaid did not return a subscription URL', 500);
       }
 
-      // Store provider subscription record
+      // Store provider subscription record (subscription_id will be set after payment via grant-access-for-order)
       await supabase.from('provider_subscriptions').upsert({
         provider: 'bepaid',
         provider_subscription_id: String(bepaidSubId),
-        subscription_id: subscription.id,
+        subscription_id: null,
         user_id,
         status: 'pending',
         plan_title: planTitle,
@@ -395,6 +364,7 @@ Deno.serve(async (req) => {
           tracking_id: trackingId,
           checkout_url: redirectUrl,
           created_by_admin: user.id,
+          order_id: order.id,
         },
       }, { onConflict: 'provider,provider_subscription_id' });
 
@@ -407,7 +377,6 @@ Deno.serve(async (req) => {
         meta: {
           payment_type: 'subscription',
           order_id: order.id,
-          subscription_id: subscription.id,
           bepaid_subscription_id: bepaidSubId,
           amount: amountByn,
           product_name: product.name,
@@ -419,7 +388,6 @@ Deno.serve(async (req) => {
         success: true,
         redirect_url: redirectUrl,
         order_id: order.id,
-        subscription_id: subscription.id,
         payment_type: 'subscription',
       });
     } else {
