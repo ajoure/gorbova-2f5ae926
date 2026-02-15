@@ -1,78 +1,47 @@
 
-# Исправление Push-уведомлений и звуковых оповещений
+# Исправление CORS для get-vapid-key и звука уведомлений
 
-## Проблема 1 (критическая): VAPID_PRIVATE_KEY невалидный
+## Корневая причина
 
-Логи edge-функции `send-push-notification` показывают ошибку при каждой попытке отправки:
+Функция `get-vapid-key` возвращает VAPID-ключ корректно (проверено — статус 200). Но клиентский код в `usePushNotifications.ts` отправляет GET-запрос с заголовком `Content-Type: application/json`. Этот заголовок запускает CORS preflight-запрос (OPTIONS). Ответ preflight содержит `Access-Control-Allow-Methods: POST, OPTIONS` — метод GET не указан. Некоторые браузеры могут заблокировать запрос, и `fetchVapidKey()` возвращает `null`.
+
+## Решение
+
+### Файл 1: `src/hooks/usePushNotifications.ts`
+
+Убрать заголовок `Content-Type: application/json` из GET-запроса к `get-vapid-key`. Для GET-запроса без тела он не нужен и только создаёт лишний preflight.
+
+Строки 34-38 — изменить:
+```typescript
+const res = await fetch(`${supabaseUrl}/functions/v1/get-vapid-key`, {
+  headers: {
+    'apikey': anonKey,
+  },
+});
 ```
-Vapid private key should be 32 bytes long when decoded
-```
 
-Секрет `VAPID_PRIVATE_KEY` содержит некорректное значение. Необходимо сгенерировать новую пару VAPID-ключей и обновить секреты.
+### Файл 2: `supabase/functions/_shared/cors.ts`
 
-**Действие**: Попросить администратора ввести корректный VAPID_PRIVATE_KEY. Для генерации пары ключей можно использовать:
-```
-npx web-push generate-vapid-keys
-```
-Затем обновить секреты `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` и `VITE_VAPID_PUBLIC_KEY` (публичный ключ должен совпадать).
-
-После обновления ключей существующую подписку в `push_subscriptions` нужно удалить — она была создана со старым публичным ключом и не будет работать с новым. Пользователю потребуется переподписаться.
-
-## Проблема 2: "Уведомления заблокированы" в preview
-
-Это ожидаемое поведение: preview-окно Lovable работает в iframe на другом домене, и браузер всегда возвращает `Notification.permission === "denied"` для iframe.
-
-**Действие**: Не требует изменения кода. Push работает только на опубликованном сайте (gorbova.lovable.app).
-
-## Проблема 3: Звук не воспроизводится
-
-`AudioContext` в современных браузерах требует предварительной активации пользователем (клик, касание). Если контекст создаётся впервые при получении realtime-события без предшествующего взаимодействия, он будет в состоянии `suspended` и звук не воспроизведётся.
-
-**Решение**: Инициализировать AudioContext при первом клике пользователя на странице и "разморозить" его вызовом `resume()`.
-
-### Файл: `src/hooks/useIncomingMessageAlert.ts`
-
-Добавить:
-- Обработчик первого клика для создания и активации AudioContext
-- Вызов `ctx.resume()` перед воспроизведением звука
-- Удаление обработчика после активации
+Добавить `GET` в `Access-Control-Allow-Methods` для надёжности:
 
 ```typescript
-useEffect(() => {
-  const initAudio = () => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    audioContextRef.current.resume();
-    document.removeEventListener('click', initAudio);
-    document.removeEventListener('touchstart', initAudio);
-  };
-  document.addEventListener('click', initAudio, { once: true });
-  document.addEventListener('touchstart', initAudio, { once: true });
-  return () => {
-    document.removeEventListener('click', initAudio);
-    document.removeEventListener('touchstart', initAudio);
-  };
-}, []);
+'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 ```
 
-И в `playNotificationSound`:
-```typescript
-if (ctx.state === 'suspended') {
-  await ctx.resume();
-}
-```
+### Файл 3: `supabase/functions/get-vapid-key/index.ts` — без изменений
 
----
+Функция уже работает корректно.
 
-## Порядок действий
+## Звук уведомлений
 
-1. Сгенерировать новую пару VAPID-ключей (попрошу ввести через инструмент секретов)
-2. Обновить секреты VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VITE_VAPID_PUBLIC_KEY
-3. Очистить старую подписку из push_subscriptions
-4. Исправить инициализацию AudioContext в useIncomingMessageAlert.ts
-5. Передеплоить send-push-notification
-6. Протестировать на опубликованном сайте
+Код AudioContext уже исправлен в предыдущем шаге. Необходимо опубликовать сайт для применения всех изменений на club.gorbova.by.
 
-### Изменяемые файлы
-- `src/hooks/useIncomingMessageAlert.ts` — fix AudioContext activation
+## После внесения изменений
+
+1. Передеплоить все edge-функции, использующие `_shared/cors.ts`
+2. Опубликовать сайт
+3. На club.gorbova.by нажать колокольчик для переподписки на push
+
+## Изменяемые файлы
+- `src/hooks/usePushNotifications.ts` — убрать Content-Type из GET-запроса
+- `supabase/functions/_shared/cors.ts` — добавить GET в разрешённые методы
