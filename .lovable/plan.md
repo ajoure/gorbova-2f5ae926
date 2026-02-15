@@ -1,63 +1,105 @@
 
-# Исправление Push-уведомлений: VAPID ключ и Safari
+# Исправление ошибки списания + Генерация ссылки на оплату для клиента
 
-## Корневые причины
+## 1. Корневая причина ошибки "bePaid error: 500"
 
-### 1. VAPID ключ отсутствует в production-сборке (КРИТИЧНО)
-На скриншоте production-сайта (club.gorbova.by) видно: **"Push-уведомления не настроены: отсутствует VAPID ключ"**.
+В логах edge-функции `admin-manual-charge` видно:
+```
+bePaid response: {"response":{"message":"We're sorry, but something went wrong"}}
+```
 
-Причина: `import.meta.env.VITE_VAPID_PUBLIC_KEY` внедряется в код только во время сборки (build-time). Секрет добавлен, но Vite не подставляет его в production-бандл. Это главная причина, почему push-подписки не создаются и таблица `push_subscriptions` пуста.
+**Причина**: Двойной префикс `Basic` в заголовке авторизации.
 
-**Решение**: Создать edge-функцию `get-vapid-key`, которая отдаёт публичный VAPID-ключ по HTTP-запросу. Фронтенд будет получать ключ динамически при подписке, а не полагаться на build-time переменную.
+- Строка 84: `const bepaidAuth = createBepaidAuthHeader(bepaidCreds);` — возвращает `"Basic base64(shop:key)"`
+- Строка 147: `'Authorization': \`Basic ${bepaidAuth}\`` — подставляет ещё один `Basic`
+- Итого отправляется: `"Basic Basic c2hvcF9pZDpzZWNyZXQ="` — bePaid отвечает 500
 
-### 2. Safari на iOS не поддерживает Push в браузере
-На скриншоте с iPhone: **"Push-уведомления не поддерживаются в этом браузере"**.
+**Исправление**: Убрать лишний `Basic` на строке 147, использовать `bepaidAuth` напрямую.
 
-Это ожидаемое поведение: Safari на iOS поддерживает Web Push **только** если сайт добавлен на главный экран как PWA (с iOS 16.4+). В обычном браузере Safari Push API недоступен.
+---
 
-**Решение**: Вместо сообщения "не поддерживается" показать пользователю инструкцию: "Добавьте сайт на главный экран для получения уведомлений". Manifest.json уже есть, сайт готов к установке как PWA.
+## 2. Новая функция: Ссылка на самостоятельную оплату клиентом
+
+### Что будет создано
+
+**Новая edge-функция**: `admin-create-payment-link`
+- Админ указывает: user_id, product_id, tariff_id, сумму, тип оплаты (разовая или подписка)
+- Функция создаёт bePaid checkout (для разовой) или subscription (для подписки)
+- Возвращает `redirect_url` — ссылку, которую можно скопировать и отправить клиенту
+- Для разовой оплаты: создаёт `orders_v2` (pending) + bePaid checkout
+- Для подписки: использует существующую логику `bepaid-create-subscription-checkout`
+
+**Новый UI-компонент**: `AdminPaymentLinkDialog`
+- Диалог с выбором: продукт, тариф, сумма (предзаполняется из тарифа), тип оплаты (разовая / подписка bePaid)
+- Кнопка "Создать ссылку" генерирует URL
+- Готовая ссылка отображается с кнопкой "Копировать"
+- Подключается к карточке контакта (рядом с кнопкой "Списать деньги")
 
 ---
 
 ## План изменений
 
-### Шаг 1: Новая edge-функция `get-vapid-key`
+### Шаг 1: Исправить двойной Basic в `admin-manual-charge`
 
-**Файл:** `supabase/functions/get-vapid-key/index.ts`
+**Файл**: `supabase/functions/admin-manual-charge/index.ts`
+- Строка 147: заменить `'Authorization': \`Basic ${bepaidAuth}\`` на `'Authorization': bepaidAuth`
 
-Минимальная функция, которая:
-- Читает `VAPID_PUBLIC_KEY` из серверных секретов
-- Возвращает его в JSON: `{ key: "..." }`
-- Доступна без авторизации (ключ публичный по определению)
+### Шаг 2: Создать edge-функцию `admin-create-payment-link`
 
-### Шаг 2: Обновить `usePushNotifications.ts`
+**Файл**: `supabase/functions/admin-create-payment-link/index.ts`
 
-**Файл:** `src/hooks/usePushNotifications.ts`
+Функция принимает:
+```
+{
+  user_id: string,
+  product_id: string,
+  tariff_id: string,
+  amount: number (в копейках),
+  payment_type: "one_time" | "subscription",
+  description?: string
+}
+```
 
-- Убрать зависимость от `import.meta.env.VITE_VAPID_PUBLIC_KEY`
-- При подписке: вызвать `fetch` к edge-функции `get-vapid-key` для получения ключа
-- Кэшировать ключ в памяти после первого получения
-- Определять iOS Safari и устанавливать специальный state `"ios-safari"` вместо `"unsupported"`
+Логика для `one_time`:
+- Создать `orders_v2` (pending)
+- Создать bePaid checkout через `https://checkout.bepaid.by/ctp/api/checkouts`
+- Вернуть `redirect_url`
 
-### Шаг 3: Обновить `PushNotificationToggle.tsx`
+Логика для `subscription`:
+- Переиспользовать логику из `bepaid-create-subscription-checkout`
+- Создать bePaid subscription через `https://api.bepaid.by/subscriptions`
+- Вернуть `redirect_url`
 
-**Файл:** `src/components/admin/PushNotificationToggle.tsx`
+### Шаг 3: Создать UI-диалог `AdminPaymentLinkDialog`
 
-- Добавить обработку нового состояния `"ios-safari"`: показывать tooltip с инструкцией "Добавьте сайт на главный экран (Поделиться -> На экран Домой)"
-- Иконка: показать `Smartphone` вместо `BellOff` для iOS Safari
+**Файл**: `src/components/admin/AdminPaymentLinkDialog.tsx`
+
+Интерфейс:
+- Селект продукта и тарифа (как в AdminChargeDialog)
+- Поле суммы (предзаполняется из тарифа, редактируемое)
+- Выбор типа оплаты: "Разовая оплата" / "Подписка bePaid"
+- Кнопка "Создать ссылку"
+- После создания: поле с URL + кнопка "Копировать ссылку"
+
+### Шаг 4: Подключить диалог к контакту
+
+**Файл**: `src/components/admin/ContactDetailSheet.tsx`
+
+- Добавить кнопку "Ссылка на оплату" рядом с "Списать деньги" в разделе привязанных карт
+- Открывает `AdminPaymentLinkDialog` с передачей `userId`, `userName`, `userEmail`
 
 ---
 
 ## Технические детали
 
 ### Изменяемые файлы
-1. `supabase/functions/get-vapid-key/index.ts` — **новый** (edge-функция)
-2. `src/hooks/usePushNotifications.ts` — fetch VAPID ключа динамически + iOS-детекция
-3. `src/components/admin/PushNotificationToggle.tsx` — обработка iOS Safari
+1. `supabase/functions/admin-manual-charge/index.ts` — fix двойного Basic (1 строка)
+2. `supabase/functions/admin-create-payment-link/index.ts` — **новый** (edge-функция)
+3. `src/components/admin/AdminPaymentLinkDialog.tsx` — **новый** (UI-диалог)
+4. `src/components/admin/ContactDetailSheet.tsx` — добавление кнопки
 
 ### Без изменений
-- `public/sw.js` — Service Worker не меняется
-- `public/manifest.json` — уже корректен для PWA
-- `send-push-notification/index.ts` — серверная отправка работает
-- `AdminLayout.tsx` — не затрагивается
+- `bepaid-create-subscription-checkout` — не затрагивается
+- `bepaid-webhook` — не затрагивается (обрабатывает оплату после перехода клиента по ссылке)
 - RLS-политики — не затрагиваются
+- Логика grant-access — не затрагивается (срабатывает через webhook)
