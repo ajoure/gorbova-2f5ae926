@@ -151,16 +151,16 @@ export function AdminPaymentLinkDialog({
 📦 Продукт: ${selectedProduct.name}
 📋 Тариф: ${selectedTariff.name}
 💰 Стоимость: ${amount} BYN
-📅 Тип: ${typeLabel}
-
-Для оплаты перейдите по ссылке:
-${generatedUrl}`;
+📅 Тип: ${typeLabel}`;
 
       const { data, error } = await supabase.functions.invoke("telegram-send-notification", {
         body: {
           user_id: userId,
           message_type: "custom",
           custom_message: telegramMessage,
+          reply_markup: {
+            inline_keyboard: [[{ text: "💳 Ссылка на оплату", url: generatedUrl }]]
+          },
         },
       });
 
