@@ -253,10 +253,10 @@ Deno.serve(async (req) => {
     const adminUserId = claimsData.user.id;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // Check if user is admin
-    const { data: isAdmin } = await supabase.rpc('has_role', {
+    // Check if user is admin or super_admin
+    const { data: isAdmin } = await supabase.rpc('has_any_role', {
       _user_id: adminUserId,
-      _role: 'admin'
+      _role_codes: ['admin', 'super_admin']
     });
 
     if (!isAdmin) {
