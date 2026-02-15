@@ -1,105 +1,49 @@
 
-# Исправление ошибки списания + Генерация ссылки на оплату для клиента
+# Исправление: непонятные подписки с английскими лейблами
 
-## 1. Корневая причина ошибки "bePaid error: 500"
+## Две проблемы
 
-В логах edge-функции `admin-manual-charge` видно:
-```
-bePaid response: {"response":{"message":"We're sorry, but something went wrong"}}
-```
+### Проблема 1: Английские лейблы статусов
 
-**Причина**: Двойной префикс `Basic` в заголовке авторизации.
+В функции `getSubscriptionStatusBadge` (ContactDetailSheet.tsx, строка 1299-1316) обрабатываются только 4 случая: expired, canceled, trial, active. Для всех остальных статусов (`past_due`, `superseded`, `pending`) отображается сырое английское значение из базы.
 
-- Строка 84: `const bepaidAuth = createBepaidAuthHeader(bepaidCreds);` — возвращает `"Basic base64(shop:key)"`
-- Строка 147: `'Authorization': \`Basic ${bepaidAuth}\`` — подставляет ещё один `Basic`
-- Итого отправляется: `"Basic Basic c2hvcF9pZDpzZWNyZXQ="` — bePaid отвечает 500
+**Решение**: Добавить маппинг всех статусов на русский язык.
 
-**Исправление**: Убрать лишний `Basic` на строке 147, использовать `bepaidAuth` напрямую.
+| Статус       | Текущее отображение | Будет             |
+|-------------|--------------------|--------------------|
+| past_due    | past_due           | Просрочена         |
+| superseded  | superseded         | Заменена           |
+| pending     | pending            | Ожидает оплаты     |
+| paused      | paused             | Приостановлена     |
+| expired     | expired            | Истекла (уже есть) |
 
----
+### Проблема 2: Дублирование подписок при создании ссылки на оплату
 
-## 2. Новая функция: Ссылка на самостоятельную оплату клиентом
+Функция `admin-create-payment-link` при типе `subscription` создаёт запись в `subscriptions_v2` со статусом `past_due` **сразу** (до оплаты). Затем, когда клиент оплачивает, `bepaid-webhook` вызывает `grant-access-for-order`, который создаёт **ещё одну** подписку. Итого у клиента появляются лишние записи `past_due`.
 
-### Что будет создано
+Видно в базе: у Александры Сермяжко есть 2 записи `past_due` с `created_by_admin`, созданные при генерации ссылок, и 1 нормальная `active` подписка после оплаты.
 
-**Новая edge-функция**: `admin-create-payment-link`
-- Админ указывает: user_id, product_id, tariff_id, сумму, тип оплаты (разовая или подписка)
-- Функция создаёт bePaid checkout (для разовой) или subscription (для подписки)
-- Возвращает `redirect_url` — ссылку, которую можно скопировать и отправить клиенту
-- Для разовой оплаты: создаёт `orders_v2` (pending) + bePaid checkout
-- Для подписки: использует существующую логику `bepaid-create-subscription-checkout`
-
-**Новый UI-компонент**: `AdminPaymentLinkDialog`
-- Диалог с выбором: продукт, тариф, сумма (предзаполняется из тарифа), тип оплаты (разовая / подписка bePaid)
-- Кнопка "Создать ссылку" генерирует URL
-- Готовая ссылка отображается с кнопкой "Копировать"
-- Подключается к карточке контакта (рядом с кнопкой "Списать деньги")
-
----
-
-## План изменений
-
-### Шаг 1: Исправить двойной Basic в `admin-manual-charge`
-
-**Файл**: `supabase/functions/admin-manual-charge/index.ts`
-- Строка 147: заменить `'Authorization': \`Basic ${bepaidAuth}\`` на `'Authorization': bepaidAuth`
-
-### Шаг 2: Создать edge-функцию `admin-create-payment-link`
-
-**Файл**: `supabase/functions/admin-create-payment-link/index.ts`
-
-Функция принимает:
-```
-{
-  user_id: string,
-  product_id: string,
-  tariff_id: string,
-  amount: number (в копейках),
-  payment_type: "one_time" | "subscription",
-  description?: string
-}
-```
-
-Логика для `one_time`:
-- Создать `orders_v2` (pending)
-- Создать bePaid checkout через `https://checkout.bepaid.by/ctp/api/checkouts`
-- Вернуть `redirect_url`
-
-Логика для `subscription`:
-- Переиспользовать логику из `bepaid-create-subscription-checkout`
-- Создать bePaid subscription через `https://api.bepaid.by/subscriptions`
-- Вернуть `redirect_url`
-
-### Шаг 3: Создать UI-диалог `AdminPaymentLinkDialog`
-
-**Файл**: `src/components/admin/AdminPaymentLinkDialog.tsx`
-
-Интерфейс:
-- Селект продукта и тарифа (как в AdminChargeDialog)
-- Поле суммы (предзаполняется из тарифа, редактируемое)
-- Выбор типа оплаты: "Разовая оплата" / "Подписка bePaid"
-- Кнопка "Создать ссылку"
-- После создания: поле с URL + кнопка "Копировать ссылку"
-
-### Шаг 4: Подключить диалог к контакту
-
-**Файл**: `src/components/admin/ContactDetailSheet.tsx`
-
-- Добавить кнопку "Ссылка на оплату" рядом с "Списать деньги" в разделе привязанных карт
-- Открывает `AdminPaymentLinkDialog` с передачей `userId`, `userName`, `userEmail`
+**Решение**: Не создавать `subscriptions_v2` в `admin-create-payment-link`. Подписка должна создаваться только после оплаты через `grant-access-for-order`. Достаточно создать `orders_v2` и `provider_subscriptions`.
 
 ---
 
 ## Технические детали
 
-### Изменяемые файлы
-1. `supabase/functions/admin-manual-charge/index.ts` — fix двойного Basic (1 строка)
-2. `supabase/functions/admin-create-payment-link/index.ts` — **новый** (edge-функция)
-3. `src/components/admin/AdminPaymentLinkDialog.tsx` — **новый** (UI-диалог)
-4. `src/components/admin/ContactDetailSheet.tsx` — добавление кнопки
+### Файл 1: `src/components/admin/ContactDetailSheet.tsx`
+
+Функция `getSubscriptionStatusBadge` (строки 1299-1316):
+- Добавить обработку статусов `past_due`, `superseded`, `pending`, `paused`, `expired_reentry`
+- Каждый статус получает русский лейбл и соответствующий цвет
+
+### Файл 2: `supabase/functions/admin-create-payment-link/index.ts`
+
+Блок subscription (строки 276-298):
+- Убрать создание записи `subscriptions_v2` до оплаты
+- Изменить `tracking_id` формат: вместо `subv2:{sub_id}:order:{order_id}` использовать `link:order:{order_id}` (без sub_id, т.к. подписки ещё нет)
+- Сохранить product_id и tariff_id в meta заказа, чтобы `grant-access-for-order` мог их использовать
+- Убрать из ответа `subscription_id`
 
 ### Без изменений
-- `bepaid-create-subscription-checkout` — не затрагивается
-- `bepaid-webhook` — не затрагивается (обрабатывает оплату после перехода клиента по ссылке)
-- RLS-политики — не затрагиваются
-- Логика grant-access — не затрагивается (срабатывает через webhook)
+- `grant-access-for-order` -- уже корректно создаёт подписку по order
+- `bepaid-webhook` -- не затрагивается
+- RLS-политики -- не затрагиваются
