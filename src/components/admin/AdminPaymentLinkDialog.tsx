@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Package, Tag, CheckCircle } from "lucide-react";
+import { Link2, Copy, ExternalLink, Loader2, Package, Tag, CheckCircle, Send } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 
@@ -33,6 +33,7 @@ interface AdminPaymentLinkDialogProps {
   userId: string;
   userName?: string;
   userEmail?: string;
+  telegramUserId?: number | null;
 }
 
 export function AdminPaymentLinkDialog({
@@ -41,6 +42,7 @@ export function AdminPaymentLinkDialog({
   userId,
   userName,
   userEmail,
+  telegramUserId,
 }: AdminPaymentLinkDialogProps) {
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
@@ -137,6 +139,43 @@ export function AdminPaymentLinkDialog({
     },
   });
 
+  const sendToTelegramMutation = useMutation({
+    mutationFn: async () => {
+      if (!generatedUrl || !selectedProduct || !selectedTariff) {
+        throw new Error("Нет данных для отправки");
+      }
+
+      const typeLabel = paymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата";
+      const telegramMessage = `💳 *Оплата подписки*
+
+📦 Продукт: ${selectedProduct.name}
+📋 Тариф: ${selectedTariff.name}
+💰 Стоимость: ${amount} BYN
+📅 Тип: ${typeLabel}
+
+Для оплаты перейдите по ссылке:
+${generatedUrl}`;
+
+      const { data, error } = await supabase.functions.invoke("telegram-send-notification", {
+        body: {
+          user_id: userId,
+          message_type: "custom",
+          custom_message: telegramMessage,
+        },
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка отправки");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Ссылка отправлена клиенту в Telegram");
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createLinkMutation.mutate();
@@ -193,6 +232,21 @@ export function AdminPaymentLinkDialog({
                 Открыть
               </Button>
             </div>
+            {telegramUserId && (
+              <Button
+                variant="outline"
+                className="w-full gap-2"
+                disabled={sendToTelegramMutation.isPending}
+                onClick={() => sendToTelegramMutation.mutate()}
+              >
+                {sendToTelegramMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                Отправить клиенту в Telegram
+              </Button>
+            )}
             <Button
               variant="ghost"
               className="w-full"
