@@ -56,6 +56,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface EditSubscriptionDialogProps {
   subscription: any | null;
@@ -288,7 +289,7 @@ export function EditSubscriptionDialog({
       onSuccess?.();
     },
     onError: (error) => {
-      toast.error("Ошибка: " + (error as Error).message);
+      toast.error(normalizeEdgeFunctionError(error));
     },
   });
 

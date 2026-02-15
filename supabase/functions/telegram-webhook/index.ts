@@ -993,6 +993,43 @@ Deno.serve(async (req) => {
             }).catch(err => console.error('[AI Support] Invocation error:', err));
           }
 
+          // ========== PUSH NOTIFICATIONS TO ADMINS ==========
+          // Send browser push to all admins with support.view permission
+          try {
+            const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+            const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+            
+            // Get admin user IDs (super_admin role or support.view permission)
+            const { data: adminRoles } = await supabase
+              .from('user_roles_v2')
+              .select('user_id, roles!inner(code)')
+              .in('roles.code', ['super_admin', 'admin']);
+            
+            const adminUserIds = [...new Set((adminRoles || []).map((r: any) => r.user_id))];
+            
+            if (adminUserIds.length > 0) {
+              const senderName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') || 'Пользователь';
+              const msgPreview = (msg.text || msg.caption || '[медиа]').slice(0, 100);
+              
+              fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
+                },
+                body: JSON.stringify({
+                  user_ids: adminUserIds,
+                  title: `💬 ${senderName}`,
+                  body: msgPreview,
+                  url: '/admin/communication',
+                  tag: `tg-msg-${telegramUserId}`,
+                }),
+              }).catch(err => console.error('[Push] Send error:', err));
+            }
+          } catch (pushErr) {
+            console.error('[Push] Admin notification error:', pushErr);
+          }
+
           // Best-effort audit log (non-blocking)
           Promise.resolve(
             supabase.from('audit_logs').insert({
