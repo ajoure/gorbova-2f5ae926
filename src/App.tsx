@@ -236,7 +236,7 @@ const App = () => {
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><LazyRoute><AdminProductDetailV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><LazyRoute><AdminOrdersV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
-              <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><LazyRoute><AdminSubscriptionsV2 /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/subscriptions-v2" element={<AdminSubscriptionsV2 />} />
               <Route path="/admin/consents" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminConsents /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminEntitlements /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/executors" element={<ProtectedRoute><LazyRoute><AdminExecutors /></LazyRoute></ProtectedRoute>} />

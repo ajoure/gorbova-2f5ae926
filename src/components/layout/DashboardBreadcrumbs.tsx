@@ -78,7 +78,7 @@ const routeLabels: Record<string, string> = {
   "/admin/products-v2": "Продукты",
   "/admin/orders-v2": "Заказы",
   "/admin/payments": "Платежи",
-  "/admin/subscriptions-v2": "Подписки",
+  "/admin/payments/auto-renewals": "Автопродления",
   "/admin/installments": "Рассрочки",
   "/admin/refunds-v2": "Возвраты",
   "/admin/executors": "Исполнители",

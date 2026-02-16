@@ -142,7 +142,7 @@ export function DealsStatsBar({
             icon={CalendarClock}
             value={`${autoPaymentStats.count}`}
             label={formatCurrency(autoPaymentStats.totalPlanned)}
-            onClick={() => navigate("/admin/subscriptions-v2?filter=auto_renew")}
+            onClick={() => navigate("/admin/payments/auto-renewals?filter=auto_renew")}
             iconClassName="text-blue-600"
             valueClassName="text-blue-600"
           />
@@ -158,7 +158,7 @@ export function DealsStatsBar({
               icon={AlertTriangle}
               value={healthStats.activeWithoutCard}
               label="Под угрозой"
-              onClick={() => navigate("/admin/subscriptions-v2?filter=active_no_card")}
+              onClick={() => navigate("/admin/payments/auto-renewals?filter=active_no_card")}
               iconClassName="text-amber-500"
               valueClassName="text-amber-500"
             />
@@ -168,7 +168,7 @@ export function DealsStatsBar({
               icon={XCircle}
               value={healthStats.trialsExpiring72h}
               label="Срочно 72ч"
-              onClick={() => navigate("/admin/subscriptions-v2?filter=trial_no_card")}
+              onClick={() => navigate("/admin/payments/auto-renewals?filter=trial_no_card")}
               iconClassName="text-red-500"
               valueClassName="text-red-500"
             />
