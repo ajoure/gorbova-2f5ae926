@@ -119,7 +119,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
   });
 
   // Load subscription for this deal
-  const { data: subscription } = useQuery({
+  const { data: subscription, isLoading: subscriptionLoading } = useQuery({
     queryKey: ["deal-subscription-edit", deal?.id],
     queryFn: async () => {
       if (!deal?.id) return null;
@@ -212,22 +212,22 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       
       if (orderError) throw orderError;
 
-      // 2. Update subscription dates if they changed
-      if (subscription) {
-        // PATCH-1: Verify subscription.id exists before updating
-        if (!subscription.id) {
-          throw new Error("Подписка не найдена — невозможно обновить");
-        }
+      // 2. Re-fetch subscription inside mutation to avoid stale cache
+      const { data: freshSubscription } = await supabase
+        .from("subscriptions_v2")
+        .select("*")
+        .eq("order_id", deal.id)
+        .maybeSingle();
 
+      if (freshSubscription) {
+        // UPDATE existing subscription
         const subscriptionUpdate: any = {
           auto_renew: formData.auto_renew,
         };
         
-        // When enabling auto_renew, link user's payment method
         if (formData.auto_renew && userPaymentMethod?.id) {
           subscriptionUpdate.payment_method_id = userPaymentMethod.id;
         } else if (!formData.auto_renew) {
-          // When disabling, clear payment_method_id
           subscriptionUpdate.payment_method_id = null;
         }
         
@@ -237,7 +237,6 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         if (formData.access_end_at) {
           subscriptionUpdate.access_end_at = formData.access_end_at.toISOString();
           
-          // PATCH-1: For club products with auto_renew, ensure next_charge_at = access_end_at
           const isClubProduct = formData.product_id === "11c9f1b8-0355-4753-bd74-40b42aa53616";
           if (isClubProduct && formData.auto_renew) {
             subscriptionUpdate.next_charge_at = formData.access_end_at.toISOString();
@@ -246,27 +245,22 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         if (formData.next_charge_at) {
           subscriptionUpdate.next_charge_at = formData.next_charge_at.toISOString();
         } else if (!formData.auto_renew) {
-          // If auto-renew is disabled and no next_charge_at, clear it
           subscriptionUpdate.next_charge_at = null;
         }
         if (formData.tariff_id) {
           subscriptionUpdate.tariff_id = formData.tariff_id;
         }
-        // NOTE: offer_id is NOT a column in subscriptions_v2 - it belongs to orders_v2
-        // Do not add offer_id to subscriptionUpdate
 
-        // If enabling auto-renew, make sure status is active
-        if (formData.auto_renew && subscription.status === 'canceled') {
+        if (formData.auto_renew && freshSubscription.status === 'canceled') {
           subscriptionUpdate.status = 'active';
           subscriptionUpdate.canceled_at = null;
           subscriptionUpdate.cancel_reason = null;
         }
         
-        // PATCH-1: Update by subscription.id (not order_id) with error checking
         const { error: subError, data: updatedRows } = await supabase
           .from("subscriptions_v2")
           .update(subscriptionUpdate)
-          .eq("id", subscription.id)
+          .eq("id", freshSubscription.id)
           .select("id");
 
         if (subError) {
@@ -276,6 +270,24 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         if (!updatedRows || updatedRows.length === 0) {
           throw new Error("Подписка не обновлена (0 строк). Проверьте права доступа.");
         }
+      } else if (formData.access_start_at || formData.access_end_at || formData.auto_renew) {
+        // INSERT new subscription if user filled dates but no subscription exists
+        const { error: insertError } = await supabase
+          .from("subscriptions_v2")
+          .insert({
+            user_id: formData.user_id || deal.user_id,
+            product_id: formData.product_id,
+            order_id: deal.id,
+            tariff_id: formData.tariff_id || null,
+            profile_id: formData.profile_id || deal.profile_id,
+            status: 'active' as any,
+            access_start_at: formData.access_start_at?.toISOString() || new Date().toISOString(),
+            access_end_at: formData.access_end_at?.toISOString() || null,
+            next_charge_at: formData.next_charge_at?.toISOString() || null,
+            auto_renew: formData.auto_renew,
+            payment_method_id: formData.auto_renew && userPaymentMethod?.id ? userPaymentMethod.id : null,
+          });
+        if (insertError) throw new Error(`Ошибка создания подписки: ${insertError.message}`);
       }
 
       // 3. Update entitlements based on status and dates
@@ -563,6 +575,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
             <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <CalendarIcon className="w-4 h-4" />
               Период доступа
+              {subscriptionLoading && <Loader2 className="w-3 h-3 animate-spin" />}
             </div>
             
             <div className="grid gap-4 p-4 rounded-2xl bg-muted/30 border border-border/50">
@@ -842,11 +855,11 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
           </Button>
           <Button 
             onClick={() => updateMutation.mutate()} 
-            disabled={updateMutation.isPending}
+            disabled={updateMutation.isPending || subscriptionLoading}
             className="flex-1 sm:flex-none bg-gradient-to-r from-primary to-primary/80 shadow-lg shadow-primary/25"
           >
-            {updateMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Сохранить изменения
+            {(updateMutation.isPending || subscriptionLoading) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            {subscriptionLoading ? "Загрузка..." : "Сохранить изменения"}
           </Button>
         </DialogFooter>
       </DialogContent>
