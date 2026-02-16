@@ -203,6 +203,75 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // INV-20: Paid orders without payments_v2 (via RPC for accurate count)
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    let inv20Missing = 0;
+    let inv20Samples: any[] = [];
+
+    const { data: inv20Data, error: inv20Err } = await supabase.rpc(
+      "inv20_paid_orders_without_payments",
+      { p_since: ninetyDaysAgo, p_limit: 10 }
+    );
+
+    if (inv20Err) {
+      console.error("[nightly] INV-20 RPC failed, falling back:", inv20Err.message);
+      // Fallback: client-side (may undercount if >200)
+      const { data: paidOrders } = await supabase
+        .from("orders_v2")
+        .select("id, order_number, created_at")
+        .eq("status", "paid")
+        .gte("created_at", ninetyDaysAgo)
+        .limit(200);
+
+      if (paidOrders && paidOrders.length > 0) {
+        const orderIds = paidOrders.map((o: any) => o.id);
+        const { data: existingPayments } = await supabase
+          .from("payments_v2")
+          .select("order_id")
+          .in("order_id", orderIds);
+
+        const paidOrderIds = new Set((existingPayments || []).map((p: any) => p.order_id));
+        const missing = paidOrders.filter((o: any) => !paidOrderIds.has(o.id));
+        inv20Missing = missing.length;
+        inv20Samples = missing.slice(0, 5).map((o: any) => ({
+          order_number: o.order_number,
+          created_at: o.created_at,
+        }));
+      }
+    } else if (inv20Data) {
+      // RPC returns single row: { count_total, samples }
+      const row = Array.isArray(inv20Data) ? inv20Data[0] : inv20Data;
+      inv20Missing = Number(row?.count_total ?? 0);
+      inv20Samples = row?.samples ?? [];
+    }
+
+    const inv20Critical = inv20Missing > 5;
+    invariants.push({
+      name: "INV-20: Paid orders without payments_v2",
+      passed: inv20Missing === 0,
+      count: inv20Missing,
+      samples: inv20Samples,
+      description: `Paid orders (90d) with no corresponding payments_v2 record. ${
+        inv20Critical ? "CRITICAL" : "WARNING"
+      }. Run admin-repair-missing-payments execute.`,
+    });
+
+    if (inv20Missing > 0) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            message: `${inv20Critical ? "🚨" : "⚠️"} INV-20${inv20Critical ? " CRITICAL" : ""}: ${inv20Missing} paid заказ(ов) без записи в payments_v2!\n\nПримеры: ${(inv20Samples || []).map((s: any) => s.order_number).join(", ")}\n\nРекомендация: запустить admin-repair-missing-payments execute`,
+            source: "nightly-payments-invariants",
+          }),
+        });
+      } catch (_) {}
+    }
+
     const passedCount = invariants.filter((i) => i.passed).length;
     const failedCount = invariants.filter((i) => !i.passed).length;
 

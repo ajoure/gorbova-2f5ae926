@@ -336,6 +336,9 @@ verify_jwt = false
 [functions.admin-fix-payments-integrity]
 verify_jwt = false
 
+[functions.admin-repair-missing-payments]
+verify_jwt = true
+
 [functions.admin-search-profiles]
 verify_jwt = false
 
