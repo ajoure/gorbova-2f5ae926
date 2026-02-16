@@ -364,9 +364,9 @@ Deno.serve(async (req) => {
       // Telegram access
       if (product?.telegram_club_id) {
         const grantRes = await supabase.functions.invoke('telegram-grant-access', {
-          body: {
+           body: {
             user_id: orderV2.user_id,
-            club_ids: [product.telegram_club_id],
+            club_id: product.telegram_club_id,
             duration_days: accessDays,
           },
         });
