@@ -857,25 +857,29 @@ Deno.serve(async (req) => {
     // B2: CRITICAL ALERT moved AFTER transactionUid/subscriptionId are defined
     if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
       console.error(`[WEBHOOK] CRITICAL: Unrecognized tracking_id format: ${rawTrackingId}`);
-      await supabase.from('audit_logs').insert({
-        actor_type: 'system',
-        actor_user_id: null,
-        action: 'bepaid.webhook.unrecognized_tracking_id',
-        meta: {
-          tracking_id: rawTrackingId,
-          transaction_uid: transactionUid,
-          subscription_id: subscriptionId,
-          severity: 'CRITICAL',
-        },
-      });
-      await supabase.from('provider_webhook_orphans').upsert({
-        provider: 'bepaid',
-        provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
-        provider_payment_id: transactionUid,
-        reason: 'unrecognized_tracking_id',
-        raw_data: createSafeOrphanData(body, rawTrackingId),
-        processed: false,
-      }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+      try {
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          action: 'bepaid.webhook.unrecognized_tracking_id',
+          meta: {
+            tracking_id: rawTrackingId,
+            transaction_uid: transactionUid,
+            subscription_id: subscriptionId,
+            severity: 'CRITICAL',
+          },
+        });
+        await supabase.from('provider_webhook_orphans').upsert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+          provider_payment_id: transactionUid,
+          reason: 'unrecognized_tracking_id',
+          raw_data: createSafeOrphanData(body, rawTrackingId),
+          processed: false,
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+      } catch (orphanErr) {
+        console.error('[WEBHOOK] Best-effort orphan/audit write failed:', orphanErr);
+      }
     }
     console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}, isRefund=${isRefundTransaction}`);
 
