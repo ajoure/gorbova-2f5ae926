@@ -1,16 +1,18 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
-import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+/// <reference deno.land/x/types/index.d.ts />
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const BEPAID_HOSTS = ['api.bepaid.by', 'merchant.bepaid.by'];
-const LIST_PATHS = ['/subscriptions', '/api/subscriptions', '/v2/subscriptions'];
+type BackfillMode = "api_match" | "synthetic" | "both";
+type ApiScanMode = "limited" | "deep";
 
-interface BackfillCandidate {
+type BackfillCandidate = {
   subscription_v2_id: string;
   user_id: string;
   product_id: string | null;
@@ -20,9 +22,9 @@ interface BackfillCandidate {
   pm_brand: string | null;
   pm_last4: string | null;
   profile_id: string | null;
-}
+};
 
-interface BackfillResult {
+type BackfillResult = {
   dry_run: boolean;
   candidates_total: number;
   candidates_autorenew: number;
@@ -36,13 +38,79 @@ interface BackfillResult {
   upserted_synthetic: number;
   errors: string[];
   duration_ms: number;
+};
+
+const BEPAID_HOSTS = [
+  "gateway.bepaid.by",
+  "api.bepaid.by",
+  "checkout.bepaid.by",
+];
+
+const LIST_PATHS = [
+  "/subscriptions",
+  "/api/v1/subscriptions",
+];
+
+function json(res: unknown, status = 200) {
+  return new Response(JSON.stringify(res), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
-// Fetch all BePaid subscriptions from API with pagination
+function pickFirstTruthy<T>(...vals: Array<T | null | undefined>): T | null {
+  for (const v of vals) if (v !== null && v !== undefined) return v;
+  return null;
+}
+
+function normalizeProviderState(input: any): string {
+  const s = String(input || "").toLowerCase();
+  if (!s) return "active";
+  if (s === "cancelled") return "canceled";
+  return s;
+}
+
+function normalizeAmountCents(
+  amount: number | null | undefined,
+  currency: string | null | undefined,
+): { cents: number | null; source: string; raw: number | null } {
+  if (amount === null || amount === undefined) {
+    return { cents: null, source: "missing", raw: null };
+  }
+  const n = Number(amount);
+  if (!Number.isFinite(n)) {
+    return { cents: null, source: "invalid", raw: null };
+  }
+
+  // Guard: already in minor units (typical: integer >= 1000)
+  if (Number.isInteger(n) && n >= 1000) {
+    return { cents: n, source: "assumed_minor_units", raw: n };
+  }
+
+  return { cents: Math.round(n * 100), source: "major_to_minor", raw: n };
+}
+
+function sanitizeApiSubscription(apiSub: any) {
+  return {
+    id: apiSub?.id ?? null,
+    state: apiSub?.state ?? apiSub?.status ?? null,
+    plan: apiSub?.plan
+      ? {
+          amount: apiSub.plan?.amount ?? null,
+          currency: apiSub.plan?.currency ?? null,
+        }
+      : null,
+    next_billing_at: apiSub?.next_billing_at ?? null,
+    created_at: apiSub?.created_at ?? null,
+    last_transaction_created_at: apiSub?.last_transaction?.created_at ?? null,
+    // NO email, name, card data, address
+  };
+}
+
 async function fetchBepaidSubscriptions(
   authHeader: string,
   maxPages: number,
-  sleepMs: number
+  sleepMs: number,
 ): Promise<{ items: any[]; totalPages: number; truncated: boolean }> {
   const allItems: any[] = [];
   const seenIds = new Set<string>();
@@ -56,13 +124,14 @@ async function fetchBepaidSubscriptions(
 
       while (hasMore && page <= maxPages) {
         const url = `https://${host}${basePath}?page=${page}&per_page=50`;
+
         try {
           const response = await fetch(url, {
-            method: 'GET',
+            method: "GET",
             headers: {
               Authorization: authHeader,
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
+              "Content-Type": "application/json",
+              Accept: "application/json",
             },
           });
 
@@ -77,18 +146,18 @@ async function fetchBepaidSubscriptions(
           if (Array.isArray(subs) && subs.length > 0) {
             totalPages++;
             for (const sub of subs) {
-              if (sub?.id && !seenIds.has(sub.id)) {
-                seenIds.add(sub.id);
+              const id = sub?.id ? String(sub.id) : null;
+              if (id && !seenIds.has(id)) {
+                seenIds.add(id);
                 allItems.push(sub);
               }
             }
+
             if (subs.length < 50) {
               hasMore = false;
             } else {
               page++;
-              if (sleepMs > 0) {
-                await new Promise(r => setTimeout(r, sleepMs));
-              }
+              if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
             }
           } else {
             hasMore = false;
@@ -98,9 +167,7 @@ async function fetchBepaidSubscriptions(
         }
       }
 
-      if (page > maxPages) {
-        truncated = true;
-      }
+      if (page > maxPages) truncated = true;
 
       if (allItems.length > 0) {
         return { items: allItems, totalPages, truncated };
@@ -111,152 +178,184 @@ async function fetchBepaidSubscriptions(
   return { items: allItems, totalPages, truncated };
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+// ---- BePaid creds helpers ----
+
+type BepaidCredsResult =
+  | { ok: true; shop_id: string; secret_key: string }
+  | { ok: false; error: string };
+
+async function getBepaidCredsStrict(supabaseSvc: any): Promise<BepaidCredsResult> {
+  const { data: instance, error } = await supabaseSvc
+    .from('integration_instances')
+    .select('config')
+    .eq('provider', 'bepaid')
+    .in('status', ['active', 'connected'])
+    .maybeSingle();
+
+  const shopId = instance?.config?.shop_id;
+  const secretKey = instance?.config?.secret_key;
+
+  if (!error && shopId && secretKey) {
+    return { ok: true, shop_id: String(shopId), secret_key: String(secretKey) };
   }
+
+  return {
+    ok: false,
+    error: "Missing BePaid credentials in integration_instances",
+  };
+}
+
+function createBepaidAuthHeader(creds: { shop_id: string; secret_key: string }) {
+  const token = btoa(`${creds.shop_id}:${creds.secret_key}`);
+  return `Basic ${token}`;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const startTime = Date.now();
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Auth: admin/superadmin only
-    const authHeaderVal = req.headers.get('Authorization');
-    if (!authHeaderVal) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    const token = authHeaderVal.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // Auth client — verify JWT
+    const authHeaderVal = req.headers.get("Authorization");
+    if (!authHeaderVal) return json({ error: "Unauthorized" }, 401);
 
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeaderVal } },
+    });
+
+    const { data: userRes, error: authError } = await supabaseAuth.auth.getUser();
+    const user = userRes?.user;
+    if (authError || !user) return json({ error: "Invalid token" }, 401);
+
+    // Service client — DB writes/reads with elevated access
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Admin/superadmin only
     const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
-      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
-      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+      supabase.rpc("has_role_v2", { _user_id: user.id, _role_code: "admin" }),
+      supabase.rpc("has_role_v2", { _user_id: user.id, _role_code: "superadmin" }),
     ]);
+
     if (!isAdmin && !isSuperAdmin) {
-      return new Response(JSON.stringify({ error: 'Admin access required' }), {
-        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return json({ error: "Admin access required" }, 403);
     }
 
-    // Parse params
+    // Params
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dry_run !== false; // default true
     const sinceDays = Math.min(Number(body.since_days) || 365, 730);
     const limit = Math.min(Number(body.limit) || 500, 1000);
-    const mode = body.mode || 'both'; // api_match | synthetic | both
+    const mode: BackfillMode = (body.mode || "both") as BackfillMode;
     const includeNonAutorenew = body.include_non_autorenew === true;
     const maxPages = Math.min(Number(body.max_pages) || 6, 40);
-    const apiScanMode = body.api_scan_mode || 'limited'; // limited | deep
-    const effectiveMaxPages = apiScanMode === 'deep' ? Math.min(maxPages, 40) : Math.min(maxPages, 6);
-    const sleepMs = apiScanMode === 'deep' ? 250 : 0;
+    const apiScanMode: ApiScanMode = (body.api_scan_mode || "limited") as ApiScanMode;
+
+    const effectiveMaxPages = apiScanMode === "deep" ? Math.min(maxPages, 40) : Math.min(maxPages, 6);
+    const sleepMs = apiScanMode === "deep" ? 250 : 0;
 
     const errors: string[] = [];
     const MAX_ERRORS = 10;
 
-    // Step A: Find candidates
     const sinceDate = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
 
-    // Get subscriptions_v2 missing provider_subscriptions
-    const { data: candidates, error: candError } = await supabase.rpc('get_backfill_candidates', {
-      p_since_date: sinceDate,
-      p_limit: limit,
-      p_include_non_autorenew: includeNonAutorenew,
-    });
-
-    // Fallback: manual query if RPC doesn't exist
+    // Step A: Candidates
     let finalCandidates: BackfillCandidate[] = [];
 
-    if (candError) {
-      console.log('[backfill] RPC not found, using manual query');
-      // Manual query
-      const autoRenewFilter = includeNonAutorenew ? {} : { auto_renew: true };
-      
-      const { data: subs } = await supabase
-        .from('subscriptions_v2')
-        .select('id, user_id, product_id, status, auto_renew, profile_id')
-        .in('status', ['active', 'trial', 'past_due'])
-        .match(autoRenewFilter)
-        .limit(limit);
+    const autoRenewFilter = includeNonAutorenew ? {} : { auto_renew: true };
 
-      if (!subs || subs.length === 0) {
-        return new Response(JSON.stringify({
-          dry_run: dryRun, candidates_total: 0, candidates_autorenew: 0,
-          api_subscriptions_scanned: 0, api_matches_found: 0, api_truncated: false,
-          api_total_pages_seen: 0, would_upsert_real_sbs: 0, would_upsert_synthetic: 0,
-          upserted_real_sbs: 0, upserted_synthetic: 0, errors: [],
-          duration_ms: Date.now() - startTime,
-        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
+    const { data: subs, error: subsErr } = await supabase
+      .from("subscriptions_v2")
+      .select("id, user_id, product_id, status, auto_renew, profile_id, created_at")
+      .in("status", ["active", "trial", "past_due"])
+      .match(autoRenewFilter)
+      .gte("created_at", sinceDate)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-      // Get payment methods for these users
-      const userIds = [...new Set(subs.map(s => s.user_id))];
-      const { data: pms } = await supabase
-        .from('payment_methods')
-        .select('id, user_id, provider_token, brand, last4, status')
-        .eq('provider', 'bepaid')
-        .eq('status', 'active')
-        .in('user_id', userIds);
-
-      const pmByUser = new Map<string, any>();
-      for (const pm of pms || []) {
-        if (pm.provider_token && (!pmByUser.has(pm.user_id) || pm.provider_token)) {
-          pmByUser.set(pm.user_id, pm);
-        }
-      }
-
-      // Get existing provider_subscriptions to exclude
-      const { data: existingPS } = await supabase
-        .from('provider_subscriptions')
-        .select('subscription_v2_id')
-        .eq('provider', 'bepaid')
-        .in('subscription_v2_id', subs.map(s => s.id));
-
-      const existingSubIds = new Set((existingPS || []).map(ps => ps.subscription_v2_id));
-
-      for (const s of subs) {
-        if (existingSubIds.has(s.id)) continue;
-        const pm = pmByUser.get(s.user_id);
-        if (!pm?.provider_token) continue;
-
-        finalCandidates.push({
-          subscription_v2_id: s.id,
-          user_id: s.user_id,
-          product_id: s.product_id,
-          status: s.status,
-          auto_renew: s.auto_renew ?? false,
-          provider_token: pm.provider_token,
-          pm_brand: pm.brand,
-          pm_last4: pm.last4,
-          profile_id: s.profile_id || null,
-        });
-      }
-    } else {
-      finalCandidates = (candidates || []).map((c: any) => ({
-        subscription_v2_id: c.subscription_v2_id || c.id,
-        user_id: c.user_id,
-        product_id: c.product_id,
-        status: c.status,
-        auto_renew: c.auto_renew ?? false,
-        provider_token: c.provider_token,
-        pm_brand: c.pm_brand || c.brand,
-        pm_last4: c.pm_last4 || c.last4,
-        profile_id: c.profile_id,
-      }));
+    if (subsErr) {
+      return json({ error: subsErr.message, duration_ms: Date.now() - startTime }, 500);
     }
 
-    const candidatesAutorenew = finalCandidates.filter(c => c.auto_renew).length;
+    if (!subs || subs.length === 0) {
+      return json({
+        dry_run: dryRun,
+        candidates_total: 0,
+        candidates_autorenew: 0,
+        api_subscriptions_scanned: 0,
+        api_matches_found: 0,
+        api_truncated: false,
+        api_total_pages_seen: 0,
+        would_upsert_real_sbs: 0,
+        would_upsert_synthetic: 0,
+        upserted_real_sbs: 0,
+        upserted_synthetic: 0,
+        errors: [],
+        duration_ms: Date.now() - startTime,
+      });
+    }
 
-    console.log(`[backfill] Found ${finalCandidates.length} candidates (${candidatesAutorenew} auto_renew), mode=${mode}, dry_run=${dryRun}`);
+    const userIds = [...new Set(subs.map((s: any) => s.user_id))];
+
+    const { data: pms, error: pmErr } = await supabase
+      .from("payment_methods")
+      .select("id, user_id, provider_token, brand, last4, status")
+      .eq("provider", "bepaid")
+      .eq("status", "active")
+      .in("user_id", userIds);
+
+    if (pmErr) {
+      return json({ error: pmErr.message, duration_ms: Date.now() - startTime }, 500);
+    }
+
+    const pmByUser = new Map<string, any>();
+    for (const pm of pms || []) {
+      if (!pm?.provider_token) continue;
+      if (!pmByUser.has(pm.user_id)) pmByUser.set(pm.user_id, pm);
+    }
+
+    const { data: existingPS, error: exErr } = await supabase
+      .from("provider_subscriptions")
+      .select("subscription_v2_id")
+      .eq("provider", "bepaid")
+      .in("subscription_v2_id", subs.map((s: any) => s.id));
+
+    if (exErr) {
+      return json({ error: exErr.message, duration_ms: Date.now() - startTime }, 500);
+    }
+
+    const existingSubIds = new Set((existingPS || []).map((ps: any) => ps.subscription_v2_id));
+
+    for (const s of subs) {
+      if (existingSubIds.has(s.id)) continue;
+
+      const pm = pmByUser.get(s.user_id);
+      if (!pm?.provider_token) continue;
+
+      finalCandidates.push({
+        subscription_v2_id: s.id,
+        user_id: s.user_id,
+        product_id: s.product_id ?? null,
+        status: s.status,
+        auto_renew: !!s.auto_renew,
+        provider_token: pm.provider_token,
+        pm_brand: pm.brand ?? null,
+        pm_last4: pm.last4 ?? null,
+        profile_id: s.profile_id ?? null,
+      });
+    }
+
+    const candidatesAutorenew = finalCandidates.filter((c) => c.auto_renew).length;
+
+    console.log(
+      `[backfill] candidates=${finalCandidates.length} (auto_renew=${candidatesAutorenew}), mode=${mode}, dry_run=${dryRun}, since=${sinceDays}d`,
+    );
 
     // Step B: API matching
     let apiSubscriptions: any[] = [];
@@ -265,78 +364,75 @@ Deno.serve(async (req) => {
     let apiMatchesFound = 0;
     const matchedCandidateIds = new Set<string>();
 
-    if (mode === 'api_match' || mode === 'both') {
-      // Get BePaid credentials
+    if (mode === "api_match" || mode === "both") {
       const creds = await getBepaidCredsStrict(supabase);
-      if (isBepaidCredsError(creds)) {
-        console.error('[backfill] No BePaid credentials:', creds.error);
-        errors.push('BePaid credentials not configured: ' + creds.error);
+
+      if (!creds.ok) {
+        errors.push(`BePaid credentials not configured: ${creds.error}`);
       } else {
-        const bepaidAuth = createBepaidAuthHeader(creds);
-        const result = await fetchBepaidSubscriptions(bepaidAuth, effectiveMaxPages, sleepMs);
+        const authHeader = createBepaidAuthHeader(creds);
+        const result = await fetchBepaidSubscriptions(authHeader, effectiveMaxPages, sleepMs);
+
         apiSubscriptions = result.items;
         apiTruncated = result.truncated;
         apiTotalPages = result.totalPages;
 
-        console.log(`[backfill] API: ${apiSubscriptions.length} subscriptions fetched, ${apiTotalPages} pages, truncated=${apiTruncated}`);
-
-        // Build token -> API subscription map
         const tokenToApiSub = new Map<string, any>();
         for (const apiSub of apiSubscriptions) {
-          const cardToken = apiSub.credit_card?.token;
-          if (cardToken) {
-            tokenToApiSub.set(cardToken, apiSub);
-          }
+          const cardToken = apiSub?.credit_card?.token;
+          if (cardToken) tokenToApiSub.set(String(cardToken), apiSub);
         }
 
-        // Match candidates by token
         for (const cand of finalCandidates) {
-          const apiSub = tokenToApiSub.get(cand.provider_token);
+          const apiSub = tokenToApiSub.get(String(cand.provider_token));
           if (!apiSub) continue;
 
           matchedCandidateIds.add(cand.subscription_v2_id);
           apiMatchesFound++;
 
           const sbsId = String(apiSub.id);
-          const apiState = apiSub.state || apiSub.status || 'active';
-          const normalizedState = apiState === 'cancelled' ? 'canceled' : apiState;
-          const planAmount = apiSub.plan?.amount;
-          const planCurrency = apiSub.plan?.currency || 'BYN';
-          const amountCents = planAmount ? (planAmount > 1000 ? planAmount : planAmount * 100) : null;
+          const normalizedState = normalizeProviderState(apiSub.state || apiSub.status);
+
+          const planAmount = apiSub?.plan?.amount ?? null;
+          const planCurrency = apiSub?.plan?.currency ?? "BYN";
+          const amountCents = planAmount === null ? null : (planAmount > 1000 ? Number(planAmount) : Math.round(Number(planAmount) * 100));
 
           if (!dryRun) {
             if (errors.length >= MAX_ERRORS) {
-              errors.push('STOP: max errors reached');
+              errors.push("STOP: max errors reached");
               break;
             }
 
             const { error: upsertErr } = await supabase
-              .from('provider_subscriptions')
-              .upsert({
-                provider: 'bepaid',
-                provider_subscription_id: sbsId,
-                subscription_v2_id: cand.subscription_v2_id,
-                user_id: cand.user_id,
-                profile_id: cand.profile_id,
-                product_id: cand.product_id,
-                state: normalizedState,
-                amount_cents: amountCents,
-                currency: planCurrency,
-                card_brand: apiSub.credit_card?.brand || cand.pm_brand,
-                card_last4: apiSub.credit_card?.last_4 || cand.pm_last4,
-                card_token: cand.provider_token,
-                next_charge_at: apiSub.next_billing_at || null,
-                last_charge_at: apiSub.last_transaction?.created_at || null,
-                raw_data: apiSub,
-                meta: {
-                  synthetic: false,
-                  lookup_mode: 'api_card_token_match',
-                  backfilled_at: new Date().toISOString(),
-                  api_scan_mode: apiScanMode,
-                  api_truncated: apiTruncated,
-                  source_subscription_v2_id: cand.subscription_v2_id,
+              .from("provider_subscriptions")
+              .upsert(
+                {
+                  provider: "bepaid",
+                  provider_subscription_id: sbsId,
+                  subscription_v2_id: cand.subscription_v2_id,
+                  user_id: cand.user_id,
+                  profile_id: cand.profile_id,
+                  product_id: cand.product_id,
+                  state: normalizedState,
+                  amount_cents: amountCents,
+                  currency: planCurrency,
+                  card_brand: apiSub?.credit_card?.brand || cand.pm_brand,
+                  card_last4: apiSub?.credit_card?.last_4 || cand.pm_last4,
+                  card_token: cand.provider_token,
+                  next_charge_at: apiSub?.next_billing_at || null,
+                  last_charge_at: apiSub?.last_transaction?.created_at || null,
+                  raw_data: sanitizeApiSubscription(apiSub),
+                  meta: {
+                    synthetic: false,
+                    lookup_mode: "api_card_token_match",
+                    backfilled_at: new Date().toISOString(),
+                    api_scan_mode: apiScanMode,
+                    api_truncated: apiTruncated,
+                    source_subscription_v2_id: cand.subscription_v2_id,
+                  },
                 },
-              }, { onConflict: 'provider,provider_subscription_id' });
+                { onConflict: "provider,provider_subscription_id" },
+              );
 
             if (upsertErr) {
               errors.push(`API match upsert failed for sbs=${sbsId}: ${upsertErr.message}`);
@@ -348,34 +444,40 @@ Deno.serve(async (req) => {
 
     // Step C: Synthetic fallback
     let syntheticCount = 0;
-    const unmatchedCandidates = finalCandidates.filter(c => !matchedCandidateIds.has(c.subscription_v2_id));
+    const unmatchedCandidates = finalCandidates.filter((c) => !matchedCandidateIds.has(c.subscription_v2_id));
 
-    if ((mode === 'synthetic' || mode === 'both') && unmatchedCandidates.length > 0) {
-      // Get latest recurring payments per user+product for amount/date
-      const userProductKeys = unmatchedCandidates.map(c => c.user_id);
-      const { data: latestPayments } = await supabase
-        .from('payments_v2')
-        .select('id, user_id, product_id, amount, currency, paid_at, created_at')
-        .eq('provider', 'bepaid')
-        .eq('status', 'succeeded')
-        .eq('is_recurring', true)
-        .in('user_id', [...new Set(userProductKeys)])
-        .order('created_at', { ascending: false })
-        .limit(500);
+    if ((mode === "synthetic" || mode === "both") && unmatchedCandidates.length > 0) {
+      const userIdsForPayments = [...new Set(unmatchedCandidates.map((c) => c.user_id))];
 
-      // Build user_id -> latest payment map
-      const userToLatestPayment = new Map<string, any>();
-      for (const p of latestPayments || []) {
-        if (!userToLatestPayment.has(p.user_id)) {
-          userToLatestPayment.set(p.user_id, p);
-        }
+      const { data: latestPayments, error: lpErr } = await supabase
+        .from("payments_v2")
+        .select("id, user_id, product_id, amount, currency, paid_at, created_at, is_recurring, status, provider")
+        .eq("provider", "bepaid")
+        .eq("status", "succeeded")
+        .eq("is_recurring", true)
+        .in("user_id", userIdsForPayments)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
+      if (lpErr) {
+        errors.push(`Latest payments query failed: ${lpErr.message}`);
       }
 
-      // Process in batches
+      const userProductToLatestPayment = new Map<string, any>();
+      const userToLatestPayment = new Map<string, any>();
+
+      for (const p of latestPayments || []) {
+        if (!userToLatestPayment.has(p.user_id)) userToLatestPayment.set(p.user_id, p);
+
+        const key = `${p.user_id}|${p.product_id ?? ""}`;
+        if (!userProductToLatestPayment.has(key)) userProductToLatestPayment.set(key, p);
+      }
+
       const BATCH_SIZE = 50;
+
       for (let i = 0; i < unmatchedCandidates.length; i += BATCH_SIZE) {
         if (errors.length >= MAX_ERRORS) {
-          errors.push('STOP: max errors reached during synthetic');
+          errors.push("STOP: max errors reached during synthetic");
           break;
         }
 
@@ -384,46 +486,62 @@ Deno.serve(async (req) => {
         for (const cand of batch) {
           syntheticCount++;
 
-          if (!dryRun) {
-            const latestPayment = userToLatestPayment.get(cand.user_id);
-            const amountCents = latestPayment?.amount ? Math.round(latestPayment.amount * 100) : null;
-            const currency = latestPayment?.currency || 'BYN';
-            const lastChargeAt = latestPayment?.paid_at || latestPayment?.created_at || null;
+          if (dryRun) continue;
 
-            // Map subscription status to provider state
-            let providerState = 'active';
-            if (cand.status === 'past_due') providerState = 'past_due';
-            if (!cand.auto_renew) providerState = 'canceled';
+          const key = `${cand.user_id}|${cand.product_id ?? ""}`;
+          let latestPayment = userProductToLatestPayment.get(key);
+          let lookupMode = "latest_payment_user_product";
 
-            const { error: upsertErr } = await supabase
-              .from('provider_subscriptions')
-              .upsert({
-                provider: 'bepaid',
+          if (!latestPayment) {
+            latestPayment = userToLatestPayment.get(cand.user_id);
+            lookupMode = "latest_payment_user_fallback";
+          }
+
+          const currency = (latestPayment?.currency || "BYN") as string;
+          const norm = normalizeAmountCents(
+            latestPayment?.amount !== undefined && latestPayment?.amount !== null ? Number(latestPayment.amount) : null,
+            currency,
+          );
+
+          const lastChargeAt = latestPayment?.paid_at || latestPayment?.created_at || null;
+
+          let providerState = "active";
+          if (cand.status === "past_due") providerState = "past_due";
+          if (!cand.auto_renew) providerState = "canceled";
+
+          const { error: upsertErr } = await supabase
+            .from("provider_subscriptions")
+            .upsert(
+              {
+                provider: "bepaid",
                 provider_subscription_id: `internal:${cand.subscription_v2_id}`,
                 subscription_v2_id: cand.subscription_v2_id,
                 user_id: cand.user_id,
                 profile_id: cand.profile_id,
                 product_id: cand.product_id,
                 state: providerState,
-                amount_cents: amountCents,
-                currency: currency,
+                amount_cents: norm.cents,
+                currency,
                 card_brand: cand.pm_brand,
                 card_last4: cand.pm_last4,
                 card_token: cand.provider_token,
                 last_charge_at: lastChargeAt,
                 meta: {
                   synthetic: true,
-                  source: 'token_direct_charge',
-                  lookup_mode: 'backfill_synthetic',
+                  source: "token_direct_charge",
+                  lookup_mode: lookupMode,
                   backfilled_at: new Date().toISOString(),
                   source_subscription_v2_id: cand.subscription_v2_id,
-                  amount_source: amountCents ? 'latest_recurring_payment' : 'missing',
+                  amount_source: norm.source,
+                  amount_raw: norm.raw,
+                  pm_lookup_mode: "pm_user_first_active",
                 },
-              }, { onConflict: 'provider,provider_subscription_id' });
+              },
+              { onConflict: "provider,provider_subscription_id" },
+            );
 
-            if (upsertErr) {
-              errors.push(`Synthetic upsert failed for sub=${cand.subscription_v2_id.slice(0, 8)}: ${upsertErr.message}`);
-            }
+          if (upsertErr) {
+            errors.push(`Synthetic upsert failed for sub=${cand.subscription_v2_id.slice(0, 8)}: ${upsertErr.message}`);
           }
         }
       }
@@ -445,35 +563,29 @@ Deno.serve(async (req) => {
       duration_ms: Date.now() - startTime,
     };
 
-    // Audit log
-    await supabase.from('audit_logs').insert({
-      actor_type: 'admin',
-      actor_user_id: user.id,
-      action: dryRun ? 'admin.bepaid_backfill_dry_run' : 'admin.bepaid_backfill_execute',
-      meta: {
-        candidates_total: result.candidates_total,
-        api_matches: result.api_matches_found,
-        synthetic: dryRun ? result.would_upsert_synthetic : result.upserted_synthetic,
-        errors_count: errors.length,
-        mode,
-        api_scan_mode: apiScanMode,
-      },
-    });
+    try {
+      await supabase.from("audit_logs").insert({
+        actor_type: "admin",
+        actor_user_id: user.id,
+        action: dryRun ? "admin.bepaid_backfill_dry_run" : "admin.bepaid_backfill_execute",
+        meta: {
+          candidates_total: result.candidates_total,
+          candidates_autorenew: result.candidates_autorenew,
+          api_matches: result.api_matches_found,
+          synthetic: dryRun ? result.would_upsert_synthetic : result.upserted_synthetic,
+          errors_count: errors.length,
+          mode,
+          api_scan_mode: apiScanMode,
+          api_truncated: apiTruncated,
+          since_days: sinceDays,
+          limit,
+        },
+      });
+    } catch (_) {}
 
-    console.log(`[backfill] Done in ${result.duration_ms}ms: ${JSON.stringify({
-      candidates: result.candidates_total,
-      api_matches: result.api_matches_found,
-      synthetic: dryRun ? result.would_upsert_synthetic : result.upserted_synthetic,
-      errors: errors.length,
-    })}`);
-
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json(result);
   } catch (e: any) {
-    console.error('[backfill] Fatal error:', e);
-    return new Response(JSON.stringify({ error: e.message, duration_ms: Date.now() - startTime }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    console.error("[backfill] Fatal error:", e);
+    return json({ error: e?.message || "Unknown error", duration_ms: Date.now() - startTime }, 500);
   }
 });
