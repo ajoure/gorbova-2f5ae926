@@ -573,6 +573,151 @@ serve(async (req) => {
       } catch (_) {}
     }
 
+    // INV-19A: BePaid subscription ID (sbs_*) observed in payments/orders but missing provider_subscriptions
+    const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    
+    // Source 1: payments_v2.meta->>'bepaid_subscription_id'
+    const { data: missingSbsFromPayments } = await supabase
+      .from('payments_v2')
+      .select('id, meta')
+      .eq('provider', 'bepaid')
+      .eq('status', 'succeeded')
+      .not('meta->bepaid_subscription_id', 'is', null)
+      .gte('created_at', seventyTwoHoursAgo)
+      .limit(200);
+
+    // Source 2: orders_v2.meta->>'bepaid_subscription_id'
+    const { data: missingSbsFromOrders } = await supabase
+      .from('orders_v2')
+      .select('id, meta')
+      .not('meta->bepaid_subscription_id', 'is', null)
+      .gte('created_at', seventyTwoHoursAgo)
+      .limit(200);
+
+    // Collect all distinct sbs IDs
+    const allSbsIds = new Set<string>();
+    for (const p of missingSbsFromPayments || []) {
+      const sbsId = (p.meta as any)?.bepaid_subscription_id;
+      if (sbsId && typeof sbsId === 'string' && sbsId.startsWith('sbs_')) {
+        allSbsIds.add(sbsId);
+      }
+    }
+    for (const o of missingSbsFromOrders || []) {
+      const sbsId = (o.meta as any)?.bepaid_subscription_id;
+      if (sbsId && typeof sbsId === 'string' && sbsId.startsWith('sbs_')) {
+        allSbsIds.add(sbsId);
+      }
+    }
+
+    // Also check payments_v2.provider_response->>'subscription_id'
+    const { data: missingSbsFromResponse } = await supabase
+      .from('payments_v2')
+      .select('id, provider_response')
+      .eq('provider', 'bepaid')
+      .eq('status', 'succeeded')
+      .not('provider_response->subscription_id', 'is', null)
+      .gte('created_at', seventyTwoHoursAgo)
+      .limit(200);
+
+    for (const p of missingSbsFromResponse || []) {
+      const sbsId = (p.provider_response as any)?.subscription_id;
+      if (sbsId && typeof sbsId === 'string' && sbsId.startsWith('sbs_')) {
+        allSbsIds.add(sbsId);
+      }
+    }
+
+    // Check which sbs IDs are missing from provider_subscriptions
+    let inv19aMissing: string[] = [];
+    if (allSbsIds.size > 0) {
+      const { data: existingPS } = await supabase
+        .from('provider_subscriptions')
+        .select('provider_subscription_id')
+        .eq('provider', 'bepaid')
+        .in('provider_subscription_id', [...allSbsIds]);
+
+      const existingSet = new Set((existingPS || []).map(ps => ps.provider_subscription_id));
+      inv19aMissing = [...allSbsIds].filter(id => !existingSet.has(id));
+    }
+
+    invariants.push({
+      name: 'INV-19A: BePaid sbs_* missing in provider_subscriptions',
+      passed: inv19aMissing.length === 0,
+      count: inv19aMissing.length,
+      samples: inv19aMissing.slice(0, 5).map(id => ({ sbs_id: id })),
+      description: 'BePaid subscription IDs found in payments/orders (72h) but missing from provider_subscriptions. Run admin-bepaid-backfill.',
+    });
+
+    if (inv19aMissing.length > 0) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+          body: JSON.stringify({
+            message: `🚨 INV-19A CRITICAL: ${inv19aMissing.length} BePaid sbs_* ID(s) найдены в платежах/заказах, но отсутствуют в provider_subscriptions!\n\nРекомендация: запустить admin-bepaid-backfill execute`,
+            source: 'nightly-payments-invariants',
+          }),
+        });
+      } catch (_) {}
+    }
+
+    // INV-19B: Token-based recurring subscriptions without provider_subscriptions
+    // Check by subscription_v2_id (not just user_id) to catch multi-product cases
+    const { data: inv19bSubs } = await supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, product_id')
+      .in('status', ['active', 'trial', 'past_due'])
+      .eq('auto_renew', true)
+      .limit(500);
+
+    let inv19bMissing = 0;
+    if (inv19bSubs && inv19bSubs.length > 0) {
+      // Get users with active bepaid payment method
+      const inv19bUserIds = [...new Set(inv19bSubs.map(s => s.user_id))];
+      const { data: inv19bPMs } = await supabase
+        .from('payment_methods')
+        .select('user_id')
+        .eq('provider', 'bepaid')
+        .eq('status', 'active')
+        .in('user_id', inv19bUserIds);
+
+      const usersWithPM = new Set((inv19bPMs || []).map(pm => pm.user_id));
+      const relevantSubs = inv19bSubs.filter(s => usersWithPM.has(s.user_id));
+
+      if (relevantSubs.length > 0) {
+        // Check which subscription_v2_ids have provider_subscriptions
+        const { data: inv19bExisting } = await supabase
+          .from('provider_subscriptions')
+          .select('subscription_v2_id')
+          .eq('provider', 'bepaid')
+          .in('subscription_v2_id', relevantSubs.map(s => s.id));
+
+        const coveredSubIds = new Set((inv19bExisting || []).map(ps => ps.subscription_v2_id));
+        inv19bMissing = relevantSubs.filter(s => !coveredSubIds.has(s.id)).length;
+      }
+    }
+
+    const inv19bCritical = inv19bMissing > 20;
+    invariants.push({
+      name: 'INV-19B: Token recurring without provider_subscriptions',
+      passed: inv19bMissing === 0,
+      count: inv19bMissing,
+      samples: [],
+      description: `Active auto_renew subscriptions with bepaid payment_method but no provider_subscriptions row (by subscription_v2_id). ${inv19bCritical ? 'CRITICAL' : 'WARNING'}. Run admin-bepaid-backfill.`,
+    });
+
+    if (inv19bCritical) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+          body: JSON.stringify({
+            message: `🚨 INV-19B CRITICAL: ${inv19bMissing} активных auto_renew подписок без provider_subscriptions!\n\nРекомендация: запустить admin-bepaid-backfill execute`,
+            source: 'nightly-payments-invariants',
+          }),
+        });
+      } catch (_) {}
+    }
+
     const passedCount = invariants.filter(i => i.passed).length;
     const failedCount = invariants.filter(i => !i.passed).length;
 

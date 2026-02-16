@@ -116,6 +116,8 @@ interface BepaidSubscription {
   linked_payment_id?: string | null;
   linked_provider_payment_id?: string | null; // PATCH-U4: bePaid UID
   canceled_at?: string | null;
+  // PATCH-P2.2: Synthetic detection (client-side)
+  is_synthetic?: boolean;
 }
 
 interface SubscriptionStats {
@@ -210,8 +212,14 @@ const STATUS_LABELS: Record<string, string> = {
 
 type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due" | "pending";
 type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
+type SourceFilter = "all" | "sbs_only" | "token_only";
 type SortField = "created_at" | "next_billing_at" | "plan_amount" | "status";
 type SortDir = "asc" | "desc";
+
+// PATCH-P2.2: Detect synthetic subscriptions client-side
+function isSyntheticSubscription(sub: BepaidSubscription): boolean {
+  return sub.id.startsWith('internal:') || sub.is_synthetic === true;
+}
 
 function normalizeStatus(status: string): string {
   if (status === 'cancelled') return 'canceled';
@@ -299,6 +307,7 @@ export function BepaidSubscriptionsTabContent() {
   // Default filter is now "active"
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("next_billing_at");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -382,6 +391,7 @@ export function BepaidSubscriptionsTabContent() {
         ...s,
         status: normalizeStatus(s.status),
         snapshot_state: s.snapshot_state ? normalizeStatus(s.snapshot_state) : undefined,
+        is_synthetic: isSyntheticSubscription(s),
       }));
       
       const result = { 
@@ -422,6 +432,11 @@ export function BepaidSubscriptionsTabContent() {
     return subscriptions.filter((s: BepaidSubscription) => s.needs_support).length;
   }, [subscriptions]);
 
+  // PATCH-P2.2: Synthetic count for stats
+  const syntheticCount = useMemo(() => {
+    return subscriptions.filter((s: BepaidSubscription) => s.is_synthetic).length;
+  }, [subscriptions]);
+
   const filteredSubscriptions = useMemo(() => {
     let result = [...subscriptions];
     
@@ -441,6 +456,13 @@ export function BepaidSubscriptionsTabContent() {
       });
     } else if (linkFilter === "needs_support") {
       result = result.filter((s: BepaidSubscription) => s.needs_support);
+    }
+
+    // PATCH-P2.2: Source filter
+    if (sourceFilter === "sbs_only") {
+      result = result.filter((s: BepaidSubscription) => !s.is_synthetic);
+    } else if (sourceFilter === "token_only") {
+      result = result.filter((s: BepaidSubscription) => s.is_synthetic);
     }
     
     if (searchQuery.trim()) {
@@ -485,7 +507,7 @@ export function BepaidSubscriptionsTabContent() {
     });
     
     return result;
-  }, [subscriptions, statusFilter, linkFilter, searchQuery, sortField, sortDir]);
+  }, [subscriptions, statusFilter, linkFilter, sourceFilter, searchQuery, sortField, sortDir]);
 
   // Mutations
   const reconcileMutation = useMutation({
@@ -787,6 +809,11 @@ export function BepaidSubscriptionsTabContent() {
         return (
           <div>
             {getStatusBadge(sub.status)}
+            {sub.is_synthetic && (
+              <Badge variant="outline" className="mt-0.5 text-[10px] px-1 py-0 bg-amber-500/10 text-amber-700 border-amber-500/20">
+                Token
+              </Badge>
+            )}
             {sub.snapshot_state && sub.snapshot_state !== sub.status && (
               <div className="text-[10px] text-muted-foreground mt-0.5">
                 bePaid: {STATUS_LABELS[sub.snapshot_state] || sub.snapshot_state}
@@ -1144,6 +1171,22 @@ export function BepaidSubscriptionsTabContent() {
             <span className="text-xs">помощь</span>
           </button>
         )}
+        
+        {/* PATCH-P2.2: Token/synthetic count */}
+        {syntheticCount > 0 && (
+          <button
+            onClick={() => setSourceFilter(sourceFilter === "token_only" ? "all" : "token_only")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              sourceFilter === "token_only" 
+                ? "bg-amber-500/20 text-amber-700 ring-2 ring-amber-500/30" 
+                : "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20"
+            )}
+          >
+            <span className="font-semibold">{syntheticCount}</span>
+            <span className="text-xs">token</span>
+          </button>
+        )}
       </div>
 
       {/* Toolbar - glassmorphism */}
@@ -1168,6 +1211,18 @@ export function BepaidSubscriptionsTabContent() {
             <SelectItem value="orphan">Сироты</SelectItem>
             <SelectItem value="urgent">Срочные (≤7д)</SelectItem>
             <SelectItem value="needs_support">Нужна помощь</SelectItem>
+          </SelectContent>
+        </Select>
+        
+        {/* PATCH-P2.2: Source filter */}
+        <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)}>
+          <SelectTrigger className="w-36 h-8 bg-background/50">
+            <SelectValue placeholder="Источник" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все источники</SelectItem>
+            <SelectItem value="sbs_only">Только sbs_*</SelectItem>
+            <SelectItem value="token_only">Только Token</SelectItem>
           </SelectContent>
         </Select>
         
