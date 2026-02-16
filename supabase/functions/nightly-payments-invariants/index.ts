@@ -206,6 +206,7 @@ Deno.serve(async (req) => {
     // INV-20: Paid orders without payments_v2 (via RPC for accurate count)
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     let inv20Missing = 0;
+    let inv20Suppressed = 0;
     let inv20Samples: any[] = [];
 
     const { data: inv20Data, error: inv20Err } = await supabase.rpc(
@@ -215,11 +216,11 @@ Deno.serve(async (req) => {
 
     if (inv20Err) {
       console.error("[nightly] INV-20 RPC failed, falling back:", inv20Err.message);
-      // Fallback: client-side (may undercount if >200)
       const { data: paidOrders } = await supabase
         .from("orders_v2")
-        .select("id, order_number, created_at")
+        .select("id, order_number, created_at, meta")
         .eq("status", "paid")
+        .not("user_id", "is", null)
         .gte("created_at", ninetyDaysAgo)
         .limit(200);
 
@@ -231,17 +232,26 @@ Deno.serve(async (req) => {
           .in("order_id", orderIds);
 
         const paidOrderIds = new Set((existingPayments || []).map((p: any) => p.order_id));
-        const missing = paidOrders.filter((o: any) => !paidOrderIds.has(o.id));
+        const missing = paidOrders.filter((o: any) => {
+          if (paidOrderIds.has(o.id)) return false;
+          const m = o.meta as any;
+          if (m?.superseded_by_repair || m?.no_real_payment) {
+            inv20Suppressed++;
+            return false;
+          }
+          return true;
+        });
         inv20Missing = missing.length;
         inv20Samples = missing.slice(0, 5).map((o: any) => ({
+          id: o.id,
           order_number: o.order_number,
           created_at: o.created_at,
         }));
       }
     } else if (inv20Data) {
-      // RPC returns single row: { count_total, samples }
       const row = Array.isArray(inv20Data) ? inv20Data[0] : inv20Data;
       inv20Missing = Number(row?.count_total ?? 0);
+      inv20Suppressed = Number(row?.suppressed_count ?? 0);
       inv20Samples = row?.samples ?? [];
     }
 
@@ -250,8 +260,9 @@ Deno.serve(async (req) => {
       name: "INV-20: Paid orders without payments_v2",
       passed: inv20Missing === 0,
       count: inv20Missing,
+      suppressed: inv20Suppressed,
       samples: inv20Samples,
-      description: `Paid orders (90d) with no corresponding payments_v2 record. ${
+      description: `Paid orders (90d) with no corresponding payments_v2 record (${inv20Suppressed} suppressed by repair). ${
         inv20Critical ? "CRITICAL" : "WARNING"
       }. Run admin-repair-missing-payments execute.`,
     });

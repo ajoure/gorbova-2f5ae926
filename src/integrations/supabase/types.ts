@@ -9911,6 +9911,7 @@ export type Database = {
         Returns: {
           count_total: number
           samples: Json
+          suppressed_count: number
         }[]
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
