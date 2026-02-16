@@ -508,7 +508,8 @@ serve(async (req) => {
              (o.order_number && o.order_number.startsWith('SUB-LINK-'));
     });
     
-    const criticalLinkOrders = linkOrders.filter((o: any) => new Date(o.created_at) < new Date(sixtyMinAgo));
+    const criticalMs = Date.now() - 60 * 60 * 1000;
+    const criticalLinkOrders = linkOrders.filter((o: any) => new Date(o.created_at).getTime() < criticalMs);
     
     invariants.push({
       name: 'INV-17: Pending link-orders > 15 min',

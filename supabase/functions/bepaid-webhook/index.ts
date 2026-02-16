@@ -509,6 +509,11 @@ function parseTrackingId(raw: string | null): TrackingParse {
   if (subv2Match) {
     return { kind: 'subv2', orderId: subv2Match[2], offerId: null, subscriptionV2Id: subv2Match[1], raw };
   }
+  // A4: Support legacy subv2:{uuid} format (without :order:)
+  const simpleSubv2 = raw.match(/^subv2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (simpleSubv2) {
+    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: simpleSubv2[1], raw };
+  }
   if (raw.startsWith('subv2:')) {
     return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: null, raw };
   }
@@ -977,6 +982,13 @@ Deno.serve(async (req) => {
             amount: transaction?.amount,
           },
         });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: body?.event || body?.type || null,
+          transaction_uid: transactionUid, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          tracking_id: rawTrackingId, parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'ignored_provider_events', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
         return new Response(JSON.stringify({ received: true, ignored: true, reason: 'ignore_provider_events' }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -994,24 +1006,72 @@ Deno.serve(async (req) => {
       // Parse tracking_id: subv2:{subscription_v2_id}:order:{order_id}
       const trackingParts = rawTrackingId.match(/^subv2:([^:]+):order:(.+)$/);
       
-      if (!trackingParts) {
-        console.error('[WEBHOOK-SUBSCRIPTION] Bad tracking_id format:', rawTrackingId);
-        await supabase.from('provider_webhook_orphans').upsert({
-          provider: 'bepaid',
-          provider_subscription_id: subscriptionId,
-          provider_payment_id: transactionUid,
-          reason: 'bad_tracking_id',
-          raw_data: createSafeOrphanData(body, rawTrackingId),
-          processed: false,
-        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
-        return new Response(JSON.stringify({ error: 'Bad tracking_id format' }), {
-          status: 400,
-          headers: corsHeaders,
-        });
+      let subscriptionV2Id: string;
+      let orderV2Id: string;
+
+      if (trackingParts) {
+        subscriptionV2Id = trackingParts[1];
+        orderV2Id = trackingParts[2];
+      } else {
+        // A4: Try legacy subv2:{uuid} format (without :order:)
+        const simpleSubv2 = rawTrackingId.match(/^subv2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+        if (simpleSubv2) {
+          subscriptionV2Id = simpleSubv2[1];
+          console.log('[WEBHOOK-SUBSCRIPTION] Legacy subv2:{uuid} format, looking up order_id from subscriptions_v2');
+          const { data: subRow } = await supabase
+            .from('subscriptions_v2')
+            .select('id, order_id')
+            .eq('id', subscriptionV2Id)
+            .maybeSingle();
+
+          if (subRow?.order_id) {
+            orderV2Id = String(subRow.order_id);
+            console.log('[WEBHOOK-SUBSCRIPTION] Recovered order_id from subscriptions_v2:', orderV2Id);
+          } else {
+            console.error('[WEBHOOK-SUBSCRIPTION] Legacy subv2:{uuid} — no order_id found in subscriptions_v2');
+            await supabase.from('provider_webhook_orphans').upsert({
+              provider: 'bepaid',
+              provider_subscription_id: subscriptionId,
+              provider_payment_id: transactionUid,
+              reason: 'subv2_missing_order_id',
+              raw_data: createSafeOrphanData(body, rawTrackingId),
+              processed: false,
+            }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+              subscription_id: subscriptionId ? String(subscriptionId) : null,
+              tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
+              outcome: 'orphan_subv2_missing_order_id', http_status: 500,
+              processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: false, status: 'orphan_subv2_missing_order_id' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        } else {
+          console.error('[WEBHOOK-SUBSCRIPTION] Bad tracking_id format:', rawTrackingId);
+          await supabase.from('provider_webhook_orphans').upsert({
+            provider: 'bepaid',
+            provider_subscription_id: subscriptionId,
+            provider_payment_id: transactionUid,
+            reason: 'bad_tracking_id',
+            raw_data: createSafeOrphanData(body, rawTrackingId),
+            processed: false,
+          }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+            subscription_id: subscriptionId ? String(subscriptionId) : null,
+            tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
+            outcome: 'orphan_bad_tracking_id', http_status: 400,
+            processing_ms: Date.now() - startTime,
+          });
+          return new Response(JSON.stringify({ error: 'Bad tracking_id format' }), {
+            status: 400,
+            headers: corsHeaders,
+          });
+        }
       }
-      
-      const subscriptionV2Id = trackingParts[1];
-      const orderV2Id = trackingParts[2];
       
       console.log('[WEBHOOK-SUBSCRIPTION] Parsed:', { subscriptionV2Id, orderV2Id, subscriptionState, transactionStatus });
       
@@ -1648,11 +1708,40 @@ Deno.serve(async (req) => {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
             },
-            body: JSON.stringify({ order_id: linkOrder.id }),
+            body: JSON.stringify({ orderId: linkOrder.id }),
           }
         );
         const grantResult = await grantResp.json();
         console.log('[WEBHOOK-LINK-ORDER] grant-access-for-order result:', grantResp.status, grantResult);
+        
+        // PATCH P2.1: If grant-access failed — log CRITICAL audit + webhook_event
+        if (!grantResp.ok) {
+          console.error('[WEBHOOK-LINK-ORDER] grant-access FAILED:', grantResp.status, grantResult);
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.grant_access_failed',
+              meta: {
+                order_id: linkOrder.id,
+                order_number: linkOrder.order_number,
+                http_status: grantResp.status,
+                error: grantResult?.error || grantResult?.message || grantResult,
+                severity: 'CRITICAL',
+              },
+            });
+          } catch (e) {
+            console.error('[WEBHOOK-LINK-ORDER] audit grant_access_failed write error (non-fatal):', e);
+          }
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+            subscription_id: subscriptionId ? String(subscriptionId) : null,
+            tracking_id: rawTrackingId, parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+            outcome: 'failed_grant_access', http_status: 200,
+            processing_ms: Date.now() - startTime,
+            error_message: `grant-access failed: ${grantResp.status}`,
+          });
+        }
         
         // PATCH P2: Extract subscription_v2_id from grant result if available
         grantedSubscriptionV2Id = grantResult?.subscription_id || grantResult?.subscription_v2_id || null;
@@ -3940,6 +4029,9 @@ ${userName}, к сожалению, не удалось провести опл�
 
     console.log(`Order ${orderId} updated to status: ${orderStatus}`);
 
+    // PATCH P2.1: Fallthrough guard — if we reached here, something wasn't handled
+    // For legacy orders flow this is the normal success return, so only apply fallthrough
+    // if no order was processed (paymentV2 and orderId both handled above)
     return new Response(
       JSON.stringify({ success: true }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
