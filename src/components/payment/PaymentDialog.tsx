@@ -1253,24 +1253,28 @@ export function PaymentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5" />
-              {getStepTitle()}
-            </DialogTitle>
-            <DialogDescription>
-              {productName} — {price}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0">
+          <div className="p-6 pb-3 border-b shrink-0">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5" />
+                {getStepTitle()}
+              </DialogTitle>
+              <DialogDescription>
+                {productName} — {price}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
 
-          {renderStep()}
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4">
+            {renderStep()}
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Trial Already Used Modal */}
       <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-5 w-5" />
