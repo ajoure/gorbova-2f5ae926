@@ -1643,9 +1643,7 @@ Deno.serve(async (req) => {
         .eq('user_id', linkOrder.user_id)
         .maybeSingle();
 
-      await supabase
-        .from('payments_v2')
-        .upsert({
+      const paymentPayload = {
           order_id: linkOrder.id,
           user_id: linkOrder.user_id,
           profile_id: profile?.id || linkOrder.profile_id || null,
@@ -1670,8 +1668,77 @@ Deno.serve(async (req) => {
             bepaid_subscription_id: subscriptionId,
             source: 'link_order_subscription_webhook',
           },
-        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
-      console.log('[WEBHOOK-LINK-ORDER] payments_v2 upserted');
+      };
+
+      const { error: payUpsertErr } = await supabase
+        .from('payments_v2')
+        .upsert(paymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
+
+      if (payUpsertErr) {
+        console.error('[WEBHOOK-LINK-ORDER] payments_v2 upsert FAILED:', payUpsertErr.message, payUpsertErr.code);
+
+        // Fallback: plain insert (no ON CONFLICT)
+        const { error: payInsertErr } = await supabase
+          .from('payments_v2')
+          .insert(paymentPayload);
+
+        if (payInsertErr) {
+          console.error('[WEBHOOK-LINK-ORDER] payments_v2 fallback insert FAILED:', payInsertErr.message);
+
+          // CRITICAL audit log
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.payments_v2_write_failed',
+              meta: {
+                order_id: linkOrder.id,
+                tracking_id: rawTrackingId,
+                transaction_uid: transactionUid,
+                error_code: payInsertErr.code,
+                error_message: payInsertErr.message,
+                upsert_error_code: payUpsertErr.code,
+                upsert_error_message: payUpsertErr.message,
+              },
+            });
+          } catch (_) {}
+
+          // Orphan record
+          try {
+            await supabase.from('provider_webhook_orphans').upsert({
+              provider: 'bepaid',
+              provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+              provider_payment_id: transactionUid,
+              reason: 'payments_v2_write_failed',
+              raw_data: createSafeOrphanData(body, rawTrackingId),
+              processed: false,
+            }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+          } catch (_) {}
+
+          // Webhook event
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'subscription',
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            subscription_id: subscriptionId ? String(subscriptionId) : null,
+            parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+            outcome: 'failed_payments_v2_write',
+            http_status: 500,
+            processing_ms: Date.now() - startTime,
+            error_message: `upsert: ${payUpsertErr.message}; insert: ${payInsertErr.message}`,
+          });
+
+          // Return 500 -> BePaid retries
+          return new Response(
+            JSON.stringify({ ok: false, status: 'failed_payments_v2_write', error: payInsertErr.message }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } else {
+          console.log('[WEBHOOK-LINK-ORDER] payments_v2 fallback insert OK');
+        }
+      } else {
+        console.log('[WEBHOOK-LINK-ORDER] payments_v2 upserted OK');
+      }
 
       // 5. PATCH P2: provider_subscriptions UPSERT (not UPDATE)
       if (subscriptionId) {
@@ -1691,10 +1758,23 @@ Deno.serve(async (req) => {
         if (body.plan?.amount) psData.amount_cents = body.plan.amount;
         if (body.plan?.currency) psData.currency = body.plan.currency;
 
-        await supabase
+        const { error: psUpsertErr } = await supabase
           .from('provider_subscriptions')
           .upsert(psData, { onConflict: 'provider,provider_subscription_id' });
-        console.log('[WEBHOOK-LINK-ORDER] provider_subscriptions upserted');
+
+        if (psUpsertErr) {
+          console.error('[WEBHOOK-LINK-ORDER] provider_subscriptions upsert FAILED:', psUpsertErr.message);
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.provider_subscriptions_write_failed',
+              meta: { order_id: linkOrder.id, sbs_id: subscriptionId, error_code: psUpsertErr.code, error_message: psUpsertErr.message },
+            });
+          } catch (_) {}
+        } else {
+          console.log('[WEBHOOK-LINK-ORDER] provider_subscriptions upserted OK');
+        }
       }
 
       // 6. Grant access via grant-access-for-order

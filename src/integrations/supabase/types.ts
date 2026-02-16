@@ -9906,6 +9906,13 @@ export type Database = {
         Args: { _role_code: string; _user_id: string }
         Returns: boolean
       }
+      inv20_paid_orders_without_payments: {
+        Args: { p_limit?: number; p_since: string }
+        Returns: {
+          count_total: number
+          samples: Json
+        }[]
+      }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
