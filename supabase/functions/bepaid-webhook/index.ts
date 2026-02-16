@@ -880,6 +880,38 @@ Deno.serve(async (req) => {
     console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}, isRefund=${isRefundTransaction}`);
 
     // =====================================================================
+    // GUARD: ignore_provider_events — early exit for provider subscriptions marked to be ignored
+    // =====================================================================
+    if (subscriptionId) {
+      const { data: provSub } = await supabase
+        .from('provider_subscriptions')
+        .select('id, meta')
+        .eq('provider_subscription_id', String(subscriptionId))
+        .maybeSingle();
+
+      const ignoreMeta = provSub?.meta as Record<string, unknown> | null;
+      if (ignoreMeta?.ignore_provider_events === true || ignoreMeta?.ignore === true) {
+        console.warn(`[WEBHOOK] IGNORED: provider_subscription ${subscriptionId} has ignore_provider_events flag`);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'webhook.ignored_provider_events',
+          meta: {
+            provider_subscription_id: subscriptionId,
+            bepaid_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            amount: transaction?.amount,
+          },
+        });
+        return new Response(JSON.stringify({ received: true, ignored: true, reason: 'ignore_provider_events' }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // =====================================================================
     // PATCH-1: PROVIDER-MANAGED SUBSCRIPTION WEBHOOK HANDLER
     // Handle subscription webhooks with tracking_id format: subv2:{subscription_v2_id}:order:{order_id}
     // =====================================================================
@@ -2791,9 +2823,9 @@ ${userName}, к сожалению, не удалось провести опл�
           
           try {
             const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
-              body: { 
+               body: { 
                 user_id: order.user_id,
-                club_ids: [productV2.telegram_club_id],
+                club_id: productV2.telegram_club_id,
                 duration_days: accessDays
               },
             });
@@ -2934,7 +2966,7 @@ ${userName}, к сожалению, не удалось провести опл�
               const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
                 body: { 
                   user_id: order.user_id,
-                  club_ids: [mapping.club_id],
+                  club_id: mapping.club_id,
                   duration_days: durationDays
                 },
               });
@@ -3735,89 +3767,71 @@ async function createOrderFromWebhook(
     provider_response: body,
   });
 
-  // Create subscription if user and product known
+  // SECURITY: Orphan handler MUST NOT grant access — only create order+payment, mark as orphan
+  // Access granting requires manual admin review or a valid order→subscription chain
   if (userId && productId) {
-    let accessEndAt = new Date();
-    accessEndAt.setMonth(accessEndAt.getMonth() + 1);
+    console.warn('[ORPHAN] Order created but access NOT granted — orphan requires manual review');
+    
+    // Mark order as orphan/requires_review
+    await supabase.from('orders_v2').update({
+      meta: {
+        ...(order.meta || {}),
+        orphan: true,
+        requires_review: true,
+        orphan_reason: 'created_from_webhook_without_valid_order',
+      },
+    }).eq('id', order.id);
 
-    if (tariffId) {
-      const { data: tariff } = await supabase
-        .from('tariffs')
-        .select('access_duration_days')
-        .eq('id', tariffId)
-        .single();
+    // Write to provider_webhook_orphans for admin visibility
+    await supabase.from('provider_webhook_orphans').insert({
+      provider: 'bepaid',
+      provider_subscription_id: body.id || subscription?.id || null,
+      provider_payment_id: transaction.uid,
+      reason: 'orphan_order_created_no_access',
+      raw_data: createSafeOrphanData(body, transaction.tracking_id),
+      processed: false,
+    });
 
-      if (tariff?.access_duration_days) {
-        accessEndAt = new Date();
-        accessEndAt.setDate(accessEndAt.getDate() + tariff.access_duration_days);
-      }
-    }
+    // Audit log
+    await supabase.from('audit_logs').insert({
+      action: 'webhook.orphan.access_skipped',
+      actor_type: 'system',
+      actor_label: 'bepaid-webhook',
+      meta: {
+        order_id: order.id,
+        order_number: order.order_number,
+        user_id: userId,
+        product_id: productId,
+        amount: amountBYN,
+        currency,
+        bepaid_uid: transaction.uid,
+        reason: 'Orphan handler must not auto-grant access — requires manual review',
+      },
+    });
+  }
 
-    // Delegate to centralized grant-access-for-order to avoid duplicates
-    try {
-      await supabase.functions.invoke('grant-access-for-order', {
-        body: {
-          orderId: order.id,
-          grantTelegram: false, // Will be handled below
-          grantGetcourse: false,
-        },
+  // Save card token if available
+  const cardToken = transaction.credit_card?.token || subscription?.credit_card?.token;
+  if (cardToken && userId) {
+    const { data: existingMethod } = await supabase
+      .from('payment_methods')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('provider_token', cardToken)
+      .maybeSingle();
+
+    if (!existingMethod) {
+      await supabase.from('payment_methods').insert({
+        user_id: userId,
+        provider: 'bepaid',
+        provider_token: cardToken,
+        brand: transaction.credit_card?.brand,
+        last4: transaction.credit_card?.last_4,
+        exp_month: transaction.credit_card?.exp_month,
+        exp_year: transaction.credit_card?.exp_year,
+        status: 'active',
+        is_default: true,
       });
-    } catch (grantErr) {
-      console.error('[WEBHOOK] grant-access-for-order error (non-critical):', grantErr);
-    }
-
-    // Create entitlement
-    const { data: product } = await supabase
-      .from('products_v2')
-      .select('code')
-      .eq('id', productId)
-      .single();
-
-    if (product?.code) {
-      await supabase.from('entitlements').upsert(
-        {
-          user_id: userId,
-          product_code: product.code,
-          status: 'active',
-          expires_at: accessEndAt.toISOString(),
-          meta: { source: 'webhook_reconstruction', order_id: order.id },
-        },
-        { onConflict: 'user_id,product_code' }
-      );
-    }
-
-    // Grant Telegram access
-    try {
-      await supabase.functions.invoke('telegram-grant-access', {
-        body: { userId, productId },
-      });
-    } catch (e) {
-      console.error('Error granting Telegram access:', e);
-    }
-
-    // Save card token if available
-    const cardToken = transaction.credit_card?.token || subscription?.credit_card?.token;
-    if (cardToken) {
-      const { data: existingMethod } = await supabase
-        .from('payment_methods')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('provider_token', cardToken)
-        .maybeSingle();
-
-      if (!existingMethod) {
-        await supabase.from('payment_methods').insert({
-          user_id: userId,
-          provider: 'bepaid',
-          provider_token: cardToken,
-          brand: transaction.credit_card?.brand,
-          last4: transaction.credit_card?.last_4,
-          exp_month: transaction.credit_card?.exp_month,
-          exp_year: transaction.credit_card?.exp_year,
-          status: 'active',
-          is_default: true,
-        });
-      }
     }
   }
 

@@ -9,6 +9,7 @@ const corsHeaders = {
 interface GrantAccessRequest {
   user_id: string;
   club_id?: string;
+  club_ids?: string[];       // Array of club IDs (use full array, not just first)
   is_manual?: boolean;
   admin_id?: string;
   valid_until?: string;
@@ -265,12 +266,36 @@ Deno.serve(async (req) => {
     // ========== END AUTH GUARD ==========
 
     const body: GrantAccessRequest = await req.json();
-    const { user_id, club_id, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days } = body;
+    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days } = body;
 
     console.log('Grant access request:', body);
 
     if (!user_id) {
       return new Response(JSON.stringify({ error: 'user_id required' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // GUARD 1: Cannot provide both club_id and club_ids — ambiguous contract
+    if (club_id && club_ids?.length) {
+      return new Response(JSON.stringify({ error: 'Cannot provide both club_id and club_ids — pick one' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Resolve club IDs: use full array, never just first element
+    const resolvedClubIds: string[] = club_ids ?? (club_id ? [club_id] : []);
+
+    // GUARD 2: club_id/club_ids is ALWAYS required — no exceptions, even for manual calls
+    if (resolvedClubIds.length === 0) {
+      console.error('CRITICAL: Call without club_id/club_ids — refusing to grant. is_manual=' + is_manual);
+      await supabase.from('audit_logs').insert({
+        action: 'telegram.grant.missing_club_id',
+        actor_type: 'system',
+        actor_label: 'telegram-grant-access',
+        meta: { user_id, source, source_id, is_manual, body_keys: Object.keys(body) },
+      });
+      return new Response(JSON.stringify({ error: 'club_id or club_ids is required — access to all clubs is never granted automatically' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -293,16 +318,8 @@ Deno.serve(async (req) => {
       console.log('Telegram not linked, queueing notification');
       
       // Get club info for context
-      let targetClubId = club_id;
-      if (!targetClubId) {
-        const { data: defaultClub } = await supabase
-          .from('telegram_clubs')
-          .select('id')
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-        targetClubId = defaultClub?.id;
-      }
+      // Use resolvedClubIds — NO fallback to "first active club"
+      const targetClubId = resolvedClubIds[0]; // Already validated non-empty above
 
       // Queue access granted notification
       await supabase.from('pending_telegram_notifications').insert({
@@ -346,9 +363,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get clubs
+    // Get clubs — filter strictly by resolvedClubIds (NEVER select all)
     let clubsQuery = supabase.from('telegram_clubs').select('*, telegram_bots(*)').eq('is_active', true);
-    if (club_id) clubsQuery = clubsQuery.eq('id', club_id);
+    clubsQuery = clubsQuery.in('id', resolvedClubIds);
     const { data: clubs, error: clubsError } = await clubsQuery;
 
     if (clubsError || !clubs?.length) {
