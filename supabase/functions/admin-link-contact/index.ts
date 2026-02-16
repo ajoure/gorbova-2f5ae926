@@ -77,9 +77,9 @@ Deno.serve(async (req) => {
     }
 
     // Check admin role using has_role function
-    const { data: isAdmin, error: roleError } = await supabaseAdmin.rpc('has_role', {
+    const { data: isAdmin, error: roleError } = await supabaseAdmin.rpc('has_any_role', {
       _user_id: user.id,
-      _role: 'admin'
+      _role_codes: ['admin', 'super_admin']
     });
 
     if (roleError || !isAdmin) {
