@@ -1,81 +1,108 @@
 
-# Исправление: super_admin не имеет тех же RLS-прав что admin
+# Исправление: данные подписки при редактировании сделки не сохраняются
 
-## Проблема
+## Причина бага
 
-На скриншоте ошибка: `new row violates row-level security policy for table "telegram_access_queue"`. Причина — super_admin пытается вставить запись, но таблица имеет только политику для `service_role`.
+В `EditDealDialog.tsx` (строка 216) логика сохранения:
+```
+if (subscription) {
+  // обновить подписку...
+}
+```
 
-Полный аудит выявил **10 проблемных мест**:
+Если переменная `subscription` равна `null` (подписка не загрузилась, была создана после открытия диалога, или вернулся пустой ответ), весь блок пропускается. При этом заказ (`orders_v2`) обновляется успешно и показывается тост "Сделка обновлена", создавая иллюзию успеха.
 
-### 1. Таблица без админ-политики вообще
-| Таблица | Текущие политики | Проблема |
-|---|---|---|
-| `telegram_access_queue` | Только `service_role` | Ни admin, ни super_admin не могут INSERT |
-
-### 2. INSERT-политики с `admin` но БЕЗ `superadmin` (9 штук)
-| Таблица | Политика |
-|---|---|
-| `ai_prompt_packages` | Admins can create prompt packages |
-| `bepaid_statement_rows` | Admins can insert bepaid_statement_rows |
-| `document_templates` | Admins can create document templates |
-| `email_inbox` | Admins can insert emails |
-| `email_logs` | Admins can insert email logs |
-| `email_threads` | Admins can insert email threads |
-| `payments_sync_runs` | Admin insert payments_sync_runs |
-| `product_document_templates` | Admins can create product document templates |
-| `telegram_messages` | Admins can insert telegram messages |
-
-Все эти политики проверяют `has_role(auth.uid(), 'admin'::app_role)` — bridge-функция маппит `'admin'` в `'admin'`, а super_admin имеет код `'super_admin'`, поэтому проверка не проходит.
-
-### Что НЕ сломано
-- Permissions (таблица `role_permissions`) — super_admin имеет ВСЕ права admin + `admins.manage`
-- SELECT/UPDATE/DELETE политики на большинстве таблиц уже содержат `OR superadmin`
-- Только INSERT-политики пропущены
+Подтверждено сетевым запросом: `GET subscriptions_v2?order_id=eq.5bd38d12...` вернул `[]`, хотя подписка в БД уже существует (id: 372c8dca).
 
 ## Решение
 
-Одна SQL-миграция, которая:
+### 1. Re-fetch подписки внутри мутации
 
-1. **telegram_access_queue** — добавить INSERT+SELECT+UPDATE политику для admin и super_admin
-2. **9 таблиц** — пересоздать INSERT-политики с добавлением `OR has_role(auth.uid(), 'superadmin'::app_role)`
+Не полагаться на закешированную переменную `subscription` из useQuery. Вместо этого в `mutationFn` заново запросить подписку по `order_id` прямо перед обновлением. Это решает проблему стейла кеша и гонки.
 
-## Технические детали (SQL-миграция)
+### 2. Создание подписки, если её нет
 
-```sql
--- 1. telegram_access_queue: добавить политики для admin/super_admin
-CREATE POLICY "Admins can manage telegram_access_queue"
-ON public.telegram_access_queue
-FOR ALL
-TO authenticated
-USING (
-  has_role(auth.uid(), 'admin'::app_role) 
-  OR has_role(auth.uid(), 'superadmin'::app_role)
-)
-WITH CHECK (
-  has_role(auth.uid(), 'admin'::app_role) 
-  OR has_role(auth.uid(), 'superadmin'::app_role)
-);
+Если подписка не найдена, но пользователь заполнил даты (`access_start_at` или `access_end_at`), нужно **создать** новую `subscriptions_v2` запись (INSERT) вместо молчаливого пропуска.
 
--- 2-10. Пересоздать 9 INSERT-политик с superadmin
--- Для каждой: DROP старую → CREATE новую с OR superadmin
--- Пример (bepaid_statement_rows):
-DROP POLICY "Admins can insert bepaid_statement_rows" ON public.bepaid_statement_rows;
-CREATE POLICY "Admins can insert bepaid_statement_rows"
-ON public.bepaid_statement_rows FOR INSERT TO authenticated
-WITH CHECK (
-  has_role(auth.uid(), 'admin'::app_role) 
-  OR has_role(auth.uid(), 'superadmin'::app_role)
-);
--- Аналогично для остальных 8 таблиц
+Минимальный набор полей для создания:
+- `user_id` (из заказа)
+- `product_id` (из формы)
+- `order_id` (deal.id)
+- `tariff_id` (из формы, если есть)
+- `status: 'active'`
+- `access_start_at`, `access_end_at`, `auto_renew`, `next_charge_at`
+- `profile_id` (из формы)
+
+### 3. Предотвращение сохранения до загрузки данных
+
+Добавить индикатор загрузки подписки. Если subscription query ещё в состоянии `isLoading`, отключить кнопку "Сохранить изменения" и показать спиннер рядом с секцией "Период доступа".
+
+## Технические детали
+
+**Файл**: `src/components/admin/EditDealDialog.tsx`
+
+### Изменение 1: Получить `isLoading` из useQuery подписки (строка 122)
+```typescript
+const { data: subscription, isLoading: subscriptionLoading } = useQuery({...});
 ```
 
-## Что НЕ меняется
-- Никакие файлы кода не редактируются
-- SELECT/UPDATE/DELETE политики не трогаются (они уже корректны)
-- Логика приложения не меняется
-- Permissions в role_permissions не меняются
+### Изменение 2: Re-fetch + upsert в mutationFn (строка 215-279)
+Заменить `if (subscription)` на:
+```typescript
+// Re-fetch subscription inside mutation to avoid stale data
+const { data: freshSubscription } = await supabase
+  .from("subscriptions_v2")
+  .select("*")
+  .eq("order_id", deal.id)
+  .maybeSingle();
 
-## Результат
-- super_admin сможет создавать сделки из платежей (telegram_access_queue INSERT)
-- super_admin сможет выполнять все INSERT-операции наравне с admin
-- Повторной проблемы с отсутствием прав не будет
+if (freshSubscription) {
+  // UPDATE existing subscription (текущая логика)
+} else if (formData.access_start_at || formData.access_end_at || formData.auto_renew) {
+  // INSERT new subscription
+  const { error: insertError } = await supabase
+    .from("subscriptions_v2")
+    .insert({
+      user_id: formData.user_id || deal.user_id,
+      product_id: formData.product_id,
+      order_id: deal.id,
+      tariff_id: formData.tariff_id || null,
+      profile_id: formData.profile_id || deal.profile_id,
+      status: 'active',
+      access_start_at: formData.access_start_at?.toISOString() || new Date().toISOString(),
+      access_end_at: formData.access_end_at?.toISOString() || null,
+      next_charge_at: formData.next_charge_at?.toISOString() || null,
+      auto_renew: formData.auto_renew,
+      payment_method_id: formData.auto_renew && userPaymentMethod?.id ? userPaymentMethod.id : null,
+    });
+  if (insertError) throw new Error(`Ошибка создания подписки: ${insertError.message}`);
+}
+```
+
+### Изменение 3: Блокировка кнопки при загрузке (DialogFooter)
+```typescript
+<Button 
+  onClick={() => updateMutation.mutate()} 
+  disabled={updateMutation.isPending || subscriptionLoading}
+>
+```
+
+### Изменение 4: Спиннер загрузки в секции "Период доступа"
+Показывать индикатор загрузки пока subscription query не завершился.
+
+## Что НЕ меняется
+- Логика обновления orders_v2 остаётся прежней
+- Логика entitlements остаётся прежней
+- Логика отзыва доступа при отмене остаётся прежней
+- Никакие другие файлы не затрагиваются
+
+## Файлы
+| Файл | Изменение |
+|---|---|
+| `src/components/admin/EditDealDialog.tsx` | Re-fetch подписки в мутации, upsert логика, индикатор загрузки |
+
+## DoD
+- Заполненные даты и автопродление сохраняются при нажатии "Сохранить"
+- Если подписки нет — она создаётся автоматически
+- При повторном открытии диалога данные на месте
+- Кнопка "Сохранить" недоступна пока подписка загружается
