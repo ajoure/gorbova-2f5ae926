@@ -1,47 +1,34 @@
 
-# Исправление CORS для get-vapid-key и звука уведомлений
+# Исправление обращения на «вы» в Telegram-уведомлениях
 
-## Корневая причина
+## Проблема
+В двух edge-функциях клиентские уведомления по-прежнему используют обращение на «ты» вместо «вы». Это противоречит стандарту формального тона.
 
-Функция `get-vapid-key` возвращает VAPID-ключ корректно (проверено — статус 200). Но клиентский код в `usePushNotifications.ts` отправляет GET-запрос с заголовком `Content-Type: application/json`. Этот заголовок запускает CORS preflight-запрос (OPTIONS). Ответ preflight содержит `Access-Control-Allow-Methods: POST, OPTIONS` — метод GET не указан. Некоторые браузеры могут заблокировать запрос, и `fetchVapidKey()` возвращает `null`.
+## Файлы для исправления
 
-## Решение
+### 1. `supabase/functions/telegram-grant-access/index.ts`
 
-### Файл 1: `src/hooks/usePushNotifications.ts`
+Строка 630 — заменить:
+- `твоя заявка будет автоматически одобрена` -> `ваша заявка будет автоматически одобрена`
 
-Убрать заголовок `Content-Type: application/json` из GET-запроса к `get-vapid-key`. Для GET-запроса без тела он не нужен и только создаёт лишний preflight.
+Строка 631 — заменить:
+- `переходи сейчас` -> `переходите сейчас`
 
-Строки 34-38 — изменить:
-```typescript
-const res = await fetch(`${supabaseUrl}/functions/v1/get-vapid-key`, {
-  headers: {
-    'apikey': anonKey,
-  },
-});
-```
+Строки 634-636 — заменить:
+- `Твой доступ к ... активирован` -> `Ваш доступ к ... активирован` (в обоих местах: plain text и HTML)
 
-### Файл 2: `supabase/functions/_shared/cors.ts`
+### 2. `supabase/functions/buh-business-notify/index.ts`
 
-Добавить `GET` в `Access-Control-Allow-Methods` для надёжности:
+Шаблон `tomorrow_charge` (строки 12-21):
+- `Привет!` -> `Здравствуйте!`
+- `с твоей карты` -> `с вашей карты`
+- `Убедись, что на карте` -> `Убедитесь, что на карте`
 
-```typescript
-'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-```
+Шаблон `no_card` (строки 24-35):
+- `Привет!` -> `Здравствуйте!`
+- `у тебя не привязана карта` -> `у вас не привязана карта`
+- `Привяжи карту` -> `Привяжите карту`
+- `напиши мне` -> `напишите мне` (в обоих шаблонах)
 
-### Файл 3: `supabase/functions/get-vapid-key/index.ts` — без изменений
-
-Функция уже работает корректно.
-
-## Звук уведомлений
-
-Код AudioContext уже исправлен в предыдущем шаге. Необходимо опубликовать сайт для применения всех изменений на club.gorbova.by.
-
-## После внесения изменений
-
-1. Передеплоить все edge-функции, использующие `_shared/cors.ts`
-2. Опубликовать сайт
-3. На club.gorbova.by нажать колокольчик для переподписки на push
-
-## Изменяемые файлы
-- `src/hooks/usePushNotifications.ts` — убрать Content-Type из GET-запроса
-- `supabase/functions/_shared/cors.ts` — добавить GET в разрешённые методы
+### После изменений
+Передеплоить обе edge-функции: `telegram-grant-access`, `buh-business-notify`.
