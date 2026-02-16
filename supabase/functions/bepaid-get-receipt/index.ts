@@ -51,9 +51,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { data: isAdmin } = await supabaseAdmin.rpc('has_role', {
+    const { data: isAdmin } = await supabaseAdmin.rpc('has_any_role', {
       _user_id: user.id,
-      _role: 'admin'
+      _role_codes: ['admin', 'super_admin']
     });
 
     if (!isAdmin) {
