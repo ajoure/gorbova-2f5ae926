@@ -317,7 +317,7 @@ export const INVARIANT_INFO: Record<string, {
     title: "Просроченные подписки",
     explain: "Активные подписки с истёкшим сроком",
     action: "Запустить очистку подписок",
-    urlTemplate: "/admin/subscriptions-v2?filter=expired",
+    urlTemplate: "/admin/payments/auto-renewals?filter=expired",
     category: "access",
   },
   "INV-12": {
