@@ -1007,6 +1007,13 @@ Deno.serve(async (req) => {
       const accessEndAt = new Date(sub.access_end_at);
       const daysLeft = Math.ceil((accessEndAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
+      // Отправляем предупреждение только за 7, 3 и 1 день
+      const noCardReminderDays = [7, 3, 1];
+      if (!noCardReminderDays.includes(daysLeft)) {
+        console.log(`No-card warning skipped for user ${userId}: daysLeft=${daysLeft} not in [7,3,1]`);
+        continue;
+      }
+
       // PATCH 1: Send no-card warning with cached bot token
       const telegramResult = await sendNoCardWarning(
         supabase,
