@@ -603,14 +603,14 @@ Deno.serve(async (req) => {
     if (!normalizedPublicKey && !secretKey) {
       console.error('[WEBHOOK-CRITICAL] No public_key AND no secret_key - cannot verify webhook');
       
-      await supabase.from('provider_webhook_orphans').insert({
+      await supabase.from('provider_webhook_orphans').upsert({
         provider: 'bepaid',
         provider_subscription_id: body?.id || body?.subscription?.id || null,
         provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
         reason: 'missing_credentials',
         raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
         processed: false,
-      });
+      }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
       
       // Alert admins
       try {
@@ -654,14 +654,14 @@ Deno.serve(async (req) => {
         // Have signature but no public_key to verify → 500 misconfig
         console.error('[WEBHOOK-CRITICAL] Have Content-Signature but no public_key to verify');
         
-        await supabase.from('provider_webhook_orphans').insert({
+        await supabase.from('provider_webhook_orphans').upsert({
           provider: 'bepaid',
           provider_subscription_id: body?.id || body?.subscription?.id || null,
           provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
           reason: 'missing_public_key',
           raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
           processed: false,
-        });
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
         
         // Alert admins
         try {
@@ -705,14 +705,14 @@ Deno.serve(async (req) => {
       console.error('[WEBHOOK-REJECT] Invalid/missing signature - saving to orphans only');
       
       // Save to provider_webhook_orphans with SAFE SUBSET (no PII)
-      await supabase.from('provider_webhook_orphans').insert({
+      await supabase.from('provider_webhook_orphans').upsert({
         provider: 'bepaid',
         provider_subscription_id: body?.id || body?.subscription?.id || null,
         provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
         reason: signatureSkipReason || 'invalid_signature',
         raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
         processed: false,
-      });
+      }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
       
       // Audit log for security tracking
       await supabase.from('audit_logs').insert({
@@ -816,9 +816,10 @@ Deno.serve(async (req) => {
     
     if (rawTrackingId) {
       // Handle link:order:{UUID} format from admin-create-payment-link (subscription)
-      const linkOrderMatch = rawTrackingId.match(/^link:order:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      // B1: Regex relaxed — allow suffixes like :plan, :v2 after UUID
+      const linkOrderMatch = rawTrackingId.match(/^link:order:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|:)/i);
       // Handle link:{UUID} format from admin-create-payment-link (one-time)
-      const linkMatch = !linkOrderMatch && rawTrackingId.match(/^link:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      const linkMatch = !linkOrderMatch && rawTrackingId.match(/^link:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|:)/i);
 
       if (linkOrderMatch) {
         parsedOrderId = linkOrderMatch[1];
@@ -835,30 +836,6 @@ Deno.serve(async (req) => {
             parsedOfferId = parts[1];
           }
         }
-      }
-
-      // CRITICAL ALERT: tracking_id exists but could not be parsed
-      if (!parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
-        console.error(`[WEBHOOK] CRITICAL: Unrecognized tracking_id format: ${rawTrackingId}`);
-        await supabase.from('audit_logs').insert({
-          actor_type: 'system',
-          actor_user_id: null,
-          action: 'bepaid.webhook.unrecognized_tracking_id',
-          meta: {
-            tracking_id: rawTrackingId,
-            transaction_uid: transactionUid,
-            subscription_id: subscriptionId,
-            severity: 'CRITICAL',
-          },
-        });
-        await supabase.from('provider_webhook_orphans').insert({
-          provider: 'bepaid',
-          provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
-          provider_payment_id: transactionUid,
-          reason: 'unrecognized_tracking_id',
-          raw_data: createSafeOrphanData(body, rawTrackingId),
-          processed: false,
-        });
       }
     }
     
@@ -877,6 +854,29 @@ Deno.serve(async (req) => {
                                 body.refund || 
                                 transaction?.refund_reason !== undefined;
 
+    // B2: CRITICAL ALERT moved AFTER transactionUid/subscriptionId are defined
+    if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
+      console.error(`[WEBHOOK] CRITICAL: Unrecognized tracking_id format: ${rawTrackingId}`);
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        action: 'bepaid.webhook.unrecognized_tracking_id',
+        meta: {
+          tracking_id: rawTrackingId,
+          transaction_uid: transactionUid,
+          subscription_id: subscriptionId,
+          severity: 'CRITICAL',
+        },
+      });
+      await supabase.from('provider_webhook_orphans').upsert({
+        provider: 'bepaid',
+        provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+        provider_payment_id: transactionUid,
+        reason: 'unrecognized_tracking_id',
+        raw_data: createSafeOrphanData(body, rawTrackingId),
+        processed: false,
+      }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+    }
     console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}, isRefund=${isRefundTransaction}`);
 
     // =====================================================================
@@ -923,14 +923,14 @@ Deno.serve(async (req) => {
       
       if (!trackingParts) {
         console.error('[WEBHOOK-SUBSCRIPTION] Bad tracking_id format:', rawTrackingId);
-        await supabase.from('provider_webhook_orphans').insert({
+        await supabase.from('provider_webhook_orphans').upsert({
           provider: 'bepaid',
           provider_subscription_id: subscriptionId,
           provider_payment_id: transactionUid,
           reason: 'bad_tracking_id',
           raw_data: createSafeOrphanData(body, rawTrackingId),
           processed: false,
-        });
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
         return new Response(JSON.stringify({ error: 'Bad tracking_id format' }), {
           status: 400,
           headers: corsHeaders,
@@ -967,14 +967,14 @@ Deno.serve(async (req) => {
       
       if (subError || !subV2) {
         console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found:', subscriptionV2Id);
-        await supabase.from('provider_webhook_orphans').insert({
+        await supabase.from('provider_webhook_orphans').upsert({
           provider: 'bepaid',
           provider_subscription_id: subscriptionId,
           provider_payment_id: transactionUid,
           reason: 'subscription_not_found',
           raw_data: createSafeOrphanData(body, rawTrackingId),
           processed: false,
-        });
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
         return new Response(JSON.stringify({ error: 'Subscription not found' }), {
           status: 404,
           headers: corsHeaders,
@@ -1332,14 +1332,14 @@ Deno.serve(async (req) => {
       
       // Unknown state - log for investigation
       console.warn('[WEBHOOK-SUBSCRIPTION] Unknown subscription state:', subscriptionState);
-      await supabase.from('provider_webhook_orphans').insert({
+      await supabase.from('provider_webhook_orphans').upsert({
         provider: 'bepaid',
         provider_subscription_id: subscriptionId,
         provider_payment_id: transactionUid,
         reason: 'unknown_state',
         raw_data: createSafeOrphanData(body, rawTrackingId),
         processed: false,
-      });
+      }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
       
       return new Response(JSON.stringify({ ok: true, status: 'unknown_state' }), {
         headers: corsHeaders,
@@ -1363,6 +1363,24 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       if (!p2Err && p2) paymentV2 = p2;
+    }
+
+    // B3: IDEMPOTENCY GUARD (main branch) — early exit if this transactionUid already processed
+    if (transactionUid) {
+      const { data: existingPmtByUid } = await supabase
+        .from('payments_v2')
+        .select('id, order_id')
+        .eq('provider_payment_id', transactionUid)
+        .eq('provider', 'bepaid')
+        .maybeSingle();
+
+      if (existingPmtByUid) {
+        console.log('[WEBHOOK] Already processed (idempotency, main branch):', transactionUid);
+        return new Response(JSON.stringify({ ok: true, status: 'already_processed', payment_id: existingPmtByUid.id }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
     
     // ---------------------------------------------------------------------
@@ -1427,6 +1445,13 @@ Deno.serve(async (req) => {
               }),
               { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
+          } else {
+            // B6: createOrderFromWebhook returned null (trial blocked, duplicate, or skipped)
+            console.log('[WEBHOOK] createOrderFromWebhook returned null — skipped');
+            return new Response(JSON.stringify({ ok: true, status: 'skipped', reason: 'order_creation_skipped' }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
           }
         } catch (createErr) {
           console.error('[WEBHOOK] Failed to create orphan order:', createErr);
@@ -3764,7 +3789,15 @@ async function createOrderFromWebhook(
     paid_at: transaction.paid_at || now.toISOString(),
     card_brand: transaction.credit_card?.brand,
     card_last4: transaction.credit_card?.last_4,
-    provider_response: body,
+    // B5: No-PII — sanitised provider_response (no raw payload with card/personal data)
+    provider_response: {
+      transaction_uid: transaction.uid,
+      status: transaction.status,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      paid_at: transaction.paid_at,
+      tracking_id: transaction.tracking_id,
+    },
   });
 
   // SECURITY: Orphan handler MUST NOT grant access — only create order+payment, mark as orphan
@@ -3783,14 +3816,14 @@ async function createOrderFromWebhook(
     }).eq('id', order.id);
 
     // Write to provider_webhook_orphans for admin visibility
-    await supabase.from('provider_webhook_orphans').insert({
+    await supabase.from('provider_webhook_orphans').upsert({
       provider: 'bepaid',
       provider_subscription_id: body.id || subscription?.id || null,
       provider_payment_id: transaction.uid,
       reason: 'orphan_order_created_no_access',
       raw_data: createSafeOrphanData(body, transaction.tracking_id),
       processed: false,
-    });
+    }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
 
     // Audit log
     await supabase.from('audit_logs').insert({
