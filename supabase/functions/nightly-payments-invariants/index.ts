@@ -489,7 +489,89 @@ serve(async (req) => {
       description: 'Subscriptions due within 24h with payment method issues (no_card/pm_inactive/no_token)',
     });
 
-    // Calculate summary
+    // INV-17: Pending link-orders > 15 min (WARNING) / > 60 min (CRITICAL)
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const sixtyMinAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    
+    const { data: staleOrders, count: staleCount } = await supabase
+      .from('orders_v2')
+      .select('id, order_number, created_at, status, meta', { count: 'exact' })
+      .eq('status', 'pending')
+      .lt('created_at', fifteenMinAgo)
+      .limit(10);
+    
+    // Filter to payment-link orders only
+    const linkOrders = (staleOrders || []).filter((o: any) => {
+      const m = o.meta as Record<string, any> | null;
+      return m?.source === 'admin-create-payment-link' || 
+             m?.source === 'telegram-payment-link' ||
+             (o.order_number && o.order_number.startsWith('SUB-LINK-'));
+    });
+    
+    const criticalLinkOrders = linkOrders.filter((o: any) => new Date(o.created_at) < new Date(sixtyMinAgo));
+    
+    invariants.push({
+      name: 'INV-17: Pending link-orders > 15 min',
+      passed: linkOrders.length === 0,
+      count: linkOrders.length,
+      samples: linkOrders.slice(0, 5).map((o: any) => ({
+        order_number: o.order_number,
+        created_at: o.created_at,
+        age_min: Math.round((Date.now() - new Date(o.created_at).getTime()) / 60000),
+        critical: new Date(o.created_at) < new Date(sixtyMinAgo),
+      })),
+      description: `Pending payment-link orders older than 15 min. ${criticalLinkOrders.length} are CRITICAL (>60 min).`,
+    });
+
+    // Send CRITICAL alert for > 60 min orders
+    if (criticalLinkOrders.length > 0) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+          body: JSON.stringify({
+            message: `🚨 INV-17 CRITICAL: ${criticalLinkOrders.length} pending link-order(s) > 60 мин!\n\n` +
+              criticalLinkOrders.slice(0, 3).map((o: any) => `• ${o.order_number} (${Math.round((Date.now() - new Date(o.created_at).getTime()) / 60000)} мин)`).join('\n'),
+            source: 'nightly-payments-invariants',
+          }),
+        });
+      } catch (_) {}
+    }
+
+    // INV-18: Unprocessed orphans in last 24h
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentOrphans, count: orphanCount } = await supabase
+      .from('provider_webhook_orphans')
+      .select('id, reason, created_at', { count: 'exact' })
+      .eq('processed', false)
+      .gte('created_at', twentyFourHoursAgo)
+      .limit(10);
+
+    invariants.push({
+      name: 'INV-18: Unprocessed orphans (24h)',
+      passed: (orphanCount || 0) === 0,
+      count: orphanCount || 0,
+      samples: (recentOrphans || []).slice(0, 5).map((o: any) => ({
+        id: o.id?.slice(0, 8),
+        reason: o.reason,
+        created_at: o.created_at,
+      })),
+      description: 'Unprocessed provider_webhook_orphans in last 24 hours require manual review',
+    });
+
+    if ((orphanCount || 0) > 0) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+          body: JSON.stringify({
+            message: `⚠️ INV-18: ${orphanCount} необработанных orphan(s) за 24ч\n\nПричины: ${[...new Set((recentOrphans || []).map((o: any) => o.reason))].join(', ')}`,
+            source: 'nightly-payments-invariants',
+          }),
+        });
+      } catch (_) {}
+    }
+
     const passedCount = invariants.filter(i => i.passed).length;
     const failedCount = invariants.filter(i => !i.passed).length;
 

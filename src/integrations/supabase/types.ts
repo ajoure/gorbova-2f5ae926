@@ -5919,6 +5919,7 @@ export type Database = {
           id: string
           processed: boolean | null
           processed_at: string | null
+          processed_by: string | null
           provider: string
           provider_payment_id: string | null
           provider_subscription_id: string | null
@@ -5931,6 +5932,7 @@ export type Database = {
           id?: string
           processed?: boolean | null
           processed_at?: string | null
+          processed_by?: string | null
           provider?: string
           provider_payment_id?: string | null
           provider_subscription_id?: string | null
@@ -5943,6 +5945,7 @@ export type Database = {
           id?: string
           processed?: boolean | null
           processed_at?: string | null
+          processed_by?: string | null
           provider?: string
           provider_payment_id?: string | null
           provider_subscription_id?: string | null
@@ -8990,6 +8993,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      webhook_events: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          event_type: string | null
+          http_status: number | null
+          id: string
+          outcome: string
+          parsed_kind: string | null
+          parsed_order_id: string | null
+          processing_ms: number | null
+          provider: string
+          subscription_id: string | null
+          tracking_id: string | null
+          transaction_uid: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          event_type?: string | null
+          http_status?: number | null
+          id?: string
+          outcome: string
+          parsed_kind?: string | null
+          parsed_order_id?: string | null
+          processing_ms?: number | null
+          provider: string
+          subscription_id?: string | null
+          tracking_id?: string | null
+          transaction_uid?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          event_type?: string | null
+          http_status?: number | null
+          id?: string
+          outcome?: string
+          parsed_kind?: string | null
+          parsed_order_id?: string | null
+          processing_ms?: number | null
+          provider?: string
+          subscription_id?: string | null
+          tracking_id?: string | null
+          transaction_uid?: string | null
+        }
+        Relationships: []
       }
       wheel_balance_tasks: {
         Row: {

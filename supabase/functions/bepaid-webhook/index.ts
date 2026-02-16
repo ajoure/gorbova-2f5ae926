@@ -490,6 +490,100 @@ async function verifyWebhookSignature(
   }
 }
 
+// =====================================================================
+// PATCH P2: Centralized parseTrackingId
+// =====================================================================
+type TrackingParse = {
+  kind: 'subv2' | 'link_order' | 'link' | 'uuid' | 'uuid_pair' | 'unknown';
+  orderId: string | null;
+  offerId: string | null;
+  subscriptionV2Id: string | null;
+  raw: string | null;
+};
+
+function parseTrackingId(raw: string | null): TrackingParse {
+  if (!raw) return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
+
+  // subv2:{subscription_v2_id}:order:{order_id}
+  const subv2Match = raw.match(/^subv2:([^:]+):order:(.+)$/i);
+  if (subv2Match) {
+    return { kind: 'subv2', orderId: subv2Match[2], offerId: null, subscriptionV2Id: subv2Match[1], raw };
+  }
+  if (raw.startsWith('subv2:')) {
+    return { kind: 'subv2', orderId: null, offerId: null, subscriptionV2Id: null, raw };
+  }
+
+  const uuid = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
+  const linkOrder = new RegExp(`^link:order:${uuid}(?:$|:)`, 'i');
+  const link = new RegExp(`^link:${uuid}(?:$|:)`, 'i');
+
+  const m1 = raw.match(linkOrder);
+  if (m1) return { kind: 'link_order', orderId: m1[1], offerId: null, subscriptionV2Id: null, raw };
+
+  const m2 = raw.match(link);
+  if (m2) return { kind: 'link', orderId: m2[1], offerId: null, subscriptionV2Id: null, raw };
+
+  // uuid or uuid_uuid
+  const uuidRe = new RegExp(`^${uuid}$`, 'i');
+  const parts = raw.split('_');
+  if (parts.length >= 1 && uuidRe.test(parts[0])) {
+    const orderId = parts[0];
+    const offerId = (parts.length >= 2 && uuidRe.test(parts[1])) ? parts[1] : null;
+    return { kind: offerId ? 'uuid_pair' : 'uuid', orderId, offerId, subscriptionV2Id: null, raw };
+  }
+
+  return { kind: 'unknown', orderId: null, offerId: null, subscriptionV2Id: null, raw };
+}
+
+// =====================================================================
+// PATCH P2: Best-effort recordWebhookEvent (never breaks main flow)
+// =====================================================================
+async function recordWebhookEvent(
+  supabase: any,
+  data: {
+    provider: string;
+    event_type?: string | null;
+    transaction_uid?: string | null;
+    subscription_id?: string | null;
+    tracking_id?: string | null;
+    parsed_kind?: string | null;
+    parsed_order_id?: string | null;
+    outcome: string;
+    http_status?: number | null;
+    processing_ms?: number | null;
+    error_message?: string | null;
+  }
+): Promise<void> {
+  try {
+    await supabase.from('webhook_events').insert({
+      provider: data.provider,
+      event_type: data.event_type || null,
+      transaction_uid: data.transaction_uid || null,
+      subscription_id: data.subscription_id || null,
+      tracking_id: data.tracking_id || null,
+      parsed_kind: data.parsed_kind || null,
+      parsed_order_id: data.parsed_order_id || null,
+      outcome: data.outcome,
+      http_status: data.http_status || null,
+      processing_ms: data.processing_ms || null,
+      error_message: data.error_message?.substring(0, 500) || null,
+    });
+  } catch (err) {
+    console.error('[WEBHOOK-EVENT] Best-effort write failed:', err);
+  }
+}
+
+// =====================================================================
+// PATCH P2: PII masking helper
+// =====================================================================
+function maskEmail(email: string | null | undefined): string {
+  if (!email) return 'не указан';
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  const prefix = local.substring(0, Math.min(3, local.length));
+  return `${prefix}***@${domain}`;
+}
+
 // Helper to create safe subset of webhook body for orphans (NO PII/card data)
 function createSafeOrphanData(body: any, trackingId: string | null): Record<string, any> {
   return {
@@ -809,35 +903,10 @@ Deno.serve(async (req) => {
                     subscription?.tracking_id ||
                     null;
 
-    // Parse tracking_id: format can be {order_id}_{offer_id} or just {order_id}
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    let parsedOrderId: string | null = null;
-    let parsedOfferId: string | null = null;
-    
-    if (rawTrackingId) {
-      // Handle link:order:{UUID} format from admin-create-payment-link (subscription)
-      // B1: Regex relaxed — allow suffixes like :plan, :v2 after UUID
-      const linkOrderMatch = rawTrackingId.match(/^link:order:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|:)/i);
-      // Handle link:{UUID} format from admin-create-payment-link (one-time)
-      const linkMatch = !linkOrderMatch && rawTrackingId.match(/^link:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|:)/i);
-
-      if (linkOrderMatch) {
-        parsedOrderId = linkOrderMatch[1];
-        console.log(`[WEBHOOK] Parsed link:order: tracking_id → orderId=${parsedOrderId}`);
-      } else if (linkMatch) {
-        parsedOrderId = linkMatch[1];
-        console.log(`[WEBHOOK] Parsed link: tracking_id → orderId=${parsedOrderId}`);
-      } else {
-        // Original format: {UUID} or {UUID}_{UUID}
-        const parts = rawTrackingId.split('_');
-        if (parts.length >= 1 && uuidRegex.test(parts[0])) {
-          parsedOrderId = parts[0];
-          if (parts.length >= 2 && uuidRegex.test(parts[1])) {
-            parsedOfferId = parts[1];
-          }
-        }
-      }
-    }
+    // PATCH P2: Use centralized parseTrackingId
+    const tracking = parseTrackingId(rawTrackingId);
+    const parsedOrderId = tracking.orderId;
+    const parsedOfferId = tracking.offerId;
     
     // For backward compatibility, orderId is the parsed order ID
     const orderId = parsedOrderId;
@@ -1140,8 +1209,7 @@ Deno.serve(async (req) => {
           
           const notifyMessage = `${paymentType}\n\n` +
             `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-            `📧 Email: ${customerProfile?.email || 'Не указан'}\n` +
-            `📱 Телефон: ${customerProfile?.phone || 'Не указан'}\n` +
+            `📧 Email: ${maskEmail(customerProfile?.email)}\n` +
             (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
             `\n📦 <b>Продукт:</b> ${productName}\n` +
             `📋 Тариф: ${tariffName}\n` +
@@ -1358,31 +1426,68 @@ Deno.serve(async (req) => {
     // Handle subscription webhooks with tracking_id format: link:order:{UUID}
     // These come from admin-create-payment-link sent via Telegram
     // =====================================================================
-    if (isSubscriptionWebhook && parsedOrderId && rawTrackingId?.startsWith('link:order:')) {
+    if (isSubscriptionWebhook && tracking.kind === 'link_order' && parsedOrderId) {
       console.log('[WEBHOOK-LINK-ORDER] Processing link:order: subscription webhook');
       console.log('[WEBHOOK-LINK-ORDER] Parsed:', { parsedOrderId, subscriptionId, subscriptionState, transactionStatus, transactionUid });
 
-      // 1. IDEMPOTENCY CHECK by transaction UID
-      if (transactionUid) {
-        const { data: existingPayment } = await supabase
-          .from('payments_v2')
-          .select('id')
-          .eq('provider_payment_id', transactionUid)
-          .maybeSingle();
+      // PATCH P2: Require transactionUid for link_order subscription events
+      if (!transactionUid) {
+        console.error('[WEBHOOK-LINK-ORDER] Missing transactionUid for link:order event');
+        await supabase.from('provider_webhook_orphans').upsert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+          provider_payment_id: null,
+          reason: 'link_order_no_transaction_uid',
+          raw_data: createSafeOrphanData(body, rawTrackingId),
+          processed: false,
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', tracking_id: rawTrackingId,
+          subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'failed_no_transaction_uid', http_status: 500,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'failed_no_transaction_uid' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-        if (existingPayment) {
-          console.log('[WEBHOOK-LINK-ORDER] Already processed (idempotency):', transactionUid);
-          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+      // 1. IDEMPOTENCY CHECK by transaction UID
+      const { data: existingPayment } = await supabase
+        .from('payments_v2')
+        .select('id')
+        .eq('provider_payment_id', transactionUid)
+        .eq('provider', 'bepaid')
+        .maybeSingle();
+
+      if (existingPayment) {
+        console.log('[WEBHOOK-LINK-ORDER] Already processed (idempotency):', transactionUid);
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'already_processed', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
 
       // Only process active/successful subscriptions
       const isSuccessful = (subscriptionState === 'active' || transactionStatus === 'successful');
       if (!isSuccessful) {
         console.log('[WEBHOOK-LINK-ORDER] Non-successful state, skipping:', { subscriptionState, transactionStatus });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'skipped_not_successful', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
         return new Response(JSON.stringify({ ok: true, status: 'skipped', reason: 'not_successful' }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1401,7 +1506,7 @@ Deno.serve(async (req) => {
         try {
           await supabase.from('provider_webhook_orphans').upsert({
             provider: 'bepaid',
-            provider_subscription_id: subscriptionId,
+            provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
             provider_payment_id: transactionUid,
             reason: 'link_order_not_found',
             raw_data: createSafeOrphanData(body, rawTrackingId),
@@ -1416,14 +1521,49 @@ Deno.serve(async (req) => {
         } catch (orphErr) {
           console.error('[WEBHOOK-LINK-ORDER] Best-effort orphan write failed:', orphErr);
         }
-        return new Response(JSON.stringify({ ok: true, status: 'orphaned' }), {
-          status: 200,
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'orphaned_order_not_found', http_status: 500,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'orphaned' }), {
+          status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // 3. Update order → paid
-      const paymentAmount = transaction?.amount ? transaction.amount / 100 : 0;
+      // 3. PATCH P2: Amount cascade — plan.amount > transaction.amount > order.final_price
+      const paymentAmount = (body.plan?.amount ? body.plan.amount / 100 : 0)
+        || (transaction?.amount ? transaction.amount / 100 : 0)
+        || Number(linkOrder.final_price) || 0;
+      
+      // PATCH P2: Amount != 0 guard
+      if (paymentAmount <= 0) {
+        console.error('[WEBHOOK-LINK-ORDER] Amount is 0 after cascade — cannot process');
+        await supabase.from('provider_webhook_orphans').upsert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+          provider_payment_id: transactionUid,
+          reason: 'link_order_amount_zero',
+          raw_data: createSafeOrphanData(body, rawTrackingId),
+          processed: false,
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'failed_amount_zero', http_status: 500,
+          processing_ms: Date.now() - startTime,
+          error_message: `Amount cascade resulted in 0: plan=${body.plan?.amount}, tx=${transaction?.amount}, order=${linkOrder.final_price}`,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'failed_amount_zero' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       const existingMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
       await supabase
         .from('orders_v2')
@@ -1434,9 +1574,9 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
         .eq('id', linkOrder.id);
-      console.log('[WEBHOOK-LINK-ORDER] Order updated to paid:', linkOrder.id);
+      console.log('[WEBHOOK-LINK-ORDER] Order updated to paid:', linkOrder.id, 'amount:', paymentAmount);
 
-      // 4. Create payments_v2 record
+      // 4. PATCH P2: payments_v2 UPSERT (idempotent by provider+provider_payment_id)
       const { data: profile } = await supabase
         .from('profiles')
         .select('id')
@@ -1445,7 +1585,7 @@ Deno.serve(async (req) => {
 
       await supabase
         .from('payments_v2')
-        .insert({
+        .upsert({
           order_id: linkOrder.id,
           user_id: linkOrder.user_id,
           profile_id: profile?.id || linkOrder.profile_id || null,
@@ -1453,37 +1593,52 @@ Deno.serve(async (req) => {
           currency: transaction?.currency || 'BYN',
           status: 'succeeded',
           provider: 'bepaid',
-          provider_payment_id: transactionUid || subscriptionId,
+          provider_payment_id: transactionUid,
           card_brand: subscription?.card?.brand || body.card?.brand || transaction?.credit_card?.brand || null,
           card_last4: subscription?.card?.last_4 || body.card?.last_4 || transaction?.credit_card?.last_4 || null,
           paid_at: transaction?.paid_at || new Date().toISOString(),
           is_recurring: true,
+          provider_response: {
+            transaction_uid: transactionUid,
+            status: transactionStatus,
+            amount: transaction?.amount,
+            currency: transaction?.currency,
+            paid_at: transaction?.paid_at,
+            subscription_id: subscriptionId,
+          },
           meta: {
             bepaid_subscription_id: subscriptionId,
             source: 'link_order_subscription_webhook',
           },
-        });
-      console.log('[WEBHOOK-LINK-ORDER] payments_v2 created');
+        }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
+      console.log('[WEBHOOK-LINK-ORDER] payments_v2 upserted');
 
-      // 5. Update provider_subscriptions to active
+      // 5. PATCH P2: provider_subscriptions UPSERT (not UPDATE)
       if (subscriptionId) {
+        const psData: Record<string, any> = {
+          provider: 'bepaid',
+          provider_subscription_id: String(subscriptionId),
+          state: 'active',
+          last_charge_at: new Date().toISOString(),
+          card_brand: subscription?.card?.brand || body.card?.brand || null,
+          card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+          updated_at: new Date().toISOString(),
+        };
+        // Only set user_id/profile_id if we have them from the order (don't guess)
+        if (linkOrder.user_id) psData.user_id = linkOrder.user_id;
+        if (profile?.id) psData.profile_id = profile.id;
+        // Set amount from plan if available
+        if (body.plan?.amount) psData.amount_cents = body.plan.amount;
+        if (body.plan?.currency) psData.currency = body.plan.currency;
+
         await supabase
           .from('provider_subscriptions')
-          .update({
-            state: 'active',
-            last_event: body.state || subscriptionState || 'active',
-            last_event_at: new Date().toISOString(),
-            card_brand: subscription?.card?.brand || body.card?.brand || null,
-            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
-            card_exp: subscription?.card?.exp_month && subscription?.card?.exp_year
-              ? `${subscription.card.exp_month}/${subscription.card.exp_year}`
-              : null,
-          })
-          .eq('provider_subscription_id', subscriptionId);
-        console.log('[WEBHOOK-LINK-ORDER] provider_subscriptions updated');
+          .upsert(psData, { onConflict: 'provider,provider_subscription_id' });
+        console.log('[WEBHOOK-LINK-ORDER] provider_subscriptions upserted');
       }
 
       // 6. Grant access via grant-access-for-order
+      let grantedSubscriptionV2Id: string | null = null;
       try {
         const grantResp = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
@@ -1498,23 +1653,63 @@ Deno.serve(async (req) => {
         );
         const grantResult = await grantResp.json();
         console.log('[WEBHOOK-LINK-ORDER] grant-access-for-order result:', grantResp.status, grantResult);
+        
+        // PATCH P2: Extract subscription_v2_id from grant result if available
+        grantedSubscriptionV2Id = grantResult?.subscription_id || grantResult?.subscription_v2_id || null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
       }
 
-      // 7. Admin notification
+      // PATCH P2: Link provider_subscriptions → subscriptions_v2
+      // Safe lookup: find via entitlements created for this order
+      if (subscriptionId && !grantedSubscriptionV2Id) {
+        try {
+          const { data: entForOrder } = await supabase
+            .from('entitlements')
+            .select('id, order_id')
+            .eq('order_id', linkOrder.id)
+            .eq('status', 'active')
+            .limit(1)
+            .maybeSingle();
+
+          if (entForOrder && linkOrder.user_id && linkOrder.product_id) {
+            const { data: subV2 } = await supabase
+              .from('subscriptions_v2')
+              .select('id')
+              .eq('user_id', linkOrder.user_id)
+              .eq('product_id', linkOrder.product_id)
+              .in('status', ['active', 'trial'])
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            
+            if (subV2) grantedSubscriptionV2Id = subV2.id;
+          }
+        } catch (lookupErr) {
+          console.error('[WEBHOOK-LINK-ORDER] subscription_v2_id lookup error (non-fatal):', lookupErr);
+        }
+      }
+
+      if (subscriptionId && grantedSubscriptionV2Id) {
+        await supabase
+          .from('provider_subscriptions')
+          .update({ subscription_v2_id: grantedSubscriptionV2Id })
+          .eq('provider', 'bepaid')
+          .eq('provider_subscription_id', String(subscriptionId));
+        console.log('[WEBHOOK-LINK-ORDER] Linked provider_subscriptions → subscription_v2_id:', grantedSubscriptionV2Id);
+      }
+
+      // 7. PATCH P2: Admin notification with PII masking
       try {
         const { data: customerProfile } = await supabase
           .from('profiles')
-          .select('full_name, email, phone, telegram_username')
+          .select('full_name, email, telegram_username')
           .eq('user_id', linkOrder.user_id)
           .maybeSingle();
 
         const notifyMessage = `💳 Оплата по ссылке (подписка bePaid)\n\n` +
           `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-          `📧 Email: ${customerProfile?.email || linkOrder.customer_email || 'Не указан'}\n` +
-          `📱 Телефон: ${customerProfile?.phone || 'Не указан'}\n` +
-          (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+          `📧 Email: ${maskEmail(customerProfile?.email || linkOrder.customer_email)}\n` +
           `\n💵 Сумма: ${paymentAmount.toFixed(2)} BYN\n` +
           `🆔 Заказ: ${linkOrder.order_number || 'N/A'}\n` +
           `📎 bePaid sub: ${subscriptionId}`;
@@ -1551,6 +1746,7 @@ Deno.serve(async (req) => {
             order_number: linkOrder.order_number,
             transaction_uid: transactionUid,
             subscription_id: subscriptionId,
+            subscription_v2_id: grantedSubscriptionV2Id,
             amount: paymentAmount,
             currency: transaction?.currency || 'BYN',
           },
@@ -1559,6 +1755,13 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK-ORDER] Audit log error (non-fatal):', auditErr);
       }
 
+      await recordWebhookEvent(supabase, {
+        provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+        tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+        parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+        outcome: 'processed', http_status: 200,
+        processing_ms: Date.now() - startTime,
+      });
       return new Response(JSON.stringify({ ok: true, status: 'processed', order_id: linkOrder.id }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -2541,8 +2744,7 @@ Deno.serve(async (req) => {
 
             const notifyMessage = `${paymentType}\n\n` +
               `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-              `📧 Email: ${customerProfile?.email || notifyOrderData.customer_email || 'Не указан'}\n` +
-              `📱 Телефон: ${customerProfile?.phone || notifyOrderData.customer_phone || 'Не указан'}\n` +
+              `📧 Email: ${maskEmail(customerProfile?.email || notifyOrderData.customer_email)}\n` +
               (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
               `\n📦 <b>Продукт:</b> ${productName}\n` +
               `📋 Тариф: ${tariffName}\n` +
@@ -3461,8 +3663,7 @@ ${userName}, к сожалению, не удалось провести опл�
 
         const telegramNotifyMessage = `${paymentType}\n\n` +
           `👤 <b>Клиент:</b> ${customerProfile?.full_name || meta.customer_first_name || 'Не указано'}\n` +
-          `📧 Email: ${customerProfile?.email || order.customer_email || 'Не указан'}\n` +
-          `📱 Телефон: ${customerProfile?.phone || meta.customer_phone || 'Не указан'}\n` +
+          `📧 Email: ${maskEmail(customerProfile?.email || order.customer_email)}\n` +
           (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
           `\n📦 <b>Продукт:</b> ${legacyProductName}\n` +
           `📋 Тариф: ${legacyTariffName}\n` +
