@@ -1,37 +1,45 @@
 
 
-# Ограничение уведомлений «Карта не привязана» до 7, 3 и 1 дня
+# Микро-патч: try/catch вокруг CRITICAL ALERT блока (B2)
 
 ## Проблема
 
-Сейчас блок «NO-CARD WARNING» в `subscription-renewal-reminders/index.ts` (строки 966-1042) выбирает все подписки без карты с `access_end_at` в пределах 7 дней и отправляет уведомление **каждый день**. Единственная защита — `wasReminderSentToday` (не отправлять дважды за один день). В итоге пользователь получает 7 одинаковых сообщений подряд.
+Строки 858-878 в `bepaid-webhook/index.ts` — блок "CRITICAL ALERT unrecognized tracking_id" — выполняет два `await` (audit_logs + orphans) БЕЗ try/catch. Если БД/RLS вернёт ошибку, webhook упадёт с 500, bePaid начнёт ретраить, и основная обработка транзакции не выполнится.
 
 ## Решение
 
-Добавить фильтр по количеству оставшихся дней: отправлять уведомление «Карта не привязана» **только** когда `daysLeft` равно 7, 3 или 1. Во все остальные дни — пропускать.
+Обернуть блок строк 858-878 в try/catch. При ошибке — логировать в console.error и продолжить выполнение webhook (best-effort orphan logging).
 
-## Техническая реализация
+## Изменение
 
-### Файл: `supabase/functions/subscription-renewal-reminders/index.ts`
+**Файл**: `supabase/functions/bepaid-webhook/index.ts`, строки 858-879
 
-В цикле обработки `noCardSubs` (после строки 1008, где вычисляется `daysLeft`) добавить проверку:
-
-```typescript
-// Отправляем предупреждение только за 7, 3 и 1 день
-const noCardReminderDays = [7, 3, 1];
-if (!noCardReminderDays.includes(daysLeft)) {
-  console.log(`No-card warning skipped for user ${userId}: daysLeft=${daysLeft} not in [7,3,1]`);
-  continue;
+**Было**:
+```
+if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
+  console.error(...);
+  await supabase.from('audit_logs').insert({...});
+  await supabase.from('provider_webhook_orphans').upsert({...});
 }
 ```
 
-Эта проверка вставляется сразу после строки 1008 (`const daysLeft = ...`) и перед строкой 1010 (`const telegramResult = ...`).
+**Станет**:
+```
+if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
+  console.error(...);
+  try {
+    await supabase.from('audit_logs').insert({...});
+    await supabase.from('provider_webhook_orphans').upsert({...});
+  } catch (orphanErr) {
+    console.error('[WEBHOOK] Best-effort orphan/audit write failed:', orphanErr);
+  }
+}
+```
 
-### После изменений
+## Деплой
 
-Передеплоить edge-функцию `subscription-renewal-reminders`.
+1 edge-функция: `bepaid-webhook`
 
 ## Результат
 
-Пользователь без привязанной карты получит максимум 3 уведомления: за 7, за 3 и за 1 день до окончания подписки — ровно как обычные напоминания об истечении.
-
+Webhook никогда не падает из-за ошибки записи в orphans/audit — основная обработка транзакции продолжается в любом случае.
