@@ -1,45 +1,37 @@
 
+# PATCH-LINK: link:order: subscription webhook handler (DEPLOYED)
 
-# Микро-патч: try/catch вокруг CRITICAL ALERT блока (B2)
+## Что сделано
 
-## Проблема
+### A) Новый handler PATCH-LINK (add-only, после PATCH-1)
 
-Строки 858-878 в `bepaid-webhook/index.ts` — блок "CRITICAL ALERT unrecognized tracking_id" — выполняет два `await` (audit_logs + orphans) БЕЗ try/catch. Если БД/RLS вернёт ошибку, webhook упадёт с 500, bePaid начнёт ретраить, и основная обработка транзакции не выполнится.
+Условие входа: `isSubscriptionWebhook && parsedOrderId && rawTrackingId?.startsWith('link:order:')`
 
-## Решение
+Логика:
+1. **Idempotency** — `payments_v2` по `provider_payment_id = transactionUid`
+2. **Проверка успешности** — только `active`/`successful` обрабатываются
+3. **Поиск заказа** — `orders_v2` по `parsedOrderId`, при отсутствии → orphan + audit
+4. **Обновление заказа** → `status='paid'`, `paid_amount`, `meta.bepaid_subscription_id`
+5. **Создание `payments_v2`** — succeeded, provider=bepaid, is_recurring=true
+6. **Обновление `provider_subscriptions`** → state=active, card data
+7. **Вызов `grant-access-for-order`** → subscriptions_v2 + entitlements + TG доступ
+8. **Admin notification** в Telegram
+9. **Audit log** — `bepaid.webhook.link_order_processed`
 
-Обернуть блок строк 858-878 в try/catch. При ошибке — логировать в console.error и продолжить выполнение webhook (best-effort orphan logging).
+### B) Исправлена main branch: поиск payment
 
-## Изменение
+Было: `payments_v2.eq('id', orderId)` — только прямой поиск по payment UUID.
 
-**Файл**: `supabase/functions/bepaid-webhook/index.ts`, строки 858-879
+Стало: двухэтапный поиск:
+1. `payments_v2.eq('id', orderId)` — для direct-charge (tracking_id = payment UUID)
+2. Fallback: `payments_v2.eq('order_id', orderId)` — для link: формата (tracking_id = order UUID)
 
-**Было**:
-```
-if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
-  console.error(...);
-  await supabase.from('audit_logs').insert({...});
-  await supabase.from('provider_webhook_orphans').upsert({...});
-}
-```
+## Backfill
 
-**Станет**:
-```
-if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
-  console.error(...);
-  try {
-    await supabase.from('audit_logs').insert({...});
-    await supabase.from('provider_webhook_orphans').upsert({...});
-  } catch (orphanErr) {
-    console.error('[WEBHOOK] Best-effort orphan/audit write failed:', orphanErr);
-  }
-}
-```
+Для зависших заказов (Елена Крац, Елена Гудвилович) варианты:
+- **Вариант 1**: Повторный webhook от bePaid — новый handler обработает автоматически
+- **Вариант 2**: Ручной вызов `grant-access-for-order` + создание payments_v2
 
 ## Деплой
 
-1 edge-функция: `bepaid-webhook`
-
-## Результат
-
-Webhook никогда не падает из-за ошибки записи в orphans/audit — основная обработка транзакции продолжается в любом случае.
+- ✅ `bepaid-webhook` задеплоен
