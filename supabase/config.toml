@@ -210,6 +210,9 @@ verify_jwt = false
 [functions.bepaid-archive-import]
 verify_jwt = false
 
+[functions.admin-bepaid-backfill]
+verify_jwt = false
+
 [functions.monitor-news]
 verify_jwt = false
 
