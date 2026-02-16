@@ -815,12 +815,50 @@ Deno.serve(async (req) => {
     let parsedOfferId: string | null = null;
     
     if (rawTrackingId) {
-      const parts = rawTrackingId.split('_');
-      if (parts.length >= 1 && uuidRegex.test(parts[0])) {
-        parsedOrderId = parts[0];
-        if (parts.length >= 2 && uuidRegex.test(parts[1])) {
-          parsedOfferId = parts[1];
+      // Handle link:order:{UUID} format from admin-create-payment-link (subscription)
+      const linkOrderMatch = rawTrackingId.match(/^link:order:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      // Handle link:{UUID} format from admin-create-payment-link (one-time)
+      const linkMatch = !linkOrderMatch && rawTrackingId.match(/^link:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+
+      if (linkOrderMatch) {
+        parsedOrderId = linkOrderMatch[1];
+        console.log(`[WEBHOOK] Parsed link:order: tracking_id → orderId=${parsedOrderId}`);
+      } else if (linkMatch) {
+        parsedOrderId = linkMatch[1];
+        console.log(`[WEBHOOK] Parsed link: tracking_id → orderId=${parsedOrderId}`);
+      } else {
+        // Original format: {UUID} or {UUID}_{UUID}
+        const parts = rawTrackingId.split('_');
+        if (parts.length >= 1 && uuidRegex.test(parts[0])) {
+          parsedOrderId = parts[0];
+          if (parts.length >= 2 && uuidRegex.test(parts[1])) {
+            parsedOfferId = parts[1];
+          }
         }
+      }
+
+      // CRITICAL ALERT: tracking_id exists but could not be parsed
+      if (!parsedOrderId && !rawTrackingId.startsWith('subv2:')) {
+        console.error(`[WEBHOOK] CRITICAL: Unrecognized tracking_id format: ${rawTrackingId}`);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          action: 'bepaid.webhook.unrecognized_tracking_id',
+          meta: {
+            tracking_id: rawTrackingId,
+            transaction_uid: transactionUid,
+            subscription_id: subscriptionId,
+            severity: 'CRITICAL',
+          },
+        });
+        await supabase.from('provider_webhook_orphans').insert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+          provider_payment_id: transactionUid,
+          reason: 'unrecognized_tracking_id',
+          raw_data: createSafeOrphanData(body, rawTrackingId),
+          processed: false,
+        });
       }
     }
     
