@@ -200,18 +200,21 @@ export function ConsultationPaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{tariffName}</DialogTitle>
-          <DialogDescription>
-            {step === "payer_type" && "Выберите тип плательщика"}
-            {step === "payment" && "Оплата банковской картой"}
-            {step === "invoice_form" && "Данные для выставления счёта"}
-            {step === "success" && "Заявка отправлена"}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0">
+        <div className="p-6 pb-3 border-b shrink-0">
+          <DialogHeader>
+            <DialogTitle>{tariffName}</DialogTitle>
+            <DialogDescription>
+              {step === "payer_type" && "Выберите тип плательщика"}
+              {step === "payment" && "Оплата банковской картой"}
+              {step === "invoice_form" && "Данные для выставления счёта"}
+              {step === "success" && "Заявка отправлена"}
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
-        <div className="space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4">
+          <div className="space-y-6">
           {/* Price display */}
           {step !== "success" && (
             <div className="text-center py-4 rounded-xl bg-muted">
@@ -360,6 +363,7 @@ export function ConsultationPaymentDialog({
               </Button>
             </div>
           )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
