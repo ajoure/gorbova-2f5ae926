@@ -326,6 +326,13 @@ export function BepaidSubscriptionsTabContent() {
   // PATCH P2.5: Sync pending state
   const [syncPendingLoading, setSyncPendingLoading] = useState(false);
   const [syncPendingDryResult, setSyncPendingDryResult] = useState<any>(null);
+  const [syncErrors, setSyncErrors] = useState<Array<{ sbs_id: string; reason: string }>>([]);
+  const [showSyncErrors, setShowSyncErrors] = useState(false);
+  
+  // PATCH P2.5+: Backfill state
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillDryResult, setBackfillDryResult] = useState<any>(null);
+  const [backfillErrors, setBackfillErrors] = useState<Array<{ sbs_id: string; reason: string }>>([]);
   
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
@@ -1335,6 +1342,7 @@ export function BepaidSubscriptionsTabContent() {
         </Button>
 
         {/* PATCH P2.5: Sync pending button */}
+        {/* PATCH P2.5: Sync pending button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button 
@@ -1344,9 +1352,9 @@ export function BepaidSubscriptionsTabContent() {
               disabled={syncPendingLoading}
               onClick={async () => {
                 setSyncPendingLoading(true);
+                setSyncErrors([]);
                 try {
                   if (!syncPendingDryResult) {
-                    // Dry run first
                     const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
                       body: { dry_run: true, mode: "stale_or_missing", max_age_days: 7, limit: 200 },
                     });
@@ -1356,13 +1364,19 @@ export function BepaidSubscriptionsTabContent() {
                       description: "Нажмите ещё раз для выполнения",
                     });
                   } else {
-                    // Execute
                     const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
                       body: { dry_run: false, mode: "stale_or_missing", max_age_days: 7, limit: 200, batch_size: 20 },
                     });
                     if (error) throw error;
+                    if (data.errors?.length) {
+                      setSyncErrors(data.errors.map((e: string) => {
+                        const parts = e.split(': ');
+                        return { sbs_id: parts[0] || 'unknown', reason: parts.slice(1).join(': ') || e };
+                      }));
+                      setShowSyncErrors(true);
+                    }
                     toast.success(`Синхронизировано: ${data.synced}, стало active: ${data.became_active}`, {
-                      description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
+                      description: data.errors?.length ? `Ошибок: ${data.errors.length}. Нажмите ⓘ для деталей.` : undefined,
                     });
                     setSyncPendingDryResult(null);
                     refetch();
@@ -1389,7 +1403,111 @@ export function BepaidSubscriptionsTabContent() {
               : "Синхронизировать pending/stale sbs_* подписки с BePaid API"}
           </TooltipContent>
         </Tooltip>
+
+        {/* PATCH P2.5+: Backfill button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="h-8"
+              disabled={backfillLoading}
+              onClick={async () => {
+                setBackfillLoading(true);
+                setBackfillErrors([]);
+                try {
+                  if (!backfillDryResult) {
+                    const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
+                      body: { dry_run: true, status: "active", limit: 500 },
+                    });
+                    if (error) throw error;
+                    setBackfillDryResult(data);
+                    toast.info(`API: ${data.api_active} active, БД: ${data.db_active_before}. Отсутствуют: ${data.missing_ids?.length || 0}`, {
+                      description: data.missing_ids?.length ? "Нажмите ещё раз для добавления" : "Всё синхронизировано",
+                    });
+                  } else {
+                    const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
+                      body: { dry_run: false, status: "active", limit: 500 },
+                    });
+                    if (error) throw error;
+                    if (data.errors?.length) {
+                      setBackfillErrors(data.errors);
+                      setShowSyncErrors(true);
+                    }
+                    toast.success(`Backfill: добавлено ${data.inserted}, обновлено ${data.updated}`, {
+                      description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
+                    });
+                    setBackfillDryResult(null);
+                    refetch();
+                  }
+                } catch (e: any) {
+                  toast.error("Ошибка backfill", { description: e.message });
+                  setBackfillDryResult(null);
+                } finally {
+                  setBackfillLoading(false);
+                }
+              }}
+            >
+              {backfillLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Database className="h-4 w-4 mr-1" />
+              )}
+              {backfillDryResult ? `Добавить ${backfillDryResult.missing_ids?.length || 0}` : "Backfill из BePaid"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {backfillDryResult 
+              ? `Подтвердите: ${backfillDryResult.missing_ids?.length || 0} подписок отсутствуют в БД` 
+              : "Загрузить из BePaid API подписки, отсутствующие в БД"}
+          </TooltipContent>
+        </Tooltip>
       </div>
+
+      {/* Sync/Backfill errors panel */}
+      {showSyncErrors && (syncErrors.length > 0 || backfillErrors.length > 0) && (
+        <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/20 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-destructive flex items-center gap-1">
+              <AlertTriangle className="h-4 w-4" />
+              Ошибки ({syncErrors.length + backfillErrors.length})
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs"
+                onClick={() => {
+                  const allErrors = [...syncErrors, ...backfillErrors];
+                  navigator.clipboard.writeText(JSON.stringify(allErrors, null, 2));
+                  toast.success("Ошибки скопированы в буфер");
+                }}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Скопировать JSON
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs"
+                onClick={() => { setShowSyncErrors(false); setSyncErrors([]); setBackfillErrors([]); }}
+              >
+                ✕
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {[...syncErrors, ...backfillErrors].slice(0, 10).map((err, i) => (
+              <div key={i} className="text-xs font-mono bg-background/50 rounded px-2 py-1">
+                <span className="text-muted-foreground">{err.sbs_id}:</span> {err.reason}
+              </div>
+            ))}
+            {(syncErrors.length + backfillErrors.length) > 10 && (
+              <div className="text-xs text-muted-foreground">...и ещё {syncErrors.length + backfillErrors.length - 10}</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Bulk actions */}
       {selectedIds.size > 0 && (

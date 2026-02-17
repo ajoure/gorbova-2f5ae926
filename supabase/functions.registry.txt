@@ -62,6 +62,7 @@ users-admin-actions
 email-fetch-inbox
 email-test-connection
 admin-bepaid-sync-pending
+admin-bepaid-backfill-subscriptions
 bepaid-queue-cron
 bepaid-receipts-cron
 bepaid-subscription-audit-cron

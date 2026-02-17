@@ -1,6 +1,7 @@
 /// <reference deno.land/x/types/index.d.ts />
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -157,13 +158,12 @@ Deno.serve(async (req: Request) => {
       return json(result);
     }
 
-    // Execute sync in batches
-    const bepaidSecretKey = Deno.env.get("BEPAID_SECRET_KEY");
-    if (!bepaidSecretKey) {
-      return json({ error: "BEPAID_SECRET_KEY not configured" }, 500);
+    // Get bePaid credentials from integration_instances (strict)
+    const creds = await getBepaidCredsStrict(serviceClient);
+    if (isBepaidCredsError(creds)) {
+      return json({ error: creds.error }, 500);
     }
-
-    const bepaidAuth = btoa(`${bepaidSecretKey}:`);
+    const bepaidAuth = createBepaidAuthHeader(creds);
     const BEPAID_API = "https://api.bepaid.by";
     let errorCount = 0;
     const MAX_ERRORS = 5;
@@ -184,7 +184,7 @@ Deno.serve(async (req: Request) => {
           // Fetch from bePaid API
           const resp = await fetch(`${BEPAID_API}/subscriptions/${sbsId}`, {
             headers: {
-              Authorization: `Basic ${bepaidAuth}`,
+              Authorization: bepaidAuth,
               Accept: "application/json",
             },
           });
