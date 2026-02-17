@@ -1750,6 +1750,19 @@ Deno.serve(async (req) => {
           card_brand: subscription?.card?.brand || body.card?.brand || null,
           card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
           updated_at: new Date().toISOString(),
+          // PATCH P2.8: Always save raw_data + meta snapshot
+          raw_data: body,
+          meta: {
+            provider_snapshot: {
+              state: subscription?.state || body.state || 'active',
+              plan: body.plan || subscription?.plan || null,
+              customer: body.customer ? { email: body.customer?.email } : null,
+              created_at: subscription?.created_at || body.created_at,
+              next_billing_at: subscription?.next_billing_at || body.next_billing_at,
+            },
+            snapshot_at: new Date().toISOString(),
+            cancellation_capability: subscription?.cancellation_capability || null,
+          },
         };
         // Only set user_id/profile_id if we have them from the order (don't guess)
         if (linkOrder.user_id) psData.user_id = linkOrder.user_id;
@@ -1866,6 +1879,29 @@ Deno.serve(async (req) => {
           .eq('provider', 'bepaid')
           .eq('provider_subscription_id', String(subscriptionId));
         console.log('[WEBHOOK-LINK-ORDER] Linked provider_subscriptions → subscription_v2_id:', grantedSubscriptionV2Id);
+
+        // PATCH P2.8: Update subscriptions_v2 billing_type + bepaid_subscription_id in meta
+        try {
+          const { data: existingSubV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('id, meta')
+            .eq('id', grantedSubscriptionV2Id)
+            .maybeSingle();
+
+          if (existingSubV2) {
+            const existingMeta = (existingSubV2.meta as Record<string, any>) || {};
+            await supabase
+              .from('subscriptions_v2')
+              .update({
+                billing_type: 'provider_managed',
+                meta: { ...existingMeta, bepaid_subscription_id: String(subscriptionId) },
+              })
+              .eq('id', grantedSubscriptionV2Id);
+            console.log('[WEBHOOK-LINK-ORDER] subscriptions_v2 updated: billing_type=provider_managed, bepaid_sub_id=', subscriptionId);
+          }
+        } catch (v2UpdateErr) {
+          console.error('[WEBHOOK-LINK-ORDER] subscriptions_v2 billing_type update error (non-fatal):', v2UpdateErr);
+        }
       }
 
       // 7. PATCH P2: Admin notification with PII masking

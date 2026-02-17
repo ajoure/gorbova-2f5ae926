@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
     // PATCH-U3: DB-first - Load ALL provider_subscriptions as base layer
     const { data: providerSubs } = await supabase
       .from('provider_subscriptions')
-      .select('provider_subscription_id, subscription_v2_id, user_id, profile_id, meta, state, next_charge_at, card_brand, card_last4, amount_cents, currency, interval_days, raw_data, updated_at')
+      .select('provider_subscription_id, subscription_v2_id, user_id, profile_id, meta, state, next_charge_at, card_brand, card_last4, amount_cents, currency, interval_days, raw_data, updated_at, created_at')
       .eq('provider', 'bepaid');
 
     const providerSubsMap = new Map<string, any>();
@@ -440,7 +440,7 @@ Deno.serve(async (req) => {
         status: ps.state || 'unknown',
         state: ps.state,
         plan: snapshot?.plan || rawData?.plan,
-        created_at: rawData?.created_at || snapshot?.created_at,
+        created_at: rawData?.created_at || snapshot?.created_at || ps.created_at || ps.updated_at || '',
         next_billing_at: ps.next_charge_at || snapshot?.next_billing_at,
         credit_card: {
           last_4: ps.card_last4 || snapshot?.credit_card?.last_4,
@@ -630,7 +630,7 @@ Deno.serve(async (req) => {
           [sub.customer?.first_name, sub.customer?.last_name].filter(Boolean).join(' ') || sub.credit_card?.holder || '',
         card_last4: cardLast4,
         card_brand: cardBrand,
-        created_at: sub.created_at || '',
+        created_at: sub.created_at || providerSub?.created_at || providerSub?.updated_at || '',
         next_billing_at: nextBillingAt,
         linked_subscription_id: linkedSubId,
         linked_user_id: linkedUserId,
