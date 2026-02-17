@@ -1742,6 +1742,9 @@ Deno.serve(async (req) => {
 
       // 5. PATCH P2: provider_subscriptions UPSERT (not UPDATE)
       if (subscriptionId) {
+        // PATCH P2.9: Compute next_charge_at with guard against null overwrite
+        const newNextChargeAt = subscription?.next_billing_at || body.next_billing_at || null;
+
         const psData: Record<string, any> = {
           provider: 'bepaid',
           provider_subscription_id: String(subscriptionId),
@@ -1764,6 +1767,10 @@ Deno.serve(async (req) => {
             cancellation_capability: subscription?.cancellation_capability || null,
           },
         };
+        // PATCH P2.9: Only set next_charge_at if we have a value (don't overwrite with null)
+        if (newNextChargeAt) {
+          psData.next_charge_at = newNextChargeAt;
+        }
         // Only set user_id/profile_id if we have them from the order (don't guess)
         if (linkOrder.user_id) psData.user_id = linkOrder.user_id;
         if (profile?.id) psData.profile_id = profile.id;

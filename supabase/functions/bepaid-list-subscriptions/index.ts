@@ -596,8 +596,12 @@ Deno.serve(async (req) => {
       const cardLast4 = sub.credit_card?.last_4 || providerSub?.card_last4 || '';
       const cardBrand = sub.credit_card?.brand || providerSub?.card_brand || '';
 
-      const planAmountRaw = sub.plan?.amount ?? providerSub?.amount_cents ?? 0;
-      const planAmount = planAmountRaw > 1000 ? planAmountRaw / 100 : planAmountRaw;
+      // PATCH P2.9: amount_cents is always in minor units (kopecks). Use currency exponent.
+      const currencyExponent: Record<string, number> = { BYN: 100, USD: 100, EUR: 100, RUB: 100 };
+      const planCurrency = sub.plan?.currency || providerSub?.currency || 'BYN';
+      const planAmountRaw = providerSub?.amount_cents ?? sub.plan?.amount ?? 0;
+      const divisor = currencyExponent[planCurrency] || 100;
+      const planAmount = planAmountRaw / divisor;
 
       const rawStatus = sub.state || sub.status || 'unknown';
       const normalizedStatus = normalizeStatus(rawStatus);
