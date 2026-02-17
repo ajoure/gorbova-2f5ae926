@@ -265,8 +265,8 @@ Deno.serve(async (req) => {
     }
 
     const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
-      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
-      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+      supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' }),
+      supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' }),
     ]);
 
     const isAdmin = hasAdmin === true || hasSuperAdmin === true;
