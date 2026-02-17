@@ -1186,6 +1186,9 @@ export function AutoRenewalsTabContent() {
           </Badge>
         );
       case 'access_end':
+        if (!renewal.access_end_at || isNaN(new Date(renewal.access_end_at).getTime())) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
         return (
           <span className="text-xs text-muted-foreground">
             {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
@@ -1320,7 +1323,9 @@ export function AutoRenewalsTabContent() {
             <TooltipContent className="max-w-xs text-xs">
               <p>{lastAttempt.success ? 'Успешное списание' : normalizedError || 'Ошибка списания'}</p>
               <p className="text-muted-foreground">
-                {format(new Date(lastAttempt.at), 'dd.MM.yy HH:mm', { locale: ru })}
+                {lastAttempt.at && !isNaN(new Date(lastAttempt.at).getTime())
+                  ? format(new Date(lastAttempt.at), 'dd.MM.yy HH:mm', { locale: ru })
+                  : '—'}
               </p>
             </TooltipContent>
           </Tooltip>
