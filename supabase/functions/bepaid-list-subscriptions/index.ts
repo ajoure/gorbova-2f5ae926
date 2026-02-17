@@ -312,6 +312,52 @@ Deno.serve(async (req) => {
       providerSubsMap.set(ps.provider_subscription_id, ps);
     }
 
+    // PATCH P2.10: Fetch plan title + next_charge from subscriptions_v2 + products + tariffs
+    // NOTE: No FK from subscriptions_v2 to products_v2/tariffs, so separate queries needed
+    const v2Ids = [...new Set(
+      (providerSubs || []).map(ps => ps.subscription_v2_id).filter(Boolean) as string[]
+    )];
+    const subV2DetailsMap = new Map<string, { product_name: string | null; tariff_name: string | null; next_charge_at: string | null; access_end_at: string | null }>();
+
+    // Batch fetch (STOP-guard: max 500 per batch)
+    const V2_BATCH_SIZE = 500;
+    for (let i = 0; i < v2Ids.length; i += V2_BATCH_SIZE) {
+      const batch = v2Ids.slice(i, i + V2_BATCH_SIZE);
+      const { data: v2Rows } = await supabase
+        .from('subscriptions_v2')
+        .select('id, next_charge_at, access_end_at, product_id, tariff_id')
+        .in('id', batch);
+
+      if (!v2Rows || v2Rows.length === 0) continue;
+
+      // Collect product_ids and tariff_ids for separate lookups
+      const productIds = [...new Set(v2Rows.map(r => r.product_id).filter(Boolean) as string[])];
+      const tariffIds = [...new Set(v2Rows.map(r => r.tariff_id).filter(Boolean) as string[])];
+
+      // Parallel fetch products and tariffs names
+      const [{ data: products }, { data: tariffs }] = await Promise.all([
+        productIds.length > 0 
+          ? supabase.from('products_v2').select('id, name').in('id', productIds) 
+          : { data: [] as { id: string; name: string }[] },
+        tariffIds.length > 0 
+          ? supabase.from('tariffs').select('id, name').in('id', tariffIds) 
+          : { data: [] as { id: string; name: string }[] },
+      ]);
+
+      const productMap = new Map((products || []).map(p => [p.id, p.name]));
+      const tariffMap = new Map((tariffs || []).map(t => [t.id, t.name]));
+
+      for (const v2 of v2Rows) {
+        subV2DetailsMap.set(v2.id, {
+          product_name: v2.product_id ? productMap.get(v2.product_id) || null : null,
+          tariff_name: v2.tariff_id ? tariffMap.get(v2.tariff_id) || null : null,
+          next_charge_at: v2.next_charge_at,
+          access_end_at: v2.access_end_at,
+        });
+      }
+    }
+    console.log(`[bepaid-list-subs] PATCH P2.10: loaded ${subV2DetailsMap.size} v2 details for ${v2Ids.length} ids (batches: ${Math.ceil(v2Ids.length / V2_BATCH_SIZE)})`);
+
     // Get our DB subscriptions_v2 mappings
     const { data: dbSubs } = await supabase
       .from('subscriptions_v2')
@@ -586,9 +632,12 @@ Deno.serve(async (req) => {
       
       const profile = linkedUserId ? userIdToProfile.get(linkedUserId) : null;
 
-      // PATCH-U5: Prioritize data sources for next_billing
+      // PATCH P2.10: next_billing fallback chain (API > DB provider > v2 > v2 access_end > snapshot)
+      const v2Details = providerSub?.subscription_v2_id ? subV2DetailsMap.get(providerSub.subscription_v2_id) : undefined;
       const nextBillingAt = sub.next_billing_at || 
                            providerSub?.next_charge_at || 
+                           v2Details?.next_charge_at ||
+                           v2Details?.access_end_at ||
                            (providerSub?.meta as any)?.provider_snapshot?.next_billing_at || 
                            '';
 
@@ -613,6 +662,13 @@ Deno.serve(async (req) => {
       const displayTitleFromMeta = providerMeta?.display_title;
       const rawDataPlanTitle = (providerSub?.raw_data as any)?.plan?.title;
       
+      // PATCH P2.10: Build v2 plan title from products + tariffs
+      const v2ProductName = v2Details?.product_name;
+      const v2TariffName = v2Details?.tariff_name;
+      const v2Title = v2ProductName && v2TariffName 
+        ? `${v2ProductName} — ${v2TariffName}` 
+        : (v2ProductName || v2TariffName || null);
+
       // Extract canceled_at from bePaid data or snapshot
       const canceledAt = (sub as any).cancelled_at || (sub as any).canceled_at || 
                          snapshot?.cancelled_at || snapshot?.canceled_at || null;
@@ -626,7 +682,7 @@ Deno.serve(async (req) => {
       return {
         id: String(sub.id),
         status: normalizedStatus,
-        plan_title: sub.plan?.title || displayTitleFromMeta || rawDataPlanTitle || 'Без названия',
+        plan_title: sub.plan?.title || displayTitleFromMeta || rawDataPlanTitle || v2Title || 'Без названия',
         plan_amount: planAmount,
         plan_currency: sub.plan?.currency || providerSub?.currency || 'BYN',
         customer_email: sub.customer?.email || '',
