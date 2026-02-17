@@ -76,14 +76,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check admin role using has_role function
-    const { data: isAdmin, error: roleError } = await supabaseAdmin.rpc('has_any_role', {
-      p_user_id: user.id,
-      p_roles: ['admin', 'super_admin']
+    // Check admin role using has_role_v2 (text-based, supports super_admin alias)
+    const { data: isAdmin } = await supabaseAdmin.rpc('has_role_v2', {
+      _user_id: user.id,
+      _role_code: 'admin'
+    });
+    const { data: isSuperAdmin } = await supabaseAdmin.rpc('has_role_v2', {
+      _user_id: user.id,
+      _role_code: 'super_admin'
     });
 
-    if (roleError || !isAdmin) {
-      console.log(`User ${user.id} is not admin. Role check result:`, isAdmin, roleError);
+    if (!isAdmin && !isSuperAdmin) {
+      console.log(`User ${user.id} is not admin. admin=${isAdmin}, super_admin=${isSuperAdmin}`);
       return new Response(
         JSON.stringify({ success: false, status: 'error', message: "Admin access required" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
