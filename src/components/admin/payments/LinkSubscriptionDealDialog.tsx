@@ -125,6 +125,18 @@ export function LinkSubscriptionDealDialog({
         .eq("id", selected.id);
       
       if (orderError) throw orderError;
+
+      // Verify save
+      const { data: verifyOrder, error: vErr } = await supabase
+        .from("orders_v2")
+        .select("meta")
+        .eq("id", selected.id)
+        .maybeSingle();
+      if (vErr) throw vErr;
+      const savedMeta = (verifyOrder?.meta as Record<string, any>) || {};
+      if (savedMeta.bepaid_subscription_id !== subscriptionId) {
+        throw new Error("Изменения в сделке не сохранились (RLS/права). Обратитесь к администратору.");
+      }
       
       // 2. Update provider_subscriptions with profile_id and user_id from order
       if (selected.profile_id || selected.user_id) {
