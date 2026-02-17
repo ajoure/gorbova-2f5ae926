@@ -4,11 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SystemHealthCheck, INVARIANT_INFO, CATEGORY_LABELS, IgnoredCheck, useUnignoreCheck } from "@/hooks/useSystemHealthRuns";
-import { CheckCircle, XCircle, ChevronDown, ExternalLink, AlertTriangle, EyeOff, Undo2, Loader2 } from "lucide-react";
+import { CheckCircle, XCircle, ChevronDown, ExternalLink, AlertTriangle, EyeOff, Undo2, Loader2, Play } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { IgnoreCheckDialog } from "./IgnoreCheckDialog";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface InvariantCheckCardProps {
   check: SystemHealthCheck;
@@ -20,6 +22,8 @@ interface InvariantCheckCardProps {
 export function InvariantCheckCard({ check, variant, isSuperAdmin, ignoredInfo }: InvariantCheckCardProps) {
   const [isOpen, setIsOpen] = useState(variant === "error");
   const [ignoreDialogOpen, setIgnoreDialogOpen] = useState(false);
+  const [actionFnLoading, setActionFnLoading] = useState(false);
+  const [actionFnDryResult, setActionFnDryResult] = useState<any>(null);
   const unignoreCheck = useUnignoreCheck();
   
   // Extract invariant code from check_key (e.g., "INV-2A" from "INV-2A: No business payments...")
@@ -215,6 +219,52 @@ export function InvariantCheckCard({ check, variant, isSuperAdmin, ignoredInfo }
                       <Undo2 className="h-3.5 w-3.5 mr-2" />
                     )}
                     Отменить игнорирование
+                  </Button>
+                )}
+
+                {/* PATCH P2.5: Action function button (only for INV-17 sync pending) */}
+                {info?.actionFn && variant === "error" && isSuperAdmin && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    disabled={actionFnLoading}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setActionFnLoading(true);
+                      try {
+                        if (!actionFnDryResult) {
+                          const { data, error } = await supabase.functions.invoke(info.actionFn!, {
+                            body: { dry_run: true, mode: "stale_or_missing", max_age_days: 7, limit: 200 },
+                          });
+                          if (error) throw error;
+                          setActionFnDryResult(data);
+                          toast.info(`Найдено ${data.candidates_found} записей`, {
+                            description: "Нажмите ещё раз для выполнения",
+                          });
+                        } else {
+                          const { data, error } = await supabase.functions.invoke(info.actionFn!, {
+                            body: { dry_run: false, mode: "stale_or_missing", max_age_days: 7, limit: 200, batch_size: 20 },
+                          });
+                          if (error) throw error;
+                          toast.success(`Выполнено: ${data.synced} синхронизировано`, {
+                            description: `Active: ${data.became_active}, Canceled: ${data.became_canceled}`,
+                          });
+                          setActionFnDryResult(null);
+                        }
+                      } catch (err: any) {
+                        toast.error("Ошибка", { description: err.message });
+                        setActionFnDryResult(null);
+                      } finally {
+                        setActionFnLoading(false);
+                      }
+                    }}
+                  >
+                    {actionFnLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5 mr-2" />
+                    )}
+                    {actionFnDryResult ? "Выполнить" : "Запустить"}
                   </Button>
                 )}
               </div>

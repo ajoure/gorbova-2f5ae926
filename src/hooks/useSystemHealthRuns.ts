@@ -230,6 +230,7 @@ export const INVARIANT_INFO: Record<string, {
   explain: string;
   action: string;
   urlTemplate?: string;
+  actionFn?: string;
   category: string;
 }> = {
   "INV-1": {
@@ -304,6 +305,7 @@ export const INVARIANT_INFO: Record<string, {
     title: "Верификации с заказами",
     explain: "Проверки карт ошибочно создали заказы",
     action: "Удалить лишние заказы",
+    urlTemplate: "/admin/payments?filter=verification_orders",
     category: "payments",
   },
   "INV-10": {
@@ -317,7 +319,7 @@ export const INVARIANT_INFO: Record<string, {
     title: "Просроченные подписки",
     explain: "Активные подписки с истёкшим сроком",
     action: "Запустить очистку подписок",
-    urlTemplate: "/admin/payments/auto-renewals?filter=expired",
+    urlTemplate: "/admin/payments/auto-renewals?filter=expired_reentry",
     category: "access",
   },
   "INV-12": {
@@ -338,12 +340,57 @@ export const INVARIANT_INFO: Record<string, {
     title: "Двойные подписки",
     explain: "Один пользователь имеет несколько активных подписок",
     action: "Объединить или деактивировать лишние",
+    urlTemplate: "/admin/payments/auto-renewals",
     category: "access",
   },
   "INV-15": {
     title: "Платежи без профиля",
     explain: "Успешный платёж не привязан к профилю",
     action: "Найти и привязать профиль",
+    urlTemplate: "/admin/payments?filter=no_profile",
+    category: "payments",
+  },
+  "INV-16": {
+    title: "Готовность к списанию (24ч)",
+    explain: "Подписки к списанию в ближайшие 24ч с проблемами оплаты (нет карты, PM неактивен, нет токена)",
+    action: "Привязать карту или пересоздать платёжный метод",
+    urlTemplate: "/admin/payments/auto-renewals?filter=no_card",
+    category: "payments",
+  },
+  "INV-17": {
+    title: "Pending подписки BePaid",
+    explain: "Подписки sbs_* в статусе pending/failed без синхронизации с bePaid API",
+    action: "Запустить синхронизацию pending подписок",
+    urlTemplate: "/admin/payments/bepaid-subscriptions",
+    actionFn: "admin-bepaid-sync-pending",
+    category: "integrations",
+  },
+  "INV-18": {
+    title: "Необработанные orphans (24ч)",
+    explain: "Webhook-события без привязки к заказу/платежу за последние сутки",
+    action: "Проверить причины в orphans",
+    urlTemplate: "/admin/payments?tab=diagnostics",
+    category: "payments",
+  },
+  "INV-19A": {
+    title: "BePaid sbs_* не в provider_subscriptions",
+    explain: "ID подписок BePaid найдены в платежах/заказах, но отсутствуют в таблице provider_subscriptions",
+    action: "Запустить admin-bepaid-backfill",
+    urlTemplate: "/admin/payments/bepaid-subscriptions",
+    category: "integrations",
+  },
+  "INV-19B": {
+    title: "Token recurring без provider_subscriptions",
+    explain: "Активные подписки с auto_renew без записи провайдера",
+    action: "Запустить admin-bepaid-backfill",
+    urlTemplate: "/admin/payments/bepaid-subscriptions",
+    category: "integrations",
+  },
+  "INV-20": {
+    title: "Оплаченные заказы без платежей",
+    explain: "Заказы со статусом paid, но без записи в payments_v2",
+    action: "Запустить admin-repair-missing-payments",
+    urlTemplate: "/admin/payments?filter=orphan_orders",
     category: "payments",
   },
 };

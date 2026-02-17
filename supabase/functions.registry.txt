@@ -61,6 +61,7 @@ telegram-reinvite-ghosts
 users-admin-actions
 email-fetch-inbox
 email-test-connection
+admin-bepaid-sync-pending
 bepaid-queue-cron
 bepaid-receipts-cron
 bepaid-subscription-audit-cron
