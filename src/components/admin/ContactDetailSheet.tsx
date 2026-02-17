@@ -1659,32 +1659,32 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                             latestJob={verificationJobsMap?.[method.id] || null}
                           />
                         ))}
-                        {/* Charge button for super admin */}
-                        {isSuperAdmin() && (
-                          <div className="flex gap-2 mt-2">
-                            <Button
-                              variant="outline"
-                              className="flex-1 gap-2"
-                              onClick={() => setChargeDialogOpen(true)}
-                            >
-                              <CreditCard className="w-4 h-4" />
-                              Списать деньги
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="flex-1 gap-2"
-                              onClick={() => setPaymentLinkDialogOpen(true)}
-                            >
-                              <Link2 className="w-4 h-4" />
-                              Ссылка на оплату
-                            </Button>
-                          </div>
-                        )}
                       </>
                     ) : (
                       <div className="text-center py-4 text-muted-foreground">
                         <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-30" />
                         <p className="text-sm">Нет привязанных карт</p>
+                      </div>
+                    )}
+                    {/* Charge & Payment link buttons for super admin — always visible */}
+                    {isSuperAdmin() && (
+                      <div className="flex gap-2 mt-2">
+                        <Button
+                          variant="outline"
+                          className="flex-1 gap-2"
+                          onClick={() => setChargeDialogOpen(true)}
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          Списать деньги
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="flex-1 gap-2"
+                          onClick={() => setPaymentLinkDialogOpen(true)}
+                        >
+                          <Link2 className="w-4 h-4" />
+                          Ссылка на оплату
+                        </Button>
                       </div>
                     )}
                   </CardContent>
