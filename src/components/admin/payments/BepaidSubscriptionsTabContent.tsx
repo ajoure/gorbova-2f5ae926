@@ -65,6 +65,7 @@ import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useHasRole } from "@/hooks/useHasRole";
+import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { LinkSubscriptionContactDialog } from "./LinkSubscriptionContactDialog";
 import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDialog";
@@ -359,7 +360,8 @@ export function BepaidSubscriptionsTabContent() {
   }, [columns]);
   
   const queryClient = useQueryClient();
-  const { hasRole: isSuperAdmin } = useHasRole('superadmin');
+  const { hasRole: isSuperAdmin } = useHasRoleV2('super_admin');
+  const { hasRole: isAdmin } = useHasRoleV2('admin');
   
   // DnD sensors
   const sensors = useSensors(
@@ -951,10 +953,38 @@ export function BepaidSubscriptionsTabContent() {
         
       case 'connection':
         return sub.is_orphan ? (
-          <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
-            <Link2Off className="h-2.5 w-2.5 mr-1" />
-            Сирота
-          </Badge>
+          <div className="flex items-center gap-1">
+            <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
+              <Link2Off className="h-2.5 w-2.5 mr-1" />
+              Сирота
+            </Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}
+                >
+                  <User className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Привязать контакт</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}
+                >
+                  <Handshake className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Привязать сделку</TooltipContent>
+            </Tooltip>
+          </div>
         ) : (
           <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30">
             <Link2 className="h-2.5 w-2.5 mr-1" />
@@ -1310,158 +1340,116 @@ export function BepaidSubscriptionsTabContent() {
               variant="outline" 
               size="sm"
               className="h-8 bg-background/50"
-              onClick={() => {
-                setReconcileResult(null);
-                setShowReconcileDialog(true);
-                reconcileMutation.mutate(false);
-              }}
-              disabled={reconcileMutation.isPending}
+              onClick={() => refetch()}
+              disabled={isRefetching}
             >
-              {reconcileMutation.isPending ? (
+              {isRefetching ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Database className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" />
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Синхронизация</TooltipContent>
+          <TooltipContent>Обновить список</TooltipContent>
         </Tooltip>
-        
-        <Button 
-          variant="outline" 
-          size="sm"
-          className="h-8 bg-background/50"
-          onClick={() => refetch()}
-          disabled={isRefetching}
-        >
-          {isRefetching ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </Button>
 
-        {/* PATCH P2.5: Sync pending button */}
-        {/* PATCH P2.5: Sync pending button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="outline" 
-              size="sm"
-              className="h-8"
-              disabled={syncPendingLoading}
-              onClick={async () => {
-                setSyncPendingLoading(true);
-                setSyncErrors([]);
-                try {
-                  if (!syncPendingDryResult) {
-                    const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
-                      body: { dry_run: true, mode: "stale_or_missing", max_age_days: 7, limit: 200 },
-                    });
-                    if (error) throw error;
-                    setSyncPendingDryResult(data);
-                    toast.info(`Найдено ${data.candidates_found} pending подписок для синхронизации`, {
-                      description: "Нажмите ещё раз для выполнения",
-                    });
-                  } else {
-                    const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
-                      body: { dry_run: false, mode: "stale_or_missing", max_age_days: 7, limit: 200, batch_size: 20 },
-                    });
-                    if (error) throw error;
-                    if (data.errors?.length) {
-                      setSyncErrors(data.errors.map((e: string) => {
-                        const parts = e.split(': ');
-                        return { sbs_id: parts[0] || 'unknown', reason: parts.slice(1).join(': ') || e };
-                      }));
-                      setShowSyncErrors(true);
+        {/* Advanced sync dropdown — admin/super_admin only */}
+        {(isSuperAdmin || isAdmin) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 bg-background/50">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem
+                disabled={syncPendingLoading}
+                onClick={async () => {
+                  setSyncPendingLoading(true);
+                  setSyncErrors([]);
+                  try {
+                    if (!syncPendingDryResult) {
+                      const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
+                        body: { dry_run: true, mode: "stale_or_missing", max_age_days: 7, limit: 200 },
+                      });
+                      if (error) throw error;
+                      setSyncPendingDryResult(data);
+                      toast.info(`Найдено ${data.candidates_found} pending подписок`, {
+                        description: "Нажмите ещё раз для выполнения",
+                      });
+                    } else {
+                      const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
+                        body: { dry_run: false, mode: "stale_or_missing", max_age_days: 7, limit: 200, batch_size: 20 },
+                      });
+                      if (error) throw error;
+                      if (data.errors?.length) {
+                        setSyncErrors(data.errors.map((e: string) => {
+                          const parts = e.split(': ');
+                          return { sbs_id: parts[0] || 'unknown', reason: parts.slice(1).join(': ') || e };
+                        }));
+                        setShowSyncErrors(true);
+                      }
+                      toast.success(`Sync: ${data.synced} синхронизировано, ${data.became_active} стало active`, {
+                        description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
+                      });
+                      setSyncPendingDryResult(null);
+                      refetch();
                     }
-                    toast.success(`Синхронизировано: ${data.synced}, стало active: ${data.became_active}`, {
-                      description: data.errors?.length ? `Ошибок: ${data.errors.length}. Нажмите ⓘ для деталей.` : undefined,
-                    });
+                  } catch (e: any) {
+                    toast.error("Ошибка sync pending", { description: e.message });
                     setSyncPendingDryResult(null);
-                    refetch();
+                  } finally {
+                    setSyncPendingLoading(false);
                   }
-                } catch (e: any) {
-                  toast.error("Ошибка sync pending", { description: e.message });
-                  setSyncPendingDryResult(null);
-                } finally {
-                  setSyncPendingLoading(false);
-                }
-              }}
-            >
-              {syncPendingLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
-              ) : (
-                <RotateCcw className="h-4 w-4 mr-1" />
-              )}
-              {syncPendingDryResult ? "Выполнить sync" : "Sync pending"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {syncPendingDryResult 
-              ? `Подтвердите: ${syncPendingDryResult.candidates_found} записей` 
-              : "Синхронизировать pending/stale sbs_* подписки с BePaid API"}
-          </TooltipContent>
-        </Tooltip>
-
-        {/* PATCH P2.5+: Backfill button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="outline" 
-              size="sm"
-              className="h-8"
-              disabled={backfillLoading}
-              onClick={async () => {
-                setBackfillLoading(true);
-                setBackfillErrors([]);
-                try {
-                  if (!backfillDryResult) {
-                    const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
-                      body: { dry_run: true, status: "active", limit: 500 },
-                    });
-                    if (error) throw error;
-                    setBackfillDryResult(data);
-                    toast.info(`API: ${data.api_active} active, БД: ${data.db_active_before}. Отсутствуют: ${data.missing_ids?.length || 0}`, {
-                      description: data.missing_ids?.length ? "Нажмите ещё раз для добавления" : "Всё синхронизировано",
-                    });
-                  } else {
-                    const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
-                      body: { dry_run: false, status: "active", limit: 500 },
-                    });
-                    if (error) throw error;
-                    if (data.errors?.length) {
-                      setBackfillErrors(data.errors);
-                      setShowSyncErrors(true);
+                }}
+              >
+                {syncPendingLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RotateCcw className="h-4 w-4 mr-2" />}
+                {syncPendingDryResult ? `Выполнить sync (${syncPendingDryResult.candidates_found})` : "Sync pending"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={backfillLoading}
+                onClick={async () => {
+                  setBackfillLoading(true);
+                  setBackfillErrors([]);
+                  try {
+                    if (!backfillDryResult) {
+                      const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
+                        body: { dry_run: true, status: "active", limit: 500 },
+                      });
+                      if (error) throw error;
+                      setBackfillDryResult(data);
+                      toast.info(`API: ${data.api_active} active, БД: ${data.db_active_before}. Отсутствуют: ${data.missing_ids?.length || 0}`, {
+                        description: data.missing_ids?.length ? "Нажмите ещё раз для добавления" : "Всё синхронизировано",
+                      });
+                    } else {
+                      const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
+                        body: { dry_run: false, status: "active", limit: 500 },
+                      });
+                      if (error) throw error;
+                      if (data.errors?.length) {
+                        setBackfillErrors(data.errors);
+                        setShowSyncErrors(true);
+                      }
+                      toast.success(`Backfill: добавлено ${data.inserted}, обновлено ${data.updated}`, {
+                        description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
+                      });
+                      setBackfillDryResult(null);
+                      refetch();
                     }
-                    toast.success(`Backfill: добавлено ${data.inserted}, обновлено ${data.updated}`, {
-                      description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
-                    });
+                  } catch (e: any) {
+                    toast.error("Ошибка backfill", { description: e.message });
                     setBackfillDryResult(null);
-                    refetch();
+                  } finally {
+                    setBackfillLoading(false);
                   }
-                } catch (e: any) {
-                  toast.error("Ошибка backfill", { description: e.message });
-                  setBackfillDryResult(null);
-                } finally {
-                  setBackfillLoading(false);
-                }
-              }}
-            >
-              {backfillLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
-              ) : (
-                <Database className="h-4 w-4 mr-1" />
-              )}
-              {backfillDryResult ? `Добавить ${backfillDryResult.missing_ids?.length || 0}` : "Backfill из BePaid"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {backfillDryResult 
-              ? `Подтвердите: ${backfillDryResult.missing_ids?.length || 0} подписок отсутствуют в БД` 
-              : "Загрузить из BePaid API подписки, отсутствующие в БД"}
-          </TooltipContent>
-        </Tooltip>
+                }}
+              >
+                {backfillLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Database className="h-4 w-4 mr-2" />}
+                {backfillDryResult ? `Добавить ${backfillDryResult.missing_ids?.length || 0} из BePaid` : "Backfill из BePaid"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* Sync/Backfill errors panel */}

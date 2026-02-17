@@ -138,6 +138,47 @@ export function LinkSubscriptionContactDialog({
             });
         }
       }
+
+      // 3. Safe subscription_v2_id linking: find matching subscription
+      // Skip if already linked
+      const { data: provSub } = await supabase
+        .from("provider_subscriptions")
+        .select("subscription_v2_id")
+        .eq("provider_subscription_id", subscriptionId)
+        .maybeSingle();
+
+      if (!provSub?.subscription_v2_id && selected.user_id) {
+        // Try to find a matching subscriptions_v2 with provider_managed billing
+        const { data: candidates } = await supabase
+          .from("subscriptions_v2")
+          .select("id, status, billing_type, created_at")
+          .eq("user_id", selected.user_id)
+          .in("status", ["active", "trial", "past_due"])
+          .order("created_at", { ascending: false })
+          .limit(5);
+
+        if (candidates && candidates.length === 1) {
+          // Only auto-link if there's exactly one candidate (safe)
+          await supabase
+            .from("provider_subscriptions")
+            .update({ subscription_v2_id: candidates[0].id })
+            .eq("provider_subscription_id", subscriptionId);
+        } else if (candidates && candidates.length > 1) {
+          // Prefer provider_managed billing type
+          const providerManaged = candidates.find(c => c.billing_type === 'provider_managed');
+          if (providerManaged) {
+            await supabase
+              .from("provider_subscriptions")
+              .update({ subscription_v2_id: providerManaged.id })
+              .eq("provider_subscription_id", subscriptionId);
+          }
+          // If multiple candidates and none is provider_managed, don't auto-link
+        }
+        // If no candidates, don't link — show info toast
+        if (!candidates || candidates.length === 0) {
+          toast.info("Контакт привязан, но подписку v2 нужно выбрать вручную");
+        }
+      }
       
       toast.success("Контакт привязан к подписке");
       onSuccess();
