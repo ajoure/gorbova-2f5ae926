@@ -46,6 +46,17 @@ export function UnlinkSubscriptionContactDialog({
       
       if (error) throw error;
       
+      // Verify save
+      const { data: verify, error: vErr } = await supabase
+        .from("provider_subscriptions")
+        .select("profile_id")
+        .eq("provider_subscription_id", subscriptionId)
+        .maybeSingle();
+      if (vErr) throw vErr;
+      if (verify?.profile_id !== null) {
+        throw new Error("Изменения не сохранились (RLS/права). Обратитесь к администратору.");
+      }
+      
       toast.success("Контакт отвязан от подписки");
       onSuccess();
       onOpenChange(false);

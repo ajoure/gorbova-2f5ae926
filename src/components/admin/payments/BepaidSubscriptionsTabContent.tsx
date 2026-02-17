@@ -205,7 +205,7 @@ const STATUS_LABELS: Record<string, string> = {
   paused: 'Приостановлена',
   unknown: 'Неизвестно',
   legacy: 'Устаревшая',
-  redirecting: 'Перенаправление',
+  redirecting: 'Ожидает оплаты',
   failed: 'Ошибка',
   expired: 'Истекла',
   suspended: 'Заблокирована',
@@ -310,8 +310,8 @@ export function BepaidSubscriptionsTabContent() {
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState<SortField>("next_billing_at");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -702,6 +702,17 @@ export function BepaidSubscriptionsTabContent() {
       case "canceled":
       case "terminated":
         return <Badge variant="secondary" className="text-xs">{label}</Badge>;
+      case "redirecting":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs cursor-default">{label}</Badge>
+            </TooltipTrigger>
+            <TooltipContent className="text-xs max-w-[250px]">
+              Клиент был перенаправлен на оплату (3DS/страница оплаты), но не завершил оформление.
+            </TooltipContent>
+          </Tooltip>
+        );
       default:
         return <Badge variant="outline" className="text-xs">{label}</Badge>;
     }
@@ -986,10 +997,20 @@ export function BepaidSubscriptionsTabContent() {
             </Tooltip>
           </div>
         ) : (
-          <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30">
-            <Link2 className="h-2.5 w-2.5 mr-1" />
-            Связана
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30 cursor-default">
+                <Link2 className="h-2.5 w-2.5 mr-1" />
+                Связана
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs max-w-[250px]">
+              <div className="space-y-0.5">
+                <div>Контакт: {sub.linked_profile_name || sub.linked_user_id || '—'}</div>
+                <div>v2: {sub.linked_subscription_id || '—'}</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
         );
         
       // PATCH-T2: Fixed bePaid URL + PATCH-T3: Added actions dropdown

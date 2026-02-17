@@ -56,6 +56,18 @@ export function UnlinkSubscriptionDealDialog({
       
       if (orderError) throw orderError;
       
+      // Verify save
+      const { data: verifyOrder, error: vErr } = await supabase
+        .from("orders_v2")
+        .select("meta")
+        .eq("id", orderId)
+        .maybeSingle();
+      if (vErr) throw vErr;
+      const verifyMeta = (verifyOrder?.meta as Record<string, any>) || {};
+      if (verifyMeta.bepaid_subscription_id) {
+        throw new Error("Изменения не сохранились (RLS/права). Обратитесь к администратору.");
+      }
+      
       toast.success("Сделка отвязана от подписки");
       onSuccess();
       onOpenChange(false);

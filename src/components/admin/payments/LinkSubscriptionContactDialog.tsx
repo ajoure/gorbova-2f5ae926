@@ -118,6 +118,17 @@ export function LinkSubscriptionContactDialog({
       
       if (subError) throw subError;
 
+      // Verify save
+      const { data: verify, error: vErr } = await supabase
+        .from("provider_subscriptions")
+        .select("profile_id, user_id, subscription_v2_id")
+        .eq("provider_subscription_id", subscriptionId)
+        .maybeSingle();
+      if (vErr) throw vErr;
+      if (verify?.profile_id !== selected.id) {
+        throw new Error("Изменения не сохранились (RLS/права). Обратитесь к администратору.");
+      }
+
       // 2. Create card-profile link if we have card data
       if (cardLast4) {
         const { data: existingLink } = await supabase
