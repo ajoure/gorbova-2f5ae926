@@ -1052,41 +1052,8 @@ export function BepaidSubscriptionsTabContent() {
       // PATCH-T2: Fixed bePaid URL + PATCH-T3: Added actions dropdown
       case 'actions':
         return (
-          <div className="flex items-center gap-0.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Открыть в bePaid</TooltipContent>
-            </Tooltip>
-            
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => handleRefreshSnapshot(sub.id)}
-                  disabled={isRefreshingSnapshot}
-                >
-                  {isRefreshingSnapshot ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-3 w-3" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Обновить статус</TooltipContent>
-            </Tooltip>
-            
-            {/* Actions dropdown menu */}
+          <div className="flex items-center justify-end">
+            {/* PATCH P2.9: Only dropdown menu, no standalone buttons */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-6 w-6">
@@ -1098,6 +1065,20 @@ export function BepaidSubscriptionsTabContent() {
                   <Copy className="h-3 w-3 mr-2" />
                   Копировать ID подписки
                 </DropdownMenuItem>
+                {/* PATCH P2.9: Refresh status in dropdown, RBAC-gated */}
+                {isSuperAdmin && (
+                  <DropdownMenuItem 
+                    onClick={() => handleRefreshSnapshot(sub.id)}
+                    disabled={isRefreshingSnapshot}
+                  >
+                    {isRefreshingSnapshot ? (
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3 w-3 mr-2" />
+                    )}
+                    Обновить статус
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 {!sub.linked_user_id && (
                   <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
@@ -1402,7 +1383,7 @@ export function BepaidSubscriptionsTabContent() {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-80 text-xs space-y-2" data-patch="P2.8.1">
-              <div className="font-medium mb-2">Диагностика интеграции <span className="text-muted-foreground ml-1">PATCH P2.8.1</span></div>
+              <div className="font-medium mb-2">Диагностика интеграции <span className="text-muted-foreground ml-1">PATCH P2.9</span></div>
               <div className="space-y-1">
                 <div><span className="text-muted-foreground">Источник:</span> {debugInfo.creds_source === 'integration_instance_only' ? 'Интеграция' : 'Не настроено'}</div>
                 <div><span className="text-muted-foreground">Shop ID:</span> {debugInfo.shop_id_present ? '✓' : '✗'}</div>
