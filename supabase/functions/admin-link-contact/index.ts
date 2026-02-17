@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,8 +78,8 @@ Deno.serve(async (req) => {
 
     // Check admin role using has_role function
     const { data: isAdmin, error: roleError } = await supabaseAdmin.rpc('has_any_role', {
-      _user_id: user.id,
-      _role_codes: ['admin', 'super_admin']
+      p_user_id: user.id,
+      p_roles: ['admin', 'super_admin']
     });
 
     if (roleError || !isAdmin) {
