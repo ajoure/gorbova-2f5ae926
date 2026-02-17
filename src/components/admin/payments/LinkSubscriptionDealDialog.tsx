@@ -105,7 +105,6 @@ export function LinkSubscriptionDealDialog({
     setSaving(true);
     try {
       // 1. Update orders_v2.meta with bepaid_subscription_id
-      // First fetch current meta
       const { data: orderData, error: fetchError } = await supabase
         .from("orders_v2")
         .select("meta")
@@ -140,6 +139,39 @@ export function LinkSubscriptionDealDialog({
         
         if (subError) {
           console.warn("Failed to update provider_subscriptions:", subError);
+        }
+      }
+
+      // 3. Safe subscription_v2_id linking via order
+      // Find subscriptions_v2 that references this order
+      const { data: subV2 } = await supabase
+        .from("subscriptions_v2")
+        .select("id")
+        .eq("order_id", selected.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (subV2?.id) {
+        await supabase
+          .from("provider_subscriptions")
+          .update({ subscription_v2_id: subV2.id })
+          .eq("provider_subscription_id", subscriptionId);
+      } else if (selected.user_id) {
+        // Fallback: try to find by user_id if order_id link doesn't exist
+        const { data: fallbackSub } = await supabase
+          .from("subscriptions_v2")
+          .select("id, billing_type")
+          .eq("user_id", selected.user_id)
+          .in("status", ["active", "trial", "past_due"])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (fallbackSub?.id) {
+          await supabase
+            .from("provider_subscriptions")
+            .update({ subscription_v2_id: fallbackSub.id })
+            .eq("provider_subscription_id", subscriptionId);
         }
       }
       
