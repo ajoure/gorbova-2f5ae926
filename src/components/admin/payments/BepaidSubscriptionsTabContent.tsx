@@ -1000,38 +1000,10 @@ export function BepaidSubscriptionsTabContent() {
         
       case 'connection':
         return sub.is_orphan ? (
-          <div className="flex items-center gap-1">
-            <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
-              <Link2Off className="h-2.5 w-2.5 mr-1" />
-              Сирота
-            </Badge>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5"
-                  onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}
-                >
-                  <User className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Привязать контакт</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5"
-                  onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}
-                >
-                  <Handshake className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Привязать сделку</TooltipContent>
-            </Tooltip>
-          </div>
+          <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
+            <Link2Off className="h-2.5 w-2.5 mr-1" />
+            Сирота
+          </Badge>
         ) : (
           <Tooltip>
             <TooltipTrigger asChild>
