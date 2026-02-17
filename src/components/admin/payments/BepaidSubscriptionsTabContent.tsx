@@ -334,6 +334,10 @@ export function BepaidSubscriptionsTabContent() {
   const [backfillLoading, setBackfillLoading] = useState(false);
   const [backfillDryResult, setBackfillDryResult] = useState<any>(null);
   const [backfillErrors, setBackfillErrors] = useState<Array<{ sbs_id: string; reason: string }>>([]);
+  // PATCH P2.8.1: Fetch by ID
+  const [fetchByIdOpen, setFetchByIdOpen] = useState(false);
+  const [fetchByIdValue, setFetchByIdValue] = useState("");
+  const [fetchByIdLoading, setFetchByIdLoading] = useState(false);
   
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
@@ -1397,8 +1401,8 @@ export function BepaidSubscriptionsTabContent() {
                 <Info className="h-4 w-4" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 text-xs space-y-2">
-              <div className="font-medium mb-2">Диагностика интеграции</div>
+            <PopoverContent className="w-80 text-xs space-y-2" data-patch="P2.8.1">
+              <div className="font-medium mb-2">Диагностика интеграции <span className="text-muted-foreground ml-1">PATCH P2.8.1</span></div>
               <div className="space-y-1">
                 <div><span className="text-muted-foreground">Источник:</span> {debugInfo.creds_source === 'integration_instance_only' ? 'Интеграция' : 'Не настроено'}</div>
                 <div><span className="text-muted-foreground">Shop ID:</span> {debugInfo.shop_id_present ? '✓' : '✗'}</div>
@@ -1528,10 +1532,61 @@ export function BepaidSubscriptionsTabContent() {
                 {backfillLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Database className="h-4 w-4 mr-2" />}
                 {backfillDryResult ? `Добавить ${backfillDryResult.missing_ids?.length || 0} из BePaid` : "Backfill из BePaid"}
               </DropdownMenuItem>
+            <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setFetchByIdOpen(true)}>
+                <Search className="h-4 w-4 mr-2" />
+                Получить из bePaid по ID
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
       </div>
+
+      {/* PATCH P2.8.1: Fetch by ID dialog */}
+      <AlertDialog open={fetchByIdOpen} onOpenChange={setFetchByIdOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Получить подписку из bePaid по ID</AlertDialogTitle>
+            <AlertDialogDescription>
+              Введите ID подписки (sbs_...) для получения данных из bePaid API и обновления локальной записи.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            placeholder="sbs_..."
+            value={fetchByIdValue}
+            onChange={(e) => setFetchByIdValue(e.target.value)}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!fetchByIdValue.startsWith("sbs_") || fetchByIdLoading}
+              onClick={async () => {
+                setFetchByIdLoading(true);
+                try {
+                  const { data, error } = await supabase.functions.invoke("admin-bepaid-backfill-subscriptions", {
+                    body: { dry_run: false, sbs_ids: [fetchByIdValue.trim()], status: "all" },
+                  });
+                  if (error) throw error;
+                  if (data.errors?.length) {
+                    toast.error(`Ошибка: ${data.errors[0].reason}`);
+                  } else {
+                    toast.success(`Готово: добавлено ${data.inserted}, обновлено ${data.updated}`);
+                    refetch();
+                  }
+                  setFetchByIdValue("");
+                } catch (e: any) {
+                  toast.error("Ошибка fetch by ID", { description: e.message });
+                } finally {
+                  setFetchByIdLoading(false);
+                }
+              }}
+            >
+              {fetchByIdLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Получить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Sync/Backfill errors panel */}
       {showSyncErrors && (syncErrors.length > 0 || backfillErrors.length > 0) && (

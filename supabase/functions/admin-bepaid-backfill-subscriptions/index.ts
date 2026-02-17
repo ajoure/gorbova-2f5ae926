@@ -269,9 +269,9 @@ Deno.serve(async (req: Request) => {
         toInsert.push(sub);
         result.missing_ids.push(sub.id);
       } else {
-        // Update if state changed
+        // Update if state changed OR if fetched by specific ID (force refresh raw_data/meta)
         const apiState = normalizeState(sub.state || sub.status);
-        if (existing.state !== apiState) {
+        if (existing.state !== apiState || params.sbs_ids?.length) {
           toUpdate.push(sub);
         }
       }
@@ -343,8 +343,13 @@ Deno.serve(async (req: Request) => {
           .update({
             state,
             next_charge_at: sub.next_billing_at || null,
+            card_last4: sub.credit_card?.last_4 || null,
+            card_brand: sub.credit_card?.brand || null,
+            amount_cents: sub.plan?.amount || null,
+            currency: sub.plan?.currency || null,
+            raw_data: sub,
             meta: {
-              snapshot,
+              provider_snapshot: snapshot,
               snapshot_at: new Date().toISOString(),
               cancellation_capability: sub.cancellation_capability,
               backfilled: true,
