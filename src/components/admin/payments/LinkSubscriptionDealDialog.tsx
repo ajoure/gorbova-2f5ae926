@@ -174,6 +174,7 @@ export function LinkSubscriptionDealDialog({
         .maybeSingle();
 
       let linkedSubV2Id: string | null = subV2?.id || null;
+      let subV2Data: { id: string; payment_method_id?: string | null; next_charge_at?: string | null; access_end_at?: string | null } | null = subV2 || null;
 
       if (!linkedSubV2Id && selected.user_id) {
         // Fallback: try to find by user_id if order_id link doesn't exist
@@ -189,8 +190,8 @@ export function LinkSubscriptionDealDialog({
         if (fallbackSub?.id) {
           linkedSubV2Id = fallbackSub.id;
           // Use fallback's enrichment data if primary didn't have it
-          if (!subV2) {
-            (subV2 as any) = fallbackSub;
+          if (!subV2Data) {
+            subV2Data = fallbackSub;
           }
         }
       }
@@ -205,7 +206,6 @@ export function LinkSubscriptionDealDialog({
 
       // 4. Enrichment: card_brand, card_last4, next_charge_at from subscriptions_v2
       const enrichData: Record<string, any> = {};
-      const subV2Data = subV2 as any;
 
       if (subV2Data) {
         // Enrich billing date
