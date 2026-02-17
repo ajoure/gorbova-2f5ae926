@@ -104,11 +104,8 @@ Deno.serve(async (req: Request) => {
       .limit(params.limit)
       .order("created_at", { ascending: true });
 
-    if (params.mode === "missing_snapshot") {
-      // Only those without any snapshot
-      query = query.is("meta->snapshot_at", null);
-    }
-    // For stale_or_missing: we fetch all pending/failed and filter in code
+    // Both modes: fetch all pending/failed candidates, filter in code
+    // (supabase-js .is() on JSON paths is unreliable)
 
     const { data: candidates, error: fetchErr } = await query;
     if (fetchErr) {
