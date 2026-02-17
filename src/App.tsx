@@ -11,7 +11,7 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
 import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
-import { IOSAdminGuard } from "@/hooks/useIOSAdminGuard";
+
 import { Loader2 } from "lucide-react";
 
 // Critical pages - loaded immediately (first screen)
@@ -140,7 +140,6 @@ const App = () => {
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <IOSAdminGuard>
           <AuthProvider>
             <HelpModeProvider>
               <ScrollToTop />
@@ -282,7 +281,6 @@ const App = () => {
             </div>
           </HelpModeProvider>
         </AuthProvider>
-      </IOSAdminGuard>
     </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
