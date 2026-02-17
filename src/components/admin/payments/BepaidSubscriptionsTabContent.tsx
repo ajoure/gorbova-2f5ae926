@@ -323,6 +323,10 @@ export function BepaidSubscriptionsTabContent() {
   
   const [refreshingSnapshotIds, setRefreshingSnapshotIds] = useState<Set<string>>(new Set());
   
+  // PATCH P2.5: Sync pending state
+  const [syncPendingLoading, setSyncPendingLoading] = useState(false);
+  const [syncPendingDryResult, setSyncPendingDryResult] = useState<any>(null);
+  
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
@@ -1329,6 +1333,62 @@ export function BepaidSubscriptionsTabContent() {
             <RefreshCw className="h-4 w-4" />
           )}
         </Button>
+
+        {/* PATCH P2.5: Sync pending button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="h-8"
+              disabled={syncPendingLoading}
+              onClick={async () => {
+                setSyncPendingLoading(true);
+                try {
+                  if (!syncPendingDryResult) {
+                    // Dry run first
+                    const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
+                      body: { dry_run: true, mode: "stale_or_missing", max_age_days: 7, limit: 200 },
+                    });
+                    if (error) throw error;
+                    setSyncPendingDryResult(data);
+                    toast.info(`Найдено ${data.candidates_found} pending подписок для синхронизации`, {
+                      description: "Нажмите ещё раз для выполнения",
+                    });
+                  } else {
+                    // Execute
+                    const { data, error } = await supabase.functions.invoke("admin-bepaid-sync-pending", {
+                      body: { dry_run: false, mode: "stale_or_missing", max_age_days: 7, limit: 200, batch_size: 20 },
+                    });
+                    if (error) throw error;
+                    toast.success(`Синхронизировано: ${data.synced}, стало active: ${data.became_active}`, {
+                      description: data.errors?.length ? `Ошибок: ${data.errors.length}` : undefined,
+                    });
+                    setSyncPendingDryResult(null);
+                    refetch();
+                  }
+                } catch (e: any) {
+                  toast.error("Ошибка sync pending", { description: e.message });
+                  setSyncPendingDryResult(null);
+                } finally {
+                  setSyncPendingLoading(false);
+                }
+              }}
+            >
+              {syncPendingLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <RotateCcw className="h-4 w-4 mr-1" />
+              )}
+              {syncPendingDryResult ? "Выполнить sync" : "Sync pending"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {syncPendingDryResult 
+              ? `Подтвердите: ${syncPendingDryResult.candidates_found} записей` 
+              : "Синхронизировать pending/stale sbs_* подписки с BePaid API"}
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Bulk actions */}

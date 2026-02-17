@@ -57,7 +57,7 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'errors' | 'bad_card';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
@@ -74,6 +74,9 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
   { value: 'bepaid', label: 'BePaid подписки', icon: CreditCard },
+  { value: 'broken_token', label: '⚠️ Broken token' },
+  { value: 'requires_3ds', label: '🔐 Requires 3DS' },
+  { value: 'link_only', label: '🔗 Только ссылка' },
 ];
 
 // Relevant event types for notification indicators
@@ -265,14 +268,36 @@ interface AutoRenewal {
   grace_period_status: string | null;
   grace_period_started_at: string | null;
   grace_period_ends_at: string | null;
-  // PATCH-7: Billing type (provider-managed subscriptions)
-  billing_type: 'mit' | 'provider_managed';
+  // PATCH-7: Billing type (stored value)
+  billing_type: string;
+  // PATCH P2.5: Display billing type (computed from actual token/PM state)
+  display_billing_type: 'mit' | 'provider_managed' | 'broken_token' | 'requires_3ds' | 'link_only';
   // PATCH 3.1: BePaid flag from provider_subscriptions (source of truth)
   is_bepaid: boolean;
   // PATCH 3.2: Card verification fields
   pm_verification_status: string | null;
   pm_verification_error: string | null;
   pm_recurring_verified: boolean | null;
+}
+
+// PATCH P2.5: Compute actual billing type from token/PM/provider state
+function computeDisplayBillingType(sub: {
+  is_bepaid: boolean;
+  has_payment_token: boolean;
+  payment_method_id: string | null;
+  pm_status: string | null;
+  billing_type: string;
+}): AutoRenewal['display_billing_type'] {
+  // Provider-managed: has active sbs_* in provider_subscriptions
+  if (sub.is_bepaid) return 'provider_managed';
+  // MIT: has valid token + active PM
+  if (sub.has_payment_token && sub.payment_method_id && sub.pm_status === 'active') return 'mit';
+  // Broken token: claims token but no PM or inactive
+  if (sub.has_payment_token && (!sub.payment_method_id || sub.pm_status !== 'active')) return 'broken_token';
+  // Requires 3DS: has PM but no token for MIT
+  if (sub.payment_method_id && sub.pm_status === 'active') return 'requires_3ds';
+  // Link only: no auto-charge capability
+  return 'link_only';
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -564,6 +589,14 @@ export function AutoRenewalsTabContent() {
           billing_type: (sub as any).billing_type || 'mit',
           // PATCH 3.1: BePaid flag — ONLY from provider_subscriptions active records (source of truth)
           is_bepaid: linkedPsMap.has(sub.id),
+          // PATCH P2.5: Computed display billing type
+          display_billing_type: computeDisplayBillingType({
+            is_bepaid: linkedPsMap.has(sub.id),
+            has_payment_token: (sub as any).has_payment_token ?? false,
+            payment_method_id: sub.payment_method_id,
+            pm_status: pm?.status || null,
+            billing_type: (sub as any).billing_type || 'mit',
+          }),
         };
       });
 
@@ -627,6 +660,7 @@ export function AutoRenewalsTabContent() {
           grace_period_ends_at: null,
           billing_type: 'provider_managed',
           is_bepaid: true,
+          display_billing_type: 'provider_managed' as const,
           // PATCH 3.2
           pm_verification_status: null,
           pm_verification_error: null,
@@ -784,6 +818,16 @@ export function AutoRenewalsTabContent() {
           r.payment_method_id && 
           (r.pm_verification_status !== 'verified' || r.pm_recurring_verified !== true)
         );
+        break;
+      // PATCH P2.5: New billing type filters
+      case 'broken_token':
+        result = result.filter(r => r.display_billing_type === 'broken_token');
+        break;
+      case 'requires_3ds':
+        result = result.filter(r => r.display_billing_type === 'requires_3ds');
+        break;
+      case 'link_only':
+        result = result.filter(r => r.display_billing_type === 'link_only');
         break;
     }
     
@@ -1107,20 +1151,25 @@ export function AutoRenewalsTabContent() {
             )}
           </div>
         );
-      case 'billing_type':
+      case 'billing_type': {
+        const dbt = renewal.display_billing_type;
+        const billingConfig: Record<string, { label: string; emoji: string; className: string }> = {
+          provider_managed: { label: 'bePaid', emoji: '🔄', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+          mit: { label: 'MIT', emoji: '💳', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+          broken_token: { label: 'Broken', emoji: '⚠️', className: 'bg-destructive/10 text-destructive' },
+          requires_3ds: { label: '3DS', emoji: '🔐', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
+          link_only: { label: 'Ссылка', emoji: '🔗', className: 'text-muted-foreground' },
+        };
+        const cfg = billingConfig[dbt] || billingConfig.link_only;
         return (
           <Badge 
-            variant={renewal.billing_type === 'provider_managed' ? 'secondary' : 'outline'}
-            className={cn(
-              'text-[10px] px-1.5',
-              renewal.billing_type === 'provider_managed' 
-                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
-                : ''
-            )}
+            variant="outline"
+            className={cn('text-[10px] px-1.5', cfg.className)}
           >
-            {renewal.billing_type === 'provider_managed' ? '🔄 bePaid' : '💳 MIT'}
+            {cfg.emoji} {cfg.label}
           </Badge>
         );
+      }
       case 'amount':
         return (
           <span className="text-sm font-mono">
