@@ -848,21 +848,38 @@ export function BepaidSubscriptionsTabContent() {
         
       case 'customer':
         return (
-          <div>
-            {sub.linked_user_id ? (
-              <button
-                onClick={() => openContactSheet(sub.linked_user_id!)}
-                className="text-xs font-medium hover:underline hover:text-primary text-left truncate block max-w-[150px]"
-              >
-                {sub.linked_profile_name || sub.customer_name || sub.customer_email || "—"}
-              </button>
-            ) : (
-              <span className="text-xs truncate block max-w-[150px]">
-                {sub.customer_name || sub.customer_email || "—"}
-              </span>
-            )}
-            {sub.customer_name && sub.customer_email && !sub.linked_user_id && (
-              <div className="text-[10px] text-muted-foreground truncate max-w-[150px]">{sub.customer_email}</div>
+          <div className="flex items-center gap-1">
+            <div className="flex-1 min-w-0">
+              {sub.linked_user_id ? (
+                <button
+                  onClick={() => openContactSheet(sub.linked_user_id!)}
+                  className="text-xs font-medium hover:underline hover:text-primary text-left truncate block max-w-[130px]"
+                >
+                  {sub.linked_profile_name || sub.customer_name || sub.customer_email || "—"}
+                </button>
+              ) : (
+                <span className="text-xs truncate block max-w-[130px]">
+                  {sub.customer_name || sub.customer_email || "—"}
+                </span>
+              )}
+              {sub.customer_name && sub.customer_email && !sub.linked_user_id && (
+                <div className="text-[10px] text-muted-foreground truncate max-w-[130px]">{sub.customer_email}</div>
+              )}
+            </div>
+            {!sub.linked_user_id && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}
+                  >
+                    <User className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Привязать контакт</TooltipContent>
+              </Tooltip>
             )}
           </div>
         );
@@ -932,24 +949,39 @@ export function BepaidSubscriptionsTabContent() {
         );
         
       case 'deal':
-        return sub.linked_order_id ? (
-          <button
-            onClick={() => copyId(sub.linked_order_id!)}
-            className="text-xs font-medium hover:underline hover:text-primary"
-          >
-            {sub.linked_order_number || sub.linked_order_id.slice(0, 8)}
-          </button>
-        ) : (
+        if (sub.linked_order_id) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs cursor-pointer hover:bg-accent border-muted bg-muted/30 text-foreground"
+                  onClick={() => copyId(sub.linked_order_id!)}
+                >
+                  <Handshake className="h-3 w-3 text-muted-foreground" />
+                  <span>Связана</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-xs">
+                  <div className="font-medium">Сделка: {sub.linked_order_number || sub.linked_order_id}</div>
+                  <div className="text-muted-foreground">Нажмите чтобы скопировать ID</div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+        return (
           <Button 
             variant="ghost" 
             size="sm" 
-            className="h-6 px-2"
+            className="h-6 w-6 p-0"
             onClick={() => { 
               setSelectedSubscription(sub); 
               setLinkDealOpen(true); 
             }}
           >
-            <Plus className="h-3 w-3" />
+            <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
           </Button>
         );
         
@@ -1007,7 +1039,7 @@ export function BepaidSubscriptionsTabContent() {
             <TooltipContent side="top" className="text-xs max-w-[250px]">
               <div className="space-y-0.5">
                 <div>Контакт: {sub.linked_profile_name || sub.linked_user_id || '—'}</div>
-                <div>v2: {sub.linked_subscription_id || '—'}</div>
+                <div>v2: {sub.linked_subscription_id || (sub as any).subscription_v2_id || '—'}</div>
               </div>
             </TooltipContent>
           </Tooltip>
@@ -1058,51 +1090,79 @@ export function BepaidSubscriptionsTabContent() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
-                  <User className="h-3 w-3 mr-2" />
-                  {sub.linked_user_id ? "Перепривязать контакт" : "Привязать контакт"}
+                <DropdownMenuItem onClick={() => copyId(sub.id)}>
+                  <Copy className="h-3 w-3 mr-2" />
+                  Копировать ID подписки
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {!sub.linked_user_id && (
+                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
+                    <Link2 className="h-3 w-3 mr-2" />
+                    Связать контакт
+                  </DropdownMenuItem>
+                )}
                 {sub.linked_user_id && (
-                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkContactOpen(true); }}>
-                    <Unlink className="h-3 w-3 mr-2" />
-                    Отвязать контакт
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
-                  <Handshake className="h-3 w-3 mr-2" />
-                  {sub.linked_order_id ? "Перепривязать сделку" : "Привязать сделку"}
-                </DropdownMenuItem>
-                {sub.linked_order_id && (
-                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkDealOpen(true); }}>
-                    <Unlink className="h-3 w-3 mr-2" />
-                    Отвязать сделку
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                {!sub.is_orphan && (
-                  canUnlink(sub) ? (
-                    <DropdownMenuItem 
-                      onClick={() => {
-                        setTargetEmergencyUnlinkId(sub.id);
-                        setShowEmergencyUnlinkDialog(true);
-                      }}
-                    >
+                  <>
+                    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkContactOpen(true); }}>
+                      <User className="h-3 w-3 mr-2" />
+                      Перепривязать контакт
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkContactOpen(true); }}>
                       <Unlink className="h-3 w-3 mr-2" />
-                      Отвязать подписку
+                      Отвязать контакт
                     </DropdownMenuItem>
-                  ) : isSuperAdmin ? (
-                    <DropdownMenuItem 
-                      className="text-destructive"
-                      onClick={() => {
-                        setTargetEmergencyUnlinkId(sub.id);
-                        setShowEmergencyUnlinkDialog(true);
-                      }}
-                    >
-                      <ShieldAlert className="h-3 w-3 mr-2" />
-                      Аварийная отвязка
+                  </>
+                )}
+                <DropdownMenuSeparator />
+                {!sub.linked_order_id && (
+                  <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
+                    <Handshake className="h-3 w-3 mr-2" />
+                    Связать сделку
+                  </DropdownMenuItem>
+                )}
+                {sub.linked_order_id && (
+                  <>
+                    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setUnlinkDealOpen(true); }}>
+                      <Unlink className="h-3 w-3 mr-2" />
+                      Отвязать сделку
                     </DropdownMenuItem>
-                  ) : null
+                    <DropdownMenuItem onClick={() => { setSelectedSubscription(sub); setLinkDealOpen(true); }}>
+                      <Handshake className="h-3 w-3 mr-2" />
+                      Пересвязать сделку
+                    </DropdownMenuItem>
+                  </>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => window.open(`https://admin.bepaid.by/subscriptions/${sub.id}`, '_blank')}>
+                  <ExternalLink className="h-3 w-3 mr-2" />
+                  Открыть в bePaid
+                </DropdownMenuItem>
+                {!sub.is_orphan && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {canUnlink(sub) ? (
+                      <DropdownMenuItem 
+                        onClick={() => {
+                          setTargetEmergencyUnlinkId(sub.id);
+                          setShowEmergencyUnlinkDialog(true);
+                        }}
+                      >
+                        <Unlink className="h-3 w-3 mr-2" />
+                        Отвязать подписку
+                      </DropdownMenuItem>
+                    ) : isSuperAdmin ? (
+                      <DropdownMenuItem 
+                        className="text-destructive"
+                        onClick={() => {
+                          setTargetEmergencyUnlinkId(sub.id);
+                          setShowEmergencyUnlinkDialog(true);
+                        }}
+                      >
+                        <ShieldAlert className="h-3 w-3 mr-2" />
+                        Аварийная отвязка
+                      </DropdownMenuItem>
+                    ) : null}
+                  </>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>

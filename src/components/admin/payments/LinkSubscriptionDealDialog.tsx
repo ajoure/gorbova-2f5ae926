@@ -151,28 +151,35 @@ export function LinkSubscriptionDealDialog({
         
         if (subError) {
           console.warn("Failed to update provider_subscriptions:", subError);
+        } else {
+          // Verify save
+          const { data: verifyPS } = await supabase
+            .from("provider_subscriptions")
+            .select("profile_id")
+            .eq("provider_subscription_id", subscriptionId)
+            .maybeSingle();
+          if (selected.profile_id && verifyPS?.profile_id !== selected.profile_id) {
+            throw new Error("Изменения в provider_subscriptions не сохранились (RLS/права). Обратитесь к администратору.");
+          }
         }
       }
 
-      // 3. Safe subscription_v2_id linking via order
+      // 3. Safe subscription_v2_id linking via order + enrichment
       // Find subscriptions_v2 that references this order
       const { data: subV2 } = await supabase
         .from("subscriptions_v2")
-        .select("id")
+        .select("id, payment_method_id, next_charge_at, access_end_at")
         .eq("order_id", selected.id)
         .limit(1)
         .maybeSingle();
 
-      if (subV2?.id) {
-        await supabase
-          .from("provider_subscriptions")
-          .update({ subscription_v2_id: subV2.id })
-          .eq("provider_subscription_id", subscriptionId);
-      } else if (selected.user_id) {
+      let linkedSubV2Id: string | null = subV2?.id || null;
+
+      if (!linkedSubV2Id && selected.user_id) {
         // Fallback: try to find by user_id if order_id link doesn't exist
         const { data: fallbackSub } = await supabase
           .from("subscriptions_v2")
-          .select("id, billing_type")
+          .select("id, billing_type, payment_method_id, next_charge_at, access_end_at")
           .eq("user_id", selected.user_id)
           .in("status", ["active", "trial", "past_due"])
           .order("created_at", { ascending: false })
@@ -180,9 +187,66 @@ export function LinkSubscriptionDealDialog({
           .maybeSingle();
 
         if (fallbackSub?.id) {
+          linkedSubV2Id = fallbackSub.id;
+          // Use fallback's enrichment data if primary didn't have it
+          if (!subV2) {
+            (subV2 as any) = fallbackSub;
+          }
+        }
+      }
+
+      // Update subscription_v2_id if found
+      if (linkedSubV2Id) {
+        await supabase
+          .from("provider_subscriptions")
+          .update({ subscription_v2_id: linkedSubV2Id })
+          .eq("provider_subscription_id", subscriptionId);
+      }
+
+      // 4. Enrichment: card_brand, card_last4, next_charge_at from subscriptions_v2
+      const enrichData: Record<string, any> = {};
+      const subV2Data = subV2 as any;
+
+      if (subV2Data) {
+        // Enrich billing date
+        const chargeDate = subV2Data.next_charge_at || subV2Data.access_end_at;
+        if (chargeDate) {
+          enrichData.next_charge_at = chargeDate;
+        }
+
+        // Enrich card data from payment_methods
+        if (subV2Data.payment_method_id) {
+          const { data: pm } = await supabase
+            .from("payment_methods")
+            .select("brand, last4")
+            .eq("id", subV2Data.payment_method_id)
+            .maybeSingle();
+
+          if (pm) {
+            if (pm.brand) enrichData.card_brand = pm.brand;
+            if (pm.last4) enrichData.card_last4 = pm.last4;
+          }
+        }
+      }
+
+      // Only update if we have enrichment data and don't overwrite existing
+      if (Object.keys(enrichData).length > 0) {
+        // Read current values to avoid overwriting
+        const { data: currentPS } = await supabase
+          .from("provider_subscriptions")
+          .select("card_brand, card_last4, next_charge_at")
+          .eq("provider_subscription_id", subscriptionId)
+          .maybeSingle();
+
+        const finalEnrich: Record<string, any> = {};
+        if (enrichData.card_brand && !currentPS?.card_brand) finalEnrich.card_brand = enrichData.card_brand;
+        if (enrichData.card_last4 && !currentPS?.card_last4) finalEnrich.card_last4 = enrichData.card_last4;
+        if (enrichData.next_charge_at && !currentPS?.next_charge_at) finalEnrich.next_charge_at = enrichData.next_charge_at;
+
+        if (Object.keys(finalEnrich).length > 0) {
           await supabase
             .from("provider_subscriptions")
-            .update({ subscription_v2_id: fallbackSub.id })
+            .update(finalEnrich)
             .eq("provider_subscription_id", subscriptionId);
         }
       }
