@@ -119,6 +119,21 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
   },
   {
+    id: "hosterby",
+    name: "hoster.by Cloud",
+    icon: "Server",
+    category: "other",
+    description: "Белорусский VPS-хостинг. BY-egress для парсинга BY/RU сайтов.",
+    fields: [
+      { key: "cloud_access_key", label: "Cloud Access Key", type: "password", required: true },
+      { key: "cloud_secret_key", label: "Cloud Secret Key", type: "password", required: true },
+    ],
+    advancedFields: [
+      { key: "dns_access_key", label: "DNS Access Key (future)", type: "password" },
+      { key: "dns_secret_key", label: "DNS Secret Key (future)", type: "password" },
+    ],
+  },
+  {
     id: "kinescope",
     name: "Kinescope",
     icon: "Video",

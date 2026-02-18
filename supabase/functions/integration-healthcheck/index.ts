@@ -350,6 +350,49 @@ serve(async (req) => {
         break;
       }
 
+      case "hosterby": {
+        // ВАЖНО: ключи НЕ принимаются из body — читаем из БД через service_role
+        if (!instance_id) {
+          errorMessage = "instance_id обязателен для hosterby healthcheck";
+          break;
+        }
+
+        // Делегируем hosterby-api (где реализованы signing + SSRF + audit)
+        try {
+          const { data: result, error: fnError } = await supabaseAdmin.functions.invoke(
+            "hosterby-api",
+            {
+              body: {
+                action: "test_connection",
+                instance_id,
+                // Ключи НЕ передаём — hosterby-api сам читает из integration_instances
+              },
+            }
+          );
+
+          if (fnError) {
+            errorMessage = `Ошибка вызова hosterby-api: ${fnError.message}`;
+            break;
+          }
+
+          if (result?.success) {
+            success = true;
+            responseData = {
+              vms_count: result.data?.vms_count ?? 0,
+              keys_configured: result.data?.keys_configured ?? false,
+              cloud_access_key_last4: result.data?.cloud_access_key_last4 ?? null,
+            };
+          } else {
+            errorMessage = result?.error ?? "Ошибка подключения к hoster.by";
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          console.error("hoster.by healthcheck error:", err);
+          errorMessage = `Ошибка: ${err}`;
+        }
+        break;
+      }
+
       default:
         errorMessage = `Неизвестный провайдер: ${provider}`;
     }
