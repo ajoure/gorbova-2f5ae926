@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { useAllPageSections, PageSection } from "@/hooks/usePageSections";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -308,10 +308,17 @@ export function ContentSectionSelector({
           </Button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-[420px] p-0 z-[100]" align="start">
+        <PopoverContent
+          className="w-[420px] p-0 z-[100] max-h-[calc(100vh-120px)] overflow-hidden"
+          align="start"
+          side="bottom"
+          sideOffset={8}
+          avoidCollisions={true}
+          collisionPadding={16}
+        >
           <div className="flex border-b">
             {/* Left column: Parents */}
-            <ScrollArea className="w-1/2 h-[300px] border-r">
+            <div className="w-1/2 h-[300px] border-r overflow-y-auto">
               <div className="p-1">
                 {parents.map((parent) => {
                   const Icon = getIcon(parent.icon);
@@ -347,10 +354,10 @@ export function ContentSectionSelector({
                   );
                 })}
               </div>
-            </ScrollArea>
+            </div>
 
             {/* Right column: Children */}
-            <ScrollArea className="w-1/2 h-[300px]">
+            <div className="w-1/2 h-[300px] overflow-y-auto">
               <div className="p-1">
                 {selectedParent ? (
                   <>
@@ -418,7 +425,7 @@ export function ContentSectionSelector({
                   </div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </div>
         </PopoverContent>
       </Popover>
