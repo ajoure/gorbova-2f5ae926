@@ -9722,6 +9722,10 @@ export type Database = {
           provider_payment_id: string
         }[]
       }
+      get_club_business_stats: {
+        Args: { p_club_id: string; p_period_days?: number }
+        Returns: Json
+      }
       get_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string }
         Returns: {

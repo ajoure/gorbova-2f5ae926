@@ -815,34 +815,33 @@ export function useClubBusinessStats(clubId: string | null, periodDays: number =
         }
       }
 
-      // 3. Всего с активным доступом
-      const { count: totalWithAccess } = await supabase
-        .from('telegram_access_grants')
-        .select('*', { count: 'exact', head: true })
-        .eq('club_id', clubId)
-        .eq('status', 'active');
+      // 3-5. Корректные агрегаты через RPC (обходит лимит 1000 строк и считает уникальных)
+      // - total_with_access: DISTINCT user_id WHERE status=active AND end_at > NOW()
+      // - new_count: пользователи, чей ПЕРВЫЙ ever grant создан за период
+      // - revoked_count: пользователи, чей ПОСЛЕДНИЙ grant — revoked/expired за период,
+      //                  при условии что сейчас у них НЕТ активного гранта
+      const { data: rpcStats, error: rpcError } = await supabase
+        .rpc('get_club_business_stats', {
+          p_club_id: clubId,
+          p_period_days: periodDays,
+        });
 
-      // 4. Новые за период
-      const { count: newCount } = await supabase
-        .from('telegram_access_grants')
-        .select('*', { count: 'exact', head: true })
-        .eq('club_id', clubId)
-        .eq('status', 'active')
-        .gte('created_at', since);
+      if (rpcError) {
+        console.error('[useClubBusinessStats] RPC error:', rpcError);
+        throw rpcError;
+      }
 
-      // 5. Не продлили за период
-      const { count: revokedCount } = await supabase
-        .from('telegram_access_grants')
-        .select('*', { count: 'exact', head: true })
-        .eq('club_id', clubId)
-        .in('status', ['revoked', 'expired'])
-        .gte('updated_at', since);
+      const stats = rpcStats as {
+        total_with_access: number;
+        new_count: number;
+        revoked_count: number;
+      } | null;
 
       return {
         tariffs,
-        totalWithAccess: totalWithAccess ?? 0,
-        newCount: newCount ?? 0,
-        revokedCount: revokedCount ?? 0,
+        totalWithAccess: stats?.total_with_access ?? 0,
+        newCount: stats?.new_count ?? 0,
+        revokedCount: stats?.revoked_count ?? 0,
       };
     },
     enabled: !!clubId,
