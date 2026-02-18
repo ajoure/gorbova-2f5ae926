@@ -32,6 +32,7 @@ export interface GalleryItem {
   id: string;
   url: string;
   caption?: string;
+  storagePath?: string; // путь в training-assets для авто-удаления
 }
 
 export interface GalleryContent {
@@ -76,7 +77,10 @@ function SortableGalleryItem({ item, onUpdate, onDelete, lessonId }: SortableGal
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
-      const prevPath = (item as any).storagePath as string | undefined
+      // Нормализуем ownerId: (lessonId || "").trim() — единая переменная
+      const ownerId = (lessonId || "").trim();
+
+      const prevPath = item.storagePath
         || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
 
       const result = await uploadToTrainingAssets(
@@ -85,17 +89,21 @@ function SortableGalleryItem({ item, onUpdate, onDelete, lessonId }: SortableGal
         10,
         "image/",
         [".jpg", ".jpeg", ".png", ".webp", ".gif"],
-        lessonId // ownerId → lesson-images/<lessonId>/...
+        ownerId // нормализованный ownerId → lesson-images/<lessonId>/...
       );
       if (result) {
         const { publicUrl, storagePath } = result;
         onUpdate(item.id, "url", publicUrl);
-        onUpdate(item.id, "storagePath" as any, storagePath);
+        onUpdate(item.id, "storagePath", storagePath); // типизировано — as any убран
         toast.success("Изображение загружено");
         // Удаляем старый файл из Storage (fire-and-forget)
         if (prevPath && prevPath !== storagePath) {
-          const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
-          deleteTrainingAssets([prevPath], entity, "gallery_image_replaced");
+          const entity = ownerId ? { type: "lesson", id: ownerId } : undefined;
+          if (entity) {
+            deleteTrainingAssets([prevPath], entity, "gallery_image_replaced");
+          } else {
+            console.warn("[GalleryBlock] lessonId missing, skip storage delete for replaced image");
+          }
         }
       }
     } finally {
@@ -238,11 +246,17 @@ export function GalleryBlock({ content, onChange, isEditing = true, lessonId }: 
     // Удаляем файл из Storage при удалении элемента галереи
     const item = items.find((i) => i.id === id);
     if (item) {
-      const path = (item as any).storagePath as string | undefined
+      // Приоритет: storagePath (типизировано, без as any) → fallback extractStoragePathFromPublicUrl
+      const path = item.storagePath
         || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
       if (path) {
-        const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
-        deleteTrainingAssets([path], entity, "gallery_item_deleted");
+        const ownerId = (lessonId || "").trim();
+        const entity = ownerId ? { type: "lesson", id: ownerId } : undefined;
+        if (entity) {
+          deleteTrainingAssets([path], entity, "gallery_item_deleted");
+        } else {
+          console.warn("[GalleryBlock] lessonId missing, skip storage delete for deleted item");
+        }
       }
     }
     onChange({ ...content, items: items.filter((item) => item.id !== id) });
