@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { FileContent } from "@/hooks/useLessonBlocks";
-import { FileText, Download, ExternalLink } from "lucide-react";
+import { FileText, Download, ExternalLink, Upload, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { uploadToTrainingAssets, formatFileSize } from "./uploadToTrainingAssets";
 
 interface FileBlockProps {
   content: FileContent;
@@ -10,18 +13,19 @@ interface FileBlockProps {
   isEditing?: boolean;
 }
 
-function formatFileSize(bytes?: number): string {
+function formatFileSizeDisplay(bytes?: number): string {
   if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return formatFileSize(bytes);
 }
 
 export function FileBlock({ content, onChange, isEditing = true }: FileBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localName, setLocalName] = useState(content.name || "");
   const [localSize, setLocalSize] = useState(content.size?.toString() || "");
-  
+  const [uploading, setUploading] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const handleUrlBlur = () => {
     onChange({ ...content, url: localUrl });
   };
@@ -34,6 +38,52 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
     onChange({ ...content, size: localSize ? parseInt(localSize) : undefined });
   };
 
+  const handleFileUpload = async (file: File) => {
+    try {
+      setUploading(true);
+      const publicUrl = await uploadToTrainingAssets(file, "lesson-files", 50);
+      if (publicUrl) {
+        // Автозаполнение всех полей
+        setLocalUrl(publicUrl);
+        setLocalName(file.name);
+        setLocalSize(String(file.size));
+        onChange({
+          ...content,
+          url: publicUrl,
+          name: file.name,
+          size: file.size,
+        });
+        toast.success("Файл загружен");
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+    e.target.value = "";
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
+  // Режим просмотра (для студента)
   if (!isEditing) {
     if (!content.url) {
       return (
@@ -43,7 +93,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
         </div>
       );
     }
-    
+
     return (
       <a
         href={content.url}
@@ -55,7 +105,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{content.name || "Файл"}</p>
           {content.size && (
-            <p className="text-sm text-muted-foreground">{formatFileSize(content.size)}</p>
+            <p className="text-sm text-muted-foreground">{formatFileSizeDisplay(content.size)}</p>
           )}
         </div>
         <Download className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
@@ -63,8 +113,56 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
     );
   }
 
+  // Режим редактирования
   return (
     <div className="space-y-3">
+      {/* Drag & Drop зона загрузки */}
+      <div
+        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
+          isDragOver
+            ? "border-primary bg-primary/5"
+            : "border-border hover:border-primary/50"
+        }`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onClick={() => !uploading && fileInputRef.current?.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt,.csv,.rtf"
+          onChange={handleInputChange}
+          className="hidden"
+        />
+
+        <div className="flex flex-col items-center gap-3">
+          {uploading ? (
+            <>
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Загрузка...</p>
+            </>
+          ) : (
+            <>
+              <FileText className="h-8 w-8 text-muted-foreground" />
+              <Button
+                variant="outline"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                disabled={uploading}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Загрузить файл
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                или перетащите файл сюда • PDF, Word, Excel, PowerPoint, ZIP, TXT • до 50 МБ
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* URL поле */}
       <div className="space-y-1.5">
         <Label>URL файла</Label>
         <div className="flex gap-2">
@@ -74,20 +172,21 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
             onBlur={handleUrlBlur}
             placeholder="https://..."
             className="flex-1"
+            disabled={uploading}
           />
           {content.url && (
-            <a 
-              href={content.url} 
-              target="_blank" 
+            <a
+              href={content.url}
+              target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center justify-center h-10 w-10 rounded-md border border-input bg-background hover:bg-accent"
+              className="inline-flex items-center justify-center h-10 w-10 rounded-md border border-input bg-background hover:bg-accent shrink-0"
             >
               <ExternalLink className="h-4 w-4" />
             </a>
           )}
         </div>
       </div>
-      
+
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label>Название файла</Label>
@@ -96,6 +195,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
             onChange={(e) => setLocalName(e.target.value)}
             onBlur={handleNameBlur}
             placeholder="document.pdf"
+            disabled={uploading}
           />
         </div>
         <div className="space-y-1.5">
@@ -106,19 +206,29 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
             onChange={(e) => setLocalSize(e.target.value)}
             onBlur={handleSizeBlur}
             placeholder="1024"
+            disabled={uploading}
           />
         </div>
       </div>
 
+      {/* Превью загруженного файла */}
       {content.url && content.name && (
         <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-          <FileText className="h-6 w-6 text-primary" />
-          <div className="flex-1">
-            <p className="font-medium text-sm">{content.name}</p>
+          <FileText className="h-6 w-6 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm truncate">{content.name}</p>
             {content.size && (
-              <p className="text-xs text-muted-foreground">{formatFileSize(content.size)}</p>
+              <p className="text-xs text-muted-foreground">{formatFileSizeDisplay(content.size)}</p>
             )}
           </div>
+          <a
+            href={content.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0"
+          >
+            <ExternalLink className="h-4 w-4 text-muted-foreground hover:text-primary transition-colors" />
+          </a>
         </div>
       )}
     </div>

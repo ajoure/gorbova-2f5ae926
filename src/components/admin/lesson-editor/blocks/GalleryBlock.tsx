@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,11 @@ import {
   rectSortingStrategy 
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ImageIcon, Plus, Trash2, GripVertical, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { ImageIcon, Plus, Trash2, GripVertical, X, ChevronLeft, ChevronRight, Upload, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { uploadToTrainingAssets } from "./uploadToTrainingAssets";
+
 
 export interface GalleryItem {
   id: string;
@@ -59,10 +62,36 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
     isDragging,
   } = useSortable({ id: item.id });
 
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+  };
+
+  const handleFileUpload = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Выберите файл изображения");
+      return;
+    }
+    try {
+      setUploading(true);
+      const publicUrl = await uploadToTrainingAssets(file, "lesson-images", 10, "image/");
+      if (publicUrl) {
+        onUpdate(item.id, "url", publicUrl);
+        toast.success("Изображение загружено");
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+    e.target.value = "";
   };
 
   return (
@@ -101,12 +130,37 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
       )}
       
       <div className="p-2 space-y-2">
-        <Input
-          value={item.url}
-          onChange={(e) => onUpdate(item.id, 'url', e.target.value)}
-          placeholder="URL изображения..."
-          className="text-xs"
-        />
+        {/* URL поле + кнопка загрузки */}
+        <div className="flex gap-1">
+          <Input
+            value={item.url}
+            onChange={(e) => onUpdate(item.id, 'url', e.target.value)}
+            placeholder="URL изображения..."
+            className="text-xs flex-1 min-w-0"
+            disabled={uploading}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.jpg,.jpeg,.png,.webp"
+            onChange={handleInputChange}
+            className="hidden"
+          />
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Загрузить изображение"
+          >
+            {uploading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
         <Input
           value={item.caption || ''}
           onChange={(e) => onUpdate(item.id, 'caption', e.target.value)}
@@ -117,6 +171,7 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
     </div>
   );
 }
+
 
 export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlockProps) {
   const items = content.items || [];
