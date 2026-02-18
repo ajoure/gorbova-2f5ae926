@@ -1,222 +1,150 @@
 
-# Диагностика и исправление: данные таблицы сбрасываются при нажатии "Далее"/"Сохранить"
+# Корневая причина: `active_until = NULL` в `telegram_access` = "вечный доступ"
 
-## Анализ проблемы
+## Точный баг (доказан SQL + API)
 
-Проведено полное исследование кода и данных в БД. Данные клиентов **сохраняются в БД корректно** — таблица `lesson_progress_state` содержит записи с заполненными `pointA_rows`. Проблема возникает на уровне взаимодействия двух слоёв дебаунсинга, которые работают против друг друга.
-
-### Корневая причина: race condition между двумя таймерами дебаунсинга
-
-Цепочка событий при нажатии кнопки "Диагностика завершена":
-
-```text
-1. Пользователь вводит данные в последнее поле
-   → DiagnosticTableBlock.updateLocalRow()
-   → debouncedCommit(rows) — запускает таймер 300ms
-
-2. Пользователь сразу нажимает "Диагностика завершена"
-   → DiagnosticTableBlock.flushAndCommit() — сбрасывает таймер, вызывает onRowsChange(rows)
-   → onRowsChange() === handleDiagnosticTableUpdate()
-   → updateState({ pointA_rows: rows }) — запускает таймер 500ms (#1)
-
-3. Параллельно onComplete() вызывается
-   → handleDiagnosticTableComplete()
-   → updateState({ pointA_completed: true }) — ПЕРЕЗАПИСЫВАЕТ таймер #1!
-     ↑ ПРОБЛЕМА: currentState = pendingStateRef.current но pendingStateRef уже содержит rows
-     ↑ НО: updateState берёт pendingStateRef.current который равен {..., pointA_rows: rows}
-     ↑ Казалось бы OK... Но markBlockCompleted() тоже вызывает updateState()!
-
-4. markBlockCompleted(blockId) вызывается
-   → currentSteps = record?.state_json?.completedSteps || []
-   → КРИТИЧЕСКИ: record — это СТАРЫЙ state из React state, ещё не обновлённый!
-   → updateState({ completedSteps: [...oldSteps, blockId] })
-   → Это ПЕРЕЗАПИСЫВАЕТ pendingStateRef снова, теперь уже используя currentState
-     из pendingStateRef, который содержит pointA_completed: true, НО...
-
-5. Таймер из шага 3 срабатывает через 500ms — сохраняет состояние
-6. Таймер из шага 4 срабатывает через 500ms — сохраняет ЕЩЁ одно состояние
-   → Второй saveState() вызов может перезаписать первый с потерей данных
-```
-
-### Проблема 2: Race condition в `markBlockCompleted`
+Предыдущий патч обнулил `telegram_access.active_until = NULL` при revoke, думая это уберёт доступ. Но в `accessValidation.ts` строка 113 и строка 256:
 
 ```typescript
-// useLessonProgressState.tsx строка 131
-const markBlockCompleted = useCallback((blockId: string) => {
-  const currentSteps = record?.state_json?.completedSteps || []; // ← ЧИТАЕТ record (stale!)
-  if (!currentSteps.includes(blockId)) {
-    updateState({
-      completedSteps: [...currentSteps, blockId]  // ← НЕ читает pendingStateRef!
-    });
-  }
-}, [record, updateState]);
+.or(`active_until.is.null,active_until.gt.${nowStr}`)
 ```
 
-`markBlockCompleted` читает `record.state_json.completedSteps` из React state, который ещё не обновлён (так как `setRecord` асинхронно). Но при этом `updateState` внутри читает `pendingStateRef.current`. Итог: новый вызов `updateState` создаёт `newState` из `pendingStateRef` (правильный) + `completedSteps` (из stale record — может быть правильным), и ПЕРЕЗАПИСЫВАЕТ дебаунс-таймер.
+Семантика `active_until IS NULL` в этой системе = **"доступ постоянный, без срока истечения"** (как у подписок без end date). Это стандартный паттерн "NULL = нет ограничения по времени".
 
-Поскольку два `updateState` вызова происходят почти одновременно, второй отменяет таймер первого. Оба записывают в `pendingStateRef` один за другим. Финальное сохранение — это только последний вызов. Если второй вызов (`markBlockCompleted`) пришёл с состоянием, в котором `pointA_rows` уже присутствует — данные сохранятся. Но в ситуации с быстрым нажатием `flushAndCommit` → `onComplete` данные могут быть потеряны.
+**Результат:** после ручного обнуления `active_until`:
+- `telegram_access` для walia_777: `active_until=NULL, state_chat='revoked', state_channel='revoked'`
+- `hasValidAccessBatch` → шаг 4 → `active_until.is.null` → запись найдена → `valid=true`, `source='telegram_access'`
+- `kick_present` → user в `skippedHasAccess` → **"Удалено: 0 участников"**
 
-### Проблема 3: `flushAndCommit` вызывает `onRowsChange` напрямую, минуя `pendingStateRef`
+Доказательство из API dry_run:
+```json
+"skipped_has_access": [{"access_source": "telegram_access", "telegram_user_id": 602210376, "telegram_username": "walia_777"}]
+```
+
+## Две проблемы, одно решение
+
+### Проблема 1: `accessValidation.ts` — `telegram_access` не проверяет `state_*`
+
+Текущий запрос (строки 108–120 для single, строки 249–273 для batch):
+```typescript
+// НЕ проверяет state_chat/state_channel — только active_until!
+.from('telegram_access')
+.select('id, active_until')
+.or(`active_until.is.null,active_until.gt.${nowStr}`)
+```
+
+Записи с `state='revoked'` и `active_until=NULL` проходят как "активный доступ".
+
+**Fix:** Добавить фильтр `NOT IN ('revoked')` для state полей. Запись в `telegram_access` считается активной ТОЛЬКО если:
+- `active_until IS NULL OR active_until > now` **И**
+- `state_chat != 'revoked' AND state_channel != 'revoked'`
+
+### Проблема 2: Для ревокнутых записей нужна другая семантика `active_until`
+
+`active_until = NULL` у ревокнутой записи сейчас = "вечный доступ". Это неверно. При revoke нужно ставить `active_until = now()` (прошедшее время) — тогда запрос `.gt.now` не найдёт запись.
+
+НО: менять `telegram-revoke-access` обратно (с NULL на now) — это регрессия предыдущего патча (мы специально ставили NULL). Более правильный fix — в `accessValidation.ts` добавить фильтр по `state`.
+
+## План правок (минимальный diff, 2 файла)
+
+### ПРАВКА 1: `supabase/functions/_shared/accessValidation.ts`
+
+**Функция `hasValidAccess` (строки 108–129) — одиночная проверка:**
+
+Добавить фильтр по state в запрос `telegram_access`:
+```typescript
+// БЫЛО:
+const telegramAccessQuery = supabase
+  .from('telegram_access')
+  .select('id, active_until')
+  .eq('user_id', userId)
+  .or(`active_until.is.null,active_until.gt.${nowStr}`)
+  .limit(1);
+
+// СТАНЕТ:
+const telegramAccessQuery = supabase
+  .from('telegram_access')
+  .select('id, active_until, state_chat, state_channel')
+  .eq('user_id', userId)
+  .or(`active_until.is.null,active_until.gt.${nowStr}`)
+  .neq('state_chat', 'revoked')   // ← добавить
+  .neq('state_channel', 'revoked') // ← добавить
+  .limit(1);
+```
+
+**Функция `hasValidAccessBatch` (строки 249–273) — батч-проверка:**
+
+Аналогично:
+```typescript
+// БЫЛО:
+const telegramQuery = supabase
+  .from('telegram_access')
+  .select('id, user_id, active_until')
+  .in('user_id', stillWithoutAccess2)
+  .or(`active_until.is.null,active_until.gt.${nowStr}`);
+
+// СТАНЕТ:
+const telegramQuery = supabase
+  .from('telegram_access')
+  .select('id, user_id, active_until, state_chat, state_channel')
+  .in('user_id', stillWithoutAccess2)
+  .or(`active_until.is.null,active_until.gt.${nowStr}`)
+  .neq('state_chat', 'revoked')   // ← добавить
+  .neq('state_channel', 'revoked') // ← добавить
+```
+
+После этой правки:
+- walia_777: `state_chat='revoked'` → запись НЕ пройдёт фильтр → `valid=false` → кик выполнится
+
+### ПРАВКА 2: `supabase/functions/telegram-revoke-access/index.ts`
+
+Убедиться что при revoke `active_until` ставится в **будущее прошедшее** время, а НЕ NULL (двойная защита):
 
 ```typescript
-// DiagnosticTableBlock.tsx строка 170-178
-const flushAndCommit = useCallback(() => {
-  if (saveTimeoutRef.current) {
-    clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = null;
-  }
-  if (localRowsRef.current.length > 0) {
-    onRowsChange?.(localRowsRef.current); // ← Запускает updateState({ pointA_rows })
-  }
-}, [onRowsChange]);
+// При revoke telegram_access:
+await supabase.from('telegram_access').update({
+  state_chat: 'revoked',
+  state_channel: 'revoked',
+  active_until: new Date(Date.now() - 1000).toISOString(), // 1 секунда назад — доступ истёк
+  last_sync_at: new Date().toISOString(),
+}).eq('user_id', profileUserId).eq('club_id', club_id);
 ```
 
-Затем сразу вызывается `onComplete?.()`:
-```typescript
-// Строка 597-598
-flushAndCommit();
-onComplete?.();  // ← Запускает updateState({ pointA_completed: true }) НЕМЕДЛЕННО
+Это даёт двойную защиту: и `state='revoked'` фильтр, и `active_until < now` фильтр.
+
+## Ручной фикс текущей ситуации walia_777
+
+Сразу после деплоя нужно обновить `telegram_access` для walia_777 — поставить `active_until` в прошлое:
+
+```sql
+UPDATE telegram_access
+SET active_until = '2026-02-18 00:00:00+00'  -- прошедшее время
+WHERE user_id = '7764bce4-627f-4846-b366-0066ef8c4d6f'
+  AND club_id = 'fa547c41-3a84-4c4f-904a-427332a0506e';
 ```
 
-Два `updateState` вызова подряд. Каждый создаёт новый `newState` на основе `pendingStateRef.current`:
-- Первый вызов: `pendingStateRef.current = { ...old, pointA_rows: rows }` ✓
-- Второй вызов: `pendingStateRef.current = { ...предыдущий pending, pointA_completed: true }` ✓
+После этого `hasValidAccessBatch` вернёт `valid=false` для walia_777, и нажатие "Удалить нарушителей" реально выполнит бан.
 
-Но затем `markBlockCompleted` читает `record` (stale), получает старые `completedSteps`, и:
-- Третий вызов: `pendingStateRef.current = { ...предыдущий pending, completedSteps: [oldSteps + blockId] }`
+## Таблица правок
 
-Это должно работать... Однако после этого вызывается `goToStep(currentStepIndex + 1, true)`, которая вызывает `updateState({ currentStepIndex: N })` — и снова перезаписывает таймер.
+| # | Файл | Строки | Изменение |
+|---|------|--------|-----------|
+| 1 | `_shared/accessValidation.ts` | 108–120 | Добавить `.neq('state_chat','revoked').neq('state_channel','revoked')` в hasValidAccess |
+| 2 | `_shared/accessValidation.ts` | 249–260 | Добавить `.neq('state_chat','revoked').neq('state_channel','revoked')` в hasValidAccessBatch |
+| 3 | `telegram-revoke-access/index.ts` | ~502 | При revoke ставить `active_until = now() - 1s` вместо `NULL` |
+| 4 | SQL (разово) | — | UPDATE telegram_access SET active_until = прошлое WHERE user_id=walia_777 |
 
-В итоге при быстрых последовательных `updateState` вызовах, каждый создаёт правильный `newState` из `pendingStateRef`, но последний таймер всегда побеждает — и именно его `newState` уходит в БД. Если в `goToStep` → `updateState` передаётся только `{ currentStepIndex }`, то этот вызов прочитает `pendingStateRef.current` (который содержит все предыдущие правильные данные) и добавит к нему `currentStepIndex`. Теоретически всё должно сохраниться.
+## Что НЕ меняем
 
-**Реальная проблема**: при перезагрузке страницы данные восстанавливаются корректно (как показывают данные в БД), но визуально кажется что "сбросились". Это происходит из-за того, что `pointA_completed = true` — таблица рендерится в read-only режиме, и клиенты воспринимают это как "данные потерялись".
+- Логику kick самих по себе — она правильная
+- `calculateAccessStatus` — он правильный
+- Фильтры по subscriptions, entitlements, manual_access, grants — они правильные
+- UI компоненты
 
-### Подтверждение из БД
+## DoD
 
-Запрос к `lesson_progress_state` показал, что у пользователей данные **сохраняются**:
-- `pointA_rows` — заполнены корректно
-- `pointA_completed: true` — стоит
-- `completedSteps` — корректны
-
-То есть данные **не теряются**, они просто отображаются в режиме "завершено" (read-only, без кнопок редактирования, с `opacity-80`). Клиенты путают read-only режим с "данные пропали".
-
-### Дополнительная проблема: кнопка "Редактировать данные" не всегда видна
-
-В `KvestLessonView.tsx` строка 362:
-```typescript
-onReset: (state?.pointA_completed) ? () => handleDiagnosticTableReset(blockId) : undefined,
-```
-
-Кнопка "Редактировать данные" показывается только когда `pointA_completed === true`. Но блок уже в `isCompleted && !isCurrent` → `isReadOnly = true` → `onReset: isReadOnly ? undefined : ...` — то есть кнопка СКРЫВАЕТСЯ! Это баг.
-
-В строке 352-365:
-```typescript
-case 'diagnostic_table':
-  return (
-    <div className={isReadOnly ? "opacity-80" : ""}>
-      <LessonBlockRenderer 
-        ...
-        kvestProps={{
-          rows: pointARows,
-          onRowsChange: isReadOnly ? undefined : handleDiagnosticTableUpdate,
-          onComplete: isReadOnly ? undefined : () => handleDiagnosticTableComplete(blockId),
-          isCompleted: state?.pointA_completed || false,
-          onReset: (state?.pointA_completed) ? () => handleDiagnosticTableReset(blockId) : undefined,
-          // ↑ ПРАВИЛЬНО: onReset передаётся даже в isReadOnly режиме
-        }}
-      />
-```
-
-Здесь `onReset` передаётся независимо от `isReadOnly` — это корректно. Но кнопка "Редактировать" ведёт к `handleDiagnosticTableReset`, который делает `updateState({ pointA_completed: false, pointA_rows: [] })` — то есть ОЧИЩАЕТ строки! Пользователи нажимают "Редактировать" и теряют данные.
-
-## Реальные баги
-
-| # | Файл | Строка | Проблема | Критичность |
-|---|------|--------|----------|-------------|
-| 1 | `KvestLessonView.tsx` | 243-252 | `handleDiagnosticTableReset` очищает `pointA_rows: []` — данные теряются при нажатии "Редактировать" | КРИТИЧНО |
-| 2 | `KvestLessonView.tsx` | 354 | `isReadOnly` блока не передаётся в `pointer-events-none` для `diagnostic_table` (в отличие от других блоков) — пользователь думает что может редактировать, но изменения не сохраняются | ВАЖНО |
-| 3 | `useLessonProgressState.tsx` | 130-137 | `markBlockCompleted` читает `record.state_json` а не `pendingStateRef` — stale closure на completedSteps | ВАЖНО |
-
-## План исправлений
-
-### Исправление 1 (КРИТИЧНО): `handleDiagnosticTableReset` не должен очищать строки
-
-**Файл**: `src/components/lesson/KvestLessonView.tsx`, строки 243-252
-
-Сейчас:
-```typescript
-const handleDiagnosticTableReset = useCallback((blockId: string) => {
-  updateState({ 
-    pointA_completed: false,
-    pointA_rows: [],          // ← УДАЛИТЬ ЭТУ СТРОКУ — она стирает данные
-    completedSteps: ...
-    currentStepIndex: ...
-  });
-```
-
-После исправления:
-```typescript
-const handleDiagnosticTableReset = useCallback((blockId: string) => {
-  updateState({ 
-    pointA_completed: false,
-    // pointA_rows: [] — НЕ ОЧИЩАЕМ, данные остаются для редактирования
-    completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
-    currentStepIndex: currentStepIndex, // Остаёмся на том же шаге
-  });
-  toast.success("Вы можете отредактировать данные");
-}, [state?.completedSteps, currentStepIndex, updateState]);
-```
-
-### Исправление 2 (ВАЖНО): `markBlockCompleted` читает `pendingStateRef` для `completedSteps`
-
-**Файл**: `src/hooks/useLessonProgressState.tsx`, строки 130-137
-
-Сейчас `completedSteps` берётся из `record.state_json` (stale). Нужно брать из `pendingStateRef.current` если он есть:
-
-```typescript
-const markBlockCompleted = useCallback((blockId: string) => {
-  const currentState = pendingStateRef.current ?? record?.state_json ?? {};
-  const currentSteps = currentState.completedSteps || [];
-  if (!currentSteps.includes(blockId)) {
-    updateState({
-      completedSteps: [...currentSteps, blockId]
-    });
-  }
-}, [record, updateState]);
-```
-
-### Исправление 3 (ВАЖНО): `diagnostic_table` в read-only режиме должен блокировать взаимодействие
-
-**Файл**: `src/components/lesson/KvestLessonView.tsx`, строка 354
-
-Сейчас:
-```typescript
-<div className={isReadOnly ? "opacity-80" : ""}>
-```
-
-Должно быть (но с исключением для кнопки "Редактировать"):
-```typescript
-<div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
-```
-
-Но при этом нужно чтобы кнопка "Редактировать данные" была кликабельна. Решение — убрать `pointer-events-none` с обёртки и передать `isCompleted` корректно через `kvestProps`, чтобы `DiagnosticTableBlock` сам блокировал inputs через `disabled={isCompleted}` (что уже реализовано).
-
-### Исправление 4 (ВАЖНО): `goToStep` в `handleDiagnosticTableReset` должна оставаться на текущем шаге, не откатываться
-
-Сейчас `handleDiagnosticTableReset` устанавливает `currentStepIndex: Math.max(0, currentStepIndex - 1)` — пользователя отбрасывает на шаг назад. Это неправильно: он нажал "Редактировать" и должен остаться на той же таблице (шаг N), а не откатиться на N-1.
-
-## Файлы для изменения
-
-| Файл | Изменений | Строки |
-|------|-----------|--------|
-| `src/components/lesson/KvestLessonView.tsx` | 2 правки | 243-252, 354 |
-| `src/hooks/useLessonProgressState.tsx` | 1 правка | 130-137 |
-
-Никаких миграций БД не требуется — данные уже корректно хранятся.
-
-## Что НЕ меняется
-
-- `DiagnosticTableBlock.tsx` — логика компонента корректна
-- `saveState` / `upsert` логика в `useLessonProgressState` — работает правильно
-- RLS политики — корректны
-- Структура таблицы `lesson_progress_state` — без изменений
+- **A)** `dry_run` для walia_777 → `candidates_count: 1`, НЕ в `skipped_has_access`
+- **B)** Нажать "Удалить нарушителей" → toast "Удалено: 1 участников"
+- **C)** SQL: `SELECT in_chat, in_channel FROM telegram_club_members WHERE id='974e1b66...'` → обе `false`
+- **D)** SQL: `SELECT active_until FROM telegram_access WHERE user_id='7764bce4...'` → прошедшая дата (не NULL)
+- **E)** Регрессия: пользователь с `telegram_access` без `state_revoked` и без подписки — всё ещё виден как `valid=true` (если `active_until IS NULL` или будущая дата) — не ломаем логику для нормальных пользователей
