@@ -403,9 +403,11 @@ Deno.serve(async (req) => {
       }
 
       // Update telegram_access if present
+      // PATCH: active_until=NULL is CRITICAL — otherwise sync will read it and return 'ok' again
       await supabase.from('telegram_access').update({
         state_chat: 'revoked',
         state_channel: 'revoked',
+        active_until: null,
         last_sync_at: new Date().toISOString(),
       }).eq('user_id', profileUserId).eq('club_id', club_id);
 
@@ -498,10 +500,12 @@ Deno.serve(async (req) => {
     const channelRevoked = channelKickResult?.success ?? false;
 
     // Update telegram_access
+    // PATCH: active_until=NULL is CRITICAL — otherwise sync will read it and return 'ok' again
     if (profileUserId) {
       await supabase.from('telegram_access').update({
         state_chat: 'revoked',
         state_channel: 'revoked',
+        active_until: null,
         last_sync_at: new Date().toISOString(),
       }).eq('user_id', profileUserId).eq('club_id', club_id);
 
