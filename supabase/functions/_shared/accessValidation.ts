@@ -106,11 +106,14 @@ export async function hasValidAccess(
   }
 
   // 4. Check telegram_access (P0.9.5)
+  // PATCH: Also filter out revoked state — active_until=NULL with state='revoked' must NOT grant access
   const telegramAccessQuery = supabase
     .from('telegram_access')
-    .select('id, active_until')
+    .select('id, active_until, state_chat, state_channel')
     .eq('user_id', userId)
     .or(`active_until.is.null,active_until.gt.${nowStr}`)
+    .neq('state_chat', 'revoked')
+    .neq('state_channel', 'revoked')
     .limit(1);
   
   if (clubId) {
@@ -247,13 +250,16 @@ export async function hasValidAccessBatch(
   }
 
   // 4. Batch check telegram_access (P0.9.5)
+  // PATCH: Also filter out revoked state — active_until=NULL with state='revoked' must NOT grant access
   const stillWithoutAccess2 = userIds.filter((uid) => !results.get(uid)?.valid);
   if (stillWithoutAccess2.length > 0) {
     const telegramQuery = supabase
       .from('telegram_access')
-      .select('id, user_id, active_until')
+      .select('id, user_id, active_until, state_chat, state_channel')
       .in('user_id', stillWithoutAccess2)
-      .or(`active_until.is.null,active_until.gt.${nowStr}`);
+      .or(`active_until.is.null,active_until.gt.${nowStr}`)
+      .neq('state_chat', 'revoked')
+      .neq('state_channel', 'revoked');
     
     if (clubId) {
       telegramQuery.eq('club_id', clubId);
