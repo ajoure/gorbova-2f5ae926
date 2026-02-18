@@ -78,6 +78,7 @@ import {
   User,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
+import { extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./blocks/uploadToTrainingAssets";
 import { HeadingBlock } from "./blocks/HeadingBlock";
 import { TextBlock } from "./blocks/TextBlock";
 import { VideoBlock } from "./blocks/VideoBlock";
@@ -418,6 +419,31 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
 
   const handleDeleteBlock = async () => {
     if (deleteBlockId) {
+      // Собираем storagePaths из удаляемого блока для авто-удаления из Storage
+      const block = blocks.find((b) => b.id === deleteBlockId);
+      if (block) {
+        const paths: string[] = [];
+        const c = block.content as Record<string, unknown>;
+
+        if (block.block_type === "audio" || block.block_type === "file") {
+          const storagePath = c.storagePath as string | undefined;
+          const url = c.url as string | undefined;
+          const path = storagePath || (url ? extractStoragePathFromPublicUrl(url) : null);
+          if (path) paths.push(path);
+        } else if (block.block_type === "gallery") {
+          const items = (c.items as Array<{ url?: string; storagePath?: string }>) || [];
+          for (const item of items) {
+            const path = item.storagePath || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
+            if (path) paths.push(path);
+          }
+        }
+
+        // fire-and-forget удаление файлов
+        if (paths.length > 0) {
+          deleteTrainingAssets(paths, { type: "lesson_block", id: deleteBlockId }, "block_deleted");
+        }
+      }
+
       await deleteBlock(deleteBlockId);
       setDeleteBlockId(null);
     }

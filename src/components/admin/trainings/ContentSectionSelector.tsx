@@ -309,7 +309,7 @@ export function ContentSectionSelector({
         </PopoverTrigger>
 
         <PopoverContent
-          className="w-[420px] p-0 z-[100] max-h-[calc(100vh-120px)] overflow-hidden"
+          className="w-[420px] p-0 z-[100]"
           align="start"
           side="bottom"
           sideOffset={8}
@@ -318,7 +318,11 @@ export function ContentSectionSelector({
         >
           <div className="flex border-b">
             {/* Left column: Parents */}
-            <div className="w-1/2 h-[300px] border-r overflow-y-auto">
+            <div
+              className="w-1/2 h-[300px] border-r overflow-y-auto overscroll-contain min-h-0"
+              onWheel={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+            >
               <div className="p-1">
                 {parents.map((parent) => {
                   const Icon = getIcon(parent.icon);
@@ -357,7 +361,11 @@ export function ContentSectionSelector({
             </div>
 
             {/* Right column: Children */}
-            <div className="w-1/2 h-[300px] overflow-y-auto">
+            <div
+              className="w-1/2 h-[300px] overflow-y-auto overscroll-contain min-h-0"
+              onWheel={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+            >
               <div className="p-1">
                 {selectedParent ? (
                   <>

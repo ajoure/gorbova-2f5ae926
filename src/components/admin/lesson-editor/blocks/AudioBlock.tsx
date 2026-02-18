@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AudioContent } from "@/hooks/useLessonBlocks";
 import { Music, ExternalLink, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { uploadToTrainingAssets, convertGoogleDriveUrl } from "./uploadToTrainingAssets";
+import { uploadToTrainingAssets, convertGoogleDriveUrl, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
 interface AudioBlockProps {
   content: AudioContent;
@@ -45,18 +45,26 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
-      // Валидация: MIME "audio/" ИЛИ расширение из allowlist
-      const publicUrl = await uploadToTrainingAssets(
+      // Сохраняем предыдущий storagePath для удаления после замены
+      const prevPath = (content as any).storagePath as string | undefined
+        || (localUrl ? extractStoragePathFromPublicUrl(localUrl) : null);
+
+      const result = await uploadToTrainingAssets(
         file,
         "lesson-audio",
         100,
         "audio/",
         ALLOWED_AUDIO_EXTENSIONS
       );
-      if (publicUrl) {
+      if (result) {
+        const { publicUrl, storagePath } = result;
         setLocalUrl(publicUrl);
-        onChange({ ...content, url: publicUrl });
+        onChange({ ...content, url: publicUrl, storagePath } as AudioContent & { storagePath?: string });
         toast.success("Аудио загружено");
+        // Удаляем старый файл из Storage (fire-and-forget)
+        if (prevPath && prevPath !== storagePath) {
+          deleteTrainingAssets([prevPath], undefined, "audio_replaced");
+        }
       }
     } finally {
       setUploading(false);
@@ -123,7 +131,12 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
             </div>
           </div>
         ) : (
-          <audio controls className="w-full">
+          <audio
+            controls
+            controlsList="nodownload"
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-full"
+          >
             <source src={content.url} />
             Ваш браузер не поддерживает аудио элемент.
           </audio>
@@ -233,7 +246,12 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
       {content.url && !isGoogleDrive && (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Предпросмотр</Label>
-          <audio controls className="w-full">
+          <audio
+            controls
+            controlsList="nodownload"
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-full"
+          >
             <source src={content.url} />
           </audio>
         </div>

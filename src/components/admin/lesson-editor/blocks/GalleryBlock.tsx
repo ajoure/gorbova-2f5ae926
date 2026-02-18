@@ -25,7 +25,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ImageIcon, Plus, Trash2, GripVertical, X, ChevronLeft, ChevronRight, Upload, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { uploadToTrainingAssets } from "./uploadToTrainingAssets";
+import { uploadToTrainingAssets, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
 
 export interface GalleryItem {
@@ -74,17 +74,25 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
-      // Валидация: MIME "image/" ИЛИ расширение из allowlist
-      const publicUrl = await uploadToTrainingAssets(
+      const prevPath = (item as any).storagePath as string | undefined
+        || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
+
+      const result = await uploadToTrainingAssets(
         file,
         "lesson-images",
         10,
         "image/",
         [".jpg", ".jpeg", ".png", ".webp", ".gif"]
       );
-      if (publicUrl) {
+      if (result) {
+        const { publicUrl, storagePath } = result;
         onUpdate(item.id, "url", publicUrl);
+        onUpdate(item.id, "storagePath" as any, storagePath);
         toast.success("Изображение загружено");
+        // Удаляем старый файл из Storage (fire-and-forget)
+        if (prevPath && prevPath !== storagePath) {
+          deleteTrainingAssets([prevPath], undefined, "gallery_image_replaced");
+        }
       }
     } finally {
       setUploading(false);
@@ -223,6 +231,15 @@ export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlo
   };
 
   const deleteItem = (id: string) => {
+    // Удаляем файл из Storage при удалении элемента галереи
+    const item = items.find((i) => i.id === id);
+    if (item) {
+      const path = (item as any).storagePath as string | undefined
+        || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
+      if (path) {
+        deleteTrainingAssets([path], undefined, "gallery_item_deleted");
+      }
+    }
     onChange({ ...content, items: items.filter((item) => item.id !== id) });
   };
 

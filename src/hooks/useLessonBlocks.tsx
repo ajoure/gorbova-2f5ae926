@@ -41,6 +41,7 @@ export interface VideoContent {
 export interface AudioContent {
   url: string;
   title?: string;
+  storagePath?: string; // путь в Storage для авто-удаления
 }
 
 export interface ImageContent {
@@ -53,6 +54,7 @@ export interface FileContent {
   url: string;
   name: string;
   size?: number;
+  storagePath?: string; // путь в Storage для авто-удаления
 }
 
 export interface ButtonContent {
@@ -145,6 +147,7 @@ export interface GalleryItem {
   id: string;
   url: string;
   caption?: string;
+  storagePath?: string; // путь в Storage для авто-удаления
 }
 
 export interface GalleryContentData {
