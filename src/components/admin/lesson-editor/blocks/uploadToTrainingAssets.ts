@@ -87,9 +87,24 @@ export async function uploadToTrainingAssets(
     .replace(/_{2,}/g, "_")
     .substring(0, 64);
 
-  // Формируем путь: folderPrefix/[ownerId/]timestamp-uuid-name
-  const filePath = ownerId
-    ? `${folderPrefix}/${ownerId}/${Date.now()}-${uniqueId}-${safeName}`
+  // Нормализуем ownerId: trim(), пробельная строка → как отсутствие
+  const owner = (typeof ownerId === "string" ? ownerId : "").trim();
+
+  // STOP-лог: ожидали lessonId для lesson-* папки, но не получили
+  if (
+    (folderPrefix === "lesson-audio" ||
+      folderPrefix === "lesson-files" ||
+      folderPrefix === "lesson-images") &&
+    !owner
+  ) {
+    console.warn(
+      `[uploadToTrainingAssets] ownerId missing or empty for "${folderPrefix}" (expected lessonId). File will be stored without ownership prefix.`
+    );
+  }
+
+  // Формируем путь: folderPrefix/[owner/]timestamp-uuid-name
+  const filePath = owner
+    ? `${folderPrefix}/${owner}/${Date.now()}-${uniqueId}-${safeName}`
     : `${folderPrefix}/${Date.now()}-${uniqueId}-${safeName}`;
 
   // Определяем Content-Type: fallback по расширению если file.type пустой
