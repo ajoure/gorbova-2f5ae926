@@ -13,12 +13,14 @@ interface AudioBlockProps {
   isEditing?: boolean;
 }
 
+const ALLOWED_AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".ogg", ".aac"];
+
 export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Проверяем, является ли URL Google Drive ссылкой
   const { isGoogleDrive } = convertGoogleDriveUrl(localUrl);
@@ -41,17 +43,16 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
   };
 
   const handleFileUpload = async (file: File) => {
-    // Валидация типа
-    const allowedTypes = ["audio/mpeg", "audio/wav", "audio/mp4", "audio/ogg", "audio/aac", "audio/x-m4a", "audio/mp3"];
-    const isAudio = file.type.startsWith("audio/") || allowedTypes.includes(file.type);
-    if (!isAudio) {
-      toast.error("Выберите аудиофайл (.mp3, .wav, .m4a, .ogg, .aac)");
-      return;
-    }
-
     try {
       setUploading(true);
-      const publicUrl = await uploadToTrainingAssets(file, "lesson-audio", 50);
+      // Валидация: MIME "audio/" ИЛИ расширение из allowlist
+      const publicUrl = await uploadToTrainingAssets(
+        file,
+        "lesson-audio",
+        50,
+        "audio/",
+        ALLOWED_AUDIO_EXTENSIONS
+      );
       if (publicUrl) {
         setLocalUrl(publicUrl);
         onChange({ ...content, url: publicUrl });
@@ -103,16 +104,30 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
         {content.title && (
           <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
         )}
-        {isGD && (
-          <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+        {isGD ? (
+          // Google Drive не отдаёт прямой аудио-поток — показываем предупреждение вместо плеера
+          <div className="flex items-start gap-2 p-3 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-700">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>Google Drive может не отдавать прямой аудиопоток. Если аудио не воспроизводится — обратитесь к организатору.</span>
+            <div className="space-y-1">
+              <p className="font-medium">Google Drive не поддерживает прямое воспроизведение.</p>
+              <p>Обратитесь к организатору — аудио необходимо загрузить напрямую в систему.</p>
+              <a
+                href={content.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 underline underline-offset-2 text-amber-800 hover:text-amber-900"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Открыть ссылку
+              </a>
+            </div>
           </div>
+        ) : (
+          <audio controls className="w-full">
+            <source src={content.url} />
+            Ваш браузер не поддерживает аудио элемент.
+          </audio>
         )}
-        <audio controls className="w-full">
-          <source src={content.url} />
-          Ваш браузер не поддерживает аудио элемент.
-        </audio>
       </div>
     );
   }
@@ -190,12 +205,13 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
           )}
         </div>
 
-        {/* Google Drive предупреждение */}
+        {/* Google Drive предупреждение в режиме редактора */}
         {isGoogleDrive && (
-          <div className="flex items-start gap-2 p-2 rounded-md bg-warning/10 border border-warning/20 text-xs text-warning-foreground">
+          <div className="flex items-start gap-2 p-2 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-700">
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
             <span>
-              Google Drive может не отдавать прямой аудиопоток. URL преобразован в прямую ссылку для скачивания, но воспроизведение не гарантировано. <strong>Рекомендуется загрузить файл через кнопку выше.</strong>
+              Google Drive не поддерживает прямое воспроизведение аудио. Ссылка преобразована для скачивания, но воспроизведение не гарантировано.{" "}
+              <strong>Рекомендуется загрузить файл через кнопку выше.</strong>
             </span>
           </div>
         )}
@@ -213,13 +229,24 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
         />
       </div>
 
-      {/* Превью плеер */}
-      {content.url && (
+      {/* Превью плеер — только если URL не Google Drive */}
+      {content.url && !isGoogleDrive && (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Предпросмотр</Label>
           <audio controls className="w-full">
             <source src={content.url} />
           </audio>
+        </div>
+      )}
+
+      {/* Если Google Drive — вместо плеера показываем предупреждение */}
+      {content.url && isGoogleDrive && (
+        <div className="flex items-start gap-2 p-3 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-700">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">Воспроизведение недоступно</p>
+            <p className="text-xs">Google Drive не отдаёт прямой аудио-поток. Загрузите файл через кнопку «Загрузить аудио» выше.</p>
+          </div>
         </div>
       )}
     </div>
