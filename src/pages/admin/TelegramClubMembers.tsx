@@ -163,6 +163,8 @@ export default function TelegramClubMembers() {
   const [showMassRevokeDialog, setShowMassRevokeDialog] = useState(false);
   const [showMassMarkRemovedDialog, setShowMassMarkRemovedDialog] = useState(false);
   const [showMassKickPresentDialog, setShowMassKickPresentDialog] = useState(false);
+  const [kickPresentDryRunResult, setKickPresentDryRunResult] = useState<{ candidates_count: number; skipped_has_access_count: number } | null>(null);
+  const [kickPresentDryRunLoading, setKickPresentDryRunLoading] = useState(false);
   const [massGrantDays, setMassGrantDays] = useState(30);
   const [massGrantComment, setMassGrantComment] = useState('');
   const [massRevokeReason, setMassRevokeReason] = useState('');
@@ -516,6 +518,28 @@ export default function TelegramClubMembers() {
     refetch();
   };
 
+  // Dry-run preview before mass kick_present
+  const handleMassKickPresentPreview = async () => {
+    if (!clubId || selectedIds.size === 0) return;
+    setKickPresentDryRunLoading(true);
+    try {
+      const memberIds = Array.from(selectedIds);
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { action: 'kick_present', club_id: clubId, member_ids: memberIds, dry_run: true },
+      });
+      if (error) throw error;
+      setKickPresentDryRunResult({
+        candidates_count: data.candidates_count ?? 0,
+        skipped_has_access_count: data.skipped_has_access_count ?? 0,
+      });
+    } catch (e) {
+      console.error('Dry run error:', e);
+      setKickPresentDryRunResult(null);
+    }
+    setKickPresentDryRunLoading(false);
+    setShowMassKickPresentDialog(true);
+  };
+
   // Mass kick only members actually present
   const handleMassKickPresent = async () => {
     if (!clubId || selectedIds.size === 0) return;
@@ -532,7 +556,8 @@ export default function TelegramClubMembers() {
       });
 
       if (error) throw error;
-      toast.success(`Кикнуто: ${data.kicked_count} из ${memberIds.length} выбранных`);
+      const skipped = data.skipped_has_access_count ?? 0;
+      toast.success(`Удалено: ${data.kicked_count}${skipped > 0 ? `, пропущено (есть доступ): ${skipped}` : ''}`);
     } catch (e) {
       console.error('Kick present error:', e);
       toast.error('Ошибка при удалении из чата/канала');
@@ -540,6 +565,7 @@ export default function TelegramClubMembers() {
 
     setMassActionLoading(false);
     setShowMassKickPresentDialog(false);
+    setKickPresentDryRunResult(null);
     setSelectedIds(new Set());
     refetch();
   };
@@ -1122,9 +1148,10 @@ export default function TelegramClubMembers() {
                   <Button 
                     size="sm" 
                     variant="destructive"
-                    onClick={() => setShowMassKickPresentDialog(true)}
+                    disabled={kickPresentDryRunLoading}
+                    onClick={handleMassKickPresentPreview}
                   >
-                    <Ban className="h-4 w-4 mr-1" />
+                    {kickPresentDryRunLoading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Ban className="h-4 w-4 mr-1" />}
                     Кикнуть из Telegram ({selectedPresentMembers.length})
                   </Button>
                 )}
@@ -1480,25 +1507,55 @@ export default function TelegramClubMembers() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Mass Kick Present Dialog */}
-        <AlertDialog open={showMassKickPresentDialog} onOpenChange={setShowMassKickPresentDialog}>
+        {/* Mass Kick Present Dialog — с dry_run preview */}
+        <AlertDialog open={showMassKickPresentDialog} onOpenChange={(open) => {
+          setShowMassKickPresentDialog(open);
+          if (!open) setKickPresentDryRunResult(null);
+        }}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle className="text-destructive">Кикнуть из Telegram?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {selectedPresentMembers.length} участников будут удалены из чата и/или канала Telegram.
-                Это действие кикнет только тех, кто реально присутствует.
+              <AlertDialogTitle className="text-destructive">Удалить из Telegram?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  {kickPresentDryRunResult ? (
+                    <div className="space-y-2">
+                      <p>Проверка завершена:</p>
+                      <div className="rounded-md border border-border p-3 space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Будет удалено (нет доступа):</span>
+                          <span className="font-semibold text-destructive">{kickPresentDryRunResult.candidates_count}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Пропущено (есть доступ):</span>
+                          <span className="font-semibold text-emerald-600">{kickPresentDryRunResult.skipped_has_access_count}</span>
+                        </div>
+                      </div>
+                      {kickPresentDryRunResult.skipped_has_access_count > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Пользователи с активным доступом защищены от удаления.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p>
+                      {selectedPresentMembers.length} участников будут удалены из чата и/или канала.
+                      Пользователи с активным доступом будут пропущены.
+                    </p>
+                  )}
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Отмена</AlertDialogCancel>
               <AlertDialogAction 
                 onClick={handleMassKickPresent} 
-                disabled={massActionLoading}
+                disabled={massActionLoading || (kickPresentDryRunResult?.candidates_count === 0)}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {massActionLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                Кикнуть ({selectedPresentMembers.length})
+                {kickPresentDryRunResult
+                  ? `Удалить (${kickPresentDryRunResult.candidates_count})`
+                  : `Кикнуть (${selectedPresentMembers.length})`}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
