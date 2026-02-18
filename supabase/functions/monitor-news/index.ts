@@ -259,6 +259,100 @@ Deno.serve(async (req) => {
   }
 });
 
+// ============================================================
+// BY-egress config type
+// ============================================================
+interface ByEgressConfig {
+  base_url: string;
+  token: string;
+  allowlist: string[];
+  enabled: boolean;
+}
+
+// Load BY-egress config from integration_instances (service_role, one read per run)
+async function loadByEgressConfig(supabase: SupabaseClient): Promise<ByEgressConfig | null> {
+  try {
+    const { data } = await supabase
+      .from("integration_instances")
+      .select("config")
+      .eq("provider", "hosterby")
+      .eq("category", "other")
+      .maybeSingle();
+
+    if (!data?.config) return null;
+    const c = data.config as Record<string, unknown>;
+    if (!c.egress_enabled || !c.egress_base_url || !c.egress_token) return null;
+
+    const rawAllowlist = (c.egress_allowlist as string) || "";
+    return {
+      base_url: c.egress_base_url as string,
+      token: c.egress_token as string,
+      allowlist: rawAllowlist.split(",").map((d: string) => d.trim()).filter(Boolean),
+      enabled: true,
+    };
+  } catch (e) {
+    console.error("[monitor-news] Failed to load BY-egress config:", e);
+    return null;
+  }
+}
+
+// SSRF guard — inline (no shared module needed)
+function isByEgressUrlSafe(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    if (h === "localhost" || h === "::1") return false;
+    if (/^127\./.test(h)) return false;
+    if (/^10\./.test(h)) return false;
+    if (/^192\.168\./.test(h)) return false;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+    if (/^169\.254\./.test(h)) return false;
+    return true;
+  } catch { return false; }
+}
+
+function isByEgressDomainAllowed(url: string, allowlist: string[]): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return allowlist.some(
+      (d) => hostname === d.toLowerCase() || hostname.endsWith("." + d.toLowerCase())
+    );
+  } catch { return false; }
+}
+
+// BY-egress fetch: GET /fetch + X-Target-URL header + Authorization: Bearer
+async function fetchViaByEgress(
+  targetUrl: string,
+  egressConfig: ByEgressConfig
+): Promise<{ content: string | null; httpStatus?: number; error?: string }> {
+  if (!isByEgressUrlSafe(egressConfig.base_url)) {
+    return { content: null, error: "SSRF_BLOCKED" };
+  }
+  if (!isByEgressDomainAllowed(targetUrl, egressConfig.allowlist)) {
+    return { content: null, error: "NOT_IN_ALLOWLIST" };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch(`${egressConfig.base_url}/fetch`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${egressConfig.token}`,
+        "X-Target-URL": targetUrl,
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return { content: null, httpStatus: resp.status };
+    const text = await resp.text();
+    return { content: text, httpStatus: resp.status };
+  } catch (e) {
+    clearTimeout(timer);
+    const isAbort = e instanceof Error && e.name === "AbortError";
+    return { content: null, error: isAbort ? "TIMEOUT" : String(e) };
+  }
+}
+
 // Main scraping function
 async function runScraping(
   supabase: SupabaseClient,
@@ -277,6 +371,12 @@ async function runScraping(
     news_duplicates: 0,
     errors: [],
   };
+
+  // BY-egress: load config ONCE per run (service_role, cached)
+  const byEgressConfig = await loadByEgressConfig(supabase);
+  if (byEgressConfig) {
+    console.log(`[monitor-news] BY-egress active. Allowlist: ${byEgressConfig.allowlist.join(",")}`);
+  }
 
   try {
     // Fetch audience interests from last 48 hours
@@ -340,10 +440,11 @@ async function runScraping(
       try {
         // P0.9.4: New fallback chain scraping
         const { items: scrapedItems, errorCode, errorDetails, stage } = await scrapeSourceWithFallback(
-          source, 
-          firecrawlKey, 
+          source,
+          firecrawlKey,
           ilexSession,
-          supabase
+          supabase,
+          byEgressConfig
         );
         
         console.log(`[monitor-news] ${source.name}: scraped ${scrapedItems.length} items via ${stage || 'unknown'}`);
@@ -691,7 +792,8 @@ async function scrapeSourceWithFallback(
   source: NewsSource,
   firecrawlKey: string | undefined,
   ilexSession: string | null,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  byEgressConfig: ByEgressConfig | null = null
 ): Promise<{ items: ScrapedItem[]; errorCode?: string; errorDetails?: Record<string, unknown>; stage?: string }> {
   const config: ScrapeConfig = { ...DEFAULT_SCRAPE_CONFIG, ...(source.scrape_config || {}) };
   const startTime = Date.now();
