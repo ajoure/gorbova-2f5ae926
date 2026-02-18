@@ -49,6 +49,9 @@ export function HosterByConnectionDialog({
     vms_count?: number;
     cloud_access_key_last4?: string;
     cloud_secret_key_last4?: string;
+    auth_mode_used?: string;
+    endpoint_used?: string;
+    code?: string;
     error?: string;
   } | null>(null);
 
@@ -90,13 +93,23 @@ export function HosterByConnectionDialog({
       if (data?.success) {
         setValidationResult({
           success: true,
-          vms_count: data.vms_count ?? 0,
-          cloud_access_key_last4: data.cloud_access_key_last4,
+          vms_count: data.orders_count ?? data.vms_count ?? 0,
+          cloud_access_key_last4: data.cloud_access_key_last4 ?? data.access_key_last4,
           cloud_secret_key_last4: data.cloud_secret_key_last4,
+          auth_mode_used: data.auth_mode_used,
+          endpoint_used: data.endpoint_used,
         });
-        toast.success(`Ключи валидны! VM: ${data.vms_count ?? 0}`);
+        toast.success(`Ключи валидны! Облаков: ${data.orders_count ?? 0} (режим: ${data.auth_mode_used ?? "hmac"})`);
       } else {
-        setValidationResult({ success: false, error: data?.error || "Ошибка проверки" });
+        // Нормализуем код → человекочитаемое сообщение
+        const code = data?.code ?? "";
+        let userMsg = data?.error || "Ошибка проверки";
+        if (code === "HOSTERBY_ROUTE_MISSING") userMsg = "Неверный endpoint/маршрут hoster.by API";
+        else if (code === "UNAUTHORIZED") userMsg = "Ключи не подходят или нет доступа";
+        else if (code === "HOSTERBY_520") userMsg = "Ошибка hoster.by API (520)";
+        else if (code === "EDGE_CRASH") userMsg = "Краш edge функции (HTTP 520) — проверьте логи";
+        else if (code === "TIMEOUT") userMsg = "Превышено время ожидания hoster.by API";
+        setValidationResult({ success: false, error: userMsg, code });
       }
     } catch (err) {
       setValidationResult({
@@ -253,17 +266,28 @@ export function HosterByConnectionDialog({
                     <div>
                       <span className="font-medium">Ключи валидны</span>
                       <div className="mt-1 flex flex-wrap gap-2">
-                        <Badge variant="secondary">VM: {validationResult.vms_count ?? 0}</Badge>
+                        <Badge variant="secondary">Облаков: {validationResult.vms_count ?? 0}</Badge>
                         <Badge variant="secondary">
                           Access: ••••{validationResult.cloud_access_key_last4}
                         </Badge>
+                        {validationResult.auth_mode_used && (
+                          <Badge variant="outline">auth: {validationResult.auth_mode_used}</Badge>
+                        )}
+                        {validationResult.endpoint_used && (
+                          <Badge variant="outline">{validationResult.endpoint_used}</Badge>
+                        )}
                       </div>
                     </div>
                   </>
                 ) : (
                   <>
                     <X className="h-4 w-4 mt-0.5 shrink-0" />
-                    <span>{validationResult.error}</span>
+                    <div>
+                      {validationResult.code && (
+                        <Badge variant="destructive" className="mb-1 text-xs">{validationResult.code}</Badge>
+                      )}
+                      <span className="block">{validationResult.error}</span>
+                    </div>
                   </>
                 )}
               </div>

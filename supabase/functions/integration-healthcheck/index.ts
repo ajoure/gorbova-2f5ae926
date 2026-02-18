@@ -384,17 +384,24 @@ serve(async (req) => {
           if (result?.success) {
             success = true;
             responseData = {
-              vms_count: result.data?.vms_count ?? 0,
+              orders_count: result.data?.orders_count ?? result.data?.vms_count ?? 0,
               keys_configured: result.data?.keys_configured ?? false,
               cloud_access_key_last4: result.data?.cloud_access_key_last4 ?? null,
+              auth_mode_used: result.data?.auth_mode_used ?? result.auth_mode_used ?? null,
+              endpoint_used: result.endpoint_used ?? result.data?.endpoint_used ?? "/cloud/orders",
             };
           } else {
-            // Передаём нормализованный код ошибки от hosterby-api
+            // Нормализуем код ошибки от hosterby-api
             const code = result?.code ?? "";
             if (code === "KEYS_MISSING") {
               errorMessage = "API ключи hoster.by не настроены (KEYS_MISSING)";
-            } else if (code === "SIGNING_MISMATCH") {
-              errorMessage = "Ошибка подписи hoster.by (SIGNING_MISMATCH). Проверьте ключи.";
+            } else if (code === "UNAUTHORIZED") {
+              errorMessage = "Ключи не подходят или нет доступа (UNAUTHORIZED)";
+            } else if (code === "HOSTERBY_ROUTE_MISSING") {
+              // hoster.by вернул ошибку маршрута — это не edge crash, это API error
+              errorMessage = "hoster.by API: неверный endpoint/маршрут (HOSTERBY_ROUTE_MISSING)";
+            } else if (code === "HOSTERBY_520") {
+              errorMessage = "hoster.by API: HTTP 520 (HOSTERBY_520)";
             } else if (code === "TIMEOUT") {
               errorMessage = "Timeout при подключении к hoster.by API";
             } else {
