@@ -127,8 +127,10 @@ export function useLessonProgressState(lessonId?: string) {
   }, [record, user, lessonId, saveState]);
 
   // Mark a block as completed
+  // Исправление 2: читаем completedSteps из pendingStateRef.current (не из stale record)
   const markBlockCompleted = useCallback((blockId: string) => {
-    const currentSteps = record?.state_json?.completedSteps || [];
+    const currentState = pendingStateRef.current ?? record?.state_json ?? {};
+    const currentSteps = currentState.completedSteps || [];
     if (!currentSteps.includes(blockId)) {
       updateState({
         completedSteps: [...currentSteps, blockId]

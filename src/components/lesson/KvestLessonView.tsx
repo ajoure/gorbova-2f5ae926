@@ -242,13 +242,15 @@ export function KvestLessonView({
   // Handler for diagnostic table reset
   const handleDiagnosticTableReset = useCallback((blockId: string) => {
     console.log('[KvestLessonView] DiagnosticTable reset:', blockId.slice(0, 8));
+    // Исправление 1 (КРИТИЧНО): НЕ очищаем pointA_rows — данные остаются для редактирования
+    // Исправление 4: остаёмся на текущем шаге, не откатываемся назад
     updateState({ 
       pointA_completed: false,
-      pointA_rows: [],
+      // pointA_rows: [] — УДАЛЕНО, чтобы данные не терялись при нажатии "Редактировать"
       completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
-      currentStepIndex: Math.max(0, currentStepIndex - 1)
+      currentStepIndex: currentStepIndex, // остаёмся на том же шаге
     });
-    toast.success("Данные сброшены — можете заполнить заново");
+    toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
 
   // Handler for sequential form (memoized)
@@ -351,6 +353,9 @@ export function KvestLessonView({
       
       case 'diagnostic_table':
         return (
+          // Исправление 3: opacity-80 остаётся для визуального индикатора read-only,
+          // НО pointer-events-none убран с обёртки — кнопка "Редактировать" должна быть кликабельной.
+          // DiagnosticTableBlock сам блокирует inputs через disabled={isCompleted}.
           <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
