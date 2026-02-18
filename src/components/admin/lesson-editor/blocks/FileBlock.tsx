@@ -51,6 +51,10 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
+      // Нормализуем ownerId один раз — чтобы путь в Storage и entity.id совпадали
+      const ownerId = (lessonId || "").trim();
+      const entity = ownerId ? { type: "lesson", id: ownerId } : undefined;
+
       // Сохраняем предыдущий storagePath для удаления после замены
       const prevPath = (content as any).storagePath as string | undefined
         || (localUrl ? extractStoragePathFromPublicUrl(localUrl) : null);
@@ -61,7 +65,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
         50,
         undefined,
         ALLOWED_FILE_EXTENSIONS,
-        lessonId // ownerId → lesson-files/<lessonId>/...
+        ownerId // нормализованный ownerId → lesson-files/<lessonId>/...
       );
       if (result) {
         const { publicUrl, storagePath } = result;
@@ -78,7 +82,6 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
         toast.success("Файл загружен");
         // Удаляем старый файл из Storage (fire-and-forget)
         if (prevPath && prevPath !== storagePath) {
-          const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
           deleteTrainingAssets([prevPath], entity, "file_replaced");
         }
       }
