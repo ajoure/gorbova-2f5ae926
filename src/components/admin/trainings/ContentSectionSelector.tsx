@@ -308,7 +308,7 @@ export function ContentSectionSelector({
           </Button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-[420px] p-0" align="start">
+        <PopoverContent className="w-[420px] p-0 z-[100]" align="start">
           <div className="flex border-b">
             {/* Left column: Parents */}
             <ScrollArea className="w-1/2 h-[300px] border-r">

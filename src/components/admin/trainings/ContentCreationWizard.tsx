@@ -1074,7 +1074,7 @@ export function ContentCreationWizard({
 
         {/* Step content with native scroll */}
         <div className="flex-1 min-h-0 overflow-y-auto px-6">
-          <div className="py-4 max-h-[calc(70vh-180px)]">
+          <div className="py-4">
             {/* Slug warning */}
             {slugWarning && (
               <Alert className="mb-4 border-yellow-500/50 bg-yellow-500/10">
