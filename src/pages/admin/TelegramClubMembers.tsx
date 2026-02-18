@@ -81,6 +81,7 @@ import {
   useTelegramClubs, 
   useClubMembers, 
   useClubMemberStats,
+  useClubBusinessStats,
   useSyncClubMembers,
   useKickViolators,
   useGrantTelegramAccess,
@@ -146,6 +147,8 @@ export default function TelegramClubMembers() {
     search: debouncedSearch 
   });
   const { data: stats, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberStats(clubId || null);
+  const [businessStatsPeriod, setBusinessStatsPeriod] = useState(30);
+  const { data: businessStats, isLoading: isBusinessStatsLoading } = useClubBusinessStats(clubId || null, businessStatsPeriod);
   
   // Alias for backward compat (refetch used in many places)
   const refetch = refetchMembers;
@@ -841,13 +844,20 @@ export default function TelegramClubMembers() {
           </CollapsibleContent>
         </Collapsible>
 
-        {/* Quick Stats — glassmorphism */}
+        {/* Quick Stats — glassmorphism бизнес-метрики */}
         <ClubQuickStats
           club={club}
-          stats={stats}
+          businessStats={businessStats}
           members={members}
-          isLoading={isLoading}
+          isLoading={isLoading || isBusinessStatsLoading}
           isError={isStatsError}
+          onTabChange={setActiveTab}
+          violatorsCount={stats?.violators}
+          outsideSystemCount={
+            club?.members_count_chat !== undefined && stats?.in_chat !== undefined
+              ? Math.max(0, (club.members_count_chat ?? 0) - (stats.in_chat ?? 0))
+              : null
+          }
         />
 
         {/* Error Alert for members or stats */}

@@ -758,6 +758,98 @@ export function useDeleteTelegramClub() {
   });
 }
 
+// ---------- Business Stats Hook ----------
+export interface ClubTariffStat {
+  tariff_id: string;
+  tariff_name: string;
+  count: number;
+}
+
+export interface ClubBusinessStats {
+  tariffs: ClubTariffStat[];
+  totalWithAccess: number;
+  newCount: number | null;
+  revokedCount: number | null;
+}
+
+export function useClubBusinessStats(clubId: string | null, periodDays: number = 30) {
+  return useQuery({
+    queryKey: ['club-business-stats', clubId, periodDays],
+    queryFn: async (): Promise<ClubBusinessStats | null> => {
+      if (!clubId) return null;
+
+      const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+      // 1. Продукт клуба
+      const { data: mappings } = await supabase
+        .from('product_club_mappings')
+        .select('product_id')
+        .eq('club_id', clubId)
+        .limit(1);
+
+      const productId = mappings?.[0]?.product_id ?? null;
+
+      // 2. Тарифы: активные подписки
+      let tariffs: ClubTariffStat[] = [];
+      if (productId) {
+        const { data: subs } = await supabase
+          .from('subscriptions_v2')
+          .select('tariff_id, tariffs!inner(id, name)')
+          .eq('product_id', productId)
+          .in('status', ['active', 'trial', 'past_due']);
+
+        if (subs) {
+          const map = new Map<string, { name: string; count: number }>();
+          for (const s of subs) {
+            const t = s.tariffs as unknown as { id: string; name: string } | null;
+            if (!t) continue;
+            const entry = map.get(t.id) ?? { name: t.name, count: 0 };
+            entry.count += 1;
+            map.set(t.id, entry);
+          }
+          tariffs = [...map.entries()].map(([id, v]) => ({
+            tariff_id: id,
+            tariff_name: v.name,
+            count: v.count,
+          })).sort((a, b) => b.count - a.count);
+        }
+      }
+
+      // 3. Всего с активным доступом
+      const { count: totalWithAccess } = await supabase
+        .from('telegram_access_grants')
+        .select('*', { count: 'exact', head: true })
+        .eq('club_id', clubId)
+        .eq('status', 'active');
+
+      // 4. Новые за период
+      const { count: newCount } = await supabase
+        .from('telegram_access_grants')
+        .select('*', { count: 'exact', head: true })
+        .eq('club_id', clubId)
+        .eq('status', 'active')
+        .gte('created_at', since);
+
+      // 5. Не продлили за период
+      const { count: revokedCount } = await supabase
+        .from('telegram_access_grants')
+        .select('*', { count: 'exact', head: true })
+        .eq('club_id', clubId)
+        .in('status', ['revoked', 'expired'])
+        .gte('updated_at', since);
+
+      return {
+        tariffs,
+        totalWithAccess: totalWithAccess ?? 0,
+        newCount: newCount ?? 0,
+        revokedCount: revokedCount ?? 0,
+      };
+    },
+    enabled: !!clubId,
+    staleTime: 60_000,
+  });
+}
+
 // Access grants history
 export function useUserAccessGrants(userId: string | null) {
   return useQuery({
