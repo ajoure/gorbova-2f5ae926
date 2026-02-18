@@ -500,12 +500,13 @@ Deno.serve(async (req) => {
     const channelRevoked = channelKickResult?.success ?? false;
 
     // Update telegram_access
-    // PATCH: active_until=NULL is CRITICAL — otherwise sync will read it and return 'ok' again
+    // PATCH: Set active_until = now()-1s (past) + state='revoked' for double protection.
+    // active_until=NULL was buggy: accessValidation treats NULL as "infinite access"!
     if (profileUserId) {
       await supabase.from('telegram_access').update({
         state_chat: 'revoked',
         state_channel: 'revoked',
-        active_until: null,
+        active_until: new Date(Date.now() - 1000).toISOString(), // 1s in past = access expired
         last_sync_at: new Date().toISOString(),
       }).eq('user_id', profileUserId).eq('club_id', club_id);
 
