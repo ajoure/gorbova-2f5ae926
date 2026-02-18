@@ -604,15 +604,54 @@ Deno.serve(async (req) => {
 
     // ==========================================
     // Action: KICK - Remove violators
+    // PATCH: hasValidAccessBatch guard — не кикать пользователей с активным доступом
     // ==========================================
     if (action === 'kick') {
-      const results: { telegram_user_id: number; success: boolean; error?: string }[] = [];
+      const MAX_KICK_PER_RUN = 50;
+      const results: { telegram_user_id: number; success: boolean; skipped?: boolean; error?: string }[] = [];
       let query = supabase.from('telegram_club_members').select('*').eq('club_id', club_id).in('access_status', ['no_access', 'expired']);
       if (member_ids?.length > 0) query = query.in('id', member_ids);
       const { data: members } = await query;
-      let kickedCount = 0;
+
+      if ((members || []).length > MAX_KICK_PER_RUN) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'TOO_MANY_CANDIDATES_STOP',
+          count: members!.length,
+          max: MAX_KICK_PER_RUN,
+          message: `Слишком много кандидатов (${members!.length}). Максимум ${MAX_KICK_PER_RUN} за раз. Выберите конкретных участников.`,
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // GUARD: re-validate access for all candidates before kicking
+      const membersWithUser = (members || []).filter(m => m.profile_id);
+      const profileIds = membersWithUser.map(m => m.profile_id);
+      const { data: profileRows } = await supabase
+        .from('profiles').select('id, user_id').in('id', profileIds);
+      const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
+
+      const userIds = [...new Set((membersWithUser).map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
+      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+
+      let kickedCount = 0, skippedCount = 0;
 
       for (const member of members || []) {
+        const userId = profileToUserId.get(member.profile_id);
+        const accessResult = userId ? accessValidation.get(userId) : null;
+
+        // AUTO_GUARD_SKIP: пользователь имеет активный доступ → не кикать
+        if (accessResult?.valid) {
+          skippedCount++;
+          await logAudit(supabase, {
+            club_id, user_id: member.profile_id, telegram_user_id: member.telegram_user_id,
+            event_type: 'KICK_SKIP_HAS_ACCESS',
+            actor_type: 'admin', actor_id: requesterId,
+            meta: { reason: 'AUTO_GUARD_SKIP', access_source: accessResult.source },
+          });
+          results.push({ telegram_user_id: member.telegram_user_id, success: false, skipped: true });
+          continue;
+        }
+
         let chatKicked = false, channelKicked = false, lastError: string | undefined;
 
         if (member.in_chat && club.chat_id) {
@@ -647,23 +686,89 @@ Deno.serve(async (req) => {
         results.push({ telegram_user_id: member.telegram_user_id, success: chatKicked || channelKicked, error: lastError });
       }
 
-      return new Response(JSON.stringify({ success: true, kicked_count: kickedCount, results }), {
+      return new Response(JSON.stringify({ success: true, kicked_count: kickedCount, skipped_count: skippedCount, results }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     // ==========================================
     // Action: KICK_PRESENT - Kick only members actually present
+    // PATCH A: hasValidAccessBatch guard — не кикать пользователей с активным доступом
+    // PATCH C: dry_run режим — возвращает кандидатов без реального кика
+    // PATCH E: MAX_KICK_PER_RUN STOP-guard
     // ==========================================
     if (action === 'kick_present') {
+      const MAX_KICK_PER_RUN = 50;
+      const { dry_run = false } = body;
+
       let query = supabase.from('telegram_club_members').select('*').eq('club_id', club_id).or('in_chat.eq.true,in_channel.eq.true');
       if (member_ids?.length > 0) query = query.in('id', member_ids);
       const { data: members } = await query;
 
+      // Map profile_id → user_id
+      const membersWithProfile = (members || []).filter(m => m.profile_id);
+      const profileIds = membersWithProfile.map(m => m.profile_id);
+      const { data: profileRows } = await supabase
+        .from('profiles').select('id, user_id').in('id', profileIds);
+      const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
+
+      const userIds = [...new Set(membersWithProfile.map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
+
+      // GUARD: re-validate access for all candidates
+      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+
+      const candidatesToKick: any[] = [];
+      const skippedHasAccess: any[] = [];
+
+      for (const member of members || []) {
+        const userId = profileToUserId.get(member.profile_id);
+        const accessResult = userId ? accessValidation.get(userId) : null;
+
+        if (accessResult?.valid) {
+          // AUTO_GUARD_SKIP: активный доступ → пропускаем
+          skippedHasAccess.push({
+            telegram_user_id: member.telegram_user_id,
+            telegram_username: member.telegram_username,
+            access_source: accessResult.source,
+          });
+        } else {
+          candidatesToKick.push(member);
+        }
+      }
+
+      // DRY RUN: только превью, без кика
+      if (dry_run) {
+        return new Response(JSON.stringify({
+          success: true,
+          dry_run: true,
+          candidates_count: candidatesToKick.length,
+          skipped_has_access_count: skippedHasAccess.length,
+          candidates: candidatesToKick.map(m => ({
+            id: m.id,
+            telegram_user_id: m.telegram_user_id,
+            telegram_username: m.telegram_username,
+            in_chat: m.in_chat,
+            in_channel: m.in_channel,
+          })),
+          skipped_has_access: skippedHasAccess,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // STOP-guard: слишком много кандидатов
+      if (candidatesToKick.length > MAX_KICK_PER_RUN) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'TOO_MANY_CANDIDATES_STOP',
+          count: candidatesToKick.length,
+          max: MAX_KICK_PER_RUN,
+          message: `Слишком много кандидатов без доступа (${candidatesToKick.length}). Максимум ${MAX_KICK_PER_RUN} за раз. Выберите конкретных участников.`,
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const results: any[] = [];
       let kickedCount = 0;
 
-      for (const member of members || []) {
+      for (const member of candidatesToKick) {
         let chatKicked = false, channelKicked = false, lastError: string | undefined;
 
         if (member.in_chat && club.chat_id) {
@@ -691,15 +796,29 @@ Deno.serve(async (req) => {
             event_type: 'KICK_PRESENT', actor_type: 'admin', actor_id: requesterId,
             telegram_chat_result: { kicked: chatKicked },
             telegram_channel_result: { kicked: channelKicked },
+            meta: { skipped_with_access: skippedHasAccess.length },
           });
         }
 
         results.push({ telegram_user_id: member.telegram_user_id, success: chatKicked || channelKicked, error: lastError });
       }
 
-      return new Response(JSON.stringify({ success: true, kicked_count: kickedCount, results }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      // Log skips
+      if (skippedHasAccess.length > 0) {
+        await logAudit(supabase, {
+          club_id,
+          event_type: 'KICK_PRESENT_SKIP_SUMMARY',
+          actor_type: 'admin', actor_id: requesterId,
+          meta: { skipped_count: skippedHasAccess.length, kicked_count: kickedCount },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        kicked_count: kickedCount,
+        skipped_has_access_count: skippedHasAccess.length,
+        results,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ==========================================

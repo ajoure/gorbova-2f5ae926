@@ -2035,17 +2035,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         {clubMembership && (
                           <div className="flex items-center gap-2 text-sm">
                             <span className="text-muted-foreground">Клуб:</span>
-                            {clubMembership.access_status === 'ok' && !clubMembership.in_chat ? (
-                              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
-                                <Clock className="w-3 h-3 mr-1" />
-                                Ожидает входа
-                              </Badge>
-                            ) : clubMembership.in_chat ? (
+                            {(clubMembership.in_chat === true || clubMembership.in_channel === true) ? (
                               <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
                                 <CheckCircle className="w-3 h-3 mr-1" />
                                 В клубе
                               </Badge>
-                            ) : ['removed', 'kicked', 'expired'].includes(clubMembership.access_status || '') ? (
+                            ) : clubMembership.access_status === 'ok' ? (
+                              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                                <Clock className="w-3 h-3 mr-1" />
+                                Ожидает входа
+                              </Badge>
+                            ) : ['removed', 'kicked', 'expired', 'no_access'].includes(clubMembership.access_status || '') ? (
                               <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
                                 <XCircle className="w-3 h-3 mr-1" />
                                 Удалён
