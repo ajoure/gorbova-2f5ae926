@@ -18,7 +18,7 @@ interface DeleteRequest {
   entity?: { type: string; id: string };
 }
 
-function isPathAllowed(path: string, entityId?: string): boolean {
+function isPathAllowed(path: string, lessonId?: string): boolean {
   if (!path || typeof path !== "string") return false;
   if (path.includes("..") || path.includes("//")) return false;
   if (path.startsWith("/")) return false;
@@ -26,9 +26,13 @@ function isPathAllowed(path: string, entityId?: string): boolean {
   const prefixOk = ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
   if (!prefixOk) return false;
 
-  // Дополнительный guard: если entityId передан, путь должен содержать его сегмент
-  if (entityId) {
-    if (!path.includes(`/${entityId}/`)) return false;
+  // Ownership guard: если lessonId передан — путь обязан начинаться с prefix/<lessonId>/
+  // (startsWith, не includes — чтобы исключить traversal вида prefix/other-lessonId-that-contains-lessonId/)
+  if (lessonId) {
+    const ownedOk = ALLOWED_PREFIXES.some((prefix) =>
+      path.startsWith(`${prefix}${lessonId}/`)
+    );
+    if (!ownedOk) return false;
   }
 
   return true;
@@ -104,12 +108,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // Фильтрация путей через guards
-    const entityId = entity?.id;
+    // lessonId берётся из entity.id только если тип = lesson
+    const lessonId = entity?.type === "lesson" ? entity?.id : undefined;
     const allowedPaths: string[] = [];
     const blockedPaths: string[] = [];
 
     for (const path of paths) {
-      if (isPathAllowed(path, entityId)) {
+      if (isPathAllowed(path, lessonId)) {
         allowedPaths.push(path);
       } else {
         blockedPaths.push(path);

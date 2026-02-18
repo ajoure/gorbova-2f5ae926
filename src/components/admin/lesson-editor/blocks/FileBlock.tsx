@@ -11,6 +11,7 @@ interface FileBlockProps {
   content: FileContent;
   onChange: (content: FileContent) => void;
   isEditing?: boolean;
+  lessonId?: string;
 }
 
 // Allowlist расширений для FileBlock — без MIME-проверки, т.к. application/* нестабилен
@@ -27,7 +28,7 @@ function formatFileSizeDisplay(bytes?: number): string {
   return formatFileSize(bytes);
 }
 
-export function FileBlock({ content, onChange, isEditing = true }: FileBlockProps) {
+export function FileBlock({ content, onChange, isEditing = true, lessonId }: FileBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localName, setLocalName] = useState(content.name || "");
   const [localSize, setLocalSize] = useState(content.size?.toString() || "");
@@ -59,7 +60,8 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
         "lesson-files",
         50,
         undefined,
-        ALLOWED_FILE_EXTENSIONS
+        ALLOWED_FILE_EXTENSIONS,
+        lessonId // ownerId → lesson-files/<lessonId>/...
       );
       if (result) {
         const { publicUrl, storagePath } = result;
@@ -76,7 +78,8 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
         toast.success("Файл загружен");
         // Удаляем старый файл из Storage (fire-and-forget)
         if (prevPath && prevPath !== storagePath) {
-          deleteTrainingAssets([prevPath], undefined, "file_replaced");
+          const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
+          deleteTrainingAssets([prevPath], entity, "file_replaced");
         }
       }
     } finally {

@@ -11,11 +11,12 @@ interface AudioBlockProps {
   content: AudioContent;
   onChange: (content: AudioContent) => void;
   isEditing?: boolean;
+  lessonId?: string;
 }
 
 const ALLOWED_AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".ogg", ".aac"];
 
-export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockProps) {
+export function AudioBlock({ content, onChange, isEditing = true, lessonId }: AudioBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
   const [uploading, setUploading] = useState(false);
@@ -54,7 +55,8 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
         "lesson-audio",
         100,
         "audio/",
-        ALLOWED_AUDIO_EXTENSIONS
+        ALLOWED_AUDIO_EXTENSIONS,
+        lessonId // ownerId → lesson-audio/<lessonId>/...
       );
       if (result) {
         const { publicUrl, storagePath } = result;
@@ -63,7 +65,8 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
         toast.success("Аудио загружено");
         // Удаляем старый файл из Storage (fire-and-forget)
         if (prevPath && prevPath !== storagePath) {
-          deleteTrainingAssets([prevPath], undefined, "audio_replaced");
+          const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
+          deleteTrainingAssets([prevPath], entity, "audio_replaced");
         }
       }
     } finally {

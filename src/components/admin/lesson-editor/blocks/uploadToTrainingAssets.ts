@@ -196,23 +196,43 @@ export async function deleteTrainingAssets(
     const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
     const fnUrl = `https://${projectId}.supabase.co/functions/v1/training-assets-delete`;
 
-    const response = await fetch(fnUrl, {
+    const baseBody = { paths: safePaths, reason, entity: entity || undefined };
+
+    // Шаг 1: dry_run — проверяем что будет удалено и ownership
+    const dryRes = await fetch(fnUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        mode: "execute",
-        paths: safePaths,
-        reason,
-        entity: entity || undefined,
-      }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...baseBody, mode: "dry_run" }),
+    });
+    const dryData = await dryRes.json().catch(() => null);
+
+    if (!dryRes.ok || !dryData || dryData.allowed <= 0) {
+      if (dryData?.allowed === 0 && dryData?.blocked > 0) {
+        console.warn("[deleteTrainingAssets] Ownership mismatch — все пути заблокированы guard'ом, execute отменён");
+      } else if (!dryRes.ok) {
+        console.error("[deleteTrainingAssets] dry_run failed:", dryData);
+      }
+      return;
+    }
+
+    // STOP: если ownership mismatch (часть путей заблокирована при наличии entity.id)
+    if (entity?.id && dryData.allowed < safePaths.length) {
+      console.warn(
+        `[deleteTrainingAssets] Ownership mismatch: запрошено ${safePaths.length}, разрешено ${dryData.allowed}. Execute отменён.`
+      );
+      return;
+    }
+
+    // Шаг 2: execute — только если dry_run показал allowed > 0
+    const execRes = await fetch(fnUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...baseBody, mode: "execute" }),
     });
 
-    if (!response.ok) {
-      const err = await response.text().catch(() => "unknown");
-      console.error("[deleteTrainingAssets] Edge function error:", err);
+    if (!execRes.ok) {
+      const err = await execRes.text().catch(() => "unknown");
+      console.error("[deleteTrainingAssets] Execute failed:", err);
     }
   } catch (err) {
     console.error("[deleteTrainingAssets] Failed:", err);
