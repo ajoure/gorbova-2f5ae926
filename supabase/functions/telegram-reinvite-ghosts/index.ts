@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -102,6 +103,21 @@ Deno.serve(async (req) => {
 
       if (!ghosts?.length) continue;
 
+      // PATCH: Batch check real access for all ghost candidates
+      // Resolve profile_id → user_id
+      const ghostProfileIds = (ghosts || []).filter(g => g.profile_id).map(g => g.profile_id);
+      const { data: profileRows } = await supabase
+        .from('profiles')
+        .select('id, user_id')
+        .in('id', ghostProfileIds);
+      const profileToUserId = new Map((profileRows || []).map((p: { id: string; user_id: string }) => [p.id, p.user_id]));
+      const ghostUserIds = [...new Set(
+        ghostProfileIds.map(id => profileToUserId.get(id)).filter(Boolean) as string[]
+      )];
+      const accessMap = ghostUserIds.length > 0
+        ? await hasValidAccessBatch(supabase, ghostUserIds, club.id)
+        : new Map();
+
       // Filter: invite_sent_at > 4h ago or null
       const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
       const candidates = ghosts.filter(g => 
@@ -116,6 +132,20 @@ Deno.serve(async (req) => {
         }
 
         totalProcessed++;
+
+        // PATCH: Guard — check real access before reinvite
+        const ghostUserId = profileToUserId.get(ghost.profile_id);
+        const accessResult = ghostUserId ? accessMap.get(ghostUserId) : null;
+        if (!accessResult?.valid) {
+          // No real access → update status to no_access, do NOT reinvite
+          console.log(`[reinvite-ghosts] No real access for profile=${ghost.profile_id} tgid=${ghost.telegram_user_id}, setting no_access`);
+          await supabase.from('telegram_club_members').update({
+            access_status: 'no_access',
+            updated_at: new Date().toISOString(),
+          }).eq('id', ghost.id);
+          totalSkipped++;
+          continue;
+        }
 
         // Check reinvite count in last 24h (from telegram_invite_links)
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
