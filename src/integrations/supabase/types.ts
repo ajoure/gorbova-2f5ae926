@@ -9421,6 +9421,7 @@ export type Database = {
         Returns: {
           access_status: string
           club_id: string
+          club_name: string
           in_channel: boolean
           in_chat: boolean
         }[]

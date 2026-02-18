@@ -2034,7 +2034,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           </div>
                         )}
                         {/* Club membership status */}
-                        <div className="flex items-center gap-2 text-sm">
+                        <div className="flex items-center gap-2 text-sm flex-wrap">
                           <span className="text-muted-foreground">Клуб:</span>
                           {clubMembership ? (
                             <>
@@ -2053,7 +2053,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   <XCircle className="w-3 h-3 mr-1" />
                                   Удалён
                                 </Badge>
-                              ) : null}
+                              ) : (
+                                <Badge variant="outline">
+                                  {clubMembership.access_status || '—'}
+                                </Badge>
+                              )}
+                              {(clubMembership as any).club_name && (
+                                <span className="text-xs text-muted-foreground">
+                                  ({(clubMembership as any).club_name})
+                                </span>
+                              )}
                             </>
                           ) : (
                             <span className="text-muted-foreground text-xs">нет данных</span>
