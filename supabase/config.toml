@@ -359,3 +359,9 @@ verify_jwt = false
 
 [functions.log-deployment]
 verify_jwt = false
+
+[functions.training-assets-download]
+verify_jwt = false
+
+[functions.training-assets-delete]
+verify_jwt = false

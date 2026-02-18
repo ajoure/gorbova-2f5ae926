@@ -3,9 +3,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { FileContent } from "@/hooks/useLessonBlocks";
-import { FileText, Download, ExternalLink, Upload, Loader2 } from "lucide-react";
+import { FileText, ExternalLink, Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { uploadToTrainingAssets, formatFileSize } from "./uploadToTrainingAssets";
+import { uploadToTrainingAssets, formatFileSize, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
 interface FileBlockProps {
   content: FileContent;
@@ -50,16 +50,19 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
-      // Только allowlist по расширениям, без MIME-проверки (application/* нестабилен)
-      const publicUrl = await uploadToTrainingAssets(
+      // Сохраняем предыдущий storagePath для удаления после замены
+      const prevPath = (content as any).storagePath as string | undefined
+        || (localUrl ? extractStoragePathFromPublicUrl(localUrl) : null);
+
+      const result = await uploadToTrainingAssets(
         file,
         "lesson-files",
         50,
         undefined,
         ALLOWED_FILE_EXTENSIONS
       );
-      if (publicUrl) {
-        // Автозаполнение всех полей
+      if (result) {
+        const { publicUrl, storagePath } = result;
         setLocalUrl(publicUrl);
         setLocalName(file.name);
         setLocalSize(String(file.size));
@@ -68,8 +71,13 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
           url: publicUrl,
           name: file.name,
           size: file.size,
-        });
+          storagePath,
+        } as FileContent & { storagePath?: string });
         toast.success("Файл загружен");
+        // Удаляем старый файл из Storage (fire-and-forget)
+        if (prevPath && prevPath !== storagePath) {
+          deleteTrainingAssets([prevPath], undefined, "file_replaced");
+        }
       }
     } finally {
       setUploading(false);
@@ -100,7 +108,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
     setIsDragOver(false);
   };
 
-  // Режим просмотра (для студента)
+  // Режим просмотра (для студента) — скачивание запрещено, только просмотр
   if (!isEditing) {
     if (!content.url) {
       return (
@@ -112,12 +120,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
     }
 
     return (
-      <a
-        href={content.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors group"
-      >
+      <div className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 select-none">
         <FileText className="h-8 w-8 text-primary" />
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{content.name || "Файл"}</p>
@@ -125,8 +128,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
             <p className="text-sm text-muted-foreground">{formatFileSizeDisplay(content.size)}</p>
           )}
         </div>
-        <Download className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-      </a>
+      </div>
     );
   }
 
