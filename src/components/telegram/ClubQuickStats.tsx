@@ -343,10 +343,10 @@ export function ClubQuickStats({
             <GlassStatCard
               title="Всего с доступом"
               value={isError ? "—" : fmt(businessStats?.totalWithAccess)}
-              subtitle="активных grant-ов"
+              subtitle="уникальных участников"
               icon={<UserCheck className="h-4 w-4 text-emerald-300" />}
               variant="success"
-              tooltip="Все пользователи с активным доступом к клубу (telegram_access_grants status=active)"
+              tooltip="Уникальные участники с действующим доступом (status=active и end_at > сейчас)"
               onClick={() => onTabChange?.("with_access")}
               isLoading={isLoading}
             />
@@ -368,10 +368,10 @@ export function ClubQuickStats({
             <GlassStatCard
               title="Новые"
               value={isError ? "—" : fmt(businessStats?.newCount)}
-              subtitle={`за ${period} дней`}
+              subtitle="впервые вступили"
               icon={<TrendingUp className="h-4 w-4 text-emerald-300" />}
               variant="success"
-              tooltip={`Получили активный доступ за последние ${period} дней`}
+              tooltip={`Люди, впервые вступившие в клуб за последние ${period} дней (не считая повторные подписки)`}
               onClick={() => onTabChange?.("with_access")}
               isLoading={isLoading}
             />
@@ -380,10 +380,10 @@ export function ClubQuickStats({
             <GlassStatCard
               title="Не продлили"
               value={isError ? "—" : fmt(businessStats?.revokedCount)}
-              subtitle={`за ${period} дней`}
+              subtitle="ушли из клуба"
               icon={<TrendingDown className="h-4 w-4 text-rose-300" />}
               variant="danger"
-              tooltip={`Доступ истёк или отозван за последние ${period} дней`}
+              tooltip={`Участники, чей последний доступ истёк за последние ${period} дней и которые не вернулись`}
               onClick={() => onTabChange?.("removed")}
               isLoading={isLoading}
             />
