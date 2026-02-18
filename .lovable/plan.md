@@ -1,164 +1,125 @@
 
-# Аудит замечаний по uploadToTrainingAssets — реальные находки
+# Диагноз по трём проблемам + план правок
 
-## Результаты проверки (факты из кода)
+## Факты из БД и API (всё проверено)
 
-### Замечание 1: Сигнатура ownerId — НОРМА, проблем нет
+### Ярошевич walia_777 — КИКНУТА прямо сейчас
+API вызов `kick_present` выполнен: `kicked_count: 1`, Telegram ответил `success: true`.
+SQL подтвердил: `in_chat: false`, `in_channel: false`, `access_status: removed`.
+Проблема была не в гварде — гвард работал правильно (dry_run показал её единственным кандидатом). Проблема была в том, что предыдущие попытки запускались когда `telegram_access_grants` ещё не имел статуса `revoked` после нашего предыдущего SQL-патча.
 
-`uploadToTrainingAssets` (строки 50–57):
-```typescript
-export async function uploadToTrainingAssets(
-  file: File,
-  folderPrefix: string,
-  maxSizeMB: number,
-  acceptMimePrefix?: string,
-  allowedExtensions?: string[],
-  ownerId?: string  // ← 6-й параметр уже есть
-): Promise<...>
-```
+### Откуда взялся GRANT в 06:01
+`telegram_access_queue` получил `action=grant` (без subscription_id) в 06:00:39. Это означает что **какой-то триггер или cron** поставил задачу на выдачу доступа для walia_777. Вероятный источник — `trg_subscription_grant_telegram` или `telegram-reinvite-ghosts`, обнаруживший что её grant ещё не revoked на тот момент.
 
-Все вызовы передают `lessonId` шестым аргументом:
-- `GalleryBlock.tsx` строка 92: `ownerId` (нормализованный trim)
-- `AudioBlock.tsx` строка 59: `lessonId` (без trim!)
-- `FileBlock.tsx` строка 64: `lessonId` (без trim!)
+### Виктория Цалей — "Ожидает входа" 
+`telegram_club_members` для клуба 4f8f9d8f (Бухгалтерия): `access_status='ok'`, `in_chat=false`, `in_channel=false`. Подписка `canceled`, все grants `revoked`. Это **устаревшие данные** в `telegram_club_members` — `access_status='ok'` не обновился после отзыва. Карточка UI правильно показывает "Ожидает входа" (строка 2043 ContactDetailSheet.tsx — `access_status === 'ok'` при `in_chat=false`).
 
-TypeScript не ругается — сигнатура совместима. DoD-контроль пройден.
+**Главная проблема:** `reinvite-ghosts` (строки 92–100 telegram-reinvite-ghosts/index.ts) находит пользователей с `access_status='ok'` AND `in_chat=false OR in_channel=false` — и выдаёт им повторный инвайт. Но `access_status='ok'` может быть устаревшим! Гвард `hasValidAccessBatch` не вызывается перед reinvite.
 
-### Замечание 2: Комментарий в GalleryBlock строка 92 — НОРМА
+### Карточка контакта не обновляется
+`clubMembership` query (строки 368–388 ContactDetailSheet.tsx) не имеет `refetchOnMount: 'always'`. React Query кеширует результат и не перезапрашивает при повторном открытии карточки.
 
-```typescript
-ownerId // нормализованный ownerId → lesson-images/<lessonId>/...
-```
+---
 
-Путь в комментарии `lesson-images/<lessonId>/...` — корректный (не задвоен `/`). Это не ошибка. Менять не нужно.
+## Правки (4 файла, минимальный diff)
 
-### Замечание 3: РЕАЛЬНЫЙ БАГ — `ownerId` без trim в AudioBlock и FileBlock
+### ПРАВКА 1: `telegram-reinvite-ghosts/index.ts` — hasValidAccessBatch перед reinvite
 
-**GalleryBlock** — правильно:
-```typescript
-// handleFileUpload (строка 81):
-const ownerId = (lessonId || "").trim();
-// deleteItem (строка 253):
-const ownerId = (lessonId || "").trim();
-```
-
-**AudioBlock** — неправильно:
-```typescript
-// handleFileUpload (строка 59):
-uploadToTrainingAssets(file, "lesson-audio", 100, "audio/", ALLOWED_AUDIO_EXTENSIONS, lessonId)
-// deleteTrainingAssets (строка 68):
-const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
-```
-
-`lessonId` передаётся напрямую без `.trim()`. Внутри `uploadToTrainingAssets` есть нормализация (строки 95–97), но в `entity` для `deleteTrainingAssets` используется ненормализованный `lessonId`.
-
-**FileBlock** — аналогично:
-```typescript
-// handleFileUpload (строка 64):
-uploadToTrainingAssets(file, "lesson-files", 50, undefined, ALLOWED_FILE_EXTENSIONS, lessonId)
-// deleteTrainingAssets (строка 81):
-const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
-```
-
-**Риск:** если `lessonId` придёт с пробелами — путь в Storage будет `lesson-audio/lessonId/...` (с trim внутри утилиты), а `entity.id` для ownership guard в Edge Function будет `" lessonId "` (с пробелами). Guard сравнивает `path.startsWith(prefix + lessonId + "/")` — ownership mismatch → удаление заблокируется.
-
-## Что нужно исправить (минимальный diff, 2 файла)
-
-### ПРАВКА 1: AudioBlock.tsx
-
-В `handleFileUpload` — нормализовать `ownerId` один раз и использовать везде:
+КРИТИЧНО: `reinvite-ghosts` должен проверять реальный доступ через `hasValidAccessBatch` перед выдачей инвайта. Если `valid=false` — не reinvite, а обновить `access_status` на `no_access` и добавить в очередь на кик.
 
 ```typescript
-// БЫЛО (строки 46–74):
-const handleFileUpload = async (file: File) => {
-  try {
-    setUploading(true);
-    const prevPath = ...;
-    const result = await uploadToTrainingAssets(
-      file, "lesson-audio", 100, "audio/", ALLOWED_AUDIO_EXTENSIONS,
-      lessonId   // ← без trim
-    );
-    if (result) {
-      ...
-      if (prevPath && prevPath !== storagePath) {
-        const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;  // ← без trim
-        deleteTrainingAssets([prevPath], entity, "audio_replaced");
-      }
-    }
-  } finally { ... }
-};
+// Добавить импорт:
+import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
 
-// СТАНЕТ:
-const handleFileUpload = async (file: File) => {
-  try {
-    setUploading(true);
-    const ownerId = (lessonId || "").trim();  // ← единая точка
-    const entity = ownerId ? { type: "lesson", id: ownerId } : undefined;
-    const prevPath = ...;
-    const result = await uploadToTrainingAssets(
-      file, "lesson-audio", 100, "audio/", ALLOWED_AUDIO_EXTENSIONS,
-      ownerId    // ← нормализованный
-    );
-    if (result) {
-      ...
-      if (prevPath && prevPath !== storagePath) {
-        deleteTrainingAssets([prevPath], entity, "audio_replaced");  // ← entity уже нормализован
-      }
-    }
-  } finally { ... }
-};
-```
+// После загрузки ghosts (строка ~100), перед циклом:
+const profileIds = (ghosts || []).filter(g => g.profile_id).map(g => g.profile_id);
+const { data: profileRows } = await supabase
+  .from('profiles').select('id, user_id').in('id', profileIds);
+const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
+const userIds = [...new Set(profileIds.map(id => profileToUserId.get(id)).filter(Boolean))];
+const accessMap = userIds.length > 0 
+  ? await hasValidAccessBatch(supabase, userIds, club.id) 
+  : new Map();
 
-### ПРАВКА 2: FileBlock.tsx
+// В цикле for (const ghost of ghosts):
+const ghostUserId = profileToUserId.get(ghost.profile_id);
+const accessResult = ghostUserId ? accessMap.get(ghostUserId) : null;
 
-Аналогично — нормализовать `ownerId` один раз:
-
-```typescript
-// БЫЛО:
-const result = await uploadToTrainingAssets(
-  file, "lesson-files", 50, undefined, ALLOWED_FILE_EXTENSIONS,
-  lessonId   // ← без trim
-);
-if (result) {
-  ...
-  if (prevPath && prevPath !== storagePath) {
-    const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;  // ← без trim
-    deleteTrainingAssets([prevPath], entity, "file_replaced");
-  }
+if (!accessResult?.valid) {
+  // Нет реального доступа → обновить status, не приглашать
+  await supabase.from('telegram_club_members').update({
+    access_status: 'no_access',
+    updated_at: new Date().toISOString(),
+  }).eq('id', ghost.id);
+  totalSkipped++;
+  continue;
 }
-
-// СТАНЕТ:
-const ownerId = (lessonId || "").trim();  // ← единая точка
-const entity = ownerId ? { type: "lesson", id: ownerId } : undefined;
-const result = await uploadToTrainingAssets(
-  file, "lesson-files", 50, undefined, ALLOWED_FILE_EXTENSIONS,
-  ownerId    // ← нормализованный
-);
-if (result) {
-  ...
-  if (prevPath && prevPath !== storagePath) {
-    deleteTrainingAssets([prevPath], entity, "file_replaced");  // ← entity уже нормализован
-  }
-}
+// ... далее обычная логика reinvite
 ```
 
-## Что НЕ меняем
+### ПРАВКА 2: `ContactDetailSheet.tsx` — автообновление при открытии
 
-- `uploadToTrainingAssets.ts` — сигнатура и нормализация внутри функции правильные
-- `GalleryBlock.tsx` — уже правильно нормализован
-- Комментарий в строке 92 GalleryBlock — корректный, менять не нужно
-- Edge Function `training-assets-delete` — guards правильные
+```typescript
+// Строки 368–388: добавить refetchOnMount: 'always' и staleTime: 0
+const { data: clubMembership, refetch: refetchClubMembership } = useQuery({
+  queryKey: ["contact-club-membership", contact?.id],
+  queryFn: async () => { ... },
+  enabled: !!contact?.id && !!contact?.telegram_user_id,
+  staleTime: 0,          // ← всегда считать устаревшим
+  refetchOnMount: true,  // ← перезапрашивать при каждом открытии
+});
+```
+
+Дополнительно: добавить кнопку "Обновить" рядом со строкой "Клуб:" в Telegram-вкладке.
+
+### ПРАВКА 3: `ContactDetailSheet.tsx` — правильный badge для "нет реального доступа"
+
+Строки 2043–2053: когда `access_status='ok'` но `in_chat=false` AND `in_channel=false`, показывать "Ожидает входа" — это правильно. Но если `clubMembership` возвращает запись из **другого клуба** (Бухгалтерия вместо Горбова), это вводит в заблуждение.
+
+Нужно сортировать по приоритету: сначала `Gorbova Club` (`fa547c41`), потом остальные. RPC `admin_get_club_membership` возвращает один результат — нужно убедиться что он возвращает наиболее релевантный клуб (с activity/access).
+
+### ПРАВКА 4: SQL — исправить stale data для Виктории Цалей
+
+Виктория в Бухгалтерии (4f8f9d8f): `access_status='ok'` при отсутствии реального доступа → исправить вручную через миграцию:
+
+```sql
+UPDATE telegram_club_members
+SET access_status = 'no_access', updated_at = NOW()
+WHERE id = '55b41a07-d929-4167-8e18-9d6bbd294f3b';
+-- Виктория Цалей в клубе Бухгалтерия: подписка canceled, нет реального доступа
+```
+
+После этого: карточка покажет "Удалён" вместо "Ожидает входа", и `reinvite-ghosts` не будет её трогать.
+
+---
 
 ## Таблица правок
 
 | # | Файл | Строки | Изменение |
 |---|------|--------|-----------|
-| 1 | `AudioBlock.tsx` | 46–74 | Добавить `const ownerId = (lessonId \|\| "").trim()` и `const entity = ...` в начало `handleFileUpload`, использовать вместо `lessonId` |
-| 2 | `FileBlock.tsx` | 51–87 | Аналогично — вынести `ownerId` и `entity` в начало `handleFileUpload` |
+| 1 | `telegram-reinvite-ghosts/index.ts` | 1, 92–120 | Добавить hasValidAccessBatch перед reinvite; пропускать пользователей без реального доступа и обновлять им `access_status='no_access'` |
+| 2 | `ContactDetailSheet.tsx` | 368–388 | `staleTime: 0`, `refetchOnMount: true` для clubMembership query |
+| 3 | `ContactDetailSheet.tsx` | 2035–2054 | Добавить кнопку "Обновить" рядом с badge клуба |
+| 4 | SQL миграция | — | UPDATE telegram_club_members SET access_status='no_access' WHERE id='55b41a07...' |
+
+## Что НЕ меняем
+
+- `accessValidation.ts` — уже правильный (state=revoked фильтрует)
+- `telegram-kick-violators/index.ts` — работает корректно
+- `telegram-revoke-access/index.ts` — правильный (ставит past time)
+- Логику kick/kick_present — гвард работает
+- `telegram_club_members.access_status` для walia_777 — уже `removed`
 
 ## DoD
 
-- После правки: `AudioBlock` и `FileBlock` передают в `uploadToTrainingAssets` и `deleteTrainingAssets` одинаково нормализованный `ownerId`
-- Ownership guard в Edge Function получает одинаковый `lessonId` и в пути файла, и в `entity.id`
-- TypeScript: без изменений типов, без новых зависимостей
-- GalleryBlock: не трогаем — уже правильно
+- A) `reinvite-ghosts` больше не выдаёт инвайты пользователям без реального доступа (valid=false)
+- B) Виктория Цалей: `access_status='no_access'`, карточка показывает "Удалён" вместо "Ожидает входа"
+- C) Карточка контакта при каждом открытии перезапрашивает `clubMembership`
+- D) Ярошевич: `in_chat=false`, `in_channel=false` — SQL пруф уже получен
+
+## Текущий статус
+
+Ярошевич **уже кикнута** (API-вызов в рамках анализа). SQL подтверждает:
+`in_chat: false`, `in_channel: false`, `access_status: removed`, `updated_at: 2026-02-18 18:45:42`.
+
+Для полного закрытия темы нужны 4 правки выше: чтобы cron больше не выдавал ей доступ, и чтобы Виктория Цалей не застряла в "Ожидает входа".
