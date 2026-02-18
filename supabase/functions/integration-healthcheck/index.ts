@@ -371,7 +371,13 @@ serve(async (req) => {
           );
 
           if (fnError) {
-            errorMessage = `Ошибка вызова hosterby-api: ${fnError.message}`;
+            const fnErrMsg = fnError.message || String(fnError);
+            // Нормализуем HTTP 520 (edge function упала до ответа)
+            if (fnErrMsg.includes("520") || fnErrMsg.includes("Function returned an error") || fnErrMsg.includes("non-2xx")) {
+              errorMessage = "hosterby-api недоступен (HTTP 520). Проверьте логи edge функции hosterby-api.";
+            } else {
+              errorMessage = `Ошибка вызова hosterby-api: ${fnErrMsg}`;
+            }
             break;
           }
 
@@ -383,7 +389,17 @@ serve(async (req) => {
               cloud_access_key_last4: result.data?.cloud_access_key_last4 ?? null,
             };
           } else {
-            errorMessage = result?.error ?? "Ошибка подключения к hoster.by";
+            // Передаём нормализованный код ошибки от hosterby-api
+            const code = result?.code ?? "";
+            if (code === "KEYS_MISSING") {
+              errorMessage = "API ключи hoster.by не настроены (KEYS_MISSING)";
+            } else if (code === "SIGNING_MISMATCH") {
+              errorMessage = "Ошибка подписи hoster.by (SIGNING_MISMATCH). Проверьте ключи.";
+            } else if (code === "TIMEOUT") {
+              errorMessage = "Timeout при подключении к hoster.by API";
+            } else {
+              errorMessage = result?.error ?? "Ошибка подключения к hoster.by";
+            }
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
