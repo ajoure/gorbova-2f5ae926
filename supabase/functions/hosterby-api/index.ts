@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,95 +22,71 @@ const HOSTERBY_API_BASE = "https://serviceapi.hoster.by";
 //   4. Headers: X-API-KEY: {access_key}, X-API-SIGN: {hex_signature}
 // ============================================================
 
-// MD5 implementation (pure JS — Deno SubtleCrypto не поддерживает MD5)
-// Compact safe implementation based on RFC 1321
-function md5(input: Uint8Array): Uint8Array {
-  const M = new Uint32Array([
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
-    0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
-    0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
-    0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-    0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92,
-    0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
-  ]);
-  const S = new Uint8Array([
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20,
-    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23,
-    4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-    6, 10, 15, 21,
-  ]);
+// ============================================================
+// MD5 — чистая реализация без BigInt и без внешних npm (стабильна в edge runtime)
+// Для GET без тела: md5Base64("") === "1B2M2Y8AsgTpgAmY7PhCfg=="
+// encodeBase64 надёжнее btoa(String.fromCharCode(...spread)) для больших буферов
+// ============================================================
+function computeMd5(input: Uint8Array): Uint8Array {
+  // Таблица T[i] = floor(abs(sin(i+1)) * 2^32) — вычисляется один раз
+  const T = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) T[i] = (Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
+
+  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+             5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+             4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+             6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
 
   const origLen = input.length;
-  // Padding
   const paddedLen = Math.ceil((origLen + 9) / 64) * 64;
   const padded = new Uint8Array(paddedLen);
   padded.set(input);
   padded[origLen] = 0x80;
-  const bitLen = BigInt(origLen) * 8n;
-  for (let i = 0; i < 8; i++) {
-    padded[paddedLen - 8 + i] = Number((bitLen >> BigInt(i * 8)) & 0xffn);
+  // Длина в битах, little-endian 64 bit — без BigInt
+  const bitLenLo = (origLen * 8) >>> 0;
+  const bitLenHi = Math.floor(origLen / 0x20000000) >>> 0;
+  for (let i = 0; i < 4; i++) {
+    padded[paddedLen - 8 + i] = (bitLenLo >>> (i * 8)) & 0xff;
+    padded[paddedLen - 4 + i] = (bitLenHi >>> (i * 8)) & 0xff;
   }
 
   let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
-
   for (let chunk = 0; chunk < paddedLen; chunk += 64) {
     const W = new Uint32Array(16);
     for (let i = 0; i < 16; i++) {
-      W[i] =
-        padded[chunk + i * 4] |
-        (padded[chunk + i * 4 + 1] << 8) |
-        (padded[chunk + i * 4 + 2] << 16) |
-        (padded[chunk + i * 4 + 3] << 24);
+      W[i] = padded[chunk + i*4]
+           | (padded[chunk + i*4 + 1] << 8)
+           | (padded[chunk + i*4 + 2] << 16)
+           | (padded[chunk + i*4 + 3] << 24);
     }
     let A = a0, B = b0, C = c0, D = d0;
-
     for (let i = 0; i < 64; i++) {
       let F: number, g: number;
-      if (i < 16) {
-        F = (B & C) | (~B & D);
-        g = i;
-      } else if (i < 32) {
-        F = (D & B) | (~D & C);
-        g = (5 * i + 1) % 16;
-      } else if (i < 48) {
-        F = B ^ C ^ D;
-        g = (3 * i + 5) % 16;
-      } else {
-        F = C ^ (B | ~D);
-        g = (7 * i) % 16;
-      }
-      F = (F + A + M[i] + W[g]) >>> 0;
-      A = D;
-      D = C;
-      C = B;
+      if (i < 16)      { F = (B & C) | (~B & D);  g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C);  g = (5*i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D;            g = (3*i + 5) % 16; }
+      else             { F = C ^ (B | ~D);          g = (7*i) % 16; }
       const s = S[i];
+      F = (F + A + T[i] + W[g]) >>> 0;
+      A = D; D = C; C = B;
       B = ((B + ((F << s) | (F >>> (32 - s)))) >>> 0);
     }
-    a0 = (a0 + A) >>> 0;
-    b0 = (b0 + B) >>> 0;
-    c0 = (c0 + C) >>> 0;
-    d0 = (d0 + D) >>> 0;
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0;
+    c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
   }
-
   const result = new Uint8Array(16);
   for (let i = 0; i < 4; i++) {
-    result[i]      = (a0 >> (i * 8)) & 0xff;
-    result[i + 4]  = (b0 >> (i * 8)) & 0xff;
-    result[i + 8]  = (c0 >> (i * 8)) & 0xff;
-    result[i + 12] = (d0 >> (i * 8)) & 0xff;
+    result[i]      = (a0 >>> (i * 8)) & 0xff;
+    result[i + 4]  = (b0 >>> (i * 8)) & 0xff;
+    result[i + 8]  = (c0 >>> (i * 8)) & 0xff;
+    result[i + 12] = (d0 >>> (i * 8)) & 0xff;
   }
   return result;
 }
 
 function md5Base64(body: string): string {
   const bytes = new TextEncoder().encode(body);
-  const hash = md5(bytes);
-  return btoa(String.fromCharCode(...hash));
+  return encodeBase64(computeMd5(bytes)); // encodeBase64 надёжнее btoa(...spread)
 }
 
 async function buildHosterSignature(
@@ -133,31 +110,38 @@ async function buildHosterSignature(
 
 // ============================================================
 // UNIT TESTS — signing vectors
-// Run inline at startup in dev; нe влияет на production flow.
-// Добавьте реальные векторы из hoster.by sandbox при получении примеров.
+// Запускаются ТОЛЬКО при HOSTERBY_SIGN_TESTS=1 (не в проде по умолчанию).
+// Внутри try/catch — никогда не бросают исключение наружу.
 // ============================================================
 async function runSigningTests(): Promise<void> {
-  // Vector 1: GET без тела
-  const sig1 = await buildHosterSignature("GET", "/v1/cloud/vms", "", "test_secret_key");
-  console.log("[SIGNING TEST] vector1 GET /v1/cloud/vms:", sig1);
+  try {
+    // Vector 3: MD5 пустой строки → base64 ДОЛЖЕН быть "1B2M2Y8AsgTpgAmY7PhCfg=="
+    const emptyMd5 = md5Base64("");
+    const expectedEmptyMd5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
+    if (emptyMd5 !== expectedEmptyMd5) {
+      console.error(`[SIGNING TEST] FAIL: MD5("") expected=${expectedEmptyMd5} got=${emptyMd5}`);
+    } else {
+      console.log("[SIGNING TEST] PASS: MD5 empty string OK");
+    }
 
-  // Vector 2: POST с телом
-  const body2 = '{"name":"test"}';
-  const sig2 = await buildHosterSignature("POST", "/v1/cloud/vms", body2, "test_secret_key");
-  console.log("[SIGNING TEST] vector2 POST /v1/cloud/vms body:", sig2);
+    // Vector 1: GET без тела
+    const sig1 = await buildHosterSignature("GET", "/v1/cloud/vms", "", "test_secret_key");
+    console.log("[SIGNING TEST] vector1 GET /v1/cloud/vms:", sig1);
 
-  // Vector 3: MD5 пустой строки → base64 должен быть "1B2M2Y8AsgTpgAmY7PhCfg=="
-  const emptyMd5 = md5Base64("");
-  const expectedEmptyMd5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
-  if (emptyMd5 !== expectedEmptyMd5) {
-    console.error(`[SIGNING TEST] FAIL: MD5("") expected ${expectedEmptyMd5} got ${emptyMd5}`);
-  } else {
-    console.log("[SIGNING TEST] PASS: MD5 empty string OK");
+    // Vector 2: POST с телом
+    const body2 = '{"name":"test"}';
+    const sig2 = await buildHosterSignature("POST", "/v1/cloud/vms", body2, "test_secret_key");
+    console.log("[SIGNING TEST] vector2 POST /v1/cloud/vms body:", sig2);
+  } catch (e) {
+    // Никогда не бросаем наружу — тесты не должны убивать edge function
+    console.error("[SIGNING TEST] ERROR (non-fatal):", e);
   }
 }
 
-// Run tests on cold start
-runSigningTests().catch((e) => console.error("[SIGNING TEST] Error:", e));
+// Запускать только при явном флаге — НЕ на cold start в проде
+if (Deno.env.get("HOSTERBY_SIGN_TESTS") === "1") {
+  runSigningTests().catch((e) => console.error("[SIGNING TEST] Error:", e));
+}
 
 // ============================================================
 // SSRF Guard
@@ -586,8 +570,12 @@ serve(async (req) => {
         const rawAllowlist = (payload.allowlist as string | undefined) || (instanceConfig.egress_allowlist as string | undefined) || "";
         const allowlist = rawAllowlist.split(",").map((d: string) => d.trim()).filter(Boolean);
 
-        if (!baseUrl || !egressToken || !targetUrl) {
-          return jsonResp({ success: false, error: "Обязательные поля: base_url, token, target_url" });
+        // Раздельная валидация: base_url/target_url обязательны, token — отдельно
+        if (!baseUrl || !targetUrl) {
+          return jsonResp({ success: false, error: "Обязательные поля: base_url, target_url" });
+        }
+        if (!egressToken) {
+          return jsonResp({ success: false, code: "TOKEN_MISSING", error: "BY_EGRESS_TOKEN не задан. Введите токен или сохраните конфигурацию egress." });
         }
 
         // SSRF guard на egress endpoint
@@ -630,12 +618,23 @@ serve(async (req) => {
       // ---- by_egress_save_config -----------------------------------
       case "by_egress_save_config": {
         const egressBaseUrl = payload.egress_base_url as string | undefined;
-        const egressToken = payload.egress_token as string | undefined;
+        // Fallback: если токен не передан — использовать сохранённый из instanceConfig
+        const egressTokenNew = payload.egress_token as string | undefined;
+        const egressToken = egressTokenNew || (instanceConfig.egress_token as string | undefined);
+        // last4: из нового токена или из сохранённого
+        const egressTokenLast4 =
+          egressTokenNew
+            ? egressTokenNew.slice(-4)
+            : (instanceConfig.egress_token_last4 as string | undefined)
+              ?? (instanceConfig.egress_token ? String(instanceConfig.egress_token).slice(-4) : "????");
         const egressAllowlist = payload.egress_allowlist as string | undefined;
         const egressEnabled = payload.egress_enabled !== false;
 
-        if (!egressBaseUrl || !egressToken) {
-          return jsonResp({ success: false, error: "egress_base_url и egress_token обязательны" });
+        if (!egressBaseUrl) {
+          return jsonResp({ success: false, error: "egress_base_url обязателен" });
+        }
+        if (!egressToken) {
+          return jsonResp({ success: false, code: "TOKEN_MISSING", error: "BY_EGRESS_TOKEN не задан. Введите токен в форме." });
         }
 
         if (!isSsrfSafe(egressBaseUrl)) {
@@ -648,7 +647,7 @@ serve(async (req) => {
             dry_run: true,
             dry_run_result: {
               egress_base_url: egressBaseUrl,
-              egress_token_last4: egressToken.slice(-4),
+              egress_token_last4: egressTokenLast4,
               egress_allowlist: egressAllowlist,
               egress_enabled: egressEnabled,
             },
@@ -662,8 +661,8 @@ serve(async (req) => {
         const updatedConfig = {
           ...instanceConfig,
           egress_base_url: egressBaseUrl,
-          egress_token: egressToken,
-          egress_token_last4: egressToken.slice(-4),
+          egress_token: egressToken,           // полный токен (защищён RLS)
+          egress_token_last4: egressTokenLast4, // используем вычисленный last4
           egress_allowlist: egressAllowlist || "nbrb.by,nalog.gov.by,ssf.gov.by,kgk.gov.by,gtk.gov.by,minfin.gov.by,economy.gov.by,pravo.by",
           egress_enabled: egressEnabled,
         };
@@ -675,12 +674,12 @@ serve(async (req) => {
         await writeAuditLog(supabaseAdmin, "hosterby.by_egress_config_saved", {
           instance_id: hosterInstance.id,
           egress_base_url: egressBaseUrl,
-          egress_token_last4: egressToken.slice(-4),
+          egress_token_last4: egressTokenLast4, // НЕ хранить полный токен!
           egress_enabled: egressEnabled,
-          // НЕ хранить полный токен!
-        }, userId);
+          token_changed: !!egressTokenNew,
+        }, null); // SYSTEM ACTOR: actor_type='system', actor_user_id=NULL
 
-        return jsonResp({ success: true, egress_token_last4: egressToken.slice(-4), egress_enabled: egressEnabled });
+        return jsonResp({ success: true, egress_token_last4: egressTokenLast4, egress_enabled: egressEnabled });
       }
 
       // ---- by_egress_toggle ----------------------------------------

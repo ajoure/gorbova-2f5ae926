@@ -88,11 +88,8 @@ export function HosterByEgressDialog({
     onOpenChange(false);
   };
 
-  const tokenToUse = egressToken.trim() || "";
-  const effectiveToken =
-    egressToken.trim() ||
-    // If no new token entered and we have existing — signal to server to use existing
-    (existingTokenLast4 ? "__USE_EXISTING__" : "");
+  // Если пользователь не ввёл токен — сервер сам использует сохранённый (fallback в hosterby-api).
+  // Магические строки типа "__USE_EXISTING__" не нужны и запрещены.
 
   // ---- Step 1 → Step 2 ----
   const handleStep1Next = () => {

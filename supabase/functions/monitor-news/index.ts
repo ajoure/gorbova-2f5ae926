@@ -343,13 +343,21 @@ async function fetchViaByEgress(
       signal: controller.signal,
     });
     clearTimeout(timer);
-    if (!resp.ok) return { content: null, httpStatus: resp.status };
+    const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
+    if (!resp.ok) {
+      console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} success=false`);
+      return { content: null, httpStatus: resp.status };
+    }
     const text = await resp.text();
+    console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} content_length=${text.length}`);
     return { content: text, httpStatus: resp.status };
   } catch (e) {
     clearTimeout(timer);
     const isAbort = e instanceof Error && e.name === "AbortError";
-    return { content: null, error: isAbort ? "TIMEOUT" : String(e) };
+    const errCode = isAbort ? "TIMEOUT" : String(e);
+    const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
+    console.log(`[monitor-news] fetch_via=by_egress_failed domain=${domain} error=${errCode} fallback=default`);
+    return { content: null, error: errCode };
   }
 }
 
