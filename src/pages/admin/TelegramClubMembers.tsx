@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { ClubStatistics } from '@/components/telegram/ClubStatistics';
+import { ClubQuickStats } from '@/components/telegram/ClubQuickStats';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -840,82 +841,14 @@ export default function TelegramClubMembers() {
           </CollapsibleContent>
         </Collapsible>
 
-        {/* Quick Stats - 5 блоков */}
-        <div className="grid gap-4 md:grid-cols-5">
-          {/* Telegram API */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4" />
-                Telegram API
-                <Tooltip>
-                  <TooltipTrigger>
-                    <HelpCircle className="h-3 w-3 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p>Telegram API показывает всех участников (включая админов и ботов).</p>
-                    <p className="text-xs mt-1">DB tracked — только синхронизированные системой.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg font-bold">Чат: {club.members_count_chat ?? '—'}</div>
-              <div className="text-lg font-bold">Канал: {club.members_count_channel ?? '—'}</div>
-            </CardContent>
-          </Card>
-
-          {/* DB Tracked */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>DB Tracked</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg">В чате: <span className="font-bold">{isStatsError ? '—' : (stats?.in_chat ?? 0)}</span></div>
-              <div className="text-lg">В канале: <span className="font-bold">{isStatsError ? '—' : (stats?.in_channel ?? 0)}</span></div>
-            </CardContent>
-          </Card>
-
-          {/* С доступом (A: has_active_access) */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="flex items-center gap-2">
-                <UserCheck className="h-4 w-4 text-green-600" />
-                С доступом
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{isStatsError ? '—' : (stats?.has_active_access ?? 0)}</div>
-            </CardContent>
-          </Card>
-
-          {/* Нарушители */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-destructive" />
-                Нарушители
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-destructive">{isStatsError ? '—' : (stats?.violators ?? 0)}</div>
-            </CardContent>
-          </Card>
-
-          {/* Купили, но не вошли */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-yellow-600" />
-                Не вошли
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-yellow-600">{isStatsError ? '—' : (stats?.bought_not_joined ?? 0)}</div>
-              <p className="text-xs text-muted-foreground">с доступом</p>
-            </CardContent>
-          </Card>
-        </div>
+        {/* Quick Stats — glassmorphism */}
+        <ClubQuickStats
+          club={club}
+          stats={stats}
+          members={members}
+          isLoading={isLoading}
+          isError={isStatsError}
+        />
 
         {/* Error Alert for members or stats */}
         {errorInfo && (
@@ -937,35 +870,15 @@ export default function TelegramClubMembers() {
           </Alert>
         )}
 
-        {/* Unknown counter badge + search indicator */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Search scope indicator - показываем при активном поиске */}
-          {debouncedSearch.length >= 2 && (
+        {/* Поисковый индикатор */}
+        {debouncedSearch.length >= 2 && (
+          <div className="flex items-center gap-2">
             <Badge variant="secondary" className="gap-1">
               <Search className="h-3 w-3" />
               Поиск по всем записям
             </Badge>
-          )}
-          
-          {/* Unknown counter badge */}
-          {(stats?.unknown ?? 0) > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="outline" className="gap-1 cursor-help">
-                  <HelpCircle className="h-3 w-3" />
-                  Неизвестные: {stats?.unknown ?? 0}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">
-                <p className="font-medium">Неуправляемые записи</p>
-                <p className="text-sm mt-1">
-                  Синхронизированные Telegram-записи без активного доступа, без истории доступа 
-                  и без присутствия в чате/канале. Не попадают ни в одну рабочую вкладку.
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
@@ -1005,25 +918,14 @@ export default function TelegramClubMembers() {
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
               <div className="flex flex-col sm:flex-row gap-3 flex-1">
-                <div className="relative flex-1 sm:max-w-80">
+                <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Поиск по имени, email, телефону..."
+                    placeholder="Поиск по имени, username, email, телефону..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="pl-9"
                   />
-                </div>
-                {/* Scope toggle: relevant vs all */}
-                <div className="flex items-center gap-2">
-                  <Switch 
-                    id="show-all-scope" 
-                    checked={showAllScope} 
-                    onCheckedChange={setShowAllScope}
-                  />
-                  <Label htmlFor="show-all-scope" className="text-sm text-muted-foreground whitespace-nowrap cursor-pointer">
-                    Все синхронизированные ({stats?.total ?? 0})
-                  </Label>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1159,15 +1061,6 @@ export default function TelegramClubMembers() {
             )}
           </CardHeader>
           <CardContent>
-            <Alert className="mb-4">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Ограничение Telegram Bot API</AlertTitle>
-              <AlertDescription>
-                Telegram Bot API не позволяет получить полный список участников чата/канала.
-                Список формируется по привязкам Telegram в системе. Используйте «Проверить статусы» для актуализации.
-              </AlertDescription>
-            </Alert>
-
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin" />
