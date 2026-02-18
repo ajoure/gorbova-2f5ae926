@@ -9752,6 +9752,7 @@ export type Database = {
           updated_at: string
         }[]
       }
+      get_db_now: { Args: never; Returns: string }
       get_demo_profile_ids: {
         Args: never
         Returns: {

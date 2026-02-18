@@ -210,15 +210,17 @@ Deno.serve(async (req) => {
 
       console.log(`Processing club: ${club.club_name}`);
 
-      // Find violators: access_status !== 'ok' AND (in_chat = true OR in_channel = true)
-      // PATCH P0.9.5: Limit to BATCH_SIZE
+      // PATCH C: Find violators in two groups:
+      // Group 1: access_status != 'ok' AND in_chat/in_channel = true (existing logic)
+      // Group 2: access_status = 'ok' but will be re-validated by hasValidAccessBatch below
+      // Both groups are loaded together and validated via hasValidAccessBatch.
       const { data: violators, error: violatorsError } = await supabase
         .from('telegram_club_members')
         .select('*')
         .eq('club_id', club.id)
-        .neq('access_status', 'ok')
         .or('in_chat.eq.true,in_channel.eq.true')
         .limit(BATCH_SIZE);
+
 
       if (violatorsError) {
         console.error(`Failed to fetch violators for club ${club.club_name}:`, violatorsError);
@@ -270,25 +272,24 @@ Deno.serve(async (req) => {
         checkedCount++;
         totalProcessed++;
 
-        // PATCH P0.9.5: Check if user has valid access via subscriptions/entitlements
+        // PATCH C: Validate access via hasValidAccessBatch for ALL members in chat/channel.
+        // This catches the case where access_status='ok' but real access was revoked.
         const userId = member.profile_id ? profileToUserIdMap.get(member.profile_id) : undefined;
         const accessCheck = userId ? accessResults.get(userId) : undefined;
 
         if (accessCheck?.valid) {
-          // SKIP KICK: User has valid access!
+          // SKIP KICK: User has valid access confirmed by source of truth
           console.log(`SKIP kick: user ${member.telegram_user_id} has valid access via ${accessCheck.source} until ${accessCheck.endAt}`);
           skippedWithAccess++;
 
-          // Update access_status to 'ok'
-          await supabase
-            .from('telegram_club_members')
-            .update({
-              access_status: 'ok',
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', member.id);
+          // Ensure access_status='ok' reflects real state
+          if (member.access_status !== 'ok') {
+            await supabase
+              .from('telegram_club_members')
+              .update({ access_status: 'ok', updated_at: new Date().toISOString() })
+              .eq('id', member.id);
+          }
 
-          // Log audit event
           await logAudit(supabase, {
             club_id: club.id,
             event_type: 'AUTO_GUARD_SKIP',
@@ -306,6 +307,11 @@ Deno.serve(async (req) => {
           });
 
           continue; // Skip to next member
+        }
+
+        // No valid access confirmed — proceed to kick even if access_status was 'ok'
+        if (member.access_status === 'ok') {
+          console.log(`PATCH C: user ${member.telegram_user_id} had access_status='ok' but hasValidAccessBatch returned invalid — proceeding to kick`);
         }
 
         // User does NOT have valid access - proceed with kick

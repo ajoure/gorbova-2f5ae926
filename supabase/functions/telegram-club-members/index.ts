@@ -173,15 +173,25 @@ function calculateAccessStatus(
 
   const access = accessRecords.get(userId);
   if (access) {
-    if (access.state_chat === 'revoked' || access.state_channel === 'revoked') {
-      // Only return 'removed' if no active subscription
-      if (!subscription || !['active', 'trial', 'past_due'].includes(subscription.status)) {
-        return 'removed';
-      }
+    // PATCH: state_chat/state_channel='revoked' takes priority over active_until.
+    // active_until is ONLY considered when state is 'active' (not pending/revoked/invited).
+    // This prevents "sync puts ok back" after admin revoke.
+    const isRevoked = access.state_chat === 'revoked' || access.state_channel === 'revoked';
+    const isActive = access.state_chat === 'active' || access.state_channel === 'active';
+
+    if (isRevoked) {
+      // State is revoked: telegram_access cannot grant 'ok'.
+      // Mark as expired so manual/grants below can still override if needed.
+      hasExpiredAccess = true;
+      // Do NOT return 'removed' here — continue checking manual & grants.
+      // 'removed' is returned only if nothing else grants access.
+    } else if (isActive) {
+      // State is active — active_until is authoritative
+      const activeUntil = access.active_until ? new Date(access.active_until) : null;
+      if (!activeUntil || activeUntil > now) return 'ok';
+      hasExpiredAccess = true;
     }
-    const activeUntil = access.active_until ? new Date(access.active_until) : null;
-    if (!activeUntil || activeUntil > now) return 'ok';
-    hasExpiredAccess = true;
+    // state='pending'/'invited' etc: do NOT grant 'ok' from active_until alone — wait for real sources.
   }
 
   const manual = manualAccessMap.get(userId);
@@ -196,6 +206,12 @@ function calculateAccessStatus(
     const endAt = grant.end_at ? new Date(grant.end_at) : null;
     if (!endAt || endAt > now) return 'ok';
     hasExpiredAccess = true;
+  }
+
+  // If state was revoked and no other source granted access — mark as removed
+  if (access) {
+    const isRevoked = access.state_chat === 'revoked' || access.state_channel === 'revoked';
+    if (isRevoked) return 'removed';
   }
 
   return hasExpiredAccess ? 'expired' : 'no_access';
