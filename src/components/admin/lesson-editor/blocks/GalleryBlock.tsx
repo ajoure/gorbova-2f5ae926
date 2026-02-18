@@ -44,15 +44,17 @@ interface GalleryBlockProps {
   content: GalleryContent;
   onChange: (content: GalleryContent) => void;
   isEditing?: boolean;
+  lessonId?: string;
 }
 
 interface SortableGalleryItemProps {
   item: GalleryItem;
   onUpdate: (id: string, field: keyof GalleryItem, value: string) => void;
   onDelete: (id: string) => void;
+  lessonId?: string;
 }
 
-function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemProps) {
+function SortableGalleryItem({ item, onUpdate, onDelete, lessonId }: SortableGalleryItemProps) {
   const {
     attributes,
     listeners,
@@ -82,7 +84,8 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
         "lesson-images",
         10,
         "image/",
-        [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+        [".jpg", ".jpeg", ".png", ".webp", ".gif"],
+        lessonId // ownerId → lesson-images/<lessonId>/...
       );
       if (result) {
         const { publicUrl, storagePath } = result;
@@ -91,7 +94,8 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
         toast.success("Изображение загружено");
         // Удаляем старый файл из Storage (fire-and-forget)
         if (prevPath && prevPath !== storagePath) {
-          deleteTrainingAssets([prevPath], undefined, "gallery_image_replaced");
+          const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
+          deleteTrainingAssets([prevPath], entity, "gallery_image_replaced");
         }
       }
     } finally {
@@ -184,7 +188,7 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
 }
 
 
-export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlockProps) {
+export function GalleryBlock({ content, onChange, isEditing = true, lessonId }: GalleryBlockProps) {
   const items = content.items || [];
   const layout = content.layout || 'grid';
   const columns = content.columns || 3;
@@ -237,7 +241,8 @@ export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlo
       const path = (item as any).storagePath as string | undefined
         || (item.url ? extractStoragePathFromPublicUrl(item.url) : null);
       if (path) {
-        deleteTrainingAssets([path], undefined, "gallery_item_deleted");
+        const entity = lessonId ? { type: "lesson", id: lessonId } : undefined;
+        deleteTrainingAssets([path], entity, "gallery_item_deleted");
       }
     }
     onChange({ ...content, items: items.filter((item) => item.id !== id) });
@@ -418,6 +423,7 @@ export function GalleryBlock({ content, onChange, isEditing = true }: GalleryBlo
                     item={item}
                     onUpdate={updateItem}
                     onDelete={deleteItem}
+                    lessonId={lessonId}
                   />
                 ))}
               </div>

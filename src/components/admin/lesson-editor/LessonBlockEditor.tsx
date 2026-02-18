@@ -258,9 +258,10 @@ interface SortableBlockItemProps {
   block: LessonBlock;
   onUpdate: (content: LessonBlock['content']) => void;
   onDelete: () => void;
+  lessonId: string;
 }
 
-function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps) {
+function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBlockItemProps) {
   const {
     attributes,
     listeners,
@@ -288,11 +289,11 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
       case 'video':
         return <VideoBlock content={block.content as any} onChange={onUpdate} />;
       case 'audio':
-        return <AudioBlock content={block.content as any} onChange={onUpdate} />;
+        return <AudioBlock content={block.content as any} onChange={onUpdate} lessonId={lessonId} />;
       case 'image':
         return <ImageBlock content={block.content as any} onChange={onUpdate} />;
       case 'file':
-        return <FileBlock content={block.content as any} onChange={onUpdate} />;
+        return <FileBlock content={block.content as any} onChange={onUpdate} lessonId={lessonId} />;
       case 'button':
         return <ButtonBlock content={block.content as any} onChange={onUpdate} />;
       case 'embed':
@@ -328,7 +329,7 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
       case 'quiz_hotspot':
         return <QuizHotspotBlock content={block.content as any} onChange={onUpdate} />;
       case 'gallery':
-        return <GalleryBlock content={block.content as any} onChange={onUpdate} />;
+        return <GalleryBlock content={block.content as any} onChange={onUpdate} lessonId={lessonId} />;
       case 'quiz_survey':
         return <QuizSurveyBlock content={block.content as any} onChange={onUpdate} />;
       case 'video_unskippable':
@@ -438,9 +439,14 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
           }
         }
 
-        // fire-and-forget удаление файлов
+        // fire-and-forget удаление файлов с ownership по lessonId
         if (paths.length > 0) {
-          deleteTrainingAssets(paths, { type: "lesson_block", id: deleteBlockId }, "block_deleted");
+          if (!lessonId) {
+            console.warn("[handleDeleteBlock] lessonId отсутствует, пропускаем удаление Storage");
+          } else {
+            const entity = { type: "lesson", id: lessonId };
+            deleteTrainingAssets(paths, entity, "block_deleted");
+          }
         }
       }
 
@@ -528,6 +534,7 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                 <SortableBlockItem
                   key={block.id}
                   block={block}
+                  lessonId={lessonId}
                   onUpdate={handleUpdateBlock(block.id)}
                   onDelete={() => setDeleteBlockId(block.id)}
                 />
