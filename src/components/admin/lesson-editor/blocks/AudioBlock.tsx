@@ -49,7 +49,7 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
       const publicUrl = await uploadToTrainingAssets(
         file,
         "lesson-audio",
-        50,
+        100,
         "audio/",
         ALLOWED_AUDIO_EXTENSIONS
       );
@@ -174,7 +174,7 @@ export function AudioBlock({ content, onChange, isEditing = true }: AudioBlockPr
                 Загрузить аудио
               </Button>
               <p className="text-xs text-muted-foreground">
-                или перетащите файл сюда • .mp3, .wav, .m4a, .ogg, .aac • до 50 МБ
+                или перетащите файл сюда • .mp3, .wav, .m4a, .ogg, .aac • до 100 МБ
               </p>
             </>
           )}
