@@ -213,7 +213,12 @@ Deno.serve(async (req) => {
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
     const forceRevoke = (body as any).force_revoke === true;
 
-    console.log('Revoke access request:', body);
+    // PATCH: явное admin-действие = is_manual:true ИЛИ admin_id передан
+    const isAdminAction = is_manual === true || (typeof admin_id === 'string' && admin_id.length > 0);
+
+    console.log('Revoke access request:', {
+      user_id, club_id, reason, is_manual, admin_id, isAdminAction, forceRevoke
+    });
 
     if (!user_id && !telegram_user_id) {
       return new Response(JSON.stringify({ error: 'user_id or telegram_user_id required' }), {
@@ -221,12 +226,22 @@ Deno.serve(async (req) => {
       });
     }
 
+    // PATCH: для admin-action club_id обязателен — findClubId не используем
+    if (isAdminAction && !club_id) {
+      console.error('[telegram-revoke-access] STOP: admin-revoke без club_id запрещён');
+      return new Response(JSON.stringify({
+        error: 'club_id required for admin revoke. Do not rely on findClubId for explicit admin actions.',
+        code: 'CLUB_ID_REQUIRED_FOR_ADMIN',
+      }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // =================================================================
-    // PATCH 11A Enhanced: Guard — запрет revoke если есть активный access
-    // Проверяем subscriptions_v2 ИЛИ entitlements (FIXED: добавлена проверка entitlements)
-    // Исключение: force_revoke=true или is_manual=true (явное действие админа)
+    // GUARD — запрет revoke если есть активный access
+    // PATCH: пропускаем при isAdminAction (is_manual || admin_id) или forceRevoke
     // =================================================================
-    if (user_id && !forceRevoke && !is_manual) {
+    if (user_id && !forceRevoke && !isAdminAction) {
       const now = new Date().toISOString();
       
       // 1. Check active subscription
@@ -239,7 +254,7 @@ Deno.serve(async (req) => {
         .limit(1)
         .maybeSingle();
 
-      // 2. Check active entitlement (club products with valid expiry)
+      // 2. Check active entitlement
       const { data: activeEntitlement } = await supabase
         .from('entitlements')
         .select('id, product_code, expires_at')
@@ -296,6 +311,8 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+    } else if (isAdminAction) {
+      console.log(`[telegram-revoke-access] Guard bypassed: isAdminAction=true (is_manual=${is_manual}, admin_id=${admin_id ? 'set' : 'null'})`);
     }
 
     // Determine telegram_user_id and profileUserId first

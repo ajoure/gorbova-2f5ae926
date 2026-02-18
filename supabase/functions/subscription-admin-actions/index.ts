@@ -478,11 +478,20 @@ Deno.serve(async (req) => {
             })
             .eq('id', relatedSubscription.id);
 
-          // Revoke Telegram access
+          // Revoke Telegram access — PATCH: is_manual:true + club_id обязательны для admin-revoke
           if (product?.telegram_club_id) {
-            await supabase.functions.invoke('telegram-revoke-access', {
-              body: { user_id: order.user_id },
+            const revokeRes = await supabase.functions.invoke('telegram-revoke-access', {
+              body: {
+                user_id: order.user_id,
+                club_id: product.telegram_club_id,
+                is_manual: true,
+                reason: 'refund',
+                admin_id: adminUserId,
+              },
             });
+            console.log('[refund] telegram-revoke-access result:', JSON.stringify(revokeRes.data));
+          } else {
+            console.warn('[refund] No telegram_club_id on product — telegram revoke skipped');
           }
 
           console.log(`Access revoked for subscription ${relatedSubscription.id}`);
@@ -811,11 +820,12 @@ Deno.serve(async (req) => {
             body: {
               user_id: subscription.user_id,
               club_id: productForRevoke.telegram_club_id,
+              is_manual: true,   // PATCH: обязательно для admin-revoke
               reason: 'subscription_revoked',
               admin_id: adminUserId,
             },
           });
-          console.log('Telegram revoke result:', revokeResult.data);
+          console.log('[revoke_access] Telegram revoke result:', JSON.stringify(revokeResult.data));
         }
 
         // Cancel in GetCourse with gc_deal_number for update
@@ -861,28 +871,45 @@ Deno.serve(async (req) => {
       }
 
       case 'delete': {
-        // Send Telegram notification before deletion
+        // PATCH: порядок операций — сначала UPDATE статуса, потом revoke, потом DELETE.
+        // Это устраняет race condition где revoke видит "active" подписку.
+
+        // 1. Обновляем статус до revoke (чтобы guard в telegram-revoke-access не видел active)
+        await supabase
+          .from('subscriptions_v2')
+          .update({
+            status: 'canceled',
+            access_end_at: new Date().toISOString(),
+            cancel_at: new Date().toISOString(),
+            canceled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', subscription_id);
+
+        // 2. Send Telegram notification
         await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
 
-        // First revoke any access with proper club_id
+        // 3. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
           const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
             body: {
               user_id: subscription.user_id,
               club_id: productForDelete.telegram_club_id,
+              is_manual: true,
               reason: 'subscription_deleted',
               admin_id: adminUserId,
             },
           });
-          console.log('Telegram revoke result:', revokeResult.data);
+          console.log('[delete] Telegram revoke result:', JSON.stringify(revokeResult.data));
+        } else {
+          console.warn('[delete] No telegram_club_id on product — telegram revoke skipped');
         }
 
-        // Cancel in GetCourse before deletion with amount and deal_number
+        // 4. Cancel in GetCourse
         const tariffForDelete = subscription.tariffs as any;
         const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
         const orderForDelete = subscription.orders_v2 as any;
-        // Use gc_deal_number (our generated number) for updates, fallback to gc_order_id
         const gcDealNumberDelete = orderForDelete?.meta?.gc_deal_number || orderForDelete?.meta?.gc_order_id;
         if (gcOfferIdDelete && orderForDelete?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
@@ -891,13 +918,13 @@ Deno.serve(async (req) => {
             orderForDelete.order_number || subscription_id,
             'Подписка удалена',
             orderForDelete.final_price || 0,
-            gcDealNumberDelete // Pass deal_number to update existing deal
+            gcDealNumberDelete
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
         }
 
-        // Delete the subscription
+        // 5. Физически удаляем запись подписки
         await supabase
           .from('subscriptions_v2')
           .delete()
