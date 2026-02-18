@@ -1,219 +1,214 @@
+# План: Интеграция hoster.by — BY-egress прокси для парсинга BY/RU сайтов
 
-# Исправление логики бизнес-метрик в ClubQuickStats
+**Статус:** Утверждено, ожидает реализации  
+**Приоритет:** P0 (Security) → P1 (UI) → P2 (Edge Function) → P3 (VPS Service) → P4 (monitor-news)  
+**Контекст задачи:** 8F42B1C3-5D9E-4A7B-B2E1-9C3F4D5A6E7B
 
-## Корень проблемы (доказано SQL)
+---
 
-Текущий хук `useClubBusinessStats` считает **строки**, а не **уникальных людей**:
+## Цель
 
-| Метрика | Текущая (неверная) | Правильная |
-|---------|-------------------|------------|
-| Всего с доступом | 546 (все active, включая end_at < NOW()) | 162 (уникальные user_id с end_at > NOW()) |
-| Новые | 531 (все active grant-записи за период) | ~5-10 (уникальные люди, чей ПЕРВЫЙ ever grant — за период) |
-| Не продлили | 423 (все revoked/expired записи за период) | 33 (уникальные люди, чей ПОСЛЕДНИЙ grant истёк и нет активного) |
+Подключить hoster.by Cloud API как BY-egress для серверного парсинга.  
+Запросы к *.by и выбранным BY/RU доменам должны выполняться через наш VPS в Беларуси (Минск), чтобы государственные сайты видели BY-IP и не блокировали запросы.
 
-Три отдельных ошибки:
+**Текущее состояние:**
+- В аккаунте hoster.by "Облако 30015" — VPS ещё нет (кнопка "Создать сервер")
+- В проекте уже есть `BY_PROXY_URL` в secrets и поддержка прокси в `monitor-news`
+- Публичная документация hoster.by Cloud API не опубликована в открытом доступе
+- На скриншотах видны: Cloud Access-Key, Cloud Secret-Key, DNS Access-Key, DNS Secret-Key
 
-**Ошибка 1 — "Всего с доступом":** `WHERE status = 'active'` без фильтра `end_at > NOW()`. В БД 36 записей `active` с просроченным `end_at`. Плюс не считает уникальных — считает строки.
+---
 
-**Ошибка 2 — "Новые":** При продлении подписки создаётся **новый** grant — поэтому за 30 дней накопилось 531 записей. Настоящих новых членов (первое вступление) — 122 за 30 дней, за 7 дней — нужно проверить.
+## Жёсткие правила безопасности (P0 — обязательно)
 
-**Ошибка 3 — "Не продлили":** Считает ВСЕ revoked/expired строки за период, включая тех, кто потом вернулся (у них уже есть новый active grant). Правильно: только те, у кого ПОСЛЕДНИЙ grant — revoked/expired И нет действующего active.
+1. **Нельзя поднимать "open proxy"** — Squid с `http_access allow all` запрещён
+2. **Секреты не хранятся в `integration_instances.config` в открытом виде** — только server-side secrets
+3. **BY-egress endpoint защищён:** bearer token + SSRF-guards + allowlist доменов + rate limit + response size limit
+4. **Никаких хардкод UUID** — все ID через запросы к БД
+5. **Ключи hoster.by API хранятся в Supabase secrets**, UI хранит только `instance_id` и публичный статус
+6. **BY_PROXY_URL/BY_EGRESS обновляется только server-side** (edge function) + запись в `audit_logs`
+7. **Реализовать signing строго по документации** — не хардкодить предположения о формате
 
-## Правильные SQL-запросы
+---
 
-### Всего с доступом
-```sql
-SELECT COUNT(DISTINCT user_id)
-FROM telegram_access_grants
-WHERE club_id = :clubId
-  AND status = 'active'
-  AND (end_at IS NULL OR end_at > NOW())
-```
-Результат: **162** ✓
+## Важная техническая оговорка: hoster.by API
 
-### Новые за период
-```sql
--- Люди, у которых ПЕРВЫЙ grant в клубе создан за период
-WITH first_grants AS (
-  SELECT user_id, MIN(created_at) as first_ever
-  FROM telegram_access_grants
-  WHERE club_id = :clubId
-  GROUP BY user_id
-)
-SELECT COUNT(*) FROM first_grants
-WHERE first_ever >= NOW() - INTERVAL ':period days'
-```
-Семантика: "Впервые вступили в клуб за выбранный период".
+**Проблема:** Документация hoster.by Cloud API (cp.hoster.by/hosterapigateway) не опубликована публично.  
+cp.hoster.by без авторизации возвращает страницу логина.
 
-### Не продлили за период
-```sql
--- Последний grant пользователя — revoked/expired за период, И нет активного сейчас
-WITH latest_grants AS (
-  SELECT DISTINCT ON (user_id)
-    user_id, status, updated_at
-  FROM telegram_access_grants
-  WHERE club_id = :clubId
-  ORDER BY user_id, created_at DESC
-)
-SELECT COUNT(*) FROM latest_grants
-WHERE status IN ('revoked', 'expired')
-  AND updated_at >= NOW() - INTERVAL ':period days'
-```
-Семантика: "Последний раз имели доступ, но сейчас — нет, и отпали за выбранный период". Если вернулись — их последний grant active, они НЕ попадают сюда. ✓
+**Требования к реализации:**
+- Signing реализуется **только после** получения официальной документации из ЛК hoster.by
+- Unit-тест на signing обязателен
+- До получения документации: healthcheck возвращает `{ success: false, error: "API_DOCS_REQUIRED" }`
 
-### Субтитры карточек (обновить)
-- **"Всего с доступом"**: подпись `"уникальных участников"` вместо `"активных grant-ов"`
-- **"Новые"**: подпись `"впервые вступили"` чтобы отличать от "продлили"
-- **"Не продлили"**: подпись `"ушли из клуба"` — более понятно
+---
 
-## Что меняем (точечные правки)
+## P1 — Admin UI: Integrations → Разное → hoster.by
 
-### Файл 1: `src/hooks/useTelegramIntegration.tsx` — хук useClubBusinessStats
+### 1.1 Провайдер в `src/hooks/useIntegrations.tsx`
 
-Заменить три запроса (строки 818–839) на корректные:
-
-**Запрос 3 (totalWithAccess):** добавить `COUNT(DISTINCT user_id)` через `.select('user_id')` + фильтр `end_at > now()`.
-
-**Запрос 4 (newCount):** вместо `gte('created_at', since)` на всех active-записях — сначала получаем минимальный created_at по user_id через CTE. В JS: получаем все записи клуба с user_id и created_at, группируем по user_id, берём min(created_at), фильтруем >= since.
-
-**Запрос 5 (revokedCount):** вместо простого фильтра — получаем последний grant каждого user_id, фильтруем revoked/expired за период, исключаем тех у кого есть active.
-
-Поскольку Supabase не поддерживает CTE через JS-клиент напрямую, реализуем логику в JS:
+Добавить в массив `PROVIDERS`:
 
 ```typescript
-// Шаг 1: получить все grant-ы клуба (user_id + status + created_at + updated_at + end_at)
-// Используем пагинацию чтобы обойти лимит 1000 строк
-const allGrants = await fetchAllGrants(clubId);
-
-// totalWithAccess: уникальные active с end_at > now
-const now = new Date();
-const activeSet = new Set(
-  allGrants
-    .filter(g => g.status === 'active' && (!g.end_at || new Date(g.end_at) > now))
-    .map(g => g.user_id)
-);
-const totalWithAccess = activeSet.size;
-
-// newCount: первый grant за period
-const sinceDate = new Date(Date.now() - periodDays * 86400000);
-const firstGrantByUser = new Map<string, Date>();
-for (const g of allGrants) {
-  const d = new Date(g.created_at);
-  if (!firstGrantByUser.has(g.user_id) || d < firstGrantByUser.get(g.user_id)!) {
-    firstGrantByUser.set(g.user_id, d);
-  }
+{
+  id: "hosterby",
+  name: "hoster.by Cloud",
+  icon: "Server",
+  category: "other",
+  description: "Белорусский VPS-хостинг. BY-egress для парсинга BY/RU сайтов.",
+  fields: [
+    { key: "cloud_access_key", label: "Cloud Access-Key", type: "password", required: true },
+    { key: "cloud_secret_key", label: "Cloud Secret-Key", type: "password", required: true },
+  ],
+  advancedFields: [
+    // DNS ключи — для будущего использования (DNS management)
+    { key: "dns_access_key", label: "DNS Access-Key (future)", type: "password" },
+    { key: "dns_secret_key", label: "DNS Secret-Key (future)", type: "password" },
+  ],
 }
-const newCount = [...firstGrantByUser.values()].filter(d => d >= sinceDate).length;
-
-// revokedCount: последний grant — revoked/expired за period, без active сейчас
-const lastGrantByUser = new Map<string, {status: string; updated_at: Date}>();
-for (const g of allGrants) {
-  const d = new Date(g.created_at);
-  const existing = lastGrantByUser.get(g.user_id);
-  if (!existing || d > existing.updated_at) { // нужен created_at для сортировки
-    lastGrantByUser.set(g.user_id, { status: g.status, updated_at: new Date(g.updated_at) });
-  }
-}
-const revokedCount = [...lastGrantByUser.entries()]
-  .filter(([uid, g]) => 
-    ['revoked', 'expired'].includes(g.status) && 
-    g.updated_at >= sinceDate &&
-    !activeSet.has(uid)
-  ).length;
 ```
 
-Но всего записей в клубе ~1112 (546+360+206) — больше 1000, нужна пагинация. Сделаем `range(0,999)` + `range(1000,1999)` или используем RPC.
+**Важно:** Ключи хранятся временно в config при создании. После первого healthcheck — переносятся в Supabase secrets (`HOSTERBY_CLOUD_ACCESS_KEY`, `HOSTERBY_CLOUD_SECRET_KEY`). В `config` остаётся: `{ cloud_id, vm_id, vm_ip, egress_status, egress_token_hash }`.
 
-**Оптимальное решение:** Создать SQL-функцию RPC `get_club_business_stats(p_club_id, p_period_days)` — она вернёт правильные агрегаты без проблемы с лимитом 1000.
+### 1.2 Компонент: `src/components/integrations/hosterby/HosterBySettingsCard.tsx`
 
-### Файл 2: `supabase/migrations/` — новая RPC функция
+По образцу `KinescopeSettingsCard.tsx`:
+- Иконка: `Server` (lucide-react)
+- Badge: Подключено / Ошибка / Не проверено
+- Статус: Cloud ID, VM + IP, статус egress (Активен / Не настроен / Ошибка)
+- Кнопки: Проверить / Настройки / Выбрать VM / Настроить BY-egress / Удалить
 
-```sql
-CREATE OR REPLACE FUNCTION public.get_club_business_stats(
-  p_club_id uuid,
-  p_period_days integer DEFAULT 30
-)
-RETURNS jsonb
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-WITH 
--- Все гранты клуба
-grants AS (
-  SELECT user_id, status, created_at, updated_at, end_at
-  FROM telegram_access_grants
-  WHERE club_id = p_club_id
-),
--- Уникальные активные участники прямо сейчас
-active_users AS (
-  SELECT DISTINCT user_id
-  FROM grants
-  WHERE status = 'active' AND (end_at IS NULL OR end_at > NOW())
-),
--- Первый grant каждого пользователя
-first_grants AS (
-  SELECT user_id, MIN(created_at) AS first_at
-  FROM grants
-  GROUP BY user_id
-),
--- Последний grant каждого пользователя
-latest_grants AS (
-  SELECT DISTINCT ON (user_id) user_id, status, updated_at
-  FROM grants
-  ORDER BY user_id, created_at DESC
-),
-since AS (
-  SELECT NOW() - (p_period_days || ' days')::interval AS dt
-)
-SELECT jsonb_build_object(
-  'total_with_access', (SELECT COUNT(*) FROM active_users),
-  'new_count', (
-    SELECT COUNT(*) FROM first_grants, since
-    WHERE first_at >= since.dt
-  ),
-  'revoked_count', (
-    SELECT COUNT(*) FROM latest_grants lg, since
-    WHERE lg.status IN ('revoked', 'expired')
-      AND lg.updated_at >= since.dt
-      AND NOT EXISTS (SELECT 1 FROM active_users au WHERE au.user_id = lg.user_id)
-  )
-);
-$$;
+### 1.3 Диалог: `src/components/integrations/hosterby/HosterByConnectionDialog.tsx`
+
+- Cloud Access-Key (masked), Cloud Secret-Key (masked)
+- Свёрнутый блок: DNS Access-Key, DNS Secret-Key (future)
+- Кнопка: **Сохранить и проверить**
+
+### 1.4 Диалог VM: `src/components/integrations/hosterby/HosterByVmDialog.tsx`
+
+- **Таб 1 (DEFAULT): "Подключить существующий VPS"** — список VM + выбор
+- **Таб 2: "Создать новый VPS"** — имя, конфиг, OS Ubuntu 22.04, STOP-guard
+
+### 1.5 Wizard: `src/components/integrations/hosterby/HosterByEgressDialog.tsx`
+
+3 шага: Обзор → Установка fetch-service (server-side SSH) → Проверка + активация
+
+### 1.6 `OtherIntegrationsTab.tsx`
+
+```tsx
+const hosterByInstance = instances?.find((i) => i.provider === "hosterby") || null;
+<HosterBySettingsCard instance={hosterByInstance} />
 ```
 
-### Файл 3: `src/components/telegram/ClubQuickStats.tsx` — обновить подписи
+---
 
-Строка 347: `subtitle="активных grant-ов"` → `subtitle="уникальных участников"`
-Строка 374: tooltip добавить "Люди, впервые вступившие в клуб за последние N дней"
-Строка 387: tooltip добавить "Не продлили и не вернулись"
+## P2 — Edge Function: `hosterby-api`
 
-## Технические детали
+**Файл:** `supabase/functions/hosterby-api/index.ts`
 
-### Тарифы: уже правильно?
-Почему BUSINESS 115 вместо реальных 114? Текущий запрос считает **строки subscriptions_v2**, не уникальных user_id. Если у одного юзера 2 активные подписки — считается дважды. Исправить: добавить `COUNT(DISTINCT s.user_id)`.
+Ключи — только из `Deno.env.get("HOSTERBY_CLOUD_ACCESS_KEY")`, никогда из request body.
 
-### Пагинация vs RPC
-Всего грантов в клубе: 546 + 360 + 206 = 1112 — превышает лимит Supabase в 1000 строк. Если считать в JS через `.select()`, получим неверные данные. **Поэтому RPC — обязательна.**
+| Action | Описание | dry_run |
+|--------|----------|---------|
+| `test_connection` | Ping API | нет |
+| `list_clouds` | Список clouds | нет |
+| `list_vms` | Список VM в cloud_id | нет |
+| `get_vm` | Детали VM | нет |
+| `create_vm` | Создать VM | **да** |
+| `attach_public_ip` | Привязать IP | **да** |
+| `setup_by_egress` | SSH → fetch-service | **да** |
+| `save_by_egress_config` | URL+TOKEN → secrets + audit_log | **да** |
+| `check_egress_health` | GET /health | нет |
+| `test_egress_url` | Тест URL через egress | нет |
 
-## Порядок изменений
+**Signing:** реализовать строго по официальной документации из ЛК hoster.by. До получения — заглушка с понятным сообщением. Unit-тест обязателен.
 
-1. SQL-миграция: создать RPC `get_club_business_stats`
-2. `useClubBusinessStats` hook: заменить 3 отдельных count-запроса на один `.rpc('get_club_business_stats', { p_club_id: clubId, p_period_days: periodDays })`
-3. Обновить подписи карточек:
-   - "Всего с доступом" subtitle → "уникальных участников"  
-   - "Новые" tooltip → "Впервые вступили в клуб за этот период"
-   - "Не продлили" tooltip → "Ушли из клуба и не вернулись"
-4. Тарифы: добавить `COUNT(DISTINCT user_id)` в запрос подписок
+---
+
+## P3 — Fetch-service на VPS (НЕ open proxy)
+
+- `/health` — публичный, без авторизации
+- `/fetch` — GET/HEAD only, bearer token, allowlist доменов, SSRF-guards, timeout 15s, max 5MB
+- ufw: закрыть metadata 169.254.x.x, все внутренние диапазоны
+- systemd сервис, запускается от `nobody`
+
+**Стартовый allowlist:** nbrb.by, nalog.gov.by, ssf.gov.by, kgk.gov.by, gtk.gov.by, minfin.gov.by, economy.gov.by, pravo.by, mintrud.gov.by, customs.gov.by
+
+**Feature flag:** `ALLOW_ALL_BY_DOMAINS=false` (wildcard *.by)
+
+---
+
+## P4 — monitor-news (минимальные изменения)
+
+Добавить в начало функции чтение конфига:
+```
+BY_EGRESS_ENABLED=true
+BY_EGRESS_BASE_URL=http://ip:8080
+BY_EGRESS_TOKEN=<token>
+BY_EGRESS_ALLOWLIST=nbrb.by,nalog.gov.by,...
+```
+
+Логи: `fetch_via=by_egress|default`, `http_status`, `duration_ms` — без PII.
+
+**Rollback:** `BY_EGRESS_ENABLED=false` → всё возвращается к прямому fetch.
+
+---
+
+## Порядок реализации
+
+### Фаза 1 (без hoster.by API — пока нет документации)
+1. `useIntegrations.tsx` — добавить провайдер `hosterby`
+2. `HosterBySettingsCard.tsx` — карточка с UI
+3. `HosterByConnectionDialog.tsx` — ввод и сохранение ключей
+4. `OtherIntegrationsTab.tsx` — добавить карточку
+5. `hosterby-api/index.ts` — skeleton edge function
+6. `integration-healthcheck/index.ts` — case "hosterby"
+
+### Фаза 2 (после получения документации hoster.by Cloud API)
+7. Реализовать signing + unit-тест `signing_test.ts`
+8. Реализовать list_clouds, list_vms, get_vm
+9. `HosterByVmDialog.tsx` — реальный список VM
+10. Реализовать setup_by_egress (SSH + fetch-service install)
+11. `HosterByEgressDialog.tsx` — wizard с реальными вызовами
+
+### Фаза 3 (после успешной настройки VPS)
+12. Добавить BY_EGRESS_* secrets
+13. Минимальные изменения в monitor-news
+
+---
 
 ## DoD
 
-- A) "Всего с доступом" = 162 (совпадает с вкладкой "С доступом")
-- B) "Новые за 30 дней" = реальное число людей, впервые вступивших, не включает продления
-- C) "Не продлили" = реальные потери, вернувшиеся НЕ включены
-- D) Тарифы = уникальные пользователи на тариф, сумма ≈ Всего с доступом
-- E) Переключатель 7/30/90 дней корректно меняет Новые и Не продлили
+| # | Критерий | Доказательство |
+|---|----------|----------------|
+| A | Карточка hoster.by видна в "Разное" рядом с Kinescope | Скрин |
+| B | Test connection возвращает список VM с IP | Скрин + лог |
+| C | VM выбрана, IP сохранён в конфиге | SQL SELECT config FROM integration_instances |
+| D | /health на VPS → 200 OK | curl скрин |
+| E | /fetch для nbrb.by → 200, nalog.gov.by → 200/301 | curl скрин |
+| F | monitor-news: fetch_via=by_egress в логах | Лог вывод |
+| G | Rollback BY_EGRESS_ENABLED=false работает | Тест |
+| H | audit_logs: запись о сохранении egress конфига | SQL SELECT |
 
-## Что не трогаем
+---
 
-- Визуальную часть карточек — симметрия уже правильная
-- Переключатель периода — работает
-- Таблицу участников, табы, поиск
-- "Вне системы" и "Нарушители" — данные из другого хука, считаются правильно
+## Открытые вопросы (перед Фазой 2)
+
+1. **Документация hoster.by Cloud API** — получить из ЛК (Облако 30015 → API)
+2. **SSH-ключ для VPS** — загрузить в аккаунт hoster.by до создания VM
+3. **Порт fetch-service** — 8080 открыт в firewall? Или другой порт?
+4. **Публичный IP VPS** — нужен после создания для DoD E/F
+
+---
+
+## Что НЕ трогаем
+
+- Внутренняя логика `monitor-news` (только добавление fetchViaByEgress)
+- RLS политики `integration_instances`
+- Таблица `integration_instances` — миграция не нужна
+- Другие провайдеры в `integration-healthcheck`
+- Существующий `BY_PROXY_URL` — не удалять
+
+---
+
+*Последнее обновление: 2026-02-18*
