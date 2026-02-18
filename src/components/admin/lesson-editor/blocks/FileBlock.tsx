@@ -13,6 +13,15 @@ interface FileBlockProps {
   isEditing?: boolean;
 }
 
+// Allowlist расширений для FileBlock — без MIME-проверки, т.к. application/* нестабилен
+const ALLOWED_FILE_EXTENSIONS = [
+  ".pdf", ".doc", ".docx",
+  ".xls", ".xlsx",
+  ".ppt", ".pptx",
+  ".zip", ".rar",
+  ".txt", ".csv", ".rtf",
+];
+
 function formatFileSizeDisplay(bytes?: number): string {
   if (!bytes) return "";
   return formatFileSize(bytes);
@@ -24,7 +33,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
   const [localSize, setLocalSize] = useState(content.size?.toString() || "");
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleUrlBlur = () => {
     onChange({ ...content, url: localUrl });
@@ -41,7 +50,14 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
-      const publicUrl = await uploadToTrainingAssets(file, "lesson-files", 50);
+      // Только allowlist по расширениям, без MIME-проверки (application/* нестабилен)
+      const publicUrl = await uploadToTrainingAssets(
+        file,
+        "lesson-files",
+        50,
+        undefined,
+        ALLOWED_FILE_EXTENSIONS
+      );
       if (publicUrl) {
         // Автозаполнение всех полей
         setLocalUrl(publicUrl);
@@ -63,6 +79,7 @@ export function FileBlock({ content, onChange, isEditing = true }: FileBlockProp
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileUpload(file);
+    // Сброс input чтобы можно было загрузить тот же файл повторно
     e.target.value = "";
   };
 

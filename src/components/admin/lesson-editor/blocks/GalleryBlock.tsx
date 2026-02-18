@@ -72,13 +72,16 @@ function SortableGalleryItem({ item, onUpdate, onDelete }: SortableGalleryItemPr
   };
 
   const handleFileUpload = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.error("Выберите файл изображения");
-      return;
-    }
     try {
       setUploading(true);
-      const publicUrl = await uploadToTrainingAssets(file, "lesson-images", 10, "image/");
+      // Валидация: MIME "image/" ИЛИ расширение из allowlist
+      const publicUrl = await uploadToTrainingAssets(
+        file,
+        "lesson-images",
+        10,
+        "image/",
+        [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+      );
       if (publicUrl) {
         onUpdate(item.id, "url", publicUrl);
         toast.success("Изображение загружено");
