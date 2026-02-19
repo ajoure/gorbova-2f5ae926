@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Video, FolderOpen, Plus, Loader2, Check } from "lucide-react";
+import { Video, FolderOpen, Plus, Loader2, Check, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { cn } from "@/lib/utils";
 import { generateSlug } from "./ModuleFormFields";
@@ -20,6 +21,7 @@ interface ModuleOption {
   id: string;
   title: string;
   slug: string;
+  is_active?: boolean;
   lesson_count?: number;
 }
 
@@ -65,11 +67,11 @@ export function ModuleSelector({
           id,
           title,
           slug,
+          is_active,
           training_lessons(count)
         `)
         .eq("menu_section_key", sectionKey)
         .eq("is_container", false)
-        .eq("is_active", true)
         .order("sort_order");
 
       if (error) throw error;
@@ -78,6 +80,7 @@ export function ModuleSelector({
         id: m.id,
         title: m.title,
         slug: m.slug,
+        is_active: m.is_active,
         lesson_count: (m.training_lessons as any)?.[0]?.count || 0,
       })) as ModuleOption[];
     },
@@ -191,11 +194,19 @@ export function ModuleSelector({
                       <FolderOpen className="h-5 w-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 justify-between">
                         <h4 className="font-medium truncate">{mod.title}</h4>
-                        {selectedModuleId === mod.id && (
-                          <Check className="h-4 w-4 text-primary shrink-0 ml-2" />
-                        )}
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          {mod.is_active === false && (
+                            <Badge variant="secondary" className="gap-1 text-xs">
+                              <EyeOff className="h-3 w-3" />
+                              Скрыт
+                            </Badge>
+                          )}
+                          {selectedModuleId === mod.id && (
+                            <Check className="h-4 w-4 text-primary" />
+                          )}
+                        </div>
                       </div>
                       <p className="text-sm text-muted-foreground mt-0.5">
                         Урок будет частью модуля

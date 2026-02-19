@@ -65,7 +65,9 @@ import {
   CalendarIcon,
   Lock,
   Info,
+  Layers,
 } from "lucide-react";
+import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 
 const contentTypeOptions = [
   { value: "article", label: "Статья", icon: FileText },
@@ -327,6 +329,7 @@ export default function AdminTrainingLessons() {
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
   
   // Date/time state for publish scheduling
   const [publishDate, setPublishDate] = useState<Date | undefined>();
@@ -553,6 +556,10 @@ export default function AdminTrainingLessons() {
               <ArrowLeft className="mr-2 h-4 w-4" />
               <span className="hidden sm:inline">Назад</span>
             </Button>
+            <Button variant="outline" onClick={() => setIsWizardOpen(true)}>
+              <Layers className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Добавить модуль</span>
+            </Button>
             <Button onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
               <span className="hidden sm:inline">Добавить урок</span>
@@ -745,6 +752,13 @@ export default function AdminTrainingLessons() {
           </AlertDialogContent>
         </AlertDialog>
       </div>
+
+      {/* ContentCreationWizard для создания нового модуля в том же разделе */}
+      <ContentCreationWizard
+        open={isWizardOpen}
+        onOpenChange={setIsWizardOpen}
+        initialSectionKey={module?.menu_section_key || "products-library"}
+      />
     </AdminLayout>
   );
 }
