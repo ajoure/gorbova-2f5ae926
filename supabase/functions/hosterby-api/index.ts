@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,176 +11,7 @@ const corsHeaders = {
 const HOSTERBY_API_BASE = "https://serviceapi.hoster.by";
 
 // ============================================================
-// Signing — строго по документации serviceapi.hoster.by
-// https://serviceapi.hoster.by/rest_api_docs.html
-//
-// Алгоритм:
-//   1. MD5(body_bytes) → base64  (для GET пустое тело → MD5("") = base64)
-//   2. canonical_string = METHOD + "\n" + URI_PATH + "\n" + md5_base64
-//   3. signature = HMAC-SHA256(secret_key, canonical_string) → HEX
-//   4. Headers: X-API-KEY: {access_key}, X-API-SIGN: {hex_signature}
-// ============================================================
-
-// ============================================================
-// MD5 — чистая реализация без BigInt и без внешних npm (стабильна в edge runtime)
-// Для GET без тела: md5Base64("") === "1B2M2Y8AsgTpgAmY7PhCfg=="
-// encodeBase64 надёжнее btoa(String.fromCharCode(...spread)) для больших буферов
-// ============================================================
-function computeMd5(input: Uint8Array): Uint8Array {
-  // Таблица T[i] = floor(abs(sin(i+1)) * 2^32) — вычисляется один раз
-  const T = new Uint32Array(64);
-  for (let i = 0; i < 64; i++) T[i] = (Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
-
-  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
-             5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
-             4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
-             6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
-
-  const origLen = input.length;
-  const paddedLen = Math.ceil((origLen + 9) / 64) * 64;
-  const padded = new Uint8Array(paddedLen);
-  padded.set(input);
-  padded[origLen] = 0x80;
-  // Длина в битах, little-endian 64 bit — без BigInt
-  const bitLenLo = (origLen * 8) >>> 0;
-  const bitLenHi = Math.floor(origLen / 0x20000000) >>> 0;
-  for (let i = 0; i < 4; i++) {
-    padded[paddedLen - 8 + i] = (bitLenLo >>> (i * 8)) & 0xff;
-    padded[paddedLen - 4 + i] = (bitLenHi >>> (i * 8)) & 0xff;
-  }
-
-  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
-  for (let chunk = 0; chunk < paddedLen; chunk += 64) {
-    const W = new Uint32Array(16);
-    for (let i = 0; i < 16; i++) {
-      W[i] = padded[chunk + i*4]
-           | (padded[chunk + i*4 + 1] << 8)
-           | (padded[chunk + i*4 + 2] << 16)
-           | (padded[chunk + i*4 + 3] << 24);
-    }
-    let A = a0, B = b0, C = c0, D = d0;
-    for (let i = 0; i < 64; i++) {
-      let F: number, g: number;
-      if (i < 16)      { F = (B & C) | (~B & D);  g = i; }
-      else if (i < 32) { F = (D & B) | (~D & C);  g = (5*i + 1) % 16; }
-      else if (i < 48) { F = B ^ C ^ D;            g = (3*i + 5) % 16; }
-      else             { F = C ^ (B | ~D);          g = (7*i) % 16; }
-      const s = S[i];
-      F = (F + A + T[i] + W[g]) >>> 0;
-      A = D; D = C; C = B;
-      B = ((B + ((F << s) | (F >>> (32 - s)))) >>> 0);
-    }
-    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0;
-    c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
-  }
-  const result = new Uint8Array(16);
-  for (let i = 0; i < 4; i++) {
-    result[i]      = (a0 >>> (i * 8)) & 0xff;
-    result[i + 4]  = (b0 >>> (i * 8)) & 0xff;
-    result[i + 8]  = (c0 >>> (i * 8)) & 0xff;
-    result[i + 12] = (d0 >>> (i * 8)) & 0xff;
-  }
-  return result;
-}
-
-function md5Base64(body: string): string {
-  const bytes = new TextEncoder().encode(body);
-  return encodeBase64(computeMd5(bytes)); // encodeBase64 надёжнее btoa(...spread)
-}
-
-async function buildHosterSignature(
-  method: string,
-  path: string,
-  body: string,
-  secretKey: string
-): Promise<string> {
-  const bodyMd5 = md5Base64(body);
-  const canonical = `${method.toUpperCase()}\n${path}\n${bodyMd5}`;
-  const keyBytes = new TextEncoder().encode(secretKey);
-  const msgBytes = new TextEncoder().encode(canonical);
-  const key = await crypto.subtle.importKey(
-    "raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, msgBytes);
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-// ============================================================
-// UNIT TESTS — signing vectors
-// Запускаются ТОЛЬКО при HOSTERBY_SIGN_TESTS=1 (не в проде по умолчанию).
-// Внутри try/catch — никогда не бросают исключение наружу.
-// ============================================================
-async function runSigningTests(): Promise<void> {
-  try {
-    // Vector 3: MD5 пустой строки → base64 ДОЛЖЕН быть "1B2M2Y8AsgTpgAmY7PhCfg=="
-    const emptyMd5 = md5Base64("");
-    const expectedEmptyMd5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
-    if (emptyMd5 !== expectedEmptyMd5) {
-      console.error(`[SIGNING TEST] FAIL: MD5("") expected=${expectedEmptyMd5} got=${emptyMd5}`);
-    } else {
-      console.log("[SIGNING TEST] PASS: MD5 empty string OK");
-    }
-
-    // Vector 1: GET без тела
-    const sig1 = await buildHosterSignature("GET", "/v1/cloud/vms", "", "test_secret_key");
-    console.log("[SIGNING TEST] vector1 GET /v1/cloud/vms:", sig1);
-
-    // Vector 2: POST с телом
-    const body2 = '{"name":"test"}';
-    const sig2 = await buildHosterSignature("POST", "/v1/cloud/vms", body2, "test_secret_key");
-    console.log("[SIGNING TEST] vector2 POST /v1/cloud/vms body:", sig2);
-  } catch (e) {
-    // Никогда не бросаем наружу — тесты не должны убивать edge function
-    console.error("[SIGNING TEST] ERROR (non-fatal):", e);
-  }
-}
-
-// Запускать только при явном флаге — НЕ на cold start в проде
-if (Deno.env.get("HOSTERBY_SIGN_TESTS") === "1") {
-  runSigningTests().catch((e) => console.error("[SIGNING TEST] Error:", e));
-}
-
-// ============================================================
-// SSRF Guard
-// ============================================================
-function isSsrfSafe(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const h = parsed.hostname.toLowerCase();
-    // Block private/loopback/link-local
-    if (h === "localhost" || h === "::1") return false;
-    if (/^127\./.test(h)) return false;
-    if (/^10\./.test(h)) return false;
-    if (/^192\.168\./.test(h)) return false;
-    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
-    if (/^169\.254\./.test(h)) return false; // link-local / AWS metadata
-    if (/^100\.64\./.test(h)) return false; // CGNAT
-    if (h === "metadata.google.internal") return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isDomainAllowed(url: string, allowlist: string[]): boolean {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return allowlist.some(
-      (d) => hostname === d.toLowerCase() || hostname.endsWith("." + d.toLowerCase())
-    );
-  } catch {
-    return false;
-  }
-}
-
-// ============================================================
-// hoster.by API request helper — dual-mode auth
-// Attempt A: HMAC (X-API-KEY + X-API-SIGN)
-// Attempt B: Bearer (Authorization: Bearer {accessKey})
-// Attempt C: Access-Token header (Access-Token: {accessKey})
-// Возвращает auth_mode_used + нормализованный code
+// Типы
 // ============================================================
 type HosterCode =
   | "OK"
@@ -202,6 +32,50 @@ interface HosterResult {
   auth_mode_used?: string;
 }
 
+interface HosterTokenResult {
+  ok: boolean;
+  accessToken?: string;
+  userId?: number;
+  dateExpires?: number;
+  error?: string;
+  code?: HosterCode;
+}
+
+// ============================================================
+// SSRF Guard
+// ============================================================
+function isSsrfSafe(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const h = parsed.hostname.toLowerCase();
+    if (h === "localhost" || h === "::1") return false;
+    if (/^127\./.test(h)) return false;
+    if (/^10\./.test(h)) return false;
+    if (/^192\.168\./.test(h)) return false;
+    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
+    if (/^169\.254\./.test(h)) return false;
+    if (/^100\.64\./.test(h)) return false;
+    if (h === "metadata.google.internal") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDomainAllowed(url: string, allowlist: string[]): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return allowlist.some(
+      (d) => hostname === d.toLowerCase() || hostname.endsWith("." + d.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// normalizeHosterBody — распознаёт hoster.by-level коды в теле ответа
+// ============================================================
 function normalizeHosterBody(data: unknown): { code: HosterCode; ok: boolean } | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
@@ -211,7 +85,7 @@ function normalizeHosterBody(data: unknown): { code: HosterCode; ok: boolean } |
   // httpCode=200 + statusCode=ok → OK
   if (httpCode === 200 && statusCode === "ok") return { code: "OK", ok: true };
 
-  // httpCode=520 → hoster.by уровень, не edge-runtime
+  // httpCode=520 → hoster.by уровень (не edge-runtime)
   if (httpCode === 520) {
     const errMsg = (d.messageList as Record<string, unknown>)?.error as Record<string, string> | undefined;
     const unknownErr = errMsg?.unknown_error ?? "";
@@ -221,12 +95,118 @@ function normalizeHosterBody(data: unknown): { code: HosterCode; ok: boolean } |
     return { code: "HOSTERBY_520", ok: false };
   }
 
-  // httpCode=401/403 → UNAUTHORIZED (иногда API возвращает это в теле при 200)
+  // httpCode=401/403 → UNAUTHORIZED
   if (httpCode === 401 || httpCode === 403) return { code: "UNAUTHORIZED", ok: false };
 
   return null;
 }
 
+// ============================================================
+// Шаг 1: Получить JWT access token через /service-account/token/create
+// Headers: Access-Key + Secret-Key
+// ============================================================
+async function getAccessToken(
+  accessKey: string,
+  secretKey: string,
+  timeoutMs = 15000
+): Promise<HosterTokenResult> {
+  const url = `${HOSTERBY_API_BASE}/service-account/token/create`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    console.log(`[hosterby-api] Step1: POST /service-account/token/create (key_last4=${accessKey.slice(-4)})`);
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Access-Key": accessKey,
+        "Secret-Key": secretKey,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    const text = await resp.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error("[hosterby-api] Step1: невалидный JSON:", text.slice(0, 200));
+      return { ok: false, error: "Невалидный JSON от /service-account/token/create", code: "HOSTERBY_520" };
+    }
+
+    const httpCode = (data as Record<string, unknown>)?.httpCode;
+    const statusCode = (data as Record<string, unknown>)?.statusCode;
+
+    console.log(`[hosterby-api] Step1: http=${resp.status} httpCode=${httpCode} statusCode=${statusCode}`);
+
+    if (resp.status === 401 || httpCode === 401) {
+      return { ok: false, error: "Неверные ключи (Access-Key или Secret-Key)", code: "UNAUTHORIZED" };
+    }
+
+    if (resp.status === 403 || httpCode === 403) {
+      return { ok: false, error: "Доступ запрещён (403)", code: "UNAUTHORIZED" };
+    }
+
+    if (httpCode === 520) {
+      const errMsg = (data?.messageList as Record<string, unknown>)?.error as Record<string, string> | undefined;
+      const unknownErr = errMsg?.unknown_error ?? "";
+      if (unknownErr.includes("Matched route") || unknownErr.includes("handler")) {
+        return { ok: false, error: "Маршрут /service-account/token/create не найден", code: "HOSTERBY_ROUTE_MISSING" };
+      }
+      return { ok: false, error: `hoster.by 520: ${unknownErr}`, code: "HOSTERBY_520" };
+    }
+
+    // Успех: httpCode=200 + statusCode=ok
+    if ((httpCode === 200 || resp.status === 200) && statusCode === "ok") {
+      const payload = (data as Record<string, unknown>)?.payload as Record<string, unknown> | undefined;
+      const accessToken = payload?.accessToken as string | undefined;
+      if (!accessToken) {
+        console.error("[hosterby-api] Step1: accessToken отсутствует в payload:", JSON.stringify(payload));
+        return { ok: false, error: "accessToken отсутствует в ответе", code: "HOSTERBY_520" };
+      }
+      console.log(`[hosterby-api] Step1: OK, userId=${payload?.userId}, expires=${payload?.dateExpires}`);
+      return {
+        ok: true,
+        accessToken,
+        userId: payload?.userId as number | undefined,
+        dateExpires: payload?.dateExpires as number | undefined,
+      };
+    }
+
+    // Также попробуем без httpCode — некоторые API возвращают только payload
+    if (resp.status === 200) {
+      const payload = (data as Record<string, unknown>)?.payload as Record<string, unknown> | undefined;
+      const accessToken = payload?.accessToken as string | undefined;
+      if (accessToken) {
+        console.log(`[hosterby-api] Step1: OK (без httpCode), userId=${payload?.userId}`);
+        return {
+          ok: true,
+          accessToken,
+          userId: payload?.userId as number | undefined,
+          dateExpires: payload?.dateExpires as number | undefined,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      error: `Неожиданный ответ: httpCode=${httpCode}, status=${resp.status}`,
+      code: "NETWORK_ERROR",
+    };
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      return { ok: false, error: "Timeout при получении access token", code: "TIMEOUT" };
+    }
+    return { ok: false, error: String(e), code: "NETWORK_ERROR" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ============================================================
+// Низкоуровневый fetch-хелпер
+// ============================================================
 async function attemptHosterRequest(
   method: string,
   path: string,
@@ -258,98 +238,50 @@ async function attemptHosterRequest(
   }
 }
 
+// ============================================================
+// Шаг 2: Выполнить запрос к hoster.by API с JWT Bearer token
+// ============================================================
 async function hosterRequest(
   method: string,
   path: string,
   body: string,
-  accessKey: string,
-  secretKey: string,
+  accessToken: string,
   timeoutMs = 15000
 ): Promise<HosterResult> {
-  // --- Attempt A: HMAC ---
-  const signature = await buildHosterSignature(method, path, body, secretKey);
-  const resultA = await attemptHosterRequest(method, path, body, {
-    "X-API-KEY": accessKey,
-    "X-API-SIGN": signature,
+  console.log(`[hosterby-api] Step2: ${method} ${path}`);
+
+  const result = await attemptHosterRequest(method, path, body, {
+    "Authorization": `Bearer ${accessToken}`,
   }, timeoutMs);
 
-  if (resultA.error === "TIMEOUT") {
-    return { ok: false, status: 0, data: null, error: "TIMEOUT", code: "TIMEOUT", auth_mode_used: "none" };
+  if (result.error === "TIMEOUT") {
+    return { ok: false, status: 0, data: null, error: "TIMEOUT", code: "TIMEOUT", auth_mode_used: "two-step" };
   }
 
-  // Проверяем тело ответа на hoster.by-level коды
-  if (resultA.ok || resultA.status >= 200) {
-    const bodyNorm = normalizeHosterBody(resultA.data);
-    if (bodyNorm) {
-      if (bodyNorm.ok) return { ...resultA, ok: true, code: "OK", auth_mode_used: "hmac" };
-      // HMAC сработал (HTTP ок), но hoster.by вернул ошибку маршрута/520
-      if (bodyNorm.code === "HOSTERBY_ROUTE_MISSING" || bodyNorm.code === "HOSTERBY_520") {
-        return { ...resultA, ok: false, code: bodyNorm.code, auth_mode_used: "hmac" };
-      }
-    }
-    // HTTP 2xx без структурированного тела — считаем OK
-    if (resultA.ok) return { ...resultA, code: "OK", auth_mode_used: "hmac" };
+  console.log(`[hosterby-api] Step2: ${method} ${path} → http=${result.status}`);
+
+  const bodyNorm = normalizeHosterBody(result.data);
+  if (bodyNorm?.ok) return { ...result, ok: true, code: "OK", auth_mode_used: "two-step" };
+  if (bodyNorm && !bodyNorm.ok) return { ...result, ok: false, code: bodyNorm.code, auth_mode_used: "two-step" };
+
+  if (result.status === 401 || result.status === 403) {
+    return { ...result, ok: false, code: "UNAUTHORIZED", auth_mode_used: "two-step" };
   }
 
-  // HTTP 401/403 от HMAC → пробуем Bearer
-  // Другие HTTP-ошибки → тоже пробуем (API может не поддерживать HMAC)
-  console.log(`[hosterby-api] HMAC attempt: status=${resultA.status}, trying Bearer...`);
-
-  // --- Attempt B: Authorization: Bearer ---
-  const resultB = await attemptHosterRequest(method, path, body, {
-    "Authorization": `Bearer ${accessKey}`,
-  }, timeoutMs);
-
-  if (resultB.error === "TIMEOUT") {
-    return { ok: false, status: 0, data: null, error: "TIMEOUT", code: "TIMEOUT", auth_mode_used: "none" };
-  }
-
-  if (resultB.ok) {
-    const bodyNorm = normalizeHosterBody(resultB.data);
-    if (!bodyNorm || bodyNorm.ok) return { ...resultB, code: "OK", auth_mode_used: "bearer" };
-    if (bodyNorm.code !== "UNAUTHORIZED") return { ...resultB, ok: false, code: bodyNorm.code, auth_mode_used: "bearer" };
-  }
-
-  // --- Attempt C: Access-Token header ---
-  console.log(`[hosterby-api] Bearer attempt: status=${resultB.status}, trying Access-Token header...`);
-  const resultC = await attemptHosterRequest(method, path, body, {
-    "Access-Token": accessKey,
-  }, timeoutMs);
-
-  if (resultC.error === "TIMEOUT") {
-    return { ok: false, status: 0, data: null, error: "TIMEOUT", code: "TIMEOUT", auth_mode_used: "none" };
-  }
-
-  if (resultC.ok) {
-    const bodyNorm = normalizeHosterBody(resultC.data);
-    if (!bodyNorm || bodyNorm.ok) return { ...resultC, code: "OK", auth_mode_used: "access-token-header" };
-    if (bodyNorm.code !== "UNAUTHORIZED") return { ...resultC, ok: false, code: bodyNorm.code, auth_mode_used: "access-token-header" };
-  }
-
-  // Все 3 попытки провалились — определяем итоговый код
-  const finalResult = resultC;
-  const bodyNormFinal = normalizeHosterBody(finalResult.data);
-
-  if (bodyNormFinal) {
-    return { ...finalResult, ok: false, code: bodyNormFinal.code, auth_mode_used: "none" };
-  }
-  if (finalResult.status === 401 || finalResult.status === 403 ||
-      resultA.status === 401 || resultA.status === 403) {
-    return { ...finalResult, ok: false, code: "UNAUTHORIZED", auth_mode_used: "none" };
-  }
+  if (result.ok) return { ...result, code: "OK", auth_mode_used: "two-step" };
 
   return {
     ok: false,
-    status: finalResult.status,
-    data: finalResult.data,
-    error: finalResult.error || `HTTP ${finalResult.status}`,
+    status: result.status,
+    data: result.data,
+    error: result.error || `HTTP ${result.status}`,
     code: "NETWORK_ERROR",
-    auth_mode_used: "none",
+    auth_mode_used: "two-step",
   };
 }
 
 // ============================================================
-// Audit log helper (строго по стандарту SYSTEM ACTOR / ADMIN ACTOR)
+// Audit log helper (SYSTEM ACTOR / ADMIN ACTOR)
 // ============================================================
 async function writeAuditLog(
   supabaseAdmin: ReturnType<typeof createClient>,
@@ -439,7 +371,6 @@ serve(async (req) => {
     console.log(`[hosterby-api] action=${action} instance_id=${instance_id} dry_run=${dry_run}`);
 
     // ---- Resolve hosterby instance ----
-    // Ключи НИКОГДА не передаются из UI в body — всегда читаем из БД.
     let hosterInstance: Record<string, unknown> | null = null;
 
     if (action !== "save_hoster_keys" || instance_id) {
@@ -464,11 +395,30 @@ serve(async (req) => {
           return jsonResp({ success: false, error: "API ключи не настроены", code: "KEYS_MISSING" });
         }
 
-        // Корректный endpoint: /cloud/orders (без /v1)
-        const result = await hosterRequest("GET", "/cloud/orders", "", accessKey, secretKey);
+        // Шаг 1: получить JWT
+        const tokenResult = await getAccessToken(accessKey, secretKey);
+        if (!tokenResult.ok || !tokenResult.accessToken) {
+          return jsonResp({
+            success: false,
+            code: tokenResult.code ?? "NETWORK_ERROR",
+            error: tokenResult.error ?? "Ошибка получения токена",
+            endpoint_used: "/service-account/token/create",
+            auth_mode_used: "two-step",
+            access_key_last4: accessKey.slice(-4),
+          });
+        }
+
+        // Шаг 2: GET /cloud/orders с JWT
+        const result = await hosterRequest("GET", "/cloud/orders", "", tokenResult.accessToken);
 
         if (result.code === "TIMEOUT") {
-          return jsonResp({ success: false, error: "Timeout при подключении к hoster.by", code: "TIMEOUT" });
+          return jsonResp({
+            success: false,
+            error: "Timeout при подключении к hoster.by",
+            code: "TIMEOUT",
+            endpoint_used: "/cloud/orders",
+            auth_mode_used: "two-step",
+          });
         }
 
         if (!result.ok) {
@@ -482,7 +432,8 @@ serve(async (req) => {
             error: userError,
             code,
             endpoint_used: "/cloud/orders",
-            auth_mode_used: result.auth_mode_used ?? "none",
+            auth_mode_used: "two-step",
+            access_key_last4: accessKey.slice(-4),
           });
         }
 
@@ -496,7 +447,7 @@ serve(async (req) => {
           keys_configured: true,
           cloud_access_key_last4: accessKey.slice(-4),
           endpoint_used: "/cloud/orders",
-          auth_mode_used: result.auth_mode_used ?? "hmac",
+          auth_mode_used: "two-step",
         };
 
         // Update instance metadata (без ключей)
@@ -508,7 +459,7 @@ serve(async (req) => {
             config: {
               ...instanceConfig,
               orders_count: ordersCount,
-              auth_mode_used: result.auth_mode_used,
+              auth_mode_used: "two-step",
               last_check_meta: metadata,
             },
           }).eq("id", hosterInstance.id as string);
@@ -519,7 +470,7 @@ serve(async (req) => {
           data: metadata,
           code: "OK",
           endpoint_used: "/cloud/orders",
-          auth_mode_used: result.auth_mode_used ?? "hmac",
+          auth_mode_used: "two-step",
           orders_count: ordersCount,
           access_key_last4: accessKey.slice(-4),
         });
@@ -531,38 +482,48 @@ serve(async (req) => {
           return jsonResp({ success: false, error: "API ключи не настроены", code: "KEYS_MISSING" });
         }
 
+        // Шаг 1: JWT
+        const tokenResult = await getAccessToken(accessKey, secretKey);
+        if (!tokenResult.ok || !tokenResult.accessToken) {
+          return jsonResp({
+            success: false,
+            code: tokenResult.code ?? "NETWORK_ERROR",
+            error: tokenResult.error ?? "Ошибка получения токена",
+            auth_mode_used: "two-step",
+          });
+        }
+
         const cloudId = payload.cloud_id as string | undefined;
         let orderId = cloudId;
         let ordersCount = 0;
 
         // Если cloud_id не передан — получаем список облаков и берём первый orderId
         if (!orderId) {
-          const ordersResult = await hosterRequest("GET", "/cloud/orders", "", accessKey, secretKey);
+          const ordersResult = await hosterRequest("GET", "/cloud/orders", "", tokenResult.accessToken);
           if (!ordersResult.ok) {
             const code = ordersResult.code ?? "NETWORK_ERROR";
-            return jsonResp({ success: false, error: `Ошибка получения списка облаков: ${code}`, code });
+            return jsonResp({ success: false, error: `Ошибка получения списка облаков: ${code}`, code, auth_mode_used: "two-step" });
           }
           const ordersData = ordersResult.data as Record<string, unknown> | null;
           const ordersList = (ordersData?.payload as Record<string, unknown>)?.orders;
           const orders = Array.isArray(ordersList) ? ordersList : [];
           ordersCount = orders.length;
           if (!orders.length) {
-            return jsonResp({ success: true, vms: [], orders_count: 0, cloud_id_used: null });
+            return jsonResp({ success: true, vms: [], orders_count: 0, cloud_id_used: null, auth_mode_used: "two-step" });
           }
           orderId = String((orders[0] as Record<string, unknown>).id);
         }
 
-        const vmsResult = await hosterRequest("GET", `/cloud/orders/${orderId}/vm`, "", accessKey, secretKey);
+        const vmsResult = await hosterRequest("GET", `/cloud/orders/${orderId}/vm`, "", tokenResult.accessToken);
         if (!vmsResult.ok) {
           const code = vmsResult.code ?? "NETWORK_ERROR";
-          return jsonResp({ success: false, error: `Ошибка получения VM: ${code}`, code });
+          return jsonResp({ success: false, error: `Ошибка получения VM: ${code}`, code, auth_mode_used: "two-step" });
         }
 
         const vmsData = vmsResult.data as Record<string, unknown> | null;
         const vmsList = (vmsData?.payload as Record<string, unknown>)?.vms;
         const vms = Array.isArray(vmsList) ? vmsList : [];
 
-        // Возвращаем только безопасные поля
         const safevms = vms.map((v: Record<string, unknown>) => ({
           id: v.id,
           name: v.name,
@@ -573,12 +534,10 @@ serve(async (req) => {
           os: v.os,
         }));
 
-        return jsonResp({ success: true, vms: safevms, orders_count: ordersCount, cloud_id_used: orderId });
+        return jsonResp({ success: true, vms: safevms, orders_count: ordersCount, cloud_id_used: orderId, auth_mode_used: "two-step" });
       }
 
       // ---- save_hoster_keys -----------------------------------------
-      // dry_run=true: валидирует ключи без сохранения
-      // dry_run=false: сохраняет в integration_instances + audit_log
       case "save_hoster_keys": {
         const newAccessKey = payload.cloud_access_key as string | undefined;
         const newSecretKey = payload.cloud_secret_key as string | undefined;
@@ -590,33 +549,48 @@ serve(async (req) => {
           return jsonResp({ success: false, error: "cloud_access_key и cloud_secret_key обязательны", code: "KEYS_MISSING" });
         }
 
-        // Validate key format (basic check — не пустые, min 8 символов)
         if (newAccessKey.length < 8 || newSecretKey.length < 8) {
           return jsonResp({ success: false, error: "Ключи слишком короткие (мин. 8 символов)" });
         }
 
-        // Test connection via /cloud/orders (корректный endpoint)
-        const testResult = await hosterRequest("GET", "/cloud/orders", "", newAccessKey, newSecretKey);
+        // Шаг 1: получить JWT для новых ключей
+        const tokenResult = await getAccessToken(newAccessKey, newSecretKey);
+        if (!tokenResult.ok || !tokenResult.accessToken) {
+          const code = tokenResult.code ?? "NETWORK_ERROR";
+          let errMsg = `Ключи не прошли проверку (${code})`;
+          if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
+          else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API (token/create)";
+          else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520) при получении токена";
+          else if (code === "TIMEOUT") errMsg = "Timeout при получении токена";
+          return jsonResp({
+            success: false,
+            error: errMsg,
+            code,
+            endpoint_used: "/service-account/token/create",
+            auth_mode_used: "two-step",
+          });
+        }
+
+        // Шаг 2: проверить /cloud/orders с JWT
+        const testResult = await hosterRequest("GET", "/cloud/orders", "", tokenResult.accessToken);
 
         if (!testResult.ok) {
-          if (testResult.code === "TIMEOUT") {
-            return jsonResp({ success: false, error: "Timeout при проверке ключей", code: "TIMEOUT" });
-          }
           const code = testResult.code ?? "NETWORK_ERROR";
           let errMsg = `Ключи не прошли проверку (${code})`;
           if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
           else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API";
           else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520)";
+          else if (code === "TIMEOUT") errMsg = "Timeout при проверке ключей";
           return jsonResp({
             success: false,
             error: errMsg,
             code,
             endpoint_used: "/cloud/orders",
-            auth_mode_used: testResult.auth_mode_used ?? "none",
+            auth_mode_used: "two-step",
           });
         }
 
-        // Парсим orders_count из реального ответа
+        // Парсим orders_count
         const testData = testResult.data as Record<string, unknown> | null;
         const testOrders = (testData?.payload as Record<string, unknown>)?.orders;
         const ordersCount = Array.isArray(testOrders) ? testOrders.length : 0;
@@ -630,12 +604,12 @@ serve(async (req) => {
             cloud_access_key_last4: newAccessKey.slice(-4),
             cloud_secret_key_last4: newSecretKey.slice(-4),
             endpoint_used: "/cloud/orders",
-            auth_mode_used: testResult.auth_mode_used ?? "hmac",
+            auth_mode_used: "two-step",
             code: "OK",
           });
         }
 
-        // Execute: save to DB
+        // Execute: save to DB (JWT не сохраняем — он краткоживущий)
         const configToSave: Record<string, unknown> = {
           cloud_access_key: newAccessKey,
           cloud_secret_key: newSecretKey,
@@ -643,7 +617,7 @@ serve(async (req) => {
           cloud_secret_key_last4: newSecretKey.slice(-4),
           keys_configured: true,
           orders_count: ordersCount,
-          auth_mode_used: testResult.auth_mode_used,
+          auth_mode_used: "two-step",
         };
         if (newDnsAccessKey) {
           configToSave.dns_access_key = newDnsAccessKey;
@@ -654,7 +628,7 @@ serve(async (req) => {
           configToSave.dns_secret_key_last4 = newDnsSecretKey.slice(-4);
         }
 
-        // Merge with existing egress config if present
+        // Merge с egress config если есть
         if (instanceConfig.egress_base_url) {
           configToSave.egress_base_url = instanceConfig.egress_base_url;
           configToSave.egress_token = instanceConfig.egress_token;
@@ -694,16 +668,15 @@ serve(async (req) => {
           savedInstanceId = created.id;
         }
 
-        // SYSTEM ACTOR Proof: actor_type='system', actor_user_id=NULL, actor_label='hosterby-api'
+        // SYSTEM ACTOR Proof: actor_type='system', actor_user_id=NULL
         await writeAuditLog(supabaseAdmin, "hosterby.save_keys", {
           instance_id: savedInstanceId,
           cloud_access_key_last4: newAccessKey.slice(-4),
           orders_count: ordersCount,
           dns_configured: !!(newDnsAccessKey && newDnsSecretKey),
-          auth_mode_used: testResult.auth_mode_used,
+          auth_mode_used: "two-step",
           endpoint_used: "/cloud/orders",
-          // НЕ хранить полные ключи!
-        }, null); // null = SYSTEM ACTOR (actor_type='system', actor_user_id=NULL)
+        }, null);
 
         return jsonResp({
           success: true,
@@ -712,7 +685,7 @@ serve(async (req) => {
           orders_count: ordersCount,
           cloud_access_key_last4: newAccessKey.slice(-4),
           cloud_secret_key_last4: newSecretKey.slice(-4),
-          auth_mode_used: testResult.auth_mode_used,
+          auth_mode_used: "two-step",
           endpoint_used: "/cloud/orders",
         });
       }
@@ -744,7 +717,6 @@ serve(async (req) => {
       }
 
       // ---- by_egress_test_url --------------------------------------
-      // Протокол: GET /fetch + X-Target-URL header + Authorization: Bearer {token}
       case "by_egress_test_url": {
         const baseUrl = (payload.base_url as string | undefined) || (instanceConfig.egress_base_url as string | undefined);
         const egressToken = (payload.token as string | undefined) || (instanceConfig.egress_token as string | undefined);
@@ -752,7 +724,6 @@ serve(async (req) => {
         const rawAllowlist = (payload.allowlist as string | undefined) || (instanceConfig.egress_allowlist as string | undefined) || "";
         const allowlist = rawAllowlist.split(",").map((d: string) => d.trim()).filter(Boolean);
 
-        // Раздельная валидация: base_url/target_url обязательны, token — отдельно
         if (!baseUrl || !targetUrl) {
           return jsonResp({ success: false, error: "Обязательные поля: base_url, target_url" });
         }
@@ -760,12 +731,10 @@ serve(async (req) => {
           return jsonResp({ success: false, code: "TOKEN_MISSING", error: "BY_EGRESS_TOKEN не задан. Введите токен или сохраните конфигурацию egress." });
         }
 
-        // SSRF guard на egress endpoint
         if (!isSsrfSafe(baseUrl)) {
           return jsonResp({ success: false, error: "SSRF_BLOCKED: egress base_url внутренний" });
         }
 
-        // Allowlist check
         if (allowlist.length > 0 && !isDomainAllowed(targetUrl, allowlist)) {
           return jsonResp({
             success: false,
@@ -800,10 +769,8 @@ serve(async (req) => {
       // ---- by_egress_save_config -----------------------------------
       case "by_egress_save_config": {
         const egressBaseUrl = payload.egress_base_url as string | undefined;
-        // Fallback: если токен не передан — использовать сохранённый из instanceConfig
         const egressTokenNew = payload.egress_token as string | undefined;
         const egressToken = egressTokenNew || (instanceConfig.egress_token as string | undefined);
-        // last4: из нового токена или из сохранённого
         const egressTokenLast4 =
           egressTokenNew
             ? egressTokenNew.slice(-4)
@@ -843,8 +810,8 @@ serve(async (req) => {
         const updatedConfig = {
           ...instanceConfig,
           egress_base_url: egressBaseUrl,
-          egress_token: egressToken,           // полный токен (защищён RLS)
-          egress_token_last4: egressTokenLast4, // используем вычисленный last4
+          egress_token: egressToken,
+          egress_token_last4: egressTokenLast4,
           egress_allowlist: egressAllowlist || "nbrb.by,nalog.gov.by,ssf.gov.by,kgk.gov.by,gtk.gov.by,minfin.gov.by,economy.gov.by,pravo.by",
           egress_enabled: egressEnabled,
         };
@@ -856,10 +823,10 @@ serve(async (req) => {
         await writeAuditLog(supabaseAdmin, "hosterby.by_egress_config_saved", {
           instance_id: hosterInstance.id,
           egress_base_url: egressBaseUrl,
-          egress_token_last4: egressTokenLast4, // НЕ хранить полный токен!
+          egress_token_last4: egressTokenLast4,
           egress_enabled: egressEnabled,
           token_changed: !!egressTokenNew,
-        }, null); // SYSTEM ACTOR: actor_type='system', actor_user_id=NULL
+        }, null); // SYSTEM ACTOR
 
         return jsonResp({ success: true, egress_token_last4: egressTokenLast4, egress_enabled: egressEnabled });
       }
