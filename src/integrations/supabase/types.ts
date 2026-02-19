@@ -8719,6 +8719,7 @@ export type Database = {
           is_active: boolean | null
           is_container: boolean | null
           menu_section_key: string | null
+          parent_module_id: string | null
           product_id: string | null
           published_at: string | null
           slug: string
@@ -8737,6 +8738,7 @@ export type Database = {
           is_active?: boolean | null
           is_container?: boolean | null
           menu_section_key?: string | null
+          parent_module_id?: string | null
           product_id?: string | null
           published_at?: string | null
           slug: string
@@ -8755,6 +8757,7 @@ export type Database = {
           is_active?: boolean | null
           is_container?: boolean | null
           menu_section_key?: string | null
+          parent_module_id?: string | null
           product_id?: string | null
           published_at?: string | null
           slug?: string
@@ -8769,6 +8772,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "user_menu_sections"
             referencedColumns: ["key"]
+          },
+          {
+            foreignKeyName: "training_modules_parent_module_id_fkey"
+            columns: ["parent_module_id"]
+            isOneToOne: false
+            referencedRelation: "training_modules"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "training_modules_product_id_fkey"
