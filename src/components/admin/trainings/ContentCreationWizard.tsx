@@ -27,6 +27,7 @@ import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from
 import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./KbLessonFormFields";
 import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
+import { ModuleTreeSelector } from "./ModuleTreeSelector";
 import { CompactAccessSelector } from "./CompactAccessSelector";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
@@ -48,16 +49,19 @@ interface WizardData {
   tariffIds: string[];
   notification: NotificationConfig;
   saleConfig: SaleConfig;
-  targetModuleId: string | null; // null = standalone (container), UUID = existing module
+  targetModuleId: string | null;       // null = standalone (container), UUID = existing module
+  targetParentModuleId: string | null; // null = корень раздела, UUID = вложить в этот модуль
+  moduleIsContainer: boolean;          // is_container при создании нового модуля
 }
 
-// Steps for MODULE flow
+// Steps for MODULE flow (with Parent step added)
 const MODULE_STEPS = [
   { label: "Раздел", shortLabel: "1" },
   { label: "Тип", shortLabel: "2" },
-  { label: "Модуль", shortLabel: "3" },
-  { label: "Урок", shortLabel: "4" },
-  { label: "Доступ", shortLabel: "5" },
+  { label: "Родитель", shortLabel: "3" },  // NEW: выбор родительского модуля
+  { label: "Модуль", shortLabel: "4" },
+  { label: "Урок", shortLabel: "5" },
+  { label: "Доступ", shortLabel: "6" },
   { label: "Готово", shortLabel: "✓" },
 ];
 
@@ -65,7 +69,7 @@ const MODULE_STEPS = [
 const LESSON_STEPS = [
   { label: "Раздел", shortLabel: "1" },
   { label: "Тип", shortLabel: "2" },
-  { label: "Модуль", shortLabel: "3" },    // NEW: Module selection
+  { label: "Модуль", shortLabel: "3" },    // Module selection (tree)
   { label: "Доступ", shortLabel: "4" },    // Access
   { label: "Урок", shortLabel: "5" },      // Lesson data
   { label: "Готово", shortLabel: "✓" },    // Creation happens here
@@ -213,7 +217,9 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   tariffIds: [],
   notification: { ...defaultNotificationConfig },
   saleConfig: { ...defaultSaleConfig },
-  targetModuleId: null, // null = standalone lesson (container)
+  targetModuleId: null,        // null = standalone lesson (container)
+  targetParentModuleId: null,  // null = корень раздела (no parent)
+  moduleIsContainer: false,    // default: создаём обычный модуль
 });
 
 // Check if section is KB (videos or questions)
@@ -287,7 +293,7 @@ export function ContentCreationWizard({
   // Validation based on current step and flow
   const canProceed = useMemo(() => {
     if (isLessonFlow) {
-      // Lesson flow: Section -> Type -> Module -> Access -> Lesson -> Done
+      // Lesson flow: Section -> Type -> Module(tree) -> Access -> Lesson -> Done
       switch (step) {
         case 0: return !!wizardData.menuSectionKey;
         case 1: return true; // Type selection always valid
@@ -302,14 +308,15 @@ export function ContentCreationWizard({
         default: return false;
       }
     } else {
-      // Module flow: Section -> Type -> Module -> Lesson -> Access -> Done
+      // Module flow: Section -> Type -> Parent(tree) -> Module -> Lesson -> Access -> Done
       switch (step) {
         case 0: return !!wizardData.menuSectionKey;
         case 1: return true; // Type selection always valid
-        case 2: return !!wizardData.module.title && !!wizardData.module.slug;
-        case 3: return true; // Lesson is optional
-        case 4: return true; // Access is optional
-        case 5: return true; // Done
+        case 2: return true; // Parent selection is optional (null = root)
+        case 3: return !!wizardData.module.title && !!wizardData.module.slug;
+        case 4: return true; // Lesson is optional
+        case 5: return true; // Access is optional
+        case 6: return true; // Done
         default: return false;
       }
     }
@@ -348,7 +355,7 @@ export function ContentCreationWizard({
     setWizardData((prev) => ({ ...prev, kbLesson: data }));
   };
 
-  // Create module (module flow step 2 -> 3)
+  // Create module (module flow step 3 -> 4, was step 2 before adding Parent step)
   const handleCreateModule = async () => {
     setIsCreating(true);
     setSlugWarning(null);
@@ -372,7 +379,9 @@ export function ContentCreationWizard({
           is_active: wizardData.module.is_active !== false,
           menu_section_key: wizardData.menuSectionKey,
           display_layout: wizardData.module.display_layout || "grid",
-          is_container: false,
+          is_container: wizardData.moduleIsContainer,
+          // PATCH 5: записываем parent_module_id из выбранного на шаге "Родитель"
+          parent_module_id: wizardData.targetParentModuleId || null,
         })
         .select()
         .single();
@@ -389,9 +398,10 @@ export function ContentCreationWizard({
       queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
       queryClient.invalidateQueries({ queryKey: ["page-sections-tabs"] });
       queryClient.invalidateQueries({ queryKey: ["training-modules"] });
+      queryClient.invalidateQueries({ queryKey: ["module-tree", wizardData.menuSectionKey] });
       
       toast.success("Модуль создан");
-      setStep(3);
+      setStep(4); // Step 4 = Lesson (was 3 before adding Parent step)
     } catch (error: any) {
       console.error("Error creating module:", error);
       toast.error(`Ошибка создания модуля: ${error.message}`);
@@ -403,7 +413,7 @@ export function ContentCreationWizard({
   // Create lesson in existing module (module flow step 3 -> 4) or skip
   const handleCreateLessonInModule = async (skip = false) => {
     if (skip || !wizardData.lesson.title) {
-      setStep(4);
+      setStep(5); // Step 5 = Access in updated MODULE flow (Parent step added at step 2)
       return;
     }
 
@@ -766,7 +776,7 @@ export function ContentCreationWizard({
   const handleSaveAccess = async () => {
     if (!createdModuleId) {
       // For lesson flow, move to done even without module access
-      setStep(isLessonFlow ? 5 : 5);
+      setStep(isLessonFlow ? 5 : 6);
       return;
     }
 
@@ -785,7 +795,7 @@ export function ContentCreationWizard({
       }
 
       toast.success("Настройки доступа сохранены");
-      setStep(isLessonFlow ? 4 : 5);
+      setStep(isLessonFlow ? 5 : 6);
     } catch (error: any) {
       console.error("Error saving access:", error);
       toast.error(`Ошибка сохранения: ${error.message}`);
@@ -810,14 +820,15 @@ export function ContentCreationWizard({
           break;
       }
     } else {
-      // Module flow: Section -> Type -> Module -> Lesson -> Access -> Done
+      // Module flow: Section -> Type -> Parent(tree) -> Module -> Lesson -> Access -> Done
       switch (step) {
         case 0: setStep(1); break;
         case 1: setStep(2); break;
-        case 2: await handleCreateModule(); break;
-        case 3: await handleCreateLessonInModule(); break;
-        case 4: await handleSaveAccess(); break;
-        case 5:
+        case 2: setStep(3); break;  // Parent selection -> Module form
+        case 3: await handleCreateModule(); break;  // Module form -> create + go to Lesson
+        case 4: await handleCreateLessonInModule(); break;
+        case 5: await handleSaveAccess(); break;
+        case 6:
           handleOpenChange(false);
           onComplete?.({ moduleId: createdModuleId!, lessonId: createdLessonId || undefined });
           break;
@@ -869,14 +880,15 @@ export function ContentCreationWizard({
     }
 
     if (isLessonFlow) {
-      // Lesson flow steps: Section -> Type -> Module -> Access -> Lesson -> Done
+      // Lesson flow steps: Section -> Type -> Module(tree) -> Access -> Lesson -> Done
       if (step === 2) {
-        // MODULE SELECTION step (NEW!)
+        // MODULE SELECTION step — теперь дерево вместо плоского списка
         return (
-          <ModuleSelector
+          <ModuleTreeSelector
             sectionKey={wizardData.menuSectionKey}
-            selectedModuleId={wizardData.targetModuleId}
+            selectedId={wizardData.targetModuleId}
             onSelect={(id) => setWizardData((prev) => ({ ...prev, targetModuleId: id }))}
+            mode="select-module"
           />
         );
       }
@@ -972,8 +984,20 @@ export function ContentCreationWizard({
         );
       }
     } else {
-      // Module flow steps
+      // Module flow steps: Section -> Type -> Parent(tree) -> Module -> Lesson -> Access -> Done
       if (step === 2) {
+        // PATCH 5: новый шаг "Родитель" — дерево для выбора родительского модуля
+        return (
+          <ModuleTreeSelector
+            sectionKey={wizardData.menuSectionKey}
+            selectedId={wizardData.targetParentModuleId}
+            onSelect={(id) => setWizardData((prev) => ({ ...prev, targetParentModuleId: id }))}
+            mode="select-parent"
+          />
+        );
+      }
+      if (step === 3) {
+        // MODULE FORM step (was step 2)
         return (
           <ModuleFormFields
             formData={wizardData.module}
@@ -984,7 +1008,8 @@ export function ContentCreationWizard({
           />
         );
       }
-      if (step === 3) {
+      if (step === 4) {
+        // LESSON step (was step 3)
         return (
           <div className="space-y-4">
             <LessonFormFieldsSimple
@@ -1000,7 +1025,8 @@ export function ContentCreationWizard({
           </div>
         );
       }
-      if (step === 4) {
+      if (step === 5) {
+        // ACCESS step (was step 4)
         return (
           <CompactAccessSelector
             selectedTariffIds={wizardData.tariffIds}
@@ -1009,13 +1035,20 @@ export function ContentCreationWizard({
           />
         );
       }
-      if (step === 5) {
+      if (step === 6) {
+        // DONE step (was step 5)
         return (
           <div className="space-y-4">
             <Alert className="border-primary/30 bg-primary/5">
               <CheckCircle2 className="h-4 w-4 text-primary" />
               <AlertDescription className="ml-2">
                 <strong>Модуль "{wizardData.module.title}"</strong> успешно создан
+                {wizardData.targetParentModuleId && (
+                  <>
+                    <br />
+                    <span className="text-muted-foreground text-sm">Вложен в выбранный родительский модуль</span>
+                  </>
+                )}
                 {createdLessonId && (
                   <>
                     <br />
@@ -1049,12 +1082,12 @@ export function ContentCreationWizard({
     return null;
   };
 
-  // Determine if we're on an optional lesson step (module flow step 3)
-  const isOptionalLessonStep = !isLessonFlow && step === 3;
+  // Determine if we're on an optional lesson step (module flow step 4 = Lesson, after Parent step added)
+  const isOptionalLessonStep = !isLessonFlow && step === 4;
   const isFinalStep = step === maxStep;
   // In lesson flow, step 4 is the lesson step where we create everything (show "Завершить")
-  // In module flow, step 4 is access step where we finalize
-  const isCreationStep = isLessonFlow ? step === 4 : step === 4;
+  // In module flow, step 5 is access step where we finalize
+  const isCreationStep = isLessonFlow ? step === 4 : step === 5;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
