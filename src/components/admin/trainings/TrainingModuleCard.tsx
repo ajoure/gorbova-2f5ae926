@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   ChevronRight,
+  Copy,
 } from "lucide-react";
 import { TrainingModule } from "@/hooks/useTrainingModules";
 
@@ -16,6 +17,7 @@ interface TrainingModuleCardProps {
   onEdit: () => void;
   onDelete: () => void;
   onOpenLessons: () => void;
+  onCopyMove?: () => void;
 }
 
 export default function TrainingModuleCard({
@@ -23,6 +25,7 @@ export default function TrainingModuleCard({
   onEdit,
   onDelete,
   onOpenLessons,
+  onCopyMove,
 }: TrainingModuleCardProps) {
   // Group tariffs by product for compact display
   const productBadges = module.accessible_products || [];
@@ -122,6 +125,17 @@ export default function TrainingModuleCard({
           </Button>
           
           <div className="flex items-center gap-1">
+            {onCopyMove && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onCopyMove}
+                title="Копировать / Переместить"
+                className="h-10 w-10 min-h-[44px] min-w-[44px]"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

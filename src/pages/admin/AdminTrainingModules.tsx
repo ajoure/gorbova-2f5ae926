@@ -59,6 +59,7 @@ import {
   Users,
 } from "lucide-react";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
+import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
@@ -361,6 +362,11 @@ export default function AdminTrainingModules() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [copyMoveTarget, setCopyMoveTarget] = useState<{
+    id: string;
+    title: string;
+    sectionKey: string;
+  } | null>(null);
   
   // E1/E2/E3: View settings with localStorage persistence
   const [density, setDensity] = useState<ViewDensity>(() => {
@@ -642,6 +648,11 @@ export default function AdminTrainingModules() {
                       onEdit={() => openEditDialog(module)}
                       onDelete={() => setDeleteConfirmId(module.id)}
                       onOpenLessons={() => navigate(`/admin/training-modules/${module.id}/lessons`)}
+                      onCopyMove={() => setCopyMoveTarget({
+                        id: module.id,
+                        title: module.title,
+                        sectionKey: module.menu_section_key || "products",
+                      })}
                     />
                   ))}
                 </div>
@@ -738,6 +749,19 @@ export default function AdminTrainingModules() {
           onOpenChange={setIsWizardOpen}
           onComplete={() => refetch()}
         />
+
+        {/* Copy/Move Dialog */}
+        {copyMoveTarget && (
+          <CopyMoveDialog
+            open={!!copyMoveTarget}
+            onOpenChange={(open) => !open && setCopyMoveTarget(null)}
+            sourceType="module"
+            sourceId={copyMoveTarget.id}
+            sourceTitle={copyMoveTarget.title}
+            currentSectionKey={copyMoveTarget.sectionKey}
+            onSuccess={() => refetch()}
+          />
+        )}
       </div>
     </AdminLayout>
   );
