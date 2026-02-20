@@ -133,6 +133,8 @@ const getErrorLabel = (code: string | null): { label: string; emoji: string } =>
       return { label: "Нет API ключа", emoji: "🔑" };
     case "auth_required":
       return { label: "Нужна авторизация", emoji: "🔐" };
+    case "408":
+      return { label: "Таймаут запроса", emoji: "⏱" };
     default:
       return { label: `Ошибка: ${code}`, emoji: "❌" };
   }
@@ -192,7 +194,7 @@ const formatNewsForPublication = (news: NewsItem) => {
 
 // Health status helper
 const getHealthStatus = (source: NewsSource) => {
-  if (source.last_error) {
+  if (source.last_error || source.last_error_code) {
     return { status: "error", icon: "🔴", label: "Ошибка", color: "text-destructive" };
   }
   if (!source.last_scraped_at) {
@@ -1144,6 +1146,11 @@ const AdminEditorial = () => {
                       <p className="font-medium text-green-800 dark:text-green-200">
                         {lastScrapeLog.summary || `Найдено ${lastScrapeLog.news_saved} новостей`}
                       </p>
+                      {healthStats && healthStats.error > 0 && (
+                        <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">
+                          ⚠ Текущих проблемных источников: {healthStats.error}
+                        </p>
+                      )}
                       <p className="text-sm text-green-600 dark:text-green-400">
                         {format(new Date(lastScrapeLog.completed_at || lastScrapeLog.started_at), "dd.MM.yyyy HH:mm", { locale: ru })}
                       </p>
