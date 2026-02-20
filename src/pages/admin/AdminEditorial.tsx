@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { StyleProfileDialog } from "@/components/admin/StyleProfileDialog";
 import { SyncResultDialog } from "@/components/admin/SyncResultDialog";
+import { ByEgressStatusBadge } from "@/components/admin/ByEgressStatusBadge";
 import { AudienceInsightsDialog } from "@/components/admin/AudienceInsightsDialog";
 
 interface NewsItem {
@@ -1024,17 +1025,20 @@ const AdminEditorial = () => {
               Мониторинг новостей и публикация в Telegram
             </p>
           </div>
-          <Button
-            onClick={() => runScraperMutation.mutate()}
-            disabled={runScraperMutation.isPending}
-          >
+          <div className="flex items-center gap-3">
+            <ByEgressStatusBadge />
+            <Button
+              onClick={() => runScraperMutation.mutate()}
+              disabled={runScraperMutation.isPending}
+            >
             {runScraperMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <Play className="h-4 w-4 mr-2" />
             )}
-            Запустить парсинг
-          </Button>
+              Запустить парсинг
+            </Button>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
