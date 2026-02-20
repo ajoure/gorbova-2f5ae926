@@ -1,60 +1,106 @@
 
-# Отображение дочерних модулей на странице модуля
+# Копирование и перемещение модулей/уроков в тренингах
 
-## Проблема
+## Что будет сделано
 
-Модули "1", "1-2", "3" существуют в БД с корректным `parent_module_id = 682d241e-...` (Закрой год). Однако страница `AdminTrainingLessons.tsx` загружает и отображает **только уроки** (`training_lessons`). Дочерние модули (`training_modules` с `parent_module_id = текущий модуль`) нигде не выводятся.
+Возможность копировать и перемещать любые модули (целиком, рекурсивно, со всеми уроками и блоками) и уроки в любое место в системе тренингов. При копировании к названию добавляется префикс "Копия — ".
 
-## Решение
+---
 
-Добавить на страницу `AdminTrainingLessons.tsx` секцию "Дочерние модули" — список модулей, у которых `parent_module_id = moduleId`. Каждый дочерний модуль — кликабельная карточка с переходом на его страницу уроков.
+## Архитектура
 
-## Изменение 1: AdminTrainingLessons.tsx — загрузка дочерних модулей
+### 1. Edge function: `training-copy-move`
 
-Добавить `useQuery` для загрузки дочерних модулей:
+Новый файл: `supabase/functions/training-copy-move/index.ts`
 
-```typescript
-const { data: childModules = [] } = useQuery({
-  queryKey: ["child-modules", moduleId],
-  queryFn: async () => {
-    const { data, error } = await supabase
-      .from("training_modules")
-      .select("id, title, slug, is_active, is_container, sort_order")
-      .eq("parent_module_id", moduleId)
-      .order("sort_order");
-    if (error) throw error;
-    return data ?? [];
-  },
-  enabled: !!moduleId,
-});
+Принимает POST-запрос с телом:
+
+```text
+action: "copy_module" | "move_module" | "copy_lesson" | "move_lesson"
+source_id: UUID исходного элемента
+target_module_id: UUID целевого модуля (или null для корня)
+target_section_key: string (menu_section_key целевого раздела)
 ```
 
-## Изменение 2: AdminTrainingLessons.tsx — отображение дочерних модулей
+Логика по операциям:
 
-Между заголовком и списком уроков (строка ~569, перед `{/* Lessons List */}`) добавить секцию:
+**copy_lesson:**
+- SELECT урок по source_id
+- INSERT копию с title = "Копия — {title}", новым slug (slug + "-copy" + уникализация), новым id
+- SELECT все lesson_blocks по lesson_id = source_id
+- INSERT копии блоков с новым lesson_id (с сохранением parent_id дерева блоков -- маппинг старых id на новые)
+- SELECT все kb_questions по lesson_id = source_id
+- INSERT копии вопросов с новым lesson_id
 
-```
--- Если childModules.length > 0:
-  Заголовок "Дочерние модули" (мелкий, text-muted-foreground)
-  Список карточек:
-    - Иконка Layers
-    - Название модуля
-    - Badge "Активен" / "Скрыт"
-    - Клик -> navigate(`/admin/training-modules/${child.id}/lessons`)
-    - Кнопки: Редактировать (карандаш), Удалить (корзина)
-```
+**copy_module (рекурсивно):**
+- SELECT модуль по source_id
+- INSERT копию модуля с title = "Копия — {title}", новым slug, target parent_module_id, target menu_section_key
+- SELECT module_access по module_id = source_id, INSERT копии для нового модуля
+- SELECT все training_lessons по module_id = source_id, для каждого -- copy_lesson (в новый модуль)
+- SELECT дочерние модули (parent_module_id = source_id), для каждого -- рекурсивный copy_module (parent = новый модуль)
 
-Кликабельные карточки используют тот же стиль `Card`, что и уроки, но с иконкой `Layers` вместо номера.
+**move_lesson:**
+- UPDATE training_lessons SET module_id = target_module_id WHERE id = source_id
+
+**move_module:**
+- UPDATE training_modules SET parent_module_id = target_module_id, menu_section_key = target_section_key WHERE id = source_id
+
+Проверка прав: только admin/superadmin (через JWT + проверку роли в user_roles).
+
+### 2. UI: Диалог `CopyMoveDialog.tsx`
+
+Новый файл: `src/components/admin/trainings/CopyMoveDialog.tsx`
+
+Props:
+- `open`, `onOpenChange`
+- `sourceType: "module" | "lesson"`
+- `sourceId: string`
+- `sourceTitle: string`
+- `currentSectionKey: string`
+- `onSuccess: () => void`
+
+Содержимое:
+- Переключатель "Копировать" / "Переместить"
+- `ContentSectionSelector` для выбора целевого раздела
+- `ModuleTreeSelector` для выбора целевого модуля/папки (mode="select-parent")
+- Кнопка подтверждения
+- Индикатор загрузки
+
+### 3. Интеграция кнопок в UI
+
+**AdminTrainingLessons.tsx** (строки 708-741, блок Actions для уроков):
+- Добавить кнопку "Копировать/Переместить" (иконка `Copy`) рядом с кнопками "Контент", "Редактировать", "Удалить"
+
+**AdminTrainingLessons.tsx** (строки 608-635, блок Actions для дочерних модулей):
+- Добавить кнопку "Копировать/Переместить" (иконка `Copy`) рядом с "Редактировать" и "Удалить"
+
+**AdminTrainingModules.tsx** (карточки модулей на главной странице):
+- Добавить кнопку "Копировать/Переместить" в контекстное меню или в строку действий
+
+---
+
+## Файлы
+
+| Файл | Действие |
+|---|---|
+| `supabase/functions/training-copy-move/index.ts` | Создать |
+| `src/components/admin/trainings/CopyMoveDialog.tsx` | Создать |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Добавить кнопки copy/move для уроков и дочерних модулей |
+| `src/pages/admin/AdminTrainingModules.tsx` | Добавить кнопку copy/move для корневых модулей |
+
+---
 
 ## Что НЕ трогаем
 
-- ContentCreationWizard (уже работает корректно с `initialParentModuleId`)
-- ModuleTreeSelector
-- БД, RLS
-- Страницу AdminTrainingModules (корневой список — уже исправлен фильтром)
+- Схему БД (все таблицы уже есть)
+- RLS политики
+- useTrainingModules, useTrainingLessons, useLessonBlocks
+- ContentCreationWizard, ModuleTreeSelector
 
 ## DoD
 
-A) На странице "Закрой год" видны дочерние модули "1", "1-2", "3" (или сколько их есть)
-B) Клик по дочернему модулю ведёт на его страницу уроков
-C) SQL: `SELECT id, title FROM training_modules WHERE parent_module_id = '682d241e-...'` возвращает модули
+A) Кнопка "Копировать" на уроке -> диалог -> выбор целевого модуля -> создаётся полная копия урока со всеми блоками и вопросами
+B) Кнопка "Копировать" на модуле -> диалог -> выбор куда -> создаётся полная рекурсивная копия модуля со всеми дочерними модулями, уроками, блоками
+C) Кнопка "Переместить" -> обновляет parent_module_id / module_id
+D) SQL-пруф: копия имеет новый id, title с "Копия — ", корректный parent
+E) Регрессия: существующий контент не затрагивается
