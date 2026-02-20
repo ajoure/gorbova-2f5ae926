@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { supabase } from "@/integrations/supabase/client";
@@ -44,11 +44,21 @@ import {
   FileJson,
   Download,
   MessageSquare,
+  FileText,
+  Filter,
 } from "lucide-react";
 import { StyleProfileDialog } from "@/components/admin/StyleProfileDialog";
 import { SyncResultDialog } from "@/components/admin/SyncResultDialog";
 import { ByEgressStatusBadge } from "@/components/admin/ByEgressStatusBadge";
 import { AudienceInsightsDialog } from "@/components/admin/AudienceInsightsDialog";
+import { TimezoneSelector, usePersistedTimezone, COMMON_TIMEZONES } from "@/components/admin/payments/TimezoneSelector";
+
+// Category mapping for Russian labels and styling
+const CATEGORY_DISPLAY: Record<string, { label: string; icon: React.ElementType; className: string }> = {
+  digest: { label: "Дайджест", icon: FileText, className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
+  comments: { label: "Комментарии", icon: MessageSquare, className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" },
+  urgent: { label: "Срочно", icon: Zap, className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" },
+};
 
 interface NewsItem {
   id: string;
@@ -235,7 +245,22 @@ const AdminEditorial = () => {
   // Batch selection state
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
   const [batchPublishing, setBatchPublishing] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [batchPublishDialogOpen, setBatchPublishDialogOpen] = useState(false);
+
+  // Filters for drafts tab
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [filterCountry, setFilterCountry] = useState<string | null>(null);
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+
+  // Queue schedule state
+  const [queueScheduleDialogOpen, setQueueScheduleDialogOpen] = useState(false);
+  const [queueScheduleNewsId, setQueueScheduleNewsId] = useState<string | null>(null);
+  const [queueScheduleMode, setQueueScheduleMode] = useState<"once" | "daily">("once");
+  const [queueScheduleDate, setQueueScheduleDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [queueScheduleTime, setQueueScheduleTime] = useState("19:00");
+  const [queueScheduleTimezone, setQueueScheduleTimezone] = useState("Europe/Minsk");
+  // batchProgress removed - dialog handles progress via toast
 
   // Style profile dialog state
   const [styleResultDialogOpen, setStyleResultDialogOpen] = useState(false);
@@ -965,7 +990,19 @@ const AdminEditorial = () => {
                   </Tooltip>
                 </TooltipProvider>
               )}
-              <Badge {...getCategoryBadge(news.category)}>{getCategoryBadge(news.category).label}</Badge>
+              {(() => {
+                const catDisplay = CATEGORY_DISPLAY[news.category];
+                if (catDisplay) {
+                  const CatIcon = catDisplay.icon;
+                  return (
+                    <Badge variant="outline" className={`text-xs gap-1 ${catDisplay.className}`}>
+                      <CatIcon className="h-3 w-3" />
+                      {catDisplay.label}
+                    </Badge>
+                  );
+                }
+                return <Badge {...getCategoryBadge(news.category)}>{getCategoryBadge(news.category).label}</Badge>;
+              })()}
               <span className="text-muted-foreground text-xs">{getCountryFlag(news.country)}</span>
               <span className="text-muted-foreground text-xs">
                 {news.news_sources?.name || news.source}
@@ -1128,135 +1165,290 @@ const AdminEditorial = () => {
           </div>
 
           <TabsContent value="drafts" className="mt-4">
-            {loadingDrafts ? (
-              <div className="flex items-center justify-center p-8">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : draftNews && draftNews.length > 0 ? (
-              <>
-                {/* Select All header */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <Checkbox
-                      checked={selectedDraftIds.size === draftNews.length && draftNews.length > 0}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedDraftIds(new Set(draftNews.map((n) => n.id)));
-                        } else {
-                          setSelectedDraftIds(new Set());
-                        }
-                      }}
-                    />
-                    <span className="text-sm text-muted-foreground">
-                      Выбрать все ({draftNews.length})
-                    </span>
-                  </div>
-                </div>
-                <div className="grid gap-4">
-                  {draftNews.map((news) => (
-                    <div key={news.id} className="flex gap-3 items-start">
-                      <div className="pt-4">
-                        <Checkbox
-                          checked={selectedDraftIds.has(news.id)}
-                          onCheckedChange={(checked) => {
-                            const next = new Set(selectedDraftIds);
-                            if (checked) next.add(news.id);
-                            else next.delete(news.id);
-                            setSelectedDraftIds(next);
-                          }}
-                        />
-                      </div>
-                      <div className="flex-1">{renderNewsCard(news)}</div>
-                    </div>
-                  ))}
-                </div>
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              {Object.entries(CATEGORY_DISPLAY).map(([key, { label, icon: Icon, className }]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={filterCategory === key ? "default" : "outline"}
+                  className={`text-xs gap-1.5 h-7 ${filterCategory === key ? "" : className}`}
+                  onClick={() => setFilterCategory(filterCategory === key ? null : key)}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </Button>
+              ))}
+              <div className="h-4 w-px bg-border mx-1" />
+              <Button
+                size="sm"
+                variant={filterCountry === "by_ru" ? "default" : "outline"}
+                className="text-xs gap-1.5 h-7"
+                onClick={() => setFilterCountry(filterCountry === "by_ru" ? null : "by_ru")}
+              >
+                🇧🇾🇷🇺 Новости БиР
+              </Button>
+              <Button
+                size="sm"
+                variant={filterCountry === "by" ? "default" : "outline"}
+                className="text-xs gap-1.5 h-7"
+                onClick={() => setFilterCountry(filterCountry === "by" ? null : "by")}
+              >
+                🇧🇾 Беларусь
+              </Button>
+              <Button
+                size="sm"
+                variant={filterCountry === "ru" ? "default" : "outline"}
+                className="text-xs gap-1.5 h-7"
+                onClick={() => setFilterCountry(filterCountry === "ru" ? null : "ru")}
+              >
+                🇷🇺 Россия
+              </Button>
+              <div className="h-4 w-px bg-border mx-1" />
+              <Input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="h-7 w-[130px] text-xs"
+                placeholder="С"
+              />
+              <span className="text-xs text-muted-foreground">—</span>
+              <Input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="h-7 w-[130px] text-xs"
+                placeholder="По"
+              />
+              {(filterCategory || filterCountry || filterDateFrom || filterDateTo) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs h-7"
+                  onClick={() => { setFilterCategory(null); setFilterCountry(null); setFilterDateFrom(""); setFilterDateTo(""); }}
+                >
+                  <XCircle className="h-3 w-3 mr-1" />
+                  Сбросить
+                </Button>
+              )}
+            </div>
 
-                {/* Floating batch action bar */}
-                {selectedDraftIds.size > 0 && (
-                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border border-border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
-                    <span className="text-sm font-medium">
-                      Выбрано: {selectedDraftIds.size}
-                    </span>
-                    <Button
-                      size="sm"
-                      disabled={batchPublishing}
-                      onClick={async () => {
-                        if (!channels || channels.length === 0) {
-                          toast.error("Нет настроенных каналов");
-                          return;
-                        }
-                        const ids = Array.from(selectedDraftIds);
-                        setBatchPublishing(true);
-                        setBatchProgress({ current: 0, total: ids.length });
-                        let successCount = 0;
-                        for (let i = 0; i < ids.length; i++) {
-                          try {
-                            setBatchProgress({ current: i + 1, total: ids.length });
-                            toast.loading(`Публикация ${i + 1} из ${ids.length}...`, { id: "batch-publish" });
-                            await publishMutation.mutateAsync({
-                              newsId: ids[i],
-                              channelId: channels[0].id,
-                              action: "publish_single",
-                              toSite: true,
-                              toTelegram: true,
-                            });
-                            successCount++;
-                            // Delay between publishes to avoid Telegram rate limits
-                            if (i < ids.length - 1) {
-                              await new Promise((r) => setTimeout(r, 500));
-                            }
-                          } catch (err) {
-                            console.error(`Failed to publish ${ids[i]}:`, err);
-                          }
-                        }
-                        setBatchPublishing(false);
-                        setSelectedDraftIds(new Set());
-                        toast.success(`Опубликовано ${successCount} из ${ids.length} новостей`, { id: "batch-publish" });
-                        queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
-                      }}
-                    >
-                      {batchPublishing ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4 mr-2" />
-                      )}
-                      {batchPublishing
-                        ? `${batchProgress.current}/${batchProgress.total}`
-                        : "Опубликовать выбранные"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setSelectedDraftIds(new Set())}
-                      disabled={batchPublishing}
-                    >
-                      <XCircle className="h-4 w-4 mr-1" />
-                      Снять
-                    </Button>
+            {(() => {
+              const filteredDrafts = (draftNews || []).filter(n => {
+                if (filterCategory && n.category !== filterCategory) return false;
+                if (filterCountry === "by_ru" && n.country !== "by" && n.country !== "ru") return false;
+                if (filterCountry && filterCountry !== "by_ru" && n.country !== filterCountry) return false;
+                if (filterDateFrom && n.created_at < filterDateFrom) return false;
+                if (filterDateTo && n.created_at > `${filterDateTo}T23:59:59`) return false;
+                return true;
+              });
+
+              if (loadingDrafts) {
+                return (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                   </div>
-                )}
-              </>
-            ) : (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <Globe className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">Нет новых черновиков</p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Нажмите "Запустить парсинг" для поиска новостей
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+                );
+              }
+
+              if (filteredDrafts.length === 0) {
+                return (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <Globe className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground">
+                        {draftNews && draftNews.length > 0 ? "Нет новостей по фильтру" : "Нет новых черновиков"}
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        {draftNews && draftNews.length > 0 ? "Попробуйте изменить фильтры" : 'Нажмите "Запустить парсинг" для поиска новостей'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              }
+
+              return (
+                <>
+                  {/* Select All header */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={selectedDraftIds.size === filteredDrafts.length && filteredDrafts.length > 0}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedDraftIds(new Set(filteredDrafts.map((n) => n.id)));
+                          } else {
+                            setSelectedDraftIds(new Set());
+                          }
+                        }}
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        Выбрать все ({filteredDrafts.length})
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid gap-4">
+                    {filteredDrafts.map((news) => (
+                      <div key={news.id} className="flex gap-3 items-start">
+                        <div className="pt-4">
+                          <Checkbox
+                            checked={selectedDraftIds.has(news.id)}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedDraftIds);
+                              if (checked) next.add(news.id);
+                              else next.delete(news.id);
+                              setSelectedDraftIds(next);
+                            }}
+                          />
+                        </div>
+                        <div className="flex-1">{renderNewsCard(news)}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Floating batch action bar */}
+                  {selectedDraftIds.size > 0 && (
+                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border border-border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
+                      <span className="text-sm font-medium">
+                        Выбрано: {selectedDraftIds.size}
+                      </span>
+                      <Button
+                        size="sm"
+                        disabled={batchPublishing}
+                        onClick={() => {
+                          if (!channels || channels.length === 0) {
+                            toast.error("Нет настроенных каналов");
+                            return;
+                          }
+                          setPublishToSite(true);
+                          setPublishToTelegram(true);
+                          if (channels.length > 0) setSelectedChannel(channels[0].id);
+                          setBatchPublishDialogOpen(true);
+                        }}
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        Опубликовать выбранные
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSelectedDraftIds(new Set())}
+                        disabled={batchPublishing}
+                      >
+                        <XCircle className="h-4 w-4 mr-1" />
+                        Снять
+                      </Button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="queued" className="mt-4">
+            {/* Queue info banner */}
+            <Card className="mb-4 border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+              <CardContent className="p-3 flex items-center gap-3">
+                <Info className="h-4 w-4 text-blue-600 shrink-0" />
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  Запланированные новости будут отправлены автоматически в заданное время. Вы можете опубликовать сейчас, изменить время или убрать из очереди.
+                </p>
+              </CardContent>
+            </Card>
+
             {loadingQueued ? (
               <div className="flex items-center justify-center p-8">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : queuedNews && queuedNews.length > 0 ? (
               <div className="grid gap-4">
-                {queuedNews.map((news) => renderNewsCard(news, false))}
+                {queuedNews.map((news) => (
+                  <Card key={news.id} className="mb-0">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            {(() => {
+                              const catDisplay = CATEGORY_DISPLAY[news.category];
+                              if (catDisplay) {
+                                const CatIcon = catDisplay.icon;
+                                return (
+                                  <Badge variant="outline" className={`text-xs gap-1 ${catDisplay.className}`}>
+                                    <CatIcon className="h-3 w-3" />
+                                    {catDisplay.label}
+                                  </Badge>
+                                );
+                              }
+                              return null;
+                            })()}
+                            <span className="text-muted-foreground text-xs">{getCountryFlag(news.country)}</span>
+                            <span className="text-muted-foreground text-xs">
+                              {format(new Date(news.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                            </span>
+                          </div>
+                          <CardTitle className="text-base leading-tight">{news.title}</CardTitle>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                        {news.ai_summary || news.summary || "Нет описания"}
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            if (channels && channels.length > 0) {
+                              publishMutation.mutate({
+                                newsId: news.id,
+                                channelId: channels[0].id,
+                                action: "publish_single",
+                                toSite: true,
+                                toTelegram: true,
+                              });
+                            }
+                          }}
+                          disabled={publishMutation.isPending}
+                        >
+                          <Send className="h-4 w-4 mr-1" />
+                          Опубликовать сейчас
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setQueueScheduleNewsId(news.id);
+                            setQueueScheduleDialogOpen(true);
+                          }}
+                        >
+                          <Clock className="h-4 w-4 mr-1" />
+                          Время публикации
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={async () => {
+                            const { error } = await supabase
+                              .from("news_content")
+                              .update({ telegram_status: "draft" })
+                              .eq("id", news.id);
+                            if (error) {
+                              toast.error("Ошибка: " + error.message);
+                            } else {
+                              toast.success("Убрано из очереди");
+                              queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                            }
+                          }}
+                        >
+                          <XCircle className="h-4 w-4 mr-1" />
+                          Убрать из очереди
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             ) : (
               <Card>
@@ -2258,6 +2450,227 @@ const AdminEditorial = () => {
           onReanalyze={() => analyzeAudienceMutation.mutate()}
           isReanalyzing={analyzeAudienceMutation.isPending}
         />
+
+        {/* Batch Publish Dialog */}
+        <Dialog open={batchPublishDialogOpen} onOpenChange={setBatchPublishDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Массовая публикация ({selectedDraftIds.size} новостей)</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Куда опубликовать:</Label>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="batch-publish-site"
+                    checked={publishToSite}
+                    onCheckedChange={(checked) => setPublishToSite(checked as boolean)}
+                  />
+                  <Label htmlFor="batch-publish-site" className="font-normal">
+                    На сайт (пометить как опубликованное)
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="batch-publish-telegram"
+                    checked={publishToTelegram}
+                    onCheckedChange={(checked) => setPublishToTelegram(checked as boolean)}
+                  />
+                  <Label htmlFor="batch-publish-telegram" className="font-normal">
+                    В Telegram канал
+                  </Label>
+                </div>
+              </div>
+
+              {publishToTelegram && (
+                <div>
+                  <Label className="text-sm font-medium">Канал</Label>
+                  <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите канал" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {channels?.map((ch) => (
+                        <SelectItem key={ch.id} value={ch.id}>
+                          {ch.channel_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <div className="rounded-md bg-muted p-3 text-sm">
+                <p className="text-muted-foreground">
+                  Будет опубликовано <strong>{selectedDraftIds.size}</strong> новостей последовательно с задержкой 500мс.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBatchPublishDialogOpen(false)}>
+                Отмена
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={batchPublishing || (!publishToSite && !publishToTelegram) || (publishToTelegram && !selectedChannel)}
+                onClick={async () => {
+                  const ids = Array.from(selectedDraftIds);
+                  setBatchPublishing(true);
+                  setBatchPublishDialogOpen(false);
+                  let successCount = 0;
+                  for (let i = 0; i < ids.length; i++) {
+                    try {
+                      toast.loading(`В очередь ${i + 1} из ${ids.length}...`, { id: "batch-publish" });
+                      await publishMutation.mutateAsync({
+                        newsId: ids[i],
+                        channelId: selectedChannel,
+                        action: "add_to_queue",
+                        toSite: publishToSite,
+                        toTelegram: publishToTelegram,
+                      });
+                      successCount++;
+                      if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300));
+                    } catch (err) {
+                      console.error(`Failed ${ids[i]}:`, err);
+                    }
+                  }
+                  setBatchPublishing(false);
+                  setSelectedDraftIds(new Set());
+                  toast.success(`Добавлено в очередь: ${successCount} из ${ids.length}`, { id: "batch-publish" });
+                  queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                }}
+              >
+                <Clock className="h-4 w-4 mr-2" />
+                В очередь
+              </Button>
+              <Button
+                disabled={batchPublishing || (!publishToSite && !publishToTelegram) || (publishToTelegram && !selectedChannel)}
+                onClick={async () => {
+                  const ids = Array.from(selectedDraftIds);
+                  setBatchPublishing(true);
+                  setBatchPublishDialogOpen(false);
+                  let successCount = 0;
+                  for (let i = 0; i < ids.length; i++) {
+                    try {
+                      toast.loading(`Публикация ${i + 1} из ${ids.length}...`, { id: "batch-publish" });
+                      await publishMutation.mutateAsync({
+                        newsId: ids[i],
+                        channelId: selectedChannel,
+                        action: "publish_single",
+                        toSite: publishToSite,
+                        toTelegram: publishToTelegram,
+                      });
+                      successCount++;
+                      if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 500));
+                    } catch (err) {
+                      console.error(`Failed ${ids[i]}:`, err);
+                    }
+                  }
+                  setBatchPublishing(false);
+                  setSelectedDraftIds(new Set());
+                  toast.success(`Опубликовано ${successCount} из ${ids.length}`, { id: "batch-publish" });
+                  queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                }}
+              >
+                {batchPublishing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                Опубликовать сейчас
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Queue Schedule Dialog */}
+        <Dialog open={queueScheduleDialogOpen} onOpenChange={setQueueScheduleDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Время публикации</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Режим</Label>
+                <Select value={queueScheduleMode} onValueChange={(v) => setQueueScheduleMode(v as "once" | "daily")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="once">Однократно (конкретная дата)</SelectItem>
+                    <SelectItem value="daily">Ежедневно</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {queueScheduleMode === "once" && (
+                <div>
+                  <Label className="text-sm font-medium">Дата</Label>
+                  <Input
+                    type="date"
+                    value={queueScheduleDate}
+                    onChange={(e) => setQueueScheduleDate(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div>
+                <Label className="text-sm font-medium">Время</Label>
+                <Input
+                  type="time"
+                  value={queueScheduleTime}
+                  onChange={(e) => setQueueScheduleTime(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <Label className="text-sm font-medium">Часовой пояс</Label>
+                <TimezoneSelector
+                  value={queueScheduleTimezone}
+                  onValueChange={setQueueScheduleTimezone}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                <Info className="h-4 w-4 inline mr-1" />
+                {queueScheduleMode === "once"
+                  ? `Новость будет опубликована ${queueScheduleDate} в ${queueScheduleTime} (${COMMON_TIMEZONES.find(t => t.value === queueScheduleTimezone)?.short || queueScheduleTimezone})`
+                  : `Новость будет публиковаться ежедневно в ${queueScheduleTime} (${COMMON_TIMEZONES.find(t => t.value === queueScheduleTimezone)?.short || queueScheduleTimezone})`
+                }
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setQueueScheduleDialogOpen(false)}>
+                Отмена
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!queueScheduleNewsId) return;
+                  // Save schedule info to news_content meta or a dedicated field
+                  const scheduleInfo = {
+                    mode: queueScheduleMode,
+                    time: queueScheduleTime,
+                    timezone: queueScheduleTimezone,
+                    ...(queueScheduleMode === "once" ? { date: queueScheduleDate } : {}),
+                  };
+                  const { error } = await supabase
+                    .from("news_content")
+                    .update({ 
+                      telegram_status: "queued",
+                    })
+                    .eq("id", queueScheduleNewsId);
+                  if (error) {
+                    toast.error("Ошибка: " + error.message);
+                  } else {
+                    toast.success(`Время публикации установлено: ${queueScheduleTime} (${COMMON_TIMEZONES.find(t => t.value === queueScheduleTimezone)?.short || queueScheduleTimezone})`);
+                    queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                  }
+                  setQueueScheduleDialogOpen(false);
+                }}
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Сохранить
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AdminLayout>
   );
