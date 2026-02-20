@@ -11,6 +11,8 @@ interface DnsOrder {
   id: string | number;
   name?: string;
   domain?: string;
+  fqdn?: string;
+  domain_name?: string;
   status?: string;
   nameservers?: string[];
   expire_date?: string;
@@ -48,8 +50,26 @@ export function HosterByDnsPanel({ instanceId }: HosterByDnsPanelProps) {
         toast.error("Ошибка загрузки DNS: " + (data?.error || error?.message));
       } else {
         const payload = data.data;
-        const orders = payload?.orders || (Array.isArray(payload) ? payload : []);
-        setDomains(orders);
+        const orders: DnsOrder[] = payload?.orders || (Array.isArray(payload) ? payload : []);
+
+        // Параллельно загружаем детали каждого заказа для получения доменного имени
+        const enriched = await Promise.all(
+          orders.map(async (order) => {
+            try {
+              const { data: detailData } = await supabase.functions.invoke("hosterby-api", {
+                body: { action: "dns_order_detail", instance_id: instanceId, payload: { order_id: String(order.id) } },
+              });
+              if (detailData?.success && detailData.data) {
+                return { ...order, ...detailData.data };
+              }
+            } catch {
+              // fallback — используем данные из списка
+            }
+            return order;
+          })
+        );
+
+        setDomains(enriched);
         setLoaded(true);
       }
     } catch {
@@ -116,7 +136,7 @@ export function HosterByDnsPanel({ instanceId }: HosterByDnsPanelProps) {
 
       {domains.map((domain) => {
         const domainId = String(domain.id);
-        const domainName = domain.name || domain.domain || `#${domainId}`;
+        const domainName = domain.name || domain.domain || domain.fqdn || domain.domain_name || `Домен #${domainId}`;
         const isExpanded = expandedDomain === domainId;
         const domainRecords = records[domainId] || [];
 
