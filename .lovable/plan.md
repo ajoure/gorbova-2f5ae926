@@ -1,77 +1,79 @@
 
-# Две функции для страницы «Редакция»
 
-## 1. Автоматический парсинг по расписанию (Настройки)
+# Улучшения редакции: фильтры, календарь, очередь
 
-### Что будет
-В настройках (вкладка «Настройки») появится новая карточка **«Расписание парсинга»** с:
-- Переключатель ВКЛ/ВЫКЛ автоматического парсинга
-- Два слота времени (по умолчанию **08:00** и **15:00** по Минску)
-- Возможность изменить время через удобные селекторы
-- Кнопка «Сохранить» для применения расписания
+## 1. Убрать кнопку «Новости БиР»
 
-### Как это работает
-- Настройки (enabled + два времени) хранятся в таблице `app_settings` (ключ `news_auto_scrape_schedule`)
-- При сохранении вызывается SQL-запрос, который создаёт/обновляет/удаляет `cron.job` записи для `monitor-news`
-- Cron будет вызывать `monitor-news` через `net.http_post` (аналогично другим существующим cron-задачам)
-- Время Минска (UTC+3) пересчитывается в UTC для cron-выражений (08:00 MSK = 05:00 UTC, 15:00 MSK = 12:00 UTC)
+Удалить кнопку «Новости БиР» из фильтров вкладки «Входящие». Останутся только «Беларусь» и «Россия» — если ни одна не выбрана, показываются все новости. Также убрать логику `filterCountry === "by_ru"` из фильтрации.
 
-### Техническая реализация
+## 2. Заменить `type="date"` на визуальный календарь из платежей
 
-**База данных (миграция):**
-- Вставить начальную настройку в `app_settings`:
-  ```sql
-  INSERT INTO app_settings (key, value) VALUES (
-    'news_auto_scrape_schedule',
-    '{"enabled": true, "slots": ["08:00", "15:00"], "timezone": "Europe/Minsk"}'
-  ) ON CONFLICT (key) DO NOTHING;
-  ```
-- Создать 2 cron-задачи:
-  ```sql
-  SELECT cron.schedule('monitor-news-morning', '0 5 * * *', $$ ... net.http_post monitor-news ... $$);
-  SELECT cron.schedule('monitor-news-afternoon', '0 12 * * *', $$ ... net.http_post monitor-news ... $$);
-  ```
+Компонент `PeriodSelector` и `GlassCalendarPicker` уже существуют в `src/components/ui/period-selector.tsx`. Нужно:
 
-**Edge Function (новая): `manage-news-schedule`**
-- Принимает `{ enabled, slots }` от UI
-- Пересчитывает время MSK в UTC
-- Выполняет `cron.unschedule` + `cron.schedule` через SQL
-- Обновляет `app_settings`
+**a) Извлечь `GlassCalendarPicker` в отдельный переиспользуемый компонент**
 
-**UI (AdminEditorial.tsx):**
-- Новая карточка в секции настроек (перед карточкой «ИИ-стиль»)
-- Иконка `Clock`, заголовок «Расписание парсинга»
-- Switch для вкл/выкл
-- Два поля ввода времени (type="time") с метками «Утро» и «День»
-- Индикатор текущего статуса: «Следующий запуск: сегодня в 15:00»
+Сейчас `GlassCalendarPicker` — приватная функция внутри `period-selector.tsx`. Нужно экспортировать её как самостоятельный компонент `DatePicker` в новый файл `src/components/ui/date-picker.tsx`, чтобы использовать везде, где нужен одиночный выбор даты.
+
+**b) Заменить все `type="date"` на новый `DatePicker` — в 10 файлах:**
+
+| Файл | Где используется |
+|------|-----------------|
+| `AdminEditorial.tsx` | Фильтр «С» / «По» во Входящих, дата вступления в силу, дата в диалоге очереди |
+| `AdminIlex.tsx` | Дата от / до в расширенном поиске |
+| `AdminProductDetailV2.tsx` | Дата старта, окончания, первого платежа |
+| `SyncWithStatementDialog.tsx` | Диапазон дат синхронизации |
+| `SyncRunDialog.tsx` | Диапазон дат |
+| `BepaidReconcileDialog.tsx` | Диапазон дат сверки |
+| `TelegramLogsTab.tsx` | Фильтр по дате логов |
+| `AdvancedFilters.tsx` | Поле даты в фильтрах |
+| `IndividualDetailsForm.tsx` | Дата рождения, выдачи, действия паспорта |
+
+Новый компонент будет принимать `value: string` (формат `yyyy-MM-dd`) и `onChange: (value: string) => void`, чтобы обеспечить прямую замену `<Input type="date">` без изменения логики состояния.
+
+## 3. Массовые действия в очереди
+
+Добавить на вкладку «В очереди» такую же систему чекбоксов и плавающую панель, как во «Входящих»:
+
+- Новый state: `selectedQueueIds: Set<string>`
+- Чекбокс на каждой карточке + «Выбрать все»
+- Плавающая панель при выделении с кнопками:
+  - «Опубликовать сейчас» — массовая публикация выбранных (последовательно, с задержкой 500ms)
+  - «Время публикации» — открывает существующий `queueScheduleDialog`, но применяет ко всем выбранным
+  - «Убрать из очереди» — массовый сброс `telegram_status` на `draft`
+
+## 4. Глобальное время публикации очереди
+
+Сейчас можно задать время для каждой отдельной новости, но нет общего расписания для всей очереди. Добавить на вкладку «В очереди» (рядом с информационным баннером) карточку «Автоматическая публикация очереди»:
+
+- Switch вкл/выкл
+- Поле ввода времени (`type="time"`)
+- `TimezoneSelector` (из платежей)
+- Текст: «Все новости в очереди будут публиковаться ежедневно в XX:XX (Минск)»
+
+Настройки хранить в `app_settings` под ключом `news_queue_auto_publish`.
 
 ---
 
-## 2. Массовая публикация новостей (вкладка «Входящие»)
+## Техническая реализация
 
-### Что будет
-На вкладке «Входящие» появится:
-- Чекбокс на каждой карточке новости для выделения
-- Плавающая панель внизу (при выделении хотя бы 1 новости):
-  - Счётчик «Выбрано: N»
-  - Кнопка «Опубликовать выбранные»
-  - Кнопка «Снять выделение»
-- Публикация идёт последовательно (по одной), с прогрессом
+### Новый файл: `src/components/ui/date-picker.tsx`
 
-### Техническая реализация
+Экспортирует компонент `DatePicker` на основе `GlassCalendarPicker` из `period-selector.tsx`:
+- Props: `value?: string`, `onChange: (value: string) => void`, `label?: string`, `placeholder?: string`, `minDate?: string`, `maxDate?: string`, `className?: string`
+- Внутри: преобразование `string <-> Date`, popover с `Calendar`, кнопки «Очистить» и «Сегодня»
+- Стиль: glassmorphism как в платежах (backdrop-blur, скруглённые углы, тени)
 
-**UI (AdminEditorial.tsx):**
-- Новый state: `selectedDraftIds: Set<string>`
-- Чекбокс в `renderNewsCard` (когда вкладка = drafts и showActions = true)
-- «Выбрать все» чекбокс в шапке вкладки
-- Плавающая панель действий при `selectedDraftIds.size > 0`
-- Мутация `batchPublishMutation`: итерирует по выбранным ID, для каждого вызывает `publishMutation.mutateAsync`, показывает прогресс toast
-- После завершения: очистка выделения, invalidate queries
+### Изменения в `AdminEditorial.tsx`
 
-**Логика публикации:**
-- Каждая новость публикуется на сайт (`is_published = true`) + в Telegram (если канал настроен)
-- Последовательно, с задержкой ~500ms между публикациями (чтобы не перегрузить Telegram API)
-- Прогресс: toast с обновлением `Опубликовано 3 из 7...`
+1. Удалить кнопку «Новости БиР» и логику `by_ru`
+2. Заменить 4 инпута `type="date"` на `DatePicker`
+3. Добавить `selectedQueueIds` state и чекбоксы в очередь
+4. Добавить плавающую панель для массовых действий в очереди
+5. Добавить карточку «Расписание публикации очереди» с сохранением в `app_settings`
+
+### Изменения в остальных 9 файлах
+
+Точечная замена `<Input type="date" ...>` на `<DatePicker ...>` — без изменения логики, только визуальный компонент.
 
 ---
 
@@ -79,6 +81,14 @@
 
 | Файл | Изменение |
 |------|-----------|
-| `src/pages/admin/AdminEditorial.tsx` | Карточка расписания в настройках + чекбоксы и панель массовой публикации во «Входящих» |
-| `supabase/functions/manage-news-schedule/index.ts` | **Новый** -- edge function для управления cron-расписанием |
-| Миграция SQL | Создание cron-задач + запись в `app_settings` |
+| `src/components/ui/date-picker.tsx` | **Новый** — универсальный компонент |
+| `src/pages/admin/AdminEditorial.tsx` | Убрать «БиР», заменить date-инпуты, массовые действия в очереди |
+| `src/pages/admin/AdminIlex.tsx` | Заменить date-инпуты |
+| `src/pages/admin/AdminProductDetailV2.tsx` | Заменить date-инпуты |
+| `src/components/admin/payments/SyncWithStatementDialog.tsx` | Заменить date-инпуты |
+| `src/components/admin/payments/SyncRunDialog.tsx` | Заменить date-инпуты |
+| `src/components/admin/payments/BepaidReconcileDialog.tsx` | Заменить date-инпуты |
+| `src/components/telegram/TelegramLogsTab.tsx` | Заменить date-инпуты |
+| `src/components/admin/AdvancedFilters.tsx` | Заменить date-инпут |
+| `src/components/legal-details/IndividualDetailsForm.tsx` | Заменить date-инпуты |
+
