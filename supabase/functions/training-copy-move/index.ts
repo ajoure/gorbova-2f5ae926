@@ -38,13 +38,17 @@ Deno.serve(async (req) => {
     }
     const userId = claimsData.claims.sub as string;
 
-    // Check admin role
+    // Check admin role using has_role_v2 (accepts text, not enum)
     const svc = createClient(supabaseUrl, supabaseService);
-    const { data: isAdmin } = await svc.rpc("has_any_role", {
-      p_user_id: userId,
-      p_roles: ["admin", "super_admin"],
+    const { data: isAdmin } = await svc.rpc("has_role_v2", {
+      _user_id: userId,
+      _role_code: "admin",
     });
-    if (!isAdmin) {
+    const { data: isSuperAdmin } = await svc.rpc("has_role_v2", {
+      _user_id: userId,
+      _role_code: "super_admin",
+    });
+    if (!isAdmin && !isSuperAdmin) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
