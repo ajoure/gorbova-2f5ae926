@@ -319,6 +319,63 @@ function isByEgressDomainAllowed(url: string, allowlist: string[]): boolean {
   } catch { return false; }
 }
 
+// Helper: detect RSS URLs to skip BY-egress for them
+function isRssUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return lower.includes('/rss') || lower.includes('/feed') || lower.includes('.xml') || lower.includes('atom') || lower.includes('format=rss');
+}
+
+// Helper: convert raw HTML to basic markdown-like text for parseNewsFromMarkdown
+function htmlToBasicMarkdown(html: string): string {
+  let text = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+
+  // Convert links to markdown
+  text = text.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, linkText) => {
+    const cleanText = linkText.replace(/<[^>]+>/g, '').trim();
+    if (cleanText && href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+      return `[${cleanText}](${href})`;
+    }
+    return cleanText;
+  });
+
+  // Convert headers
+  text = text.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+  text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+  text = text.replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n### $1\n');
+
+  // Convert structure
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  text = text.replace(/<li[^>]*>/gi, '* ');
+  text = text.replace(/<\/li>/gi, '\n');
+
+  // Strip remaining tags
+  text = text.replace(/<[^>]+>/g, '');
+
+  // Decode entities
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
+    .replace(/&laquo;/g, '«')
+    .replace(/&raquo;/g, '»')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .trim();
+
+  return text;
+}
+
 // BY-egress fetch: GET /fetch + X-Target-URL header + Authorization: Bearer
 async function fetchViaByEgress(
   targetUrl: string,
@@ -331,26 +388,64 @@ async function fetchViaByEgress(
     return { content: null, error: "NOT_IN_ALLOWLIST" };
   }
 
+  const MAX_REDIRECTS = 3;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 20000);
   try {
-    const resp = await fetch(`${egressConfig.base_url}/fetch`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${egressConfig.token}`,
-        "X-Target-URL": targetUrl,
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
-    if (!resp.ok) {
-      console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} success=false`);
-      return { content: null, httpStatus: resp.status };
+    let currentUrl = targetUrl;
+    let attempt = 0;
+    
+    while (attempt < MAX_REDIRECTS) {
+      attempt++;
+      const resp = await fetch(`${egressConfig.base_url}/fetch`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${egressConfig.token}`,
+          "X-Target-URL": currentUrl,
+        },
+        signal: controller.signal,
+        redirect: "manual", // don't follow redirects from proxy itself
+      });
+      
+      const domain = (() => { try { return new URL(currentUrl).hostname; } catch { return currentUrl; } })();
+      
+      // Handle redirects: fetch-service may return 301/302 from target
+      if (resp.status === 301 || resp.status === 302 || resp.status === 307 || resp.status === 308) {
+        const location = resp.headers.get("location") || resp.headers.get("x-redirect-location");
+        if (location) {
+          // Resolve relative URLs
+          const resolvedUrl = location.startsWith("http") ? location : new URL(location, currentUrl).href;
+          console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} redirect_to=${resolvedUrl} attempt=${attempt}`);
+          currentUrl = resolvedUrl;
+          continue;
+        }
+        // No location header — try reading body as HTML (some proxies inline the redirect page)
+        const body = await resp.text();
+        if (body.length > 500) {
+          console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} redirect_body_length=${body.length} using_body`);
+          clearTimeout(timer);
+          return { content: body, httpStatus: resp.status };
+        }
+        console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} no_location success=false`);
+        clearTimeout(timer);
+        return { content: null, httpStatus: resp.status };
+      }
+      
+      if (!resp.ok) {
+        console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} success=false`);
+        clearTimeout(timer);
+        return { content: null, httpStatus: resp.status };
+      }
+      
+      const text = await resp.text();
+      console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} content_length=${text.length}`);
+      clearTimeout(timer);
+      return { content: text, httpStatus: resp.status };
     }
-    const text = await resp.text();
-    console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} content_length=${text.length}`);
-    return { content: text, httpStatus: resp.status };
+    
+    clearTimeout(timer);
+    console.log(`[monitor-news] fetch_via=by_egress too_many_redirects url=${targetUrl}`);
+    return { content: null, error: "TOO_MANY_REDIRECTS" };
   } catch (e) {
     clearTimeout(timer);
     const isAbort = e instanceof Error && e.name === "AbortError";
@@ -852,6 +947,53 @@ async function scrapeSourceWithFallback(
 
   if (checkTimeout()) {
     return { items: [], errorCode: "timeout", errorDetails: { stage: "rss", elapsed_ms: Date.now() - startTime }, stage: "timeout" };
+  }
+
+  // ===== STAGE 1.5: BY-egress (VPS proxy for allowlisted domains) =====
+  if (byEgressConfig?.enabled && !isRssUrl(source.url) && isByEgressDomainAllowed(source.url, byEgressConfig.allowlist)) {
+    const egressDomain = (() => { try { return new URL(source.url).hostname; } catch { return source.url; } })();
+    console.log(`[monitor-news] ${source.name}: STAGE 1.5 - trying BY-egress for ${egressDomain}...`);
+    
+    const egressResult = await fetchViaByEgress(source.url, byEgressConfig);
+    
+    const egressStatusCode = egressResult.httpStatus ? String(egressResult.httpStatus) : (egressResult.error || null);
+    
+    // Log 401 as CRITICAL (wrong token)
+    if (egressResult.httpStatus === 401) {
+      console.error(`[monitor-news] CRITICAL: BY-egress 401 for ${egressDomain} — check egress token!`);
+    }
+    
+    await logScrapeAttempt(
+      supabase, source, "by_egress", source.url, "by_egress",
+      egressStatusCode, egressResult.error || null,
+      Date.now() - startTime, 0
+    );
+
+    if (egressResult.content) {
+      // BY-egress returns raw HTML — convert to markdown for parseNewsFromMarkdown
+      const markdownContent = htmlToBasicMarkdown(egressResult.content);
+      const items = parseNewsFromMarkdown(markdownContent, source.url);
+      
+      console.log(`[monitor-news] stage=by_egress domain=${egressDomain} status=${egressResult.httpStatus || 'ok'} bytes=${egressResult.content.length} items=${items.length}`);
+      
+      if (items.length > 0) {
+        console.log(`[monitor-news] ${source.name}: BY-egress SUCCESS, ${items.length} items`);
+        return { items: items.slice(0, MAX_ITEMS), stage: "by_egress" };
+      }
+    }
+
+    if (egressResult.error || egressResult.httpStatus) {
+      lastError = { 
+        code: egressStatusCode || "by_egress_fail", 
+        details: { stage: "by_egress", domain: egressDomain, error: egressResult.error } 
+      };
+    }
+    
+    console.log(`[monitor-news] ${source.name}: BY-egress no items, falling back to Firecrawl`);
+  }
+
+  if (checkTimeout()) {
+    return { items: [], errorCode: "timeout", errorDetails: { stage: "by_egress", elapsed_ms: Date.now() - startTime }, stage: "timeout" };
   }
 
   // ===== STAGE 2: HTML scrape (proxy: auto) =====
