@@ -864,6 +864,181 @@ serve(async (req) => {
         return jsonResp({ success: true, egress_enabled: enabled });
       }
 
+      // ---- cloud_order_detail ----------------------------------------
+      case "cloud_order_detail": {
+        if (!accessKey || !secretKey) {
+          return jsonResp({ success: false, error: "Cloud API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(accessKey, secretKey);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        if (!orderId) return jsonResp({ success: false, error: "order_id обязателен" });
+        const res = await hosterRequest("GET", `/cloud/orders/${orderId}/`, "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- cloud_balance ---------------------------------------------
+      case "cloud_balance": {
+        if (!accessKey || !secretKey) {
+          return jsonResp({ success: false, error: "Cloud API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(accessKey, secretKey);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string | undefined;
+        const path = orderId ? `/cloud/orders/${orderId}/balance` : `/cloud/orders/balance`;
+        const res = await hosterRequest("GET", path, "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- vm_detail -------------------------------------------------
+      case "vm_detail": {
+        if (!accessKey || !secretKey) {
+          return jsonResp({ success: false, error: "Cloud API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(accessKey, secretKey);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const vmId = payload.vm_id as string;
+        if (!orderId || !vmId) return jsonResp({ success: false, error: "order_id и vm_id обязательны" });
+        const res = await hosterRequest("GET", `/cloud/orders/${orderId}/vm/${vmId}`, "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- vm_start / vm_stop / vm_reboot / vm_reset / vm_shutdown ---
+      case "vm_start":
+      case "vm_stop":
+      case "vm_reboot":
+      case "vm_reset":
+      case "vm_shutdown": {
+        if (!accessKey || !secretKey) {
+          return jsonResp({ success: false, error: "Cloud API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(accessKey, secretKey);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const vmId = payload.vm_id as string;
+        if (!orderId || !vmId) return jsonResp({ success: false, error: "order_id и vm_id обязательны" });
+
+        const vmAction = action.replace("vm_", ""); // start|stop|reboot|reset|shutdown
+        const res = await hosterRequest("PATCH", `/cloud/orders/${orderId}/vm/${vmId}/${vmAction}`, "", tokenRes.accessToken);
+
+        await writeAuditLog(supabaseAdmin, `hosterby.${action}`, {
+          instance_id: hosterInstance?.id,
+          order_id: orderId,
+          vm_id: vmId,
+          result_ok: res.ok,
+          result_code: res.code,
+        }, userId);
+
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- list_dns_orders -------------------------------------------
+      case "list_dns_orders": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const res = await hosterRequest("GET", "/dns/orders", "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- dns_order_detail ------------------------------------------
+      case "dns_order_detail": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        if (!orderId) return jsonResp({ success: false, error: "order_id обязателен" });
+        const res = await hosterRequest("GET", `/dns/orders/${orderId}/`, "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- list_dns_records ------------------------------------------
+      case "list_dns_records": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        if (!orderId) return jsonResp({ success: false, error: "order_id обязателен" });
+        const res = await hosterRequest("GET", `/dns/orders/${orderId}/records`, "", tokenRes.accessToken);
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
+      // ---- add_dns_a_record ------------------------------------------
+      case "add_dns_a_record": {
+        const dnsAK = (instanceConfig.dns_access_key as string) || accessKey;
+        const dnsSK = (instanceConfig.dns_secret_key as string) || secretKey;
+        if (!dnsAK || !dnsSK) {
+          return jsonResp({ success: false, error: "DNS API ключи не настроены", code: "KEYS_MISSING" });
+        }
+        const tokenRes = await getAccessToken(dnsAK, dnsSK);
+        if (!tokenRes.ok || !tokenRes.accessToken) {
+          return jsonResp({ success: false, error: tokenRes.error, code: tokenRes.code });
+        }
+        const orderId = payload.order_id as string;
+        const name = payload.name as string;
+        const content = payload.content as string;
+        const ttl = (payload.ttl as number) || 3600;
+        const disabled = (payload.disabled as boolean) || false;
+        if (!orderId || !name || !content) {
+          return jsonResp({ success: false, error: "order_id, name и content (IP) обязательны" });
+        }
+        // Validate IP format
+        const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+        if (!ipRegex.test(content)) {
+          return jsonResp({ success: false, error: "content должен быть валидным IPv4 адресом" });
+        }
+
+        const recordBody = JSON.stringify({ name, content, ttl, disabled });
+        const res = await hosterRequest("POST", `/dns/orders/${orderId}/records/a`, recordBody, tokenRes.accessToken);
+
+        await writeAuditLog(supabaseAdmin, "hosterby.add_dns_a_record", {
+          instance_id: hosterInstance?.id,
+          order_id: orderId,
+          name,
+          content,
+          ttl,
+          result_ok: res.ok,
+          result_code: res.code,
+        }, userId);
+
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+      }
+
       default:
         return jsonResp({ success: false, error: `Неизвестное действие: ${action}` }, 400);
     }
