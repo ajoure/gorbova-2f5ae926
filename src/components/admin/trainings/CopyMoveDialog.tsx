@@ -36,7 +36,12 @@ export function CopyMoveDialog({
   onSuccess,
 }: CopyMoveDialogProps) {
   const [isCopy, setIsCopy] = useState(true);
-  const [sectionKey, setSectionKey] = useState(currentSectionKey);
+  const [sectionKey, setSectionKeyRaw] = useState(currentSectionKey);
+
+  const handleSectionChange = (key: string) => {
+    setSectionKeyRaw(key);
+    setTargetModuleId(null);
+  };
   const [targetModuleId, setTargetModuleId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -114,8 +119,11 @@ export function CopyMoveDialog({
           {/* Section selector */}
           <ContentSectionSelector
             value={sectionKey}
-            onChange={setSectionKey}
+            onChange={handleSectionChange}
           />
+          <p className="text-xs text-muted-foreground -mt-1">
+            Смените раздел, чтобы увидеть модули из другого раздела
+          </p>
 
           {/* Module tree selector */}
           <div className="space-y-2">
