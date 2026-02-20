@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +54,7 @@ import { SyncResultDialog } from "@/components/admin/SyncResultDialog";
 import { ByEgressStatusBadge } from "@/components/admin/ByEgressStatusBadge";
 import { AudienceInsightsDialog } from "@/components/admin/AudienceInsightsDialog";
 import { TimezoneSelector, usePersistedTimezone, COMMON_TIMEZONES } from "@/components/admin/payments/TimezoneSelector";
+import { GlassCard } from "@/components/ui/GlassCard";
 
 // Category mapping for Russian labels and styling
 const CATEGORY_DISPLAY: Record<string, { label: string; icon: React.ElementType; className: string }> = {
@@ -264,6 +266,13 @@ const AdminEditorial = () => {
   const [queueScheduleTimezone, setQueueScheduleTimezone] = useState("Europe/Minsk");
   // batchProgress removed - dialog handles progress via toast
 
+  // Queue auto-publish schedule state
+  const [queueAutoEnabled, setQueueAutoEnabled] = useState(false);
+  const [queueAutoTime, setQueueAutoTime] = useState("19:00");
+  const [queueAutoTimezone, setQueueAutoTimezone] = useState("Europe/Minsk");
+  const [queueAutoLoaded, setQueueAutoLoaded] = useState(false);
+  const [queueAutoSaving, setQueueAutoSaving] = useState(false);
+
   // Style profile dialog state
   const [styleResultDialogOpen, setStyleResultDialogOpen] = useState(false);
   // ... keep existing code
@@ -402,6 +411,56 @@ const AdminEditorial = () => {
       setScheduleLoaded(true);
     }
   }, [scheduleSettings, scheduleLoaded]);
+
+  // Fetch queue auto-publish settings
+  const { data: queueAutoSettings } = useQuery({
+    queryKey: ["news-queue-auto-publish"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "news_queue_auto_publish")
+        .maybeSingle();
+      if (error) throw error;
+      return data?.value as { enabled: boolean; time: string; timezone: string } | null;
+    },
+  });
+
+  // Sync queue auto-publish state from DB
+  useEffect(() => {
+    if (queueAutoSettings && !queueAutoLoaded) {
+      setQueueAutoEnabled(queueAutoSettings.enabled ?? false);
+      setQueueAutoTime(queueAutoSettings.time || "19:00");
+      setQueueAutoTimezone(queueAutoSettings.timezone || "Europe/Minsk");
+      setQueueAutoLoaded(true);
+    }
+  }, [queueAutoSettings, queueAutoLoaded]);
+
+  // Save queue auto-publish settings
+  const saveQueueAutoPublish = async () => {
+    setQueueAutoSaving(true);
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        .upsert({
+          key: "news_queue_auto_publish",
+          value: { enabled: queueAutoEnabled, time: queueAutoTime, timezone: queueAutoTimezone },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "key" });
+      if (error) throw error;
+      const tzLabel = COMMON_TIMEZONES.find(t => t.value === queueAutoTimezone)?.short || queueAutoTimezone;
+      toast.success(
+        queueAutoEnabled
+          ? `Расписание очереди: ежедневно в ${queueAutoTime} (${tzLabel})`
+          : "Автопубликация очереди отключена"
+      );
+      queryClient.invalidateQueries({ queryKey: ["news-queue-auto-publish"] });
+    } catch (err: any) {
+      toast.error(`Ошибка сохранения: ${err.message}`);
+    } finally {
+      setQueueAutoSaving(false);
+    }
+  };
 
   // Save schedule mutation
   const saveScheduleMutation = useMutation({
@@ -1347,6 +1406,88 @@ const AdminEditorial = () => {
                 </p>
               </CardContent>
             </Card>
+
+            {/* Queue Auto-Publish Schedule Card */}
+            <GlassCard className="mb-4 p-0 overflow-hidden">
+              <div className="p-4 sm:p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                      <Calendar className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold">Расписание публикации</h3>
+                      <p className="text-xs text-muted-foreground">Автоматическая отправка очереди</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Badge
+                      variant={queueAutoEnabled ? "default" : "secondary"}
+                      className={cn(
+                        "text-xs",
+                        queueAutoEnabled
+                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200"
+                          : ""
+                      )}
+                    >
+                      {queueAutoEnabled ? "Активно" : "Пауза"}
+                    </Badge>
+                    <Switch
+                      checked={queueAutoEnabled}
+                      onCheckedChange={setQueueAutoEnabled}
+                    />
+                  </div>
+                </div>
+
+                {queueAutoEnabled && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Время публикации</Label>
+                        <Input
+                          type="time"
+                          value={queueAutoTime}
+                          onChange={(e) => setQueueAutoTime(e.target.value)}
+                          className="h-9"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Часовой пояс</Label>
+                        <TimezoneSelector
+                          value={queueAutoTimezone}
+                          onValueChange={setQueueAutoTimezone}
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30 p-3">
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        <Clock className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+                        Все новости в очереди будут публиковаться ежедневно в{" "}
+                        <strong>{queueAutoTime}</strong>{" "}
+                        ({COMMON_TIMEZONES.find(t => t.value === queueAutoTimezone)?.short || queueAutoTimezone})
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 flex justify-end">
+                  <Button
+                    size="sm"
+                    onClick={saveQueueAutoPublish}
+                    disabled={queueAutoSaving}
+                  >
+                    {queueAutoSaving ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                    )}
+                    Сохранить расписание
+                  </Button>
+                </div>
+              </div>
+            </GlassCard>
 
             {loadingQueued ? (
               <div className="flex items-center justify-center p-8">
@@ -2681,7 +2822,11 @@ const AdminEditorial = () => {
         <Dialog open={queueScheduleDialogOpen} onOpenChange={setQueueScheduleDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Время публикации</DialogTitle>
+              <DialogTitle>
+                {queueScheduleNewsId
+                  ? "Время публикации"
+                  : `Время публикации (${selectedQueueIds.size} новостей)`}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -2737,24 +2882,25 @@ const AdminEditorial = () => {
               </Button>
               <Button
                 onClick={async () => {
-                  if (!queueScheduleNewsId) return;
-                  // Save schedule info to news_content meta or a dedicated field
-                  const scheduleInfo = {
-                    mode: queueScheduleMode,
-                    time: queueScheduleTime,
-                    timezone: queueScheduleTimezone,
-                    ...(queueScheduleMode === "once" ? { date: queueScheduleDate } : {}),
-                  };
+                  const ids = queueScheduleNewsId
+                    ? [queueScheduleNewsId]
+                    : Array.from(selectedQueueIds);
+                  if (ids.length === 0) return;
+
                   const { error } = await supabase
                     .from("news_content")
-                    .update({ 
-                      telegram_status: "queued",
-                    })
-                    .eq("id", queueScheduleNewsId);
+                    .update({ telegram_status: "queued" })
+                    .in("id", ids);
                   if (error) {
                     toast.error("Ошибка: " + error.message);
                   } else {
-                    toast.success(`Время публикации установлено: ${queueScheduleTime} (${COMMON_TIMEZONES.find(t => t.value === queueScheduleTimezone)?.short || queueScheduleTimezone})`);
+                    const tzLabel = COMMON_TIMEZONES.find(t => t.value === queueScheduleTimezone)?.short || queueScheduleTimezone;
+                    toast.success(
+                      ids.length === 1
+                        ? `Время публикации: ${queueScheduleTime} (${tzLabel})`
+                        : `Время установлено для ${ids.length} новостей: ${queueScheduleTime} (${tzLabel})`
+                    );
+                    if (!queueScheduleNewsId) setSelectedQueueIds(new Set());
                     queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
                   }
                   setQueueScheduleDialogOpen(false);
