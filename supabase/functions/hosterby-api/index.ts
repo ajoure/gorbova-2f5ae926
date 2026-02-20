@@ -239,7 +239,7 @@ async function attemptHosterRequest(
 }
 
 // ============================================================
-// Шаг 2: Выполнить запрос к hoster.by API с JWT Bearer token
+// Шаг 2: Выполнить запрос к hoster.by API с Access-Token header
 // ============================================================
 async function hosterRequest(
   method: string,
@@ -251,7 +251,7 @@ async function hosterRequest(
   console.log(`[hosterby-api] Step2: ${method} ${path}`);
 
   const result = await attemptHosterRequest(method, path, body, {
-    "Authorization": `Bearer ${accessToken}`,
+    "Access-Token": accessToken,
   }, timeoutMs);
 
   if (result.error === "TIMEOUT") {
