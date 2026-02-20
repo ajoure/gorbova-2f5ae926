@@ -1066,7 +1066,13 @@ serve(async (req) => {
           return jsonResp({ success: false, error: "content должен быть валидным IPv4 адресом" });
         }
 
-        const recordBody = JSON.stringify({ name, content, ttl, disabled });
+        // hoster.by DNS API: POST /dns/orders/{id}/records/a with { name, ttl, records: [{ content, disabled }] }
+        const fqdn = name.endsWith(".") ? name : `${name}.`;
+        const recordBody = JSON.stringify({
+          name: fqdn,
+          ttl,
+          records: [{ content, disabled }],
+        });
         const res = await hosterRequest("POST", `/dns/orders/${orderId}/records/a`, recordBody, tokenRes.accessToken);
 
         await writeAuditLog(supabaseAdmin, "hosterby.add_dns_a_record", {
