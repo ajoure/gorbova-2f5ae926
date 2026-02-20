@@ -1,84 +1,61 @@
 
-# Исправление интеграции hoster.by: API endpoint + сохранение ключей
+# Исправление авторизации hoster.by API: заголовок Access-Token
 
-## Проблема 1: Неверный маршрут API
+## Проблема
 
-Текущий код использует endpoint:
+Логи edge-функции показывают:
 ```
-POST https://serviceapi.hoster.by/service-account/token/create
-```
-
-Согласно официальной документации hoster.by API (https://serviceapi.hoster.by/rest_api_docs.html), правильный endpoint:
-```
-POST https://serviceapi.hoster.by/service/account/create/token
+Step1: OK, userId=201461, expires=1771584811    <-- токен получен успешно
+Step2: GET /cloud/orders → http=401              <-- отказ в доступе
 ```
 
-Это и вызывает ошибку `httpCode=520`, которая нормализуется в `HOSTERBY_ROUTE_MISSING` -> "Неверный маршрут hoster.by API (token/create)".
+Шаг 1 (получение JWT) работает корректно после предыдущего исправления endpoint. Но Шаг 2 (запрос к `/cloud/orders`) возвращает 401 (Unauthorized).
 
-## Проблема 2: Ключи нельзя сохранить при ошибке
+**Корневая причина**: Текущий код отправляет заголовок `Authorization: Bearer {jwt}`, но согласно OpenAPI-спецификации hoster.by (`serviceapi.hoster.by/docs/swagger/json`), Cloud-эндпоинты используют схему авторизации `Access-Token` — то есть заголовок должен быть `Access-Token: {jwt}`.
 
-Сейчас кнопка "Сохранить и подключить" доступна только после успешной валидации (`validationResult?.success`). Если проверка не прошла (например, из-за бага с endpoint), ключи теряются при закрытии диалога.
+## Доказательство из документации
 
----
+1. Swagger JSON: security scheme для `/cloud/orders` — `"Access-Token": ["cloud_orders_list"]`
+2. Документация hoster.by упоминает пользовательские заголовки (`refresh-Token`, `X-User-Id`), а не стандартный `Authorization: Bearer`
 
 ## Решение
 
-### Файл 1: `supabase/functions/hosterby-api/index.ts`
+### Файл: `supabase/functions/hosterby-api/index.ts`
 
-**Изменение**: строка 113 — исправить URL создания токена:
+**Изменение 1** — строка 254, функция `hosterRequest`:
+
+Заменить:
+```typescript
+"Authorization": `Bearer ${accessToken}`,
 ```
-// Было:
-const url = `${HOSTERBY_API_BASE}/service-account/token/create`;
-
-// Стало:
-const url = `${HOSTERBY_API_BASE}/service/account/create/token`;
-```
-
-Также обновить лог-сообщения (строка 118) и текст ошибки (строка 155, 562) для соответствия новому пути.
-
-### Файл 2: `src/components/integrations/hosterby/HosterByConnectionDialog.tsx`
-
-**Изменение 1** — Разделить кнопку "Сохранить" на две функции:
-- "Сохранить и подключить" (текущее поведение, при успешной валидации)
-- "Сохранить ключи" — новая кнопка, доступная даже при ошибке валидации. Сохраняет ключи в БД со статусом `error` и `error_message`.
-
-**Изменение 2** — Логика `handleSaveWithoutValidation`:
-- Вызывает `save_hoster_keys` с дополнительным флагом `skip_validation: true` (или сохраняет напрямую через `createInstance`/`updateInstance`).
-- Ставит `status: "error"`, `error_message: validationResult?.error`.
-
-**Изменение 3** — UI footer диалога:
-```
-<DialogFooter>
-  <Button variant="outline" onClick={handleClose}>Отмена</Button>
-  
-  {/* Показывать "Сохранить ключи" только если валидация не прошла */}
-  {validationResult && !validationResult.success && canValidate && (
-    <Button variant="secondary" onClick={handleSaveWithoutValidation}>
-      Сохранить ключи
-    </Button>
-  )}
-  
-  <Button onClick={handleSave} disabled={isSaving || !validationResult?.success}>
-    Сохранить и подключить
-  </Button>
-</DialogFooter>
+На:
+```typescript
+"Access-Token": accessToken,
 ```
 
-### Файл 3: `supabase/functions/hosterby-api/index.ts` (action `save_hoster_keys`)
+**Изменение 2** — строка 242, обновить комментарий:
 
-**Изменение** — Добавить поддержку `skip_validation` в payload:
-- Если `payload.skip_validation === true`: пропустить шаги 1-2 (получение JWT и проверка /cloud/orders), сохранить ключи в БД со `status: "disconnected"`, `error_message` из payload.
-- Если `skip_validation` не передан: текущее поведение (валидация обязательна).
+Заменить:
+```
+// Шаг 2: Выполнить запрос к hoster.by API с JWT Bearer token
+```
+На:
+```
+// Шаг 2: Выполнить запрос к hoster.by API с Access-Token header
+```
 
-### Файл 4: `src/components/integrations/hosterby/HosterBySettingsCard.tsx`
+Больше ничего менять не нужно. UI, диалог сохранения ключей, бейджи статуса — всё работает корректно. Проблема только в формате заголовка авторизации.
 
-Без изменений — бейджи статуса (Подключено / Ошибка / Не проверено) уже реализованы.
+## Что НЕ трогаем
 
----
+- `HosterByConnectionDialog.tsx` — без изменений
+- `HosterBySettingsCard.tsx` — без изменений
+- `getAccessToken()` — Шаг 1 использует `Access-Key` / `Secret-Key` и работает корректно
+- Логика `save_hoster_keys`, `skip_validation` — уже работает
 
-## Итог
+## Ожидаемый результат
 
-1. Исправляется корневая причина ошибки: неверный URL `/service-account/token/create` -> `/service/account/create/token`
-2. Ключи можно сохранить даже при ошибке проверки, со статусом "error" и бейджем ошибки на карточке
-3. При повторном открытии диалога ключи уже сохранены (отображаются last4)
-4. Бейдж на карточке отражает реальный статус интеграции
+После деплоя:
+1. Нажатие "Проверить подключение" → Step1 получает JWT → Step2 с правильным заголовком `Access-Token` → 200 OK
+2. Карточка hoster.by показывает бейдж "Подключено" вместо "Ошибка"
+3. Количество облаков отображается корректно
