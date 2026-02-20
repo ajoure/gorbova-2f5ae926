@@ -1,45 +1,60 @@
 
+# Отображение дочерних модулей на странице модуля
 
-# Исправление: "Модуль в модуле" — финальный патч
+## Проблема
 
-## Статус текущей реализации (что уже сделано)
+Модули "1", "1-2", "3" существуют в БД с корректным `parent_module_id = 682d241e-...` (Закрой год). Однако страница `AdminTrainingLessons.tsx` загружает и отображает **только уроки** (`training_lessons`). Дочерние модули (`training_modules` с `parent_module_id = текущий модуль`) нигде не выводятся.
 
-- `parent_module_id` колонка в БД: ЕСТЬ (подтверждено SQL-запросом)
-- `parent_module_id` в типах Supabase (`types.ts`): ЕСТЬ
-- `ModuleTreeSelector.tsx`: СОЗДАН и полностью работает (дерево, quick-create, бейдж "Скрыт")
-- `ContentCreationWizard.tsx`: ОБНОВЛЁН — шаг "Родитель" добавлен в MODULE flow, `parent_module_id` записывается при insert
-- LESSON flow в мастере: уже использует `ModuleTreeSelector` вместо плоского `ModuleSelector`
+## Решение
 
-## Что НЕ доделано (1 дефект)
+Добавить на страницу `AdminTrainingLessons.tsx` секцию "Дочерние модули" — список модулей, у которых `parent_module_id = moduleId`. Каждый дочерний модуль — кликабельная карточка с переходом на его страницу уроков.
 
-**`ModuleSelector.tsx` (строка 74)** — всё ещё содержит фильтр `.eq("is_container", false)`. Этот компонент используется в других местах (не в мастере), но фильтр скрывает контейнеры. Нужно убрать.
+## Изменение 1: AdminTrainingLessons.tsx — загрузка дочерних модулей
 
-## План действий
+Добавить `useQuery` для загрузки дочерних модулей:
 
-### PATCH 1: Убрать фильтр `is_container=false` в `ModuleSelector.tsx`
-
-**Файл:** `src/components/admin/trainings/ModuleSelector.tsx`
-**Строка 74:** удалить `.eq("is_container", false)`
-
-Добавить поле `is_container` в `ModuleOption` и отображать бейдж "Папка" для контейнеров (аналогично `ModuleTreeSelector`).
-
-### PATCH 2: Верификация — скриншоты UI
-
-1. Залогиниться в админку
-2. Открыть мастер создания контента (ContentCreationWizard)
-3. Выбрать тип "Модуль"
-4. На шаге "Родитель" — показать дерево модулей с возможностью выбора родителя
-5. Создать вложенный модуль
-6. Подтвердить SQL-запросом что `parent_module_id` заполнен
-
-### PATCH 3: SQL-верификация
-
-```sql
-SELECT id, title, parent_module_id, menu_section_key 
-FROM training_modules 
-WHERE parent_module_id IS NOT NULL;
+```typescript
+const { data: childModules = [] } = useQuery({
+  queryKey: ["child-modules", moduleId],
+  queryFn: async () => {
+    const { data, error } = await supabase
+      .from("training_modules")
+      .select("id, title, slug, is_active, is_container, sort_order")
+      .eq("parent_module_id", moduleId)
+      .order("sort_order");
+    if (error) throw error;
+    return data ?? [];
+  },
+  enabled: !!moduleId,
+});
 ```
 
-## Технические детали
+## Изменение 2: AdminTrainingLessons.tsx — отображение дочерних модулей
 
-Единственное реальное изменение кода — удаление одной строки фильтра в `ModuleSelector.tsx`. Всё остальное уже реализовано и работает. После этого — полная верификация со скринами.
+Между заголовком и списком уроков (строка ~569, перед `{/* Lessons List */}`) добавить секцию:
+
+```
+-- Если childModules.length > 0:
+  Заголовок "Дочерние модули" (мелкий, text-muted-foreground)
+  Список карточек:
+    - Иконка Layers
+    - Название модуля
+    - Badge "Активен" / "Скрыт"
+    - Клик -> navigate(`/admin/training-modules/${child.id}/lessons`)
+    - Кнопки: Редактировать (карандаш), Удалить (корзина)
+```
+
+Кликабельные карточки используют тот же стиль `Card`, что и уроки, но с иконкой `Layers` вместо номера.
+
+## Что НЕ трогаем
+
+- ContentCreationWizard (уже работает корректно с `initialParentModuleId`)
+- ModuleTreeSelector
+- БД, RLS
+- Страницу AdminTrainingModules (корневой список — уже исправлен фильтром)
+
+## DoD
+
+A) На странице "Закрой год" видны дочерние модули "1", "1-2", "3" (или сколько их есть)
+B) Клик по дочернему модулю ведёт на его страницу уроков
+C) SQL: `SELECT id, title FROM training_modules WHERE parent_module_id = '682d241e-...'` возвращает модули
