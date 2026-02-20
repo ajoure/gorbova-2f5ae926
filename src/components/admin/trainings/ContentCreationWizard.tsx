@@ -38,6 +38,7 @@ interface ContentCreationWizardProps {
   onOpenChange: (open: boolean) => void;
   onComplete?: (result: { moduleId: string; lessonId?: string }) => void;
   initialSectionKey?: string;
+  initialParentModuleId?: string;
 }
 
 interface WizardData {
@@ -182,7 +183,7 @@ const getOrCreateContainerModule = async (sectionKey: string): Promise<string> =
   return newModule.id;
 };
 
-const createInitialState = (initialSectionKey?: string): WizardData => ({
+const createInitialState = (initialSectionKey?: string, initialParentModuleId?: string): WizardData => ({
   contentType: "module",
   menuSectionKey: initialSectionKey || "products-library",
   module: {
@@ -217,8 +218,8 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   tariffIds: [],
   notification: { ...defaultNotificationConfig },
   saleConfig: { ...defaultSaleConfig },
-  targetModuleId: null,        // null = standalone lesson (container)
-  targetParentModuleId: null,  // null = корень раздела (no parent)
+  targetModuleId: initialParentModuleId || null,        // null = standalone lesson (container)
+  targetParentModuleId: initialParentModuleId || null,  // предвыбор родителя если задан
   moduleIsContainer: false,    // default: создаём обычный модуль
 });
 
@@ -232,6 +233,7 @@ export function ContentCreationWizard({
   onOpenChange,
   onComplete,
   initialSectionKey,
+  initialParentModuleId,
 }: ContentCreationWizardProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -243,7 +245,7 @@ export function ContentCreationWizard({
   const [slugWarning, setSlugWarning] = useState<string | null>(null);
 
   const [wizardData, setWizardData] = useState<WizardData>(() => 
-    createInitialState(initialSectionKey)
+    createInitialState(initialSectionKey, initialParentModuleId)
   );
 
   // Determine which flow we're in
@@ -283,11 +285,11 @@ export function ContentCreationWizard({
         setCreatedModuleId(null);
         setCreatedLessonId(null);
         setSlugWarning(null);
-        setWizardData(createInitialState(initialSectionKey));
+        setWizardData(createInitialState(initialSectionKey, initialParentModuleId));
       }
       onOpenChange(newOpen);
     },
-    [onOpenChange, initialSectionKey]
+    [onOpenChange, initialSectionKey, initialParentModuleId]
   );
 
   // Validation based on current step and flow

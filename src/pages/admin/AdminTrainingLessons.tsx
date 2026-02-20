@@ -758,6 +758,7 @@ export default function AdminTrainingLessons() {
         open={isWizardOpen}
         onOpenChange={setIsWizardOpen}
         initialSectionKey={module?.menu_section_key || "products-library"}
+        initialParentModuleId={module?.id}
       />
     </AdminLayout>
   );
