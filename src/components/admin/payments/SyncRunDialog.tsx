@@ -13,6 +13,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -212,20 +213,18 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="from-date">С даты</Label>
-                <Input
+                <DatePicker
                   id="from-date"
-                  type="date"
                   value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
+                  onChange={setFromDate}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="to-date">По дату</Label>
-                <Input
+                <DatePicker
                   id="to-date"
-                  type="date"
                   value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
+                  onChange={setToDate}
                 />
               </div>
             </div>

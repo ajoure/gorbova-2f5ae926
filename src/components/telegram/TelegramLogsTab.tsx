@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -161,20 +162,18 @@ export function TelegramLogsTab() {
             </SelectContent>
           </Select>
           
-          <Input
-            type="date"
+          <DatePicker
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="w-[150px]"
+            onChange={setDateFrom}
             placeholder="От"
+            className="w-[160px]"
           />
           
-          <Input
-            type="date"
+          <DatePicker
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="w-[150px]"
+            onChange={setDateTo}
             placeholder="До"
+            className="w-[160px]"
           />
           
           {hasFilters && (

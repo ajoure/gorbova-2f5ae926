@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -513,20 +514,18 @@ export default function SyncWithStatementDialog({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="from-date">С даты</Label>
-                  <Input
+                  <DatePicker
                     id="from-date"
-                    type="date"
                     value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
+                    onChange={setFromDate}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="to-date">По дату</Label>
-                  <Input
+                  <DatePicker
                     id="to-date"
-                    type="date"
                     value={toDate}
-                    onChange={(e) => setToDate(e.target.value)}
+                    onChange={setToDate}
                   />
                 </div>
               </div>

@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Form,
   FormControl,
@@ -176,11 +177,10 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Дата рождения *</FormLabel>
                   <FormControl>
-                    <Input 
-                      type="date" 
-                      autoComplete="off" 
+                    <DatePicker
+                      value={field.value}
+                      onChange={field.onChange}
                       placeholder={getPlaceholder("ind_birth_date", "")}
-                      {...field} 
                     />
                   </FormControl>
                   <FormMessage />
@@ -304,7 +304,10 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Дата выдачи</FormLabel>
                   <FormControl>
-                    <Input type="date" autoComplete="off" {...field} />
+                    <DatePicker
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -317,7 +320,10 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Действ. до</FormLabel>
                   <FormControl>
-                    <Input type="date" autoComplete="off" {...field} />
+                    <DatePicker
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

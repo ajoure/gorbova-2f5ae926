@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Select,
   SelectContent,
@@ -204,10 +205,10 @@ export function AdvancedFilters({ fields, filters, onFiltersChange }: AdvancedFi
                     </SelectContent>
                   </Select>
                 ) : selectedField?.type === "date" ? (
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={newFilter.value || ""}
-                    onChange={(e) => setNewFilter({ ...newFilter, value: e.target.value })}
+                    onChange={(v) => setNewFilter({ ...newFilter, value: v })}
+                    placeholder="Выбрать дату"
                   />
                 ) : selectedField?.type === "number" ? (
                   <Input
