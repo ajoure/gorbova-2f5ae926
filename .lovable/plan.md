@@ -1,34 +1,75 @@
 
-# Исправление: показывать доменные имена вместо числовых ID
 
-## Проблема
+# Установка fetch-service на VPS и настройка BY-egress
 
-На скриншоте в DNS-табе видны карточки `#71015` и `#49792` — это внутренние ID заказов hoster.by. Пользователю они ни о чем не говорят. API `/dns/orders` возвращает массив объектов с `id`, но доменное имя может быть в поле, которое не подхватывается (например `fqdn`, `domain_name`, или вложенное).
+## Ограничение
 
-## Решение
+Lovable не имеет SSH-доступа к внешним серверам. API hoster.by поддерживает только управление VM (start/stop/reboot), но не выполнение команд. Поэтому установка fetch-service -- действие пользователя (одна команда копипаста).
 
-### Шаг 1: Загружать детали каждого домена
+## Этап 1: Установка fetch-service на VPS (действие пользователя)
 
-После получения списка заказов (`list_dns_orders`), для каждого заказа параллельно вызывать `dns_order_detail`, который возвращает полную информацию включая доменное имя, nameservers, даты.
+Пользователь подключается к VPS по SSH и вставляет один скрипт. Скрипт:
+- Устанавливает Node.js (если нет)
+- Создает `/opt/fetch-service/` с `server.js`
+- Генерирует случайный Bearer-токен
+- Создает systemd-сервис `fetch-service`
+- Запускает и включает автозапуск
+- Выводит URL и токен для копирования
 
-### Шаг 2: Расширить интерфейс DnsOrder
+Fetch-service -- это минимальный HTTP-прокси (~50 строк):
+- Слушает порт `8080`
+- Принимает `GET /fetch` с заголовком `X-Target-URL`
+- Проверяет `Authorization: Bearer <token>`
+- Проксирует запрос и возвращает результат
+- Имеет endpoint `GET /health` для проверки
 
-Добавить дополнительные поля, которые может возвращать API:
-- `fqdn` -- полное доменное имя
-- `domain_name` -- доменное имя
+## Этап 2: Настройка BY-egress в приложении (автоматически)
 
-### Шаг 3: Обновить fallback-логику отображения имени
+После получения URL и токена от пользователя:
 
-Сейчас: `domain.name || domain.domain || #${domainId}`
+**Файл: `supabase/functions/hosterby-api/index.ts`**
+- Добавить action `save_egress_config` -- сохраняет `egress_base_url`, `egress_token`, `egress_allowlist`, `egress_enabled` в `config` интеграции hosterby
+- Добавить action `test_egress` -- делает GET к `<base_url>/health` и возвращает статус
 
-Станет: `domain.name || domain.domain || domain.fqdn || domain.domain_name || Домен #${domainId}` -- с подписью "Домен" для ясности.
+**Файл: `src/components/integrations/hosterby/HosterByCloudPanel.tsx`**
+- Добавить секцию "BY-egress" с полями:
+  - Base URL (например `http://178.172.173.1:8080`)
+  - Token (Bearer-токен)
+  - Allowlist доменов (предзаполнен BY-доменами)
+  - Кнопка "Тест /health"
+  - Переключатель "Включено"
 
-### Изменения
+## Этап 3: Проверка работы парсинга
 
-**Файл: `src/components/integrations/hosterby/HosterByDnsPanel.tsx`**
+После настройки egress:
+- Запустить `monitor-news` для одного BY-источника
+- Убедиться в логах: `fetch_via=by_egress` вместо прямого запроса
+- Проверить, что контент получен через VPS
 
-1. Расширить интерфейс `DnsOrder` -- добавить `fqdn?`, `domain_name?`
-2. В `loadDomains()` -- после получения списка orders, для каждого вызвать `dns_order_detail` параллельно и обогатить данные (доменное имя, nameservers, даты)
-3. Обновить строку формирования `domainName` с учетом новых полей и подписью "Домен" перед ID
+## Предзаполненный allowlist доменов
 
-Никакие другие файлы не меняются. Edge-функция уже поддерживает `dns_order_detail`.
+```
+nbrb.by,nalog.gov.by,pravo.by,government.by,president.gov.by,
+minfin.gov.by,economy.gov.by,mintrud.gov.by,belstat.gov.by,
+ilex.by,etalonline.by
+```
+
+## Скрипт установки (для копирования в SSH)
+
+Будет создан файл-инструкция. Скрипт bash ~40 строк:
+- `apt update && apt install -y nodejs npm` (если нет)
+- Создание `/opt/fetch-service/server.js`
+- `TOKEN=$(openssl rand -hex 32)`
+- Создание systemd unit
+- `systemctl enable --now fetch-service`
+- Вывод: `echo "URL: http://178.172.173.1:8080"` и `echo "TOKEN: $TOKEN"`
+
+## Итого изменения в коде
+
+| Файл | Изменение |
+|------|-----------|
+| `supabase/functions/hosterby-api/index.ts` | Добавить actions: `save_egress_config`, `test_egress` |
+| `src/components/integrations/hosterby/HosterByCloudPanel.tsx` | Добавить UI-секцию BY-egress: URL, token, allowlist, тест, переключатель |
+
+Никакие другие файлы не затрагиваются. Существующая логика `monitor-news` уже поддерживает BY-egress -- нужно только заполнить конфиг.
+
