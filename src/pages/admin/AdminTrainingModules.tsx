@@ -635,7 +635,7 @@ export default function AdminTrainingModules() {
                   "grid gap-4 mt-4",
                   density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
-                  {modules.map((module) => (
+                  {modules.filter((m) => !m.parent_module_id).map((module) => (
                     <TrainingModuleCard
                       key={module.id}
                       module={module}
