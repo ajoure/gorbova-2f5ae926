@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -244,6 +245,7 @@ const AdminEditorial = () => {
 
   // Batch selection state
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
+  const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
   const [batchPublishing, setBatchPublishing] = useState(false);
   const [batchPublishDialogOpen, setBatchPublishDialogOpen] = useState(false);
 
@@ -1183,14 +1185,6 @@ const AdminEditorial = () => {
               <div className="h-4 w-px bg-border mx-1" />
               <Button
                 size="sm"
-                variant={filterCountry === "by_ru" ? "default" : "outline"}
-                className="text-xs gap-1.5 h-7"
-                onClick={() => setFilterCountry(filterCountry === "by_ru" ? null : "by_ru")}
-              >
-                🇧🇾🇷🇺 Новости БиР
-              </Button>
-              <Button
-                size="sm"
                 variant={filterCountry === "by" ? "default" : "outline"}
                 className="text-xs gap-1.5 h-7"
                 onClick={() => setFilterCountry(filterCountry === "by" ? null : "by")}
@@ -1206,20 +1200,18 @@ const AdminEditorial = () => {
                 🇷🇺 Россия
               </Button>
               <div className="h-4 w-px bg-border mx-1" />
-              <Input
-                type="date"
+              <DatePicker
                 value={filterDateFrom}
-                onChange={(e) => setFilterDateFrom(e.target.value)}
-                className="h-7 w-[130px] text-xs"
+                onChange={setFilterDateFrom}
                 placeholder="С"
+                className="w-[160px]"
               />
               <span className="text-xs text-muted-foreground">—</span>
-              <Input
-                type="date"
+              <DatePicker
                 value={filterDateTo}
-                onChange={(e) => setFilterDateTo(e.target.value)}
-                className="h-7 w-[130px] text-xs"
+                onChange={setFilterDateTo}
                 placeholder="По"
+                className="w-[160px]"
               />
               {(filterCategory || filterCountry || filterDateFrom || filterDateTo) && (
                 <Button
@@ -1237,8 +1229,7 @@ const AdminEditorial = () => {
             {(() => {
               const filteredDrafts = (draftNews || []).filter(n => {
                 if (filterCategory && n.category !== filterCategory) return false;
-                if (filterCountry === "by_ru" && n.country !== "by" && n.country !== "ru") return false;
-                if (filterCountry && filterCountry !== "by_ru" && n.country !== filterCountry) return false;
+                if (filterCountry && n.country !== filterCountry) return false;
                 if (filterDateFrom && n.created_at < filterDateFrom) return false;
                 if (filterDateTo && n.created_at > `${filterDateTo}T23:59:59`) return false;
                 return true;
@@ -1362,94 +1353,202 @@ const AdminEditorial = () => {
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : queuedNews && queuedNews.length > 0 ? (
-              <div className="grid gap-4">
-                {queuedNews.map((news) => (
-                  <Card key={news.id} className="mb-0">
-                    <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            {(() => {
-                              const catDisplay = CATEGORY_DISPLAY[news.category];
-                              if (catDisplay) {
-                                const CatIcon = catDisplay.icon;
-                                return (
-                                  <Badge variant="outline" className={`text-xs gap-1 ${catDisplay.className}`}>
-                                    <CatIcon className="h-3 w-3" />
-                                    {catDisplay.label}
-                                  </Badge>
-                                );
-                              }
-                              return null;
-                            })()}
-                            <span className="text-muted-foreground text-xs">{getCountryFlag(news.country)}</span>
-                            <span className="text-muted-foreground text-xs">
-                              {format(new Date(news.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
-                            </span>
+              <>
+                {/* Select All header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={selectedQueueIds.size === queuedNews.length && queuedNews.length > 0}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedQueueIds(new Set(queuedNews.map((n) => n.id)));
+                        } else {
+                          setSelectedQueueIds(new Set());
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      Выбрать все ({queuedNews.length})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-4">
+                  {queuedNews.map((news) => (
+                    <div key={news.id} className="flex gap-3 items-start">
+                      <div className="pt-4">
+                        <Checkbox
+                          checked={selectedQueueIds.has(news.id)}
+                          onCheckedChange={(checked) => {
+                            const next = new Set(selectedQueueIds);
+                            if (checked) next.add(news.id);
+                            else next.delete(news.id);
+                            setSelectedQueueIds(next);
+                          }}
+                        />
+                      </div>
+                      <Card className="flex-1 mb-0">
+                        <CardHeader className="pb-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                {(() => {
+                                  const catDisplay = CATEGORY_DISPLAY[news.category];
+                                  if (catDisplay) {
+                                    const CatIcon = catDisplay.icon;
+                                    return (
+                                      <Badge variant="outline" className={`text-xs gap-1 ${catDisplay.className}`}>
+                                        <CatIcon className="h-3 w-3" />
+                                        {catDisplay.label}
+                                      </Badge>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                                <span className="text-muted-foreground text-xs">{getCountryFlag(news.country)}</span>
+                                <span className="text-muted-foreground text-xs">
+                                  {format(new Date(news.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                                </span>
+                              </div>
+                              <CardTitle className="text-base leading-tight">{news.title}</CardTitle>
+                            </div>
                           </div>
-                          <CardTitle className="text-base leading-tight">{news.title}</CardTitle>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                        {news.ai_summary || news.summary || "Нет описания"}
-                      </p>
-                      <div className="flex gap-2 flex-wrap">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            if (channels && channels.length > 0) {
-                              publishMutation.mutate({
-                                newsId: news.id,
-                                channelId: channels[0].id,
-                                action: "publish_single",
-                                toSite: true,
-                                toTelegram: true,
-                              });
-                            }
-                          }}
-                          disabled={publishMutation.isPending}
-                        >
-                          <Send className="h-4 w-4 mr-1" />
-                          Опубликовать сейчас
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setQueueScheduleNewsId(news.id);
-                            setQueueScheduleDialogOpen(true);
-                          }}
-                        >
-                          <Clock className="h-4 w-4 mr-1" />
-                          Время публикации
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive"
-                          onClick={async () => {
-                            const { error } = await supabase
-                              .from("news_content")
-                              .update({ telegram_status: "draft" })
-                              .eq("id", news.id);
-                            if (error) {
-                              toast.error("Ошибка: " + error.message);
-                            } else {
-                              toast.success("Убрано из очереди");
-                              queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
-                            }
-                          }}
-                        >
-                          <XCircle className="h-4 w-4 mr-1" />
-                          Убрать из очереди
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                            {news.ai_summary || news.summary || "Нет описания"}
+                          </p>
+                          <div className="flex gap-2 flex-wrap">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                if (channels && channels.length > 0) {
+                                  publishMutation.mutate({
+                                    newsId: news.id,
+                                    channelId: channels[0].id,
+                                    action: "publish_single",
+                                    toSite: true,
+                                    toTelegram: true,
+                                  });
+                                }
+                              }}
+                              disabled={publishMutation.isPending}
+                            >
+                              <Send className="h-4 w-4 mr-1" />
+                              Опубликовать сейчас
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setQueueScheduleNewsId(news.id);
+                                setQueueScheduleDialogOpen(true);
+                              }}
+                            >
+                              <Clock className="h-4 w-4 mr-1" />
+                              Время публикации
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:text-destructive"
+                              onClick={async () => {
+                                const { error } = await supabase
+                                  .from("news_content")
+                                  .update({ telegram_status: "draft" })
+                                  .eq("id", news.id);
+                                if (error) {
+                                  toast.error("Ошибка: " + error.message);
+                                } else {
+                                  toast.success("Убрано из очереди");
+                                  queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                                }
+                              }}
+                            >
+                              <XCircle className="h-4 w-4 mr-1" />
+                              Убрать из очереди
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Floating batch action bar for queue */}
+                {selectedQueueIds.size > 0 && (
+                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border border-border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
+                    <span className="text-sm font-medium">
+                      Выбрано: {selectedQueueIds.size}
+                    </span>
+                    <Button
+                      size="sm"
+                      disabled={publishMutation.isPending}
+                      onClick={async () => {
+                        if (!channels || channels.length === 0) {
+                          toast.error("Нет настроенных каналов");
+                          return;
+                        }
+                        const ids = Array.from(selectedQueueIds);
+                        for (let i = 0; i < ids.length; i++) {
+                          publishMutation.mutate({
+                            newsId: ids[i],
+                            channelId: channels[0].id,
+                            action: "publish_single",
+                            toSite: true,
+                            toTelegram: true,
+                          });
+                          if (i < ids.length - 1) await new Promise(r => setTimeout(r, 500));
+                        }
+                        setSelectedQueueIds(new Set());
+                      }}
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Опубликовать сейчас
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setQueueScheduleNewsId(null); // null = apply to all selected
+                        setQueueScheduleDialogOpen(true);
+                      }}
+                    >
+                      <Clock className="h-4 w-4 mr-2" />
+                      Время публикации
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={async () => {
+                        const ids = Array.from(selectedQueueIds);
+                        const { error } = await supabase
+                          .from("news_content")
+                          .update({ telegram_status: "draft" })
+                          .in("id", ids);
+                        if (error) {
+                          toast.error("Ошибка: " + error.message);
+                        } else {
+                          toast.success(`Убрано из очереди: ${ids.length}`);
+                          setSelectedQueueIds(new Set());
+                          queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                        }
+                      }}
+                    >
+                      <XCircle className="h-4 w-4 mr-1" />
+                      Убрать из очереди
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSelectedQueueIds(new Set())}
+                    >
+                      Снять
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <Card>
                 <CardContent className="p-8 text-center">
@@ -2180,11 +2279,10 @@ const AdminEditorial = () => {
               </div>
 
               <div>
-                <label className="text-sm font-medium">Дата вступления в силу</label>
-                <Input
-                  type="date"
+                <DatePicker
+                  label="Дата вступления в силу"
                   value={editForm.effective_date}
-                  onChange={(e) => setEditForm({ ...editForm, effective_date: e.target.value })}
+                  onChange={(v) => setEditForm({ ...editForm, effective_date: v })}
                 />
               </div>
             </div>
@@ -2600,14 +2698,11 @@ const AdminEditorial = () => {
               </div>
 
               {queueScheduleMode === "once" && (
-                <div>
-                  <Label className="text-sm font-medium">Дата</Label>
-                  <Input
-                    type="date"
-                    value={queueScheduleDate}
-                    onChange={(e) => setQueueScheduleDate(e.target.value)}
-                  />
-                </div>
+                <DatePicker
+                  label="Дата"
+                  value={queueScheduleDate}
+                  onChange={setQueueScheduleDate}
+                />
               )}
 
               <div>

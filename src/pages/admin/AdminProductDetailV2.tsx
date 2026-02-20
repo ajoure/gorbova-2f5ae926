@@ -5,6 +5,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -1442,10 +1443,9 @@ export default function AdminProductDetailV2() {
                         <Calendar className="h-3.5 w-3.5" />
                         Дата первого списания
                       </Label>
-                      <Input
-                        type="date"
+                      <DatePicker
                         value={offerForm.preregistration_first_charge_date}
-                        onChange={(e) => setOfferForm({ ...offerForm, preregistration_first_charge_date: e.target.value })}
+                        onChange={(v) => setOfferForm({ ...offerForm, preregistration_first_charge_date: v })}
                       />
                     </div>
                     <div className="space-y-2">
@@ -1638,18 +1638,16 @@ export default function AdminProductDetailV2() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Дата старта</Label>
-                <Input
-                  type="date"
+                <DatePicker
                   value={flowForm.start_date}
-                  onChange={(e) => setFlowForm({ ...flowForm, start_date: e.target.value })}
+                  onChange={(v) => setFlowForm({ ...flowForm, start_date: v })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Дата окончания</Label>
-                <Input
-                  type="date"
+                <DatePicker
                   value={flowForm.end_date}
-                  onChange={(e) => setFlowForm({ ...flowForm, end_date: e.target.value })}
+                  onChange={(v) => setFlowForm({ ...flowForm, end_date: v })}
                 />
               </div>
             </div>

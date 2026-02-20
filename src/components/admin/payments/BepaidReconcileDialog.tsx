@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -153,21 +154,19 @@ export function BepaidReconcileDialog({ open, onOpenChange }: Props) {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="from">Дата с</Label>
-              <Input
+              <DatePicker
                 id="from"
-                type="date"
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={setFromDate}
                 disabled={isRunning}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="to">Дата по</Label>
-              <Input
+              <DatePicker
                 id="to"
-                type="date"
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={setToDate}
                 disabled={isRunning}
               />
             </div>

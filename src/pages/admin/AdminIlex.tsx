@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -456,19 +457,17 @@ export default function AdminIlex() {
 
                       <div className="space-y-2">
                         <Label>Дата от</Label>
-                        <Input
-                          type="date"
+                        <DatePicker
                           value={advancedParams.dateFrom}
-                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, dateFrom: e.target.value }))}
+                          onChange={(v) => setAdvancedParams(prev => ({ ...prev, dateFrom: v }))}
                         />
                       </div>
 
                       <div className="space-y-2">
                         <Label>Дата до</Label>
-                        <Input
-                          type="date"
+                        <DatePicker
                           value={advancedParams.dateTo}
-                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, dateTo: e.target.value }))}
+                          onChange={(v) => setAdvancedParams(prev => ({ ...prev, dateTo: v }))}
                         />
                       </div>
 
