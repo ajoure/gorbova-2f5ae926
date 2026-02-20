@@ -165,6 +165,52 @@ export function HosterByConnectionDialog({
     }
   };
 
+  const handleSaveWithoutValidation = async () => {
+    if (!canValidate) {
+      toast.error("Введите Cloud Access Key и Cloud Secret Key");
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("hosterby-api", {
+        body: {
+          action: "save_hoster_keys",
+          dry_run: false,
+          instance_id: existingInstance?.id,
+          payload: {
+            cloud_access_key: cloudAccessKey.trim(),
+            cloud_secret_key: cloudSecretKey.trim(),
+            ...(dnsAccessKey.trim() ? { dns_access_key: dnsAccessKey.trim() } : {}),
+            ...(dnsSecretKey.trim() ? { dns_secret_key: dnsSecretKey.trim() } : {}),
+            alias: "hoster.by Cloud",
+            skip_validation: true,
+            error_message: validationResult?.error || "Ключи сохранены без проверки",
+          },
+        },
+      });
+
+      if (error || !data?.success) {
+        toast.error("Ошибка сохранения: " + (data?.error || error?.message || "unknown"));
+        return;
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["integration-instances"] });
+      toast.success("Ключи сохранены (без проверки подключения)");
+      onOpenChange(false);
+      setCloudAccessKey("");
+      setCloudSecretKey("");
+      setDnsAccessKey("");
+      setDnsSecretKey("");
+      setValidationResult(null);
+    } catch (err) {
+      toast.error("Ошибка сохранения");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleClose = () => {
     setCloudAccessKey("");
     setCloudSecretKey("");
@@ -340,6 +386,22 @@ export function HosterByConnectionDialog({
           <Button variant="outline" onClick={handleClose}>
             Отмена
           </Button>
+          {validationResult && !validationResult.success && canValidate && (
+            <Button
+              variant="secondary"
+              onClick={handleSaveWithoutValidation}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Сохранение...
+                </>
+              ) : (
+                "Сохранить ключи"
+              )}
+            </Button>
+          )}
           <Button
             onClick={handleSave}
             disabled={isSaving || !validationResult?.success}
