@@ -377,10 +377,11 @@ function htmlToBasicMarkdown(html: string): string {
 }
 
 // BY-egress fetch: GET /fetch + X-Target-URL header + Authorization: Bearer
+// VPS protocol: proxy always returns HTTP 200, real target status in X-Target-Status, final URL in X-Final-URL
 async function fetchViaByEgress(
   targetUrl: string,
   egressConfig: ByEgressConfig
-): Promise<{ content: string | null; httpStatus?: number; error?: string }> {
+): Promise<{ content: string | null; httpStatus?: number; error?: string; finalUrl?: string }> {
   if (!isByEgressUrlSafe(egressConfig.base_url)) {
     return { content: null, error: "SSRF_BLOCKED" };
   }
@@ -388,70 +389,56 @@ async function fetchViaByEgress(
     return { content: null, error: "NOT_IN_ALLOWLIST" };
   }
 
-  const MAX_REDIRECTS = 3;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
+
+  const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
+
   try {
-    let currentUrl = targetUrl;
-    let attempt = 0;
-    
-    while (attempt < MAX_REDIRECTS) {
-      attempt++;
-      const resp = await fetch(`${egressConfig.base_url}/fetch`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${egressConfig.token}`,
-          "X-Target-URL": currentUrl,
-        },
-        signal: controller.signal,
-        redirect: "manual", // don't follow redirects from proxy itself
-      });
-      
-      const domain = (() => { try { return new URL(currentUrl).hostname; } catch { return currentUrl; } })();
-      
-      // Handle redirects: fetch-service may return 301/302 from target
-      if (resp.status === 301 || resp.status === 302 || resp.status === 307 || resp.status === 308) {
-        const location = resp.headers.get("location") || resp.headers.get("x-redirect-location");
-        if (location) {
-          // Resolve relative URLs
-          const resolvedUrl = location.startsWith("http") ? location : new URL(location, currentUrl).href;
-          console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} redirect_to=${resolvedUrl} attempt=${attempt}`);
-          currentUrl = resolvedUrl;
-          continue;
-        }
-        // No location header — try reading body as HTML (some proxies inline the redirect page)
-        const body = await resp.text();
-        if (body.length > 500) {
-          console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} redirect_body_length=${body.length} using_body`);
-          clearTimeout(timer);
-          return { content: body, httpStatus: resp.status };
-        }
-        console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} no_location success=false`);
-        clearTimeout(timer);
-        return { content: null, httpStatus: resp.status };
+    const resp = await fetch(`${egressConfig.base_url}/fetch`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${egressConfig.token}`,
+        "X-Target-URL": targetUrl,
+      },
+      signal: controller.signal,
+    });
+
+    // proxy error (token wrong / proxy down)
+    if (resp.status !== 200) {
+      const body = await resp.text().catch(() => "");
+      if (resp.status === 401) {
+        console.error(`[monitor-news] CRITICAL: BY-egress proxy 401 for ${domain} — check egress token!`);
       }
-      
-      if (!resp.ok) {
-        console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} success=false`);
-        clearTimeout(timer);
-        return { content: null, httpStatus: resp.status };
-      }
-      
-      const text = await resp.text();
-      console.log(`[monitor-news] fetch_via=by_egress domain=${domain} status=${resp.status} content_length=${text.length}`);
+      console.log(`[monitor-news] fetch_via=by_egress domain=${domain} proxy_status=${resp.status} error=proxy_error body_len=${body.length}`);
       clearTimeout(timer);
-      return { content: text, httpStatus: resp.status };
+      return { content: null, httpStatus: resp.status, error: `proxy_${resp.status}` };
     }
-    
+
+    // real target status from headers
+    const targetStatusRaw = resp.headers.get("x-target-status") || "200";
+    const targetStatus = Number.parseInt(targetStatusRaw, 10);
+    const finalUrl = resp.headers.get("x-final-url") || targetUrl;
+
+    const body = await resp.text();
+    console.log(`[monitor-news] fetch_via=by_egress domain=${domain} proxy_status=200 target_status=${targetStatus} final_url=${finalUrl} content_length=${body.length}`);
+
     clearTimeout(timer);
-    console.log(`[monitor-news] fetch_via=by_egress too_many_redirects url=${targetUrl}`);
-    return { content: null, error: "TOO_MANY_REDIRECTS" };
+
+    if (!Number.isFinite(targetStatus)) {
+      return { content: null, error: "BAD_TARGET_STATUS_HEADER" };
+    }
+
+    if (targetStatus >= 400) {
+      return { content: null, httpStatus: targetStatus, error: `target_${targetStatus}`, finalUrl };
+    }
+
+    return { content: body, httpStatus: targetStatus, finalUrl };
   } catch (e) {
     clearTimeout(timer);
     const isAbort = e instanceof Error && e.name === "AbortError";
-    const errCode = isAbort ? "TIMEOUT" : String(e);
-    const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return targetUrl; } })();
-    console.log(`[monitor-news] fetch_via=by_egress_failed domain=${domain} error=${errCode} fallback=default`);
+    const errCode = isAbort ? "TIMEOUT" : (e instanceof Error ? e.message : String(e));
+    console.log(`[monitor-news] fetch_via=by_egress_failed domain=${domain} error=${errCode}`);
     return { content: null, error: errCode };
   }
 }
@@ -972,9 +959,11 @@ async function scrapeSourceWithFallback(
     if (egressResult.content) {
       // BY-egress returns raw HTML — convert to markdown for parseNewsFromMarkdown
       const markdownContent = htmlToBasicMarkdown(egressResult.content);
-      const items = parseNewsFromMarkdown(markdownContent, source.url);
+      // IMPORTANT: use finalUrl as baseUrl (after redirects resolved by VPS)
+      const baseUrl = egressResult.finalUrl || source.url;
+      const items = parseNewsFromMarkdown(markdownContent, baseUrl);
       
-      console.log(`[monitor-news] stage=by_egress domain=${egressDomain} status=${egressResult.httpStatus || 'ok'} bytes=${egressResult.content.length} items=${items.length}`);
+      console.log(`[monitor-news] stage=by_egress domain=${egressDomain} target_status=${egressResult.httpStatus || 'ok'} final_url=${egressResult.finalUrl || source.url} bytes=${egressResult.content.length} items=${items.length}`);
       
       if (items.length > 0) {
         console.log(`[monitor-news] ${source.name}: BY-egress SUCCESS, ${items.length} items`);
