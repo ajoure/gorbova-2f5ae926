@@ -102,7 +102,7 @@ function normalizeHosterBody(data: unknown): { code: HosterCode; ok: boolean } |
 }
 
 // ============================================================
-// Шаг 1: Получить JWT access token через /service-account/token/create
+// Шаг 1: Получить JWT access token через /service/account/create/token
 // Headers: Access-Key + Secret-Key
 // ============================================================
 async function getAccessToken(
@@ -110,12 +110,12 @@ async function getAccessToken(
   secretKey: string,
   timeoutMs = 15000
 ): Promise<HosterTokenResult> {
-  const url = `${HOSTERBY_API_BASE}/service-account/token/create`;
+  const url = `${HOSTERBY_API_BASE}/service/account/create/token`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    console.log(`[hosterby-api] Step1: POST /service-account/token/create (key_last4=${accessKey.slice(-4)})`);
+    console.log(`[hosterby-api] Step1: POST /service/account/create/token (key_last4=${accessKey.slice(-4)})`);
     const resp = await fetch(url, {
       method: "POST",
       headers: {
@@ -132,7 +132,7 @@ async function getAccessToken(
       data = JSON.parse(text);
     } catch {
       console.error("[hosterby-api] Step1: невалидный JSON:", text.slice(0, 200));
-      return { ok: false, error: "Невалидный JSON от /service-account/token/create", code: "HOSTERBY_520" };
+      return { ok: false, error: "Невалидный JSON от /service/account/create/token", code: "HOSTERBY_520" };
     }
 
     const httpCode = (data as Record<string, unknown>)?.httpCode;
@@ -152,7 +152,7 @@ async function getAccessToken(
       const errMsg = (data?.messageList as Record<string, unknown>)?.error as Record<string, string> | undefined;
       const unknownErr = errMsg?.unknown_error ?? "";
       if (unknownErr.includes("Matched route") || unknownErr.includes("handler")) {
-        return { ok: false, error: "Маршрут /service-account/token/create не найден", code: "HOSTERBY_ROUTE_MISSING" };
+        return { ok: false, error: "Маршрут /service/account/create/token не найден", code: "HOSTERBY_ROUTE_MISSING" };
       }
       return { ok: false, error: `hoster.by 520: ${unknownErr}`, code: "HOSTERBY_520" };
     }
@@ -402,7 +402,7 @@ serve(async (req) => {
             success: false,
             code: tokenResult.code ?? "NETWORK_ERROR",
             error: tokenResult.error ?? "Ошибка получения токена",
-            endpoint_used: "/service-account/token/create",
+          endpoint_used: "/service/account/create/token",
             auth_mode_used: "two-step",
             access_key_last4: accessKey.slice(-4),
           });
@@ -544,6 +544,8 @@ serve(async (req) => {
         const newDnsAccessKey = payload.dns_access_key as string | undefined;
         const newDnsSecretKey = payload.dns_secret_key as string | undefined;
         const alias = (payload.alias as string | undefined) || "hoster.by";
+        const skipValidation = payload.skip_validation === true;
+        const errorMessage = payload.error_message as string | undefined;
 
         if (!newAccessKey || !newSecretKey) {
           return jsonResp({ success: false, error: "cloud_access_key и cloud_secret_key обязательны", code: "KEYS_MISSING" });
@@ -553,61 +555,68 @@ serve(async (req) => {
           return jsonResp({ success: false, error: "Ключи слишком короткие (мин. 8 символов)" });
         }
 
-        // Шаг 1: получить JWT для новых ключей
-        const tokenResult = await getAccessToken(newAccessKey, newSecretKey);
-        if (!tokenResult.ok || !tokenResult.accessToken) {
-          const code = tokenResult.code ?? "NETWORK_ERROR";
-          let errMsg = `Ключи не прошли проверку (${code})`;
-          if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
-          else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API (token/create)";
-          else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520) при получении токена";
-          else if (code === "TIMEOUT") errMsg = "Timeout при получении токена";
-          return jsonResp({
-            success: false,
-            error: errMsg,
-            code,
-            endpoint_used: "/service-account/token/create",
-            auth_mode_used: "two-step",
-          });
+        let ordersCount = 0;
+
+        if (!skipValidation) {
+          // Шаг 1: получить JWT для новых ключей
+          const tokenResult = await getAccessToken(newAccessKey, newSecretKey);
+          if (!tokenResult.ok || !tokenResult.accessToken) {
+            const code = tokenResult.code ?? "NETWORK_ERROR";
+            let errMsg = `Ключи не прошли проверку (${code})`;
+            if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
+            else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API (token/create)";
+            else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520) при получении токена";
+            else if (code === "TIMEOUT") errMsg = "Timeout при получении токена";
+            return jsonResp({
+              success: false,
+              error: errMsg,
+              code,
+              endpoint_used: "/service/account/create/token",
+              auth_mode_used: "two-step",
+            });
+          }
+
+          // Шаг 2: проверить /cloud/orders с JWT
+          const testResult = await hosterRequest("GET", "/cloud/orders", "", tokenResult.accessToken);
+
+          if (!testResult.ok) {
+            const code = testResult.code ?? "NETWORK_ERROR";
+            let errMsg = `Ключи не прошли проверку (${code})`;
+            if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
+            else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API";
+            else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520)";
+            else if (code === "TIMEOUT") errMsg = "Timeout при проверке ключей";
+            return jsonResp({
+              success: false,
+              error: errMsg,
+              code,
+              endpoint_used: "/cloud/orders",
+              auth_mode_used: "two-step",
+            });
+          }
+
+          // Парсим orders_count
+          const testData = testResult.data as Record<string, unknown> | null;
+          const testOrders = (testData?.payload as Record<string, unknown>)?.orders;
+          ordersCount = Array.isArray(testOrders) ? testOrders.length : 0;
         }
-
-        // Шаг 2: проверить /cloud/orders с JWT
-        const testResult = await hosterRequest("GET", "/cloud/orders", "", tokenResult.accessToken);
-
-        if (!testResult.ok) {
-          const code = testResult.code ?? "NETWORK_ERROR";
-          let errMsg = `Ключи не прошли проверку (${code})`;
-          if (code === "UNAUTHORIZED") errMsg = "Ключи не подходят или нет доступа";
-          else if (code === "HOSTERBY_ROUTE_MISSING") errMsg = "Неверный маршрут hoster.by API";
-          else if (code === "HOSTERBY_520") errMsg = "Ошибка hoster.by API (520)";
-          else if (code === "TIMEOUT") errMsg = "Timeout при проверке ключей";
-          return jsonResp({
-            success: false,
-            error: errMsg,
-            code,
-            endpoint_used: "/cloud/orders",
-            auth_mode_used: "two-step",
-          });
-        }
-
-        // Парсим orders_count
-        const testData = testResult.data as Record<string, unknown> | null;
-        const testOrders = (testData?.payload as Record<string, unknown>)?.orders;
-        const ordersCount = Array.isArray(testOrders) ? testOrders.length : 0;
 
         if (dry_run) {
           return jsonResp({
             success: true,
             dry_run: true,
-            dry_run_result: "keys_valid",
+            dry_run_result: skipValidation ? "keys_saved_without_validation" : "keys_valid",
             orders_count: ordersCount,
             cloud_access_key_last4: newAccessKey.slice(-4),
             cloud_secret_key_last4: newSecretKey.slice(-4),
-            endpoint_used: "/cloud/orders",
-            auth_mode_used: "two-step",
+            endpoint_used: skipValidation ? "none" : "/cloud/orders",
+            auth_mode_used: skipValidation ? "skip" : "two-step",
             code: "OK",
           });
         }
+
+        const saveStatus = skipValidation ? "error" : "connected";
+        const saveErrorMessage = skipValidation ? (errorMessage || "Ключи сохранены без проверки") : null;
 
         // Execute: save to DB (JWT не сохраняем — он краткоживущий)
         const configToSave: Record<string, unknown> = {
@@ -617,7 +626,7 @@ serve(async (req) => {
           cloud_secret_key_last4: newSecretKey.slice(-4),
           keys_configured: true,
           orders_count: ordersCount,
-          auth_mode_used: "two-step",
+          auth_mode_used: skipValidation ? "skip" : "two-step",
         };
         if (newDnsAccessKey) {
           configToSave.dns_access_key = newDnsAccessKey;
@@ -641,9 +650,9 @@ serve(async (req) => {
         if (hosterInstance?.id) {
           await supabaseAdmin.from("integration_instances").update({
             config: configToSave,
-            status: "connected",
+            status: saveStatus,
             last_check_at: new Date().toISOString(),
-            error_message: null,
+            error_message: saveErrorMessage,
             alias,
           }).eq("id", hosterInstance.id as string);
           savedInstanceId = hosterInstance.id as string;
@@ -655,10 +664,10 @@ serve(async (req) => {
               provider: "hosterby",
               alias,
               is_default: true,
-              status: "connected",
+              status: saveStatus,
               last_check_at: new Date().toISOString(),
               config: configToSave,
-              error_message: null,
+              error_message: saveErrorMessage,
             })
             .select("id")
             .single();
@@ -674,8 +683,9 @@ serve(async (req) => {
           cloud_access_key_last4: newAccessKey.slice(-4),
           orders_count: ordersCount,
           dns_configured: !!(newDnsAccessKey && newDnsSecretKey),
-          auth_mode_used: "two-step",
-          endpoint_used: "/cloud/orders",
+          auth_mode_used: skipValidation ? "skip" : "two-step",
+          endpoint_used: skipValidation ? "none" : "/cloud/orders",
+          skip_validation: skipValidation,
         }, null);
 
         return jsonResp({
@@ -685,8 +695,9 @@ serve(async (req) => {
           orders_count: ordersCount,
           cloud_access_key_last4: newAccessKey.slice(-4),
           cloud_secret_key_last4: newSecretKey.slice(-4),
-          auth_mode_used: "two-step",
-          endpoint_used: "/cloud/orders",
+          auth_mode_used: skipValidation ? "skip" : "two-step",
+          endpoint_used: skipValidation ? "none" : "/cloud/orders",
+          skip_validation: skipValidation,
         });
       }
 
