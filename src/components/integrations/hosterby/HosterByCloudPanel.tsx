@@ -28,6 +28,7 @@ export function HosterByCloudPanel({ instanceId }: HosterByCloudPanelProps) {
   const [balance, setBalance] = useState<Record<string, unknown> | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
 
   const loadVms = async () => {
     setLoading(true);
@@ -37,9 +38,11 @@ export function HosterByCloudPanel({ instanceId }: HosterByCloudPanelProps) {
       });
       if (error || !data?.success) {
         toast.error("Ошибка загрузки VM: " + (data?.error || error?.message));
+        setLoaded(true);
       } else {
         setVms(data.vms || []);
         setOrderId(data.cloud_id_used || null);
+        setDebugInfo({ cloud_id_used: data.cloud_id_used, orders_count: data.orders_count, endpoint_used: data.endpoint_used });
         setLoaded(true);
       }
     } catch {
@@ -81,11 +84,17 @@ export function HosterByCloudPanel({ instanceId }: HosterByCloudPanelProps) {
           <span className="text-sm font-medium">Баланс</span>
           {balance && (
             <Badge variant="outline" className="text-xs font-mono">
-              {typeof balance.balance === "number"
-                ? `${balance.balance.toFixed(2)} BYN`
-                : typeof balance.amount === "number"
-                  ? `${balance.amount.toFixed(2)} BYN`
-                  : JSON.stringify(balance)}
+              {(() => {
+                // Попробовать balance.balance, balance.amount, или balance.orders[0].balance
+                let rawBal: unknown = balance.balance ?? balance.amount;
+                if (rawBal == null && Array.isArray(balance.orders)) {
+                  const first = (balance.orders as Record<string, unknown>[])[0];
+                  rawBal = first?.balance ?? first?.amount;
+                }
+                const num = rawBal != null ? Number(rawBal) : NaN;
+                if (!isNaN(num)) return `${num.toFixed(2)} BYN`;
+                return JSON.stringify(balance);
+              })()}
             </Badge>
           )}
           {balanceLoading && <span className="text-xs text-muted-foreground">загрузка...</span>}
@@ -111,6 +120,16 @@ export function HosterByCloudPanel({ instanceId }: HosterByCloudPanelProps) {
             </a>
             , и она появится здесь автоматически.
           </p>
+          <Button variant="outline" size="sm" onClick={() => { loadVms(); loadBalance(); }} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />Перепроверить
+          </Button>
+          {debugInfo && (
+            <div className="text-xs text-muted-foreground mt-2 space-y-0.5">
+              <div>cloud_id: {String(debugInfo.cloud_id_used ?? "—")}</div>
+              <div>orders: {String(debugInfo.orders_count ?? "—")}</div>
+              <div>endpoint: {String(debugInfo.endpoint_used ?? "—")}</div>
+            </div>
+          )}
         </div>
       )}
 

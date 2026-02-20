@@ -521,20 +521,54 @@ serve(async (req) => {
         }
 
         const vmsData = vmsResult.data as Record<string, unknown> | null;
-        const vmsList = (vmsData?.payload as Record<string, unknown>)?.vms;
-        const vms = Array.isArray(vmsList) ? vmsList : [];
 
+        // P1: safe debug logging (only when debug=true or dry_run=true)
+        const debugMode = payload.debug === true || payload.dry_run === true;
+        if (debugMode) {
+          const topKeys = vmsData ? Object.keys(vmsData) : [];
+          const payloadObj = (vmsData?.payload as Record<string, unknown>) ?? {};
+          const payloadKeys = Object.keys(payloadObj);
+          console.log(`[hosterby-api] DEBUG list_vms: topKeys=${JSON.stringify(topKeys)} payloadKeys=${JSON.stringify(payloadKeys)}`);
+          // Log first 2 items of any found array (truncated, no secrets)
+          for (const k of payloadKeys) {
+            const val = payloadObj[k];
+            if (Array.isArray(val) && val.length > 0) {
+              const sample = val.slice(0, 2).map((item: unknown) => {
+                const s = JSON.stringify(item);
+                return s.length > 500 ? s.slice(0, 500) + "…" : s;
+              });
+              console.log(`[hosterby-api] DEBUG list_vms: payload.${k} (len=${val.length}) sample=${JSON.stringify(sample)}`);
+            }
+          }
+        }
+
+        // P2: универсальный парсинг массива VM
+        const payloadData = (vmsData?.payload as Record<string, unknown>) ?? vmsData ?? {};
+        let vmCandidate = payloadData.vms ?? payloadData.vm ?? payloadData.servers ?? payloadData.items ?? payloadData.virtualMachines ?? payloadData.data;
+        if (!Array.isArray(vmCandidate)) {
+          vmCandidate = (payloadData.result as Record<string, unknown>)?.vms ?? (payloadData.response as Record<string, unknown>)?.vms;
+        }
+        const vms = Array.isArray(vmCandidate) ? vmCandidate : [];
+
+        // P3: универсальный маппинг полей VM
+        // deno-lint-ignore no-explicit-any
+        const extractOs = (raw: any): string | undefined => {
+          if (raw == null) return undefined;
+          if (typeof raw === 'string') return raw;
+          if (typeof raw === 'object' && raw.name) return String(raw.name);
+          return String(raw);
+        };
         const safevms = vms.map((v: Record<string, unknown>) => ({
-          id: v.id,
-          name: v.name,
-          status: v.status,
-          public_ip: v.public_ip ?? v.ip,
-          cpu: v.cpu,
-          ram: v.ram,
-          os: v.os,
+          id: v.id ?? v.vm_id ?? v.vmId ?? v.server_id,
+          name: v.name ?? v.hostname ?? v.label ?? v.title,
+          status: v.status ?? v.state,
+          public_ip: v.public_ip ?? v.publicIp ?? v.ip ?? v.ipv4 ?? v.main_ip,
+          cpu: v.cpu ?? v.vcpu ?? v.cores,
+          ram: v.ram ?? v.memory ?? v.mem,
+          os: extractOs(v.os) ?? extractOs(v.image) ?? extractOs(v.template) ?? extractOs(v.distribution),
         }));
 
-        return jsonResp({ success: true, vms: safevms, orders_count: ordersCount, cloud_id_used: orderId, auth_mode_used: "two-step" });
+        return jsonResp({ success: true, vms: safevms, orders_count: ordersCount, cloud_id_used: orderId, auth_mode_used: "two-step", endpoint_used: `/cloud/orders/${orderId}/vm` });
       }
 
       // ---- save_hoster_keys -----------------------------------------
@@ -908,9 +942,19 @@ serve(async (req) => {
         const orderId = payload.order_id as string;
         const vmId = payload.vm_id as string;
         if (!orderId || !vmId) return jsonResp({ success: false, error: "order_id и vm_id обязательны" });
-        const res = await hosterRequest("GET", `/cloud/orders/${orderId}/vm/${vmId}`, "", tokenRes.accessToken);
-        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code });
-        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
+        // P4: попробовать основной путь, если не OK — с trailing slash
+        let endpointUsed = `/cloud/orders/${orderId}/vm/${vmId}`;
+        let res = await hosterRequest("GET", endpointUsed, "", tokenRes.accessToken);
+        if (!res.ok) {
+          const altPath = `/cloud/orders/${orderId}/vm/${vmId}/`;
+          const altRes = await hosterRequest("GET", altPath, "", tokenRes.accessToken);
+          if (altRes.ok) {
+            res = altRes;
+            endpointUsed = altPath;
+          }
+        }
+        if (!res.ok) return jsonResp({ success: false, error: `Ошибка: ${res.code}`, code: res.code, endpoint_used: endpointUsed });
+        return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data, endpoint_used: endpointUsed });
       }
 
       // ---- vm_start / vm_stop / vm_reboot / vm_reset / vm_shutdown ---
