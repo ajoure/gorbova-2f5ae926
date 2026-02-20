@@ -1,106 +1,43 @@
 
-# Копирование и перемещение модулей/уроков в тренингах
+# Запрет копирования/перемещения уроков в корень раздела
 
-## Что будет сделано
+## Проблема
 
-Возможность копировать и перемещать любые модули (целиком, рекурсивно, со всеми уроками и блоками) и уроки в любое место в системе тренингов. При копировании к названию добавляется префикс "Копия — ".
+Сейчас при копировании/перемещении урока можно выбрать "В корень раздела (без родителя)" — `targetModuleId = null`. Edge function передаёт `null` как `module_id`, но уроки обязаны принадлежать модулю. Результат: урок остаётся на месте или создаётся с некорректным `module_id`.
 
----
+## Решение
 
-## Архитектура
+В `CopyMoveDialog.tsx` для `sourceType === "lesson"`:
 
-### 1. Edge function: `training-copy-move`
+1. **Заблокировать кнопку подтверждения**, если `targetModuleId === null` — добавить условие `disabled` на кнопку "Копировать"/"Переместить".
+2. **Показать предупреждение** под `ModuleTreeSelector`: текст "Урок должен находиться в модуле. Выберите целевой модуль." (жёлтый/оранжевый, `text-amber-600`).
+3. **Изменить подсказку** над `ModuleTreeSelector`: вместо "Выберите модуль-контейнер или оставьте «Корень раздела»" показывать "Выберите модуль, в который будет скопирован/перемещён урок".
 
-Новый файл: `supabase/functions/training-copy-move/index.ts`
+## Техническая реализация
 
-Принимает POST-запрос с телом:
+### Файл: `src/components/admin/trainings/CopyMoveDialog.tsx`
 
-```text
-action: "copy_module" | "move_module" | "copy_lesson" | "move_lesson"
-source_id: UUID исходного элемента
-target_module_id: UUID целевого модуля (или null для корня)
-target_section_key: string (menu_section_key целевого раздела)
+**Изменение 1** — Вычисляемая переменная:
+```typescript
+const isLessonWithoutModule = sourceType === "lesson" && !targetModuleId;
 ```
 
-Логика по операциям:
+**Изменение 2** — Кнопка подтверждения (строка 139):
+```typescript
+<Button onClick={handleSubmit} disabled={loading || isLessonWithoutModule}>
+```
 
-**copy_lesson:**
-- SELECT урок по source_id
-- INSERT копию с title = "Копия — {title}", новым slug (slug + "-copy" + уникализация), новым id
-- SELECT все lesson_blocks по lesson_id = source_id
-- INSERT копии блоков с новым lesson_id (с сохранением parent_id дерева блоков -- маппинг старых id на новые)
-- SELECT все kb_questions по lesson_id = source_id
-- INSERT копии вопросов с новым lesson_id
+**Изменение 3** — Подсказка над ModuleTreeSelector (строки 121-124):
+Для `sourceType === "lesson"` текст: "Выберите модуль, куда будет скопирован урок" (без упоминания "корня раздела").
 
-**copy_module (рекурсивно):**
-- SELECT модуль по source_id
-- INSERT копию модуля с title = "Копия — {title}", новым slug, target parent_module_id, target menu_section_key
-- SELECT module_access по module_id = source_id, INSERT копии для нового модуля
-- SELECT все training_lessons по module_id = source_id, для каждого -- copy_lesson (в новый модуль)
-- SELECT дочерние модули (parent_module_id = source_id), для каждого -- рекурсивный copy_module (parent = новый модуль)
-
-**move_lesson:**
-- UPDATE training_lessons SET module_id = target_module_id WHERE id = source_id
-
-**move_module:**
-- UPDATE training_modules SET parent_module_id = target_module_id, menu_section_key = target_section_key WHERE id = source_id
-
-Проверка прав: только admin/superadmin (через JWT + проверку роли в user_roles).
-
-### 2. UI: Диалог `CopyMoveDialog.tsx`
-
-Новый файл: `src/components/admin/trainings/CopyMoveDialog.tsx`
-
-Props:
-- `open`, `onOpenChange`
-- `sourceType: "module" | "lesson"`
-- `sourceId: string`
-- `sourceTitle: string`
-- `currentSectionKey: string`
-- `onSuccess: () => void`
-
-Содержимое:
-- Переключатель "Копировать" / "Переместить"
-- `ContentSectionSelector` для выбора целевого раздела
-- `ModuleTreeSelector` для выбора целевого модуля/папки (mode="select-parent")
-- Кнопка подтверждения
-- Индикатор загрузки
-
-### 3. Интеграция кнопок в UI
-
-**AdminTrainingLessons.tsx** (строки 708-741, блок Actions для уроков):
-- Добавить кнопку "Копировать/Переместить" (иконка `Copy`) рядом с кнопками "Контент", "Редактировать", "Удалить"
-
-**AdminTrainingLessons.tsx** (строки 608-635, блок Actions для дочерних модулей):
-- Добавить кнопку "Копировать/Переместить" (иконка `Copy`) рядом с "Редактировать" и "Удалить"
-
-**AdminTrainingModules.tsx** (карточки модулей на главной странице):
-- Добавить кнопку "Копировать/Переместить" в контекстное меню или в строку действий
-
----
-
-## Файлы
-
-| Файл | Действие |
-|---|---|
-| `supabase/functions/training-copy-move/index.ts` | Создать |
-| `src/components/admin/trainings/CopyMoveDialog.tsx` | Создать |
-| `src/pages/admin/AdminTrainingLessons.tsx` | Добавить кнопки copy/move для уроков и дочерних модулей |
-| `src/pages/admin/AdminTrainingModules.tsx` | Добавить кнопку copy/move для корневых модулей |
-
----
+**Изменение 4** — Предупреждение под ModuleTreeSelector:
+Если `isLessonWithoutModule` — показать:
+```
+<p className="text-sm text-amber-600">Урок должен находиться в модуле. Выберите целевой модуль.</p>
+```
 
 ## Что НЕ трогаем
 
-- Схему БД (все таблицы уже есть)
-- RLS политики
-- useTrainingModules, useTrainingLessons, useLessonBlocks
-- ContentCreationWizard, ModuleTreeSelector
-
-## DoD
-
-A) Кнопка "Копировать" на уроке -> диалог -> выбор целевого модуля -> создаётся полная копия урока со всеми блоками и вопросами
-B) Кнопка "Копировать" на модуле -> диалог -> выбор куда -> создаётся полная рекурсивная копия модуля со всеми дочерними модулями, уроками, блоками
-C) Кнопка "Переместить" -> обновляет parent_module_id / module_id
-D) SQL-пруф: копия имеет новый id, title с "Копия — ", корректный parent
-E) Регрессия: существующий контент не затрагивается
+- Edge function (валидация на бэке — дополнительная защита, но не обязательна)
+- ModuleTreeSelector (опция "корень" остаётся для модулей)
+- Остальные компоненты
