@@ -227,8 +227,19 @@ const AdminEditorial = () => {
   const [publishToSite, setPublishToSite] = useState(true);
   const [publishToTelegram, setPublishToTelegram] = useState(true);
 
+  // Schedule state
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [scheduleSlots, setScheduleSlots] = useState(["08:00", "15:00"]);
+  const [scheduleLoaded, setScheduleLoaded] = useState(false);
+
+  // Batch selection state
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
+  const [batchPublishing, setBatchPublishing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+
   // Style profile dialog state
   const [styleResultDialogOpen, setStyleResultDialogOpen] = useState(false);
+  // ... keep existing code
   const [styleResult, setStyleResult] = useState<{
     success: boolean;
     posts_analyzed: number;
@@ -340,6 +351,48 @@ const AdminEditorial = () => {
       return data as ScrapeLog | null;
     },
     refetchInterval: visibilityInterval, // Pause when tab hidden
+  });
+
+  // Fetch schedule settings
+  const { data: scheduleSettings } = useQuery({
+    queryKey: ["news-schedule-settings"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "news_auto_scrape_schedule")
+        .maybeSingle();
+      if (error) throw error;
+      return data?.value as { enabled: boolean; slots: string[]; timezone: string } | null;
+    },
+  });
+
+  // Sync schedule state from DB
+  React.useEffect(() => {
+    if (scheduleSettings && !scheduleLoaded) {
+      setScheduleEnabled(scheduleSettings.enabled);
+      setScheduleSlots(scheduleSettings.slots || ["08:00", "15:00"]);
+      setScheduleLoaded(true);
+    }
+  }, [scheduleSettings, scheduleLoaded]);
+
+  // Save schedule mutation
+  const saveScheduleMutation = useMutation({
+    mutationFn: async ({ enabled, slots }: { enabled: boolean; slots: string[] }) => {
+      const { data, error } = await supabase.functions.invoke("manage-news-schedule", {
+        body: { enabled, slots },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(data.message || "Расписание сохранено");
+      queryClient.invalidateQueries({ queryKey: ["news-schedule-settings"] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка сохранения расписания: ${error.message}`);
+    },
   });
 
   // Fetch channel settings for style profile
@@ -1080,9 +1133,109 @@ const AdminEditorial = () => {
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : draftNews && draftNews.length > 0 ? (
-              <div className="grid gap-4">
-                {draftNews.map((news) => renderNewsCard(news))}
-              </div>
+              <>
+                {/* Select All header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={selectedDraftIds.size === draftNews.length && draftNews.length > 0}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedDraftIds(new Set(draftNews.map((n) => n.id)));
+                        } else {
+                          setSelectedDraftIds(new Set());
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      Выбрать все ({draftNews.length})
+                    </span>
+                  </div>
+                </div>
+                <div className="grid gap-4">
+                  {draftNews.map((news) => (
+                    <div key={news.id} className="flex gap-3 items-start">
+                      <div className="pt-4">
+                        <Checkbox
+                          checked={selectedDraftIds.has(news.id)}
+                          onCheckedChange={(checked) => {
+                            const next = new Set(selectedDraftIds);
+                            if (checked) next.add(news.id);
+                            else next.delete(news.id);
+                            setSelectedDraftIds(next);
+                          }}
+                        />
+                      </div>
+                      <div className="flex-1">{renderNewsCard(news)}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Floating batch action bar */}
+                {selectedDraftIds.size > 0 && (
+                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border border-border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
+                    <span className="text-sm font-medium">
+                      Выбрано: {selectedDraftIds.size}
+                    </span>
+                    <Button
+                      size="sm"
+                      disabled={batchPublishing}
+                      onClick={async () => {
+                        if (!channels || channels.length === 0) {
+                          toast.error("Нет настроенных каналов");
+                          return;
+                        }
+                        const ids = Array.from(selectedDraftIds);
+                        setBatchPublishing(true);
+                        setBatchProgress({ current: 0, total: ids.length });
+                        let successCount = 0;
+                        for (let i = 0; i < ids.length; i++) {
+                          try {
+                            setBatchProgress({ current: i + 1, total: ids.length });
+                            toast.loading(`Публикация ${i + 1} из ${ids.length}...`, { id: "batch-publish" });
+                            await publishMutation.mutateAsync({
+                              newsId: ids[i],
+                              channelId: channels[0].id,
+                              action: "publish_single",
+                              toSite: true,
+                              toTelegram: true,
+                            });
+                            successCount++;
+                            // Delay between publishes to avoid Telegram rate limits
+                            if (i < ids.length - 1) {
+                              await new Promise((r) => setTimeout(r, 500));
+                            }
+                          } catch (err) {
+                            console.error(`Failed to publish ${ids[i]}:`, err);
+                          }
+                        }
+                        setBatchPublishing(false);
+                        setSelectedDraftIds(new Set());
+                        toast.success(`Опубликовано ${successCount} из ${ids.length} новостей`, { id: "batch-publish" });
+                        queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+                      }}
+                    >
+                      {batchPublishing ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4 mr-2" />
+                      )}
+                      {batchPublishing
+                        ? `${batchProgress.current}/${batchProgress.total}`
+                        : "Опубликовать выбранные"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSelectedDraftIds(new Set())}
+                      disabled={batchPublishing}
+                    >
+                      <XCircle className="h-4 w-4 mr-1" />
+                      Снять
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <Card>
                 <CardContent className="p-8 text-center">
@@ -1175,6 +1328,83 @@ const AdminEditorial = () => {
                 </CardContent>
               </Card>
             )}
+
+            {/* Parsing Schedule Card */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Расписание парсинга
+                </CardTitle>
+                <CardDescription>
+                  Автоматический поиск новостей по расписанию
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={scheduleEnabled}
+                        onCheckedChange={setScheduleEnabled}
+                      />
+                      <span className="text-sm font-medium">
+                        {scheduleEnabled ? "Автопарсинг включён" : "Автопарсинг выключен"}
+                      </span>
+                    </div>
+                    <Badge variant={scheduleEnabled ? "default" : "secondary"}>
+                      {scheduleEnabled ? "Активно" : "Пауза"}
+                    </Badge>
+                  </div>
+
+                  {scheduleEnabled && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-sm text-muted-foreground mb-1 block">☀️ Утро</Label>
+                        <Input
+                          type="time"
+                          value={scheduleSlots[0]}
+                          onChange={(e) => setScheduleSlots([e.target.value, scheduleSlots[1]])}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm text-muted-foreground mb-1 block">🌤 День</Label>
+                        <Input
+                          type="time"
+                          value={scheduleSlots[1]}
+                          onChange={(e) => setScheduleSlots([scheduleSlots[0], e.target.value])}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      Часовой пояс: Минск (UTC+3)
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() => saveScheduleMutation.mutate({ enabled: scheduleEnabled, slots: scheduleSlots })}
+                      disabled={saveScheduleMutation.isPending}
+                    >
+                      {saveScheduleMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Сохранить расписание
+                    </Button>
+                  </div>
+
+                  {scheduleEnabled && (
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                      <Info className="h-4 w-4 inline mr-1" />
+                      Парсинг будет запускаться ежедневно в <strong>{scheduleSlots[0]}</strong> и <strong>{scheduleSlots[1]}</strong> по минскому времени.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
             {/* AI Style Control Panel */}
             <Card>

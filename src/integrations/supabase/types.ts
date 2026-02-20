@@ -333,6 +333,27 @@ export type Database = {
         }
         Relationships: []
       }
+      app_settings: {
+        Row: {
+          created_at: string
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          created_at?: string
+          key: string
+          updated_at?: string
+          value?: Json
+        }
+        Update: {
+          created_at?: string
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
       audience_insights: {
         Row: {
           channel_id: string | null
@@ -9932,6 +9953,16 @@ export type Database = {
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
+      manage_news_cron: {
+        Args: {
+          p_afternoon_utc_hour: number
+          p_enabled: boolean
+          p_monitor_url: string
+          p_morning_utc_hour: number
+          p_service_key: string
+        }
+        Returns: undefined
+      }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
       queue_telegram_notification: {
         Args: {

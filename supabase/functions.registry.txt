@@ -68,3 +68,4 @@ bepaid-receipts-cron
 bepaid-subscription-audit-cron
 log-deployment
 training-copy-move
+manage-news-schedule
