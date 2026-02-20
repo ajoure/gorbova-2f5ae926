@@ -1,61 +1,33 @@
 
-# Исправление авторизации hoster.by API: заголовок Access-Token
+# DNS-ключи hoster.by: из "будущего" в текущее использование
 
-## Проблема
+## Что меняем
 
-Логи edge-функции показывают:
-```
-Step1: OK, userId=201461, expires=1771584811    <-- токен получен успешно
-Step2: GET /cloud/orders → http=401              <-- отказ в доступе
-```
+Только один файл: `src/components/integrations/hosterby/HosterByConnectionDialog.tsx`
 
-Шаг 1 (получение JWT) работает корректно после предыдущего исправления endpoint. Но Шаг 2 (запрос к `/cloud/orders`) возвращает 401 (Unauthorized).
+### Изменение 1: Убрать Collapsible и надписи про "будущее"
 
-**Корневая причина**: Текущий код отправляет заголовок `Authorization: Bearer {jwt}`, но согласно OpenAPI-спецификации hoster.by (`serviceapi.hoster.by/docs/swagger/json`), Cloud-эндпоинты используют схему авторизации `Access-Token` — то есть заголовок должен быть `Access-Token: {jwt}`.
+DNS-ключи перестают быть скрытыми/опциональными. Они отображаются как полноценные поля наравне с Cloud-ключами, без Collapsible-обертки.
 
-## Доказательство из документации
+### Изменение 2: Обновить тексты
 
-1. Swagger JSON: security scheme для `/cloud/orders` — `"Access-Token": ["cloud_orders_list"]`
-2. Документация hoster.by упоминает пользовательские заголовки (`refresh-Token`, `X-User-Id`), а не стандартный `Authorization: Bearer`
+- Заголовок диалога: "Подключение hoster.by" (без "Cloud")
+- Описание: убрать упоминание "будущего", добавить что ключи используются для Cloud API и DNS API
+- Лейблы DNS-полей: убрать `text-muted-foreground` (серый цвет), сделать как Cloud-поля
+- Плейсхолдеры: "Введите DNS Access Key" / "Введите DNS Secret Key" (без "опционально")
+- Убрать текст "DNS ключи сохраняются, но пока не используются..."
 
-## Решение
+### Изменение 3: Показывать текущие DNS last4
 
-### Файл: `supabase/functions/hosterby-api/index.ts`
+Добавить отображение сохраненных DNS-ключей (last4) аналогично Cloud-ключам — вытягивая `dns_access_key_last4` и `dns_secret_key_last4` из `existingInstance.config`.
 
-**Изменение 1** — строка 254, функция `hosterRequest`:
+### Изменение 4: Разделитель секций
 
-Заменить:
-```typescript
-"Authorization": `Bearer ${accessToken}`,
-```
-На:
-```typescript
-"Access-Token": accessToken,
-```
-
-**Изменение 2** — строка 242, обновить комментарий:
-
-Заменить:
-```
-// Шаг 2: Выполнить запрос к hoster.by API с JWT Bearer token
-```
-На:
-```
-// Шаг 2: Выполнить запрос к hoster.by API с Access-Token header
-```
-
-Больше ничего менять не нужно. UI, диалог сохранения ключей, бейджи статуса — всё работает корректно. Проблема только в формате заголовка авторизации.
+Добавить визуальный разделитель (Separator или заголовок секции) между Cloud-ключами и DNS-ключами для структуры.
 
 ## Что НЕ трогаем
 
-- `HosterByConnectionDialog.tsx` — без изменений
+- Edge-функцию `hosterby-api` — она уже сохраняет DNS-ключи корректно
 - `HosterBySettingsCard.tsx` — без изменений
-- `getAccessToken()` — Шаг 1 использует `Access-Key` / `Secret-Key` и работает корректно
-- Логика `save_hoster_keys`, `skip_validation` — уже работает
-
-## Ожидаемый результат
-
-После деплоя:
-1. Нажатие "Проверить подключение" → Step1 получает JWT → Step2 с правильным заголовком `Access-Token` → 200 OK
-2. Карточка hoster.by показывает бейдж "Подключено" вместо "Ошибка"
-3. Количество облаков отображается корректно
+- Логику валидации/сохранения — DNS-ключи уже передаются в payload
+- Другие файлы проекта
