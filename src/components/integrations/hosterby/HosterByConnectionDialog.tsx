@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Check, X, Server, ChevronDown, ChevronUp } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Loader2, Check, X, Server } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,7 +40,7 @@ export function HosterByConnectionDialog({
   const [cloudSecretKey, setCloudSecretKey] = useState("");
   const [dnsAccessKey, setDnsAccessKey] = useState("");
   const [dnsSecretKey, setDnsSecretKey] = useState("");
-  const [showDns, setShowDns] = useState(false);
+
 
   const [isValidating, setIsValidating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -59,6 +59,8 @@ export function HosterByConnectionDialog({
 
   const existingLast4AccessKey = existingInstance?.config?.cloud_access_key_last4 as string | undefined;
   const existingLast4SecretKey = existingInstance?.config?.cloud_secret_key_last4 as string | undefined;
+  const existingLast4DnsAccessKey = existingInstance?.config?.dns_access_key_last4 as string | undefined;
+  const existingLast4DnsSecretKey = existingInstance?.config?.dns_secret_key_last4 as string | undefined;
   const keysConfigured = existingInstance?.config?.keys_configured as boolean | undefined;
 
   const handleValidate = async () => {
@@ -228,10 +230,11 @@ export function HosterByConnectionDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Server className="h-5 w-5" />
-            {existingInstance ? "Обновить ключи hoster.by" : "Подключение hoster.by Cloud"}
+            {existingInstance ? "Обновить ключи hoster.by" : "Подключение hoster.by"}
           </DialogTitle>
           <DialogDescription>
             Ключи доступны в Личном кабинете hoster.by → Настройки → API.
+            Cloud-ключи используются для управления VPS, DNS-ключи — для управления DNS-записями.
             Значения не отображаются повторно — только последние 4 символа.
           </DialogDescription>
         </DialogHeader>
@@ -340,46 +343,42 @@ export function HosterByConnectionDialog({
             </div>
           )}
 
-          {/* DNS Keys (future) */}
-          <Collapsible open={showDns} onOpenChange={setShowDns}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground">
-                <span>DNS ключи (для будущего использования)</span>
-                {showDns ? (
-                  <ChevronUp className="h-4 w-4" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-3 pt-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="dns_access_key" className="text-muted-foreground">DNS Access Key</Label>
-                <Input
-                  id="dns_access_key"
-                  type="password"
-                  placeholder="DNS Access Key (опционально)"
-                  value={dnsAccessKey}
-                  onChange={(e) => setDnsAccessKey(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="dns_secret_key" className="text-muted-foreground">DNS Secret Key</Label>
-                <Input
-                  id="dns_secret_key"
-                  type="password"
-                  placeholder="DNS Secret Key (опционально)"
-                  value={dnsSecretKey}
-                  onChange={(e) => setDnsSecretKey(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
+          {/* DNS Keys */}
+          <Separator />
+          <p className="text-sm font-medium">DNS API</p>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="dns_access_key">DNS Access Key</Label>
+            <Input
+              id="dns_access_key"
+              type="password"
+              placeholder="Введите DNS Access Key"
+              value={dnsAccessKey}
+              onChange={(e) => setDnsAccessKey(e.target.value)}
+              autoComplete="off"
+            />
+            {keysConfigured && existingLast4DnsAccessKey && (
               <p className="text-xs text-muted-foreground">
-                DNS ключи сохраняются, но пока не используются. Нужны для будущего управления DNS.
+                Текущий: {maskKey(existingLast4DnsAccessKey)}
               </p>
-            </CollapsibleContent>
-          </Collapsible>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dns_secret_key">DNS Secret Key</Label>
+            <Input
+              id="dns_secret_key"
+              type="password"
+              placeholder="Введите DNS Secret Key"
+              value={dnsSecretKey}
+              onChange={(e) => setDnsSecretKey(e.target.value)}
+              autoComplete="off"
+            />
+            {keysConfigured && existingLast4DnsSecretKey && (
+              <p className="text-xs text-muted-foreground">
+                Текущий: {maskKey(existingLast4DnsSecretKey)}
+              </p>
+            )}
+          </div>
         </div>
 
         <DialogFooter>
