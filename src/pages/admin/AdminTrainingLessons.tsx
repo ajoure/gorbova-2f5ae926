@@ -366,6 +366,21 @@ export default function AdminTrainingLessons() {
     enabled: !!moduleId,
   });
 
+  // Fetch child modules (sub-modules of current module)
+  const { data: childModules = [], refetch: refetchChildModules } = useQuery({
+    queryKey: ["child-modules", moduleId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, slug, is_active, is_container, sort_order")
+        .eq("parent_module_id", moduleId!)
+        .order("sort_order");
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!moduleId,
+  });
+
   const { lessons, loading, createLesson, updateLesson, deleteLesson } = useTrainingLessons(moduleId);
 
   const resetForm = useCallback(() => {
@@ -566,6 +581,65 @@ export default function AdminTrainingLessons() {
             </Button>
           </div>
         </div>
+
+        {/* Child Modules */}
+        {childModules.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-muted-foreground mb-3">Дочерние модули</h3>
+            <div className="space-y-2">
+              {childModules.map((child) => (
+                <Card
+                  key={child.id}
+                  className="cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
+                >
+                  <CardContent className="flex items-center gap-3 p-4">
+                    <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Layers className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium truncate">{child.title}</h4>
+                      <code className="text-xs text-muted-foreground">/{child.slug}</code>
+                    </div>
+                    <Badge variant={child.is_active ? "default" : "secondary"} className="shrink-0">
+                      {child.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                      <span className="hidden sm:inline">{child.is_active ? "Активен" : "Скрыт"}</span>
+                    </Badge>
+                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={async () => {
+                          if (!confirm(`Удалить модуль "${child.title}"?`)) return;
+                          const { error } = await supabase
+                            .from("training_modules")
+                            .delete()
+                            .eq("id", child.id);
+                          if (error) {
+                            toast.error("Ошибка удаления модуля");
+                          } else {
+                            toast.success("Модуль удалён");
+                            refetchChildModules();
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Lessons List */}
         {loading ? (
