@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
       // Get channel with bot
       const { data: channel, error: channelError } = await supabase
         .from("telegram_publish_channels")
-        .select("*, telegram_bots(token)")
+        .select("*, telegram_bots(bot_token_encrypted)")
         .eq("id", channelId)
         .single();
 
@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
         throw new Error(`Channel not found: ${channelError?.message}`);
       }
 
-      const botToken = (channel as any).telegram_bots?.token;
+      const botToken = (channel as any).telegram_bots?.bot_token_encrypted;
       if (!botToken) {
         throw new Error("Bot token not found for channel");
       }
