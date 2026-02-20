@@ -78,6 +78,7 @@ export function CopyMoveDialog({
     }
   };
 
+  const isLessonWithoutModule = sourceType === "lesson" && !targetModuleId;
   const actionLabel = isCopy ? "Копировать" : "Переместить";
 
   return (
@@ -120,7 +121,9 @@ export function CopyMoveDialog({
           <div className="space-y-2">
             <Label>Целевой модуль</Label>
             <p className="text-xs text-muted-foreground">
-              Выберите модуль-контейнер или оставьте «Корень раздела»
+              {sourceType === "lesson"
+                ? `Выберите модуль, куда будет ${isCopy ? "скопирован" : "перемещён"} урок`
+                : "Выберите модуль-контейнер или оставьте «Корень раздела»"}
             </p>
             <ModuleTreeSelector
               sectionKey={sectionKey}
@@ -129,6 +132,11 @@ export function CopyMoveDialog({
               mode="select-parent"
               excludeId={sourceType === "module" ? sourceId : undefined}
             />
+            {isLessonWithoutModule && (
+              <p className="text-sm text-amber-600">
+                Урок должен находиться в модуле. Выберите целевой модуль.
+              </p>
+            )}
           </div>
         </div>
 
@@ -136,7 +144,7 @@ export function CopyMoveDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             Отмена
           </Button>
-          <Button onClick={handleSubmit} disabled={loading}>
+          <Button onClick={handleSubmit} disabled={loading || isLessonWithoutModule}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
