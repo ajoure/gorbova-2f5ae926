@@ -41,8 +41,8 @@ Deno.serve(async (req) => {
     // Check admin role
     const svc = createClient(supabaseUrl, supabaseService);
     const { data: isAdmin } = await svc.rpc("has_any_role", {
-      _user_id: userId,
-      _role_codes: ["admin", "super_admin"],
+      p_user_id: userId,
+      p_roles: ["admin", "super_admin"],
     });
     if (!isAdmin) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
