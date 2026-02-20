@@ -351,61 +351,97 @@ serve(async (req) => {
       }
 
       case "hosterby": {
-        // ВАЖНО: ключи НЕ принимаются из body — читаем из БД через service_role
+        // ВАЖНО: ключи НЕ принимаются из body — читаем из БД через hosterby-api
         if (!instance_id) {
           errorMessage = "instance_id обязателен для hosterby healthcheck";
           break;
         }
 
-        // Делегируем hosterby-api (где реализованы signing + SSRF + audit)
-        try {
-          const { data: result, error: fnError } = await supabaseAdmin.functions.invoke(
-            "hosterby-api",
-            {
-              body: {
-                action: "test_connection",
-                instance_id,
-                // Ключи НЕ передаём — hosterby-api сам читает из integration_instances
-              },
-            }
-          );
+        // STOP-guard: без user JWT нет смысла вызывать hosterby-api
+        if (!authHeader) {
+          errorMessage = "Missing Authorization header";
+          break;
+        }
 
-          if (fnError) {
-            const fnErrMsg = fnError.message || String(fnError);
-            // Нормализуем HTTP 520 (edge function упала до ответа)
-            if (fnErrMsg.includes("520") || fnErrMsg.includes("Function returned an error") || fnErrMsg.includes("non-2xx")) {
-              errorMessage = "hosterby-api недоступен (HTTP 520). Проверьте логи edge функции hosterby-api.";
-            } else {
-              errorMessage = `Ошибка вызова hosterby-api: ${fnErrMsg}`;
-            }
+        // Прямой fetch к hosterby-api с оригинальным JWT пользователя (не service role)
+        try {
+          let hosterbyResp: Response;
+          try {
+            hosterbyResp = await fetchWithTimeout(
+              `${supabaseUrl}/functions/v1/hosterby-api`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": authHeader,
+                  "apikey": anonKey,
+                },
+                body: JSON.stringify({
+                  action: "test_connection",
+                  instance_id,
+                }),
+              },
+              20000
+            );
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            console.error("hosterby-api fetch error:", isAbort ? "TIMEOUT" : String(e));
+            errorMessage = isAbort
+              ? "Timeout при подключении к hosterby-api (20s)"
+              : `Ошибка сети при вызове hosterby-api: ${String(e)}`;
             break;
           }
 
-          if (result?.success) {
-            success = true;
-            responseData = {
-              orders_count: result.data?.orders_count ?? result.data?.vms_count ?? 0,
-              keys_configured: result.data?.keys_configured ?? false,
-              cloud_access_key_last4: result.data?.cloud_access_key_last4 ?? null,
-              auth_mode_used: result.data?.auth_mode_used ?? result.auth_mode_used ?? null,
-              endpoint_used: result.endpoint_used ?? result.data?.endpoint_used ?? "/cloud/orders",
-            };
-          } else {
-            // Нормализуем код ошибки от hosterby-api
-            const code = result?.code ?? "";
+          // Нормализация по HTTP-статусу
+          if (hosterbyResp.status === 401 || hosterbyResp.status === 403) {
+            errorMessage = "Нет доступа / требуется user session (UNAUTHORIZED)";
+            break;
+          }
+
+          let result: Record<string, unknown> | null = null;
+          try {
+            result = await hosterbyResp.json();
+          } catch {
+            errorMessage = `hosterby-api вернул non-JSON (HTTP ${hosterbyResp.status})`;
+            break;
+          }
+
+          if (!hosterbyResp.ok) {
+            // hosterby-api вернул ошибку, но с JSON-телом
+            const code = (result as Record<string, unknown>)?.code ?? "";
             if (code === "KEYS_MISSING") {
               errorMessage = "API ключи hoster.by не настроены (KEYS_MISSING)";
             } else if (code === "UNAUTHORIZED") {
               errorMessage = "Ключи не подходят или нет доступа (UNAUTHORIZED)";
             } else if (code === "HOSTERBY_ROUTE_MISSING") {
-              // hoster.by вернул ошибку маршрута — это не edge crash, это API error
               errorMessage = "hoster.by API: неверный endpoint/маршрут (HOSTERBY_ROUTE_MISSING)";
             } else if (code === "HOSTERBY_520") {
               errorMessage = "hoster.by API: HTTP 520 (HOSTERBY_520)";
             } else if (code === "TIMEOUT") {
               errorMessage = "Timeout при подключении к hoster.by API";
             } else {
-              errorMessage = result?.error ?? "Ошибка подключения к hoster.by";
+              errorMessage = (result as Record<string, unknown>)?.error as string || `hosterby-api HTTP ${hosterbyResp.status}`;
+            }
+            break;
+          }
+
+          // Успешный ответ
+          if ((result as Record<string, unknown>)?.success) {
+            success = true;
+            const d = (result as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
+            responseData = {
+              orders_count: d?.orders_count ?? d?.vms_count ?? 0,
+              keys_configured: d?.keys_configured ?? false,
+              cloud_access_key_last4: d?.cloud_access_key_last4 ?? null,
+              auth_mode_used: d?.auth_mode_used ?? (result as Record<string, unknown>)?.auth_mode_used ?? null,
+              endpoint_used: (result as Record<string, unknown>)?.endpoint_used ?? d?.endpoint_used ?? "/cloud/orders",
+            };
+          } else {
+            const code = (result as Record<string, unknown>)?.code ?? "";
+            if (code === "KEYS_MISSING") {
+              errorMessage = "API ключи hoster.by не настроены (KEYS_MISSING)";
+            } else {
+              errorMessage = ((result as Record<string, unknown>)?.error as string) ?? "Ошибка подключения к hoster.by";
             }
           }
         } catch (e) {
