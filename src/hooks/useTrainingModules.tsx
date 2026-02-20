@@ -22,7 +22,10 @@ export interface TrainingModule {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-  // New fields for menu placement and display
+  // Hierarchy
+  parent_module_id: string | null;
+  is_container?: boolean;
+  // Menu placement and display
   menu_section_key: string | null;
   display_layout: string | null;
   // Computed fields
