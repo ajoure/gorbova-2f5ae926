@@ -66,8 +66,10 @@ import {
   Lock,
   Info,
   Layers,
+  Copy,
 } from "lucide-react";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
+import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 
 const contentTypeOptions = [
   { value: "article", label: "Статья", icon: FileText },
@@ -330,6 +332,11 @@ export default function AdminTrainingLessons() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [copyMoveTarget, setCopyMoveTarget] = useState<{
+    type: "module" | "lesson";
+    id: string;
+    title: string;
+  } | null>(null);
   
   // Date/time state for publish scheduling
   const [publishDate, setPublishDate] = useState<Date | undefined>();
@@ -609,6 +616,14 @@ export default function AdminTrainingLessons() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        title="Копировать / Переместить"
+                        onClick={() => setCopyMoveTarget({ type: "module", id: child.id, title: child.title })}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
                       >
                         <Pencil className="h-4 w-4" />
@@ -706,6 +721,14 @@ export default function AdminTrainingLessons() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-11 sm:ml-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Копировать / Переместить"
+                        onClick={() => setCopyMoveTarget({ type: "lesson", id: lesson.id, title: lesson.title })}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
                       {lesson.completion_mode === 'kvest' && (
                         <Button
                           variant="outline"
@@ -834,6 +857,23 @@ export default function AdminTrainingLessons() {
         initialSectionKey={module?.menu_section_key || "products-library"}
         initialParentModuleId={module?.id}
       />
+
+      {/* Copy/Move Dialog */}
+      {copyMoveTarget && (
+        <CopyMoveDialog
+          open={!!copyMoveTarget}
+          onOpenChange={(open) => !open && setCopyMoveTarget(null)}
+          sourceType={copyMoveTarget.type}
+          sourceId={copyMoveTarget.id}
+          sourceTitle={copyMoveTarget.title}
+          currentSectionKey={module?.menu_section_key || "products-library"}
+          onSuccess={() => {
+            refetchChildModules();
+            // refetch lessons via hook
+            window.location.reload();
+          }}
+        />
+      )}
     </AdminLayout>
   );
 }
