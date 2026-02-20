@@ -23,7 +23,7 @@ export function DomainHomePage() {
   const isCourseDomain = hostname === "cb.gorbova.by";
   
   // Check for consultation domain
-  const isConsultationDomain = hostname === "consultation.gorbova.by";
+  const isConsultationDomain = hostname === "consultation.gorbova.by" || hostname === "cons.gorbova.by";
   
   // Course domain → show course landing
   if (isCourseDomain) {
