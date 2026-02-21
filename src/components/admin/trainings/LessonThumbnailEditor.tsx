@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Upload, Sparkles, Loader2, X, RotateCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { deleteTrainingAssets, extractStoragePathFromPublicUrl } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
 
 interface LessonThumbnailEditorProps {
   lessonId: string;
@@ -109,6 +110,7 @@ export function LessonThumbnailEditor({
             title: lessonTitle,
             description: lessonDescription || "",
             moduleId: lessonId,
+            previousCoverUrl: currentThumbnail || undefined,
           }),
         }
       );
@@ -141,9 +143,14 @@ export function LessonThumbnailEditor({
     }
   };
 
-  const handleRemoveThumbnail = () => {
+  const handleRemoveThumbnail = async () => {
+    // Cleanup old cover from storage
     if (currentThumbnail) {
       setPreviousThumbnail(currentThumbnail);
+      const oldPath = extractStoragePathFromPublicUrl(currentThumbnail);
+      if (oldPath) {
+        await deleteTrainingAssets([oldPath], { type: "lesson", id: lessonId }, "cover_removed");
+      }
     }
     setThumbnailUrl("");
     onThumbnailChange(null);

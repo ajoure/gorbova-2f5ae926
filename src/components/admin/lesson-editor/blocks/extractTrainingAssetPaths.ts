@@ -3,7 +3,7 @@
  * Используется при cleanup (reset progress, delete lesson).
  */
 
-const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
+const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "ai-covers/", "training-covers/", "lesson-covers/"];
 
 /** Паттерн для извлечения storagePath из publicUrl Supabase Storage */
 const PUBLIC_URL_PATTERN = /\/storage\/v1\/object\/public\/training-assets\/(.+)/;
