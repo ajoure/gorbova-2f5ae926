@@ -112,9 +112,16 @@ export async function uploadToTrainingAssets(
   const resolvedContentType =
     mapped !== "application/octet-stream" ? mapped : (file.type || mapped);
 
+  // BUGFIX: Supabase SDK uses File.type internally, ignoring contentType option.
+  // Re-create File from bytes with correct MIME to guarantee proper Content-Type.
+  const uploadBody: File | Blob =
+    file.type !== resolvedContentType
+      ? new File([await file.arrayBuffer()], file.name, { type: resolvedContentType })
+      : file;
+
   const { error: uploadError } = await supabase.storage
     .from("training-assets")
-    .upload(filePath, file, { upsert: false, contentType: resolvedContentType });
+    .upload(filePath, uploadBody, { upsert: false, contentType: resolvedContentType });
 
   if (uploadError) {
     console.error("Upload error:", uploadError);
