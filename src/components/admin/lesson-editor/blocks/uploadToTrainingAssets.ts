@@ -187,15 +187,39 @@ export function extractStoragePathFromPublicUrl(url: string): string | null {
 }
 
 /**
+ * Результат удаления файлов из training-assets.
+ */
+export interface DeleteTrainingAssetsResult {
+  ok: boolean;
+  requested_count: number;
+  allowed_count: number;
+  blocked_count: number;
+  deleted_count: number;
+  blocked_paths: string[];
+  deleted_paths: string[];
+  error?: string;
+}
+
+const EMPTY_RESULT: DeleteTrainingAssetsResult = {
+  ok: true,
+  requested_count: 0,
+  allowed_count: 0,
+  blocked_count: 0,
+  deleted_count: 0,
+  blocked_paths: [],
+  deleted_paths: [],
+};
+
+/**
  * Безопасное удаление файлов из training-assets через Edge Function.
- * fire-and-forget: не блокирует UX, ошибки только в console.
+ * Возвращает структурированный результат для STOP-guards.
  */
 export async function deleteTrainingAssets(
   paths: string[],
   entity?: { type: string; id: string },
   reason = "client_delete"
-): Promise<void> {
-  if (!paths || paths.length === 0) return;
+): Promise<DeleteTrainingAssetsResult> {
+  if (!paths || paths.length === 0) return { ...EMPTY_RESULT };
 
   // Фильтрация на клиенте — только наши префиксы
   const safePaths = paths.filter(
@@ -207,22 +231,35 @@ export async function deleteTrainingAssets(
       STORAGE_ALLOWED_PREFIXES.some((prefix) => p.startsWith(prefix))
   );
 
-  if (safePaths.length === 0) return;
+  const result: DeleteTrainingAssetsResult = {
+    ok: false,
+    requested_count: safePaths.length,
+    allowed_count: 0,
+    blocked_count: 0,
+    deleted_count: 0,
+    blocked_paths: [],
+    deleted_paths: [],
+  };
+
+  if (safePaths.length === 0) {
+    result.ok = true;
+    return result;
+  }
 
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData?.session?.access_token;
     if (!token) {
+      result.error = "No session token";
       console.warn("[deleteTrainingAssets] No session token, skipping delete");
-      return;
+      return result;
     }
 
     const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
     const fnUrl = `https://${projectId}.supabase.co/functions/v1/training-assets-delete`;
-
     const baseBody = { paths: safePaths, reason, entity: entity || undefined };
 
-    // Шаг 1: dry_run — проверяем что будет удалено и ownership
+    // Шаг 1: dry_run
     const dryRes = await fetch(fnUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -230,36 +267,61 @@ export async function deleteTrainingAssets(
     });
     const dryData = await dryRes.json().catch(() => null);
 
-    // BUGFIX: edge returns allowed_count / blocked_count (not allowed / blocked)
-    if (!dryRes.ok || !dryData || dryData.allowed_count <= 0) {
-      if (dryData?.allowed_count === 0 && dryData?.blocked_count > 0) {
-        console.warn("[deleteTrainingAssets] Ownership mismatch — все пути заблокированы guard'ом, execute отменён. blocked_paths:", dryData.blocked_paths);
-      } else if (!dryRes.ok) {
-        console.error("[deleteTrainingAssets] dry_run failed:", dryData);
+    if (!dryRes.ok || !dryData) {
+      result.error = `dry_run failed: ${dryRes.status}`;
+      console.error("[deleteTrainingAssets] dry_run failed:", dryData);
+      return result;
+    }
+
+    result.allowed_count = dryData.allowed_count ?? 0;
+    result.blocked_count = dryData.blocked_count ?? 0;
+    result.blocked_paths = dryData.blocked_paths ?? [];
+
+    // STOP: если нечего удалять
+    if (result.allowed_count <= 0) {
+      result.error = "dry_run: allowed_count=0";
+      if (result.blocked_count > 0) {
+        console.warn("[deleteTrainingAssets] All paths blocked:", result.blocked_paths);
       }
-      return;
+      return result;
     }
 
-    // STOP: если ownership mismatch (часть путей заблокирована при наличии entity.id)
-    if (entity?.id && dryData.allowed_count < safePaths.length) {
-      console.warn(
-        `[deleteTrainingAssets] Ownership mismatch: запрошено ${safePaths.length}, разрешено ${dryData.allowed_count}. blocked_paths:`, dryData.blocked_paths, "Execute отменён."
-      );
-      return;
+    // STOP: если ownership mismatch (часть путей заблокирована)
+    if (result.allowed_count < safePaths.length) {
+      result.error = `Ownership mismatch: requested=${safePaths.length}, allowed=${result.allowed_count}`;
+      console.warn("[deleteTrainingAssets]", result.error, "blocked_paths:", result.blocked_paths);
+      return result;
     }
 
-    // Шаг 2: execute — только если dry_run показал allowed > 0
+    // Шаг 2: execute
     const execRes = await fetch(fnUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ ...baseBody, mode: "execute" }),
     });
+    const execData = await execRes.json().catch(() => null);
 
-    if (!execRes.ok) {
-      const err = await execRes.text().catch(() => "unknown");
-      console.error("[deleteTrainingAssets] Execute failed:", err);
+    if (!execRes.ok || !execData) {
+      result.error = `execute failed: ${execRes.status}`;
+      console.error("[deleteTrainingAssets] Execute failed:", execData);
+      return result;
     }
+
+    result.deleted_count = execData.deleted_count ?? execData.allowed_count ?? 0;
+    result.deleted_paths = execData.deleted_paths ?? [];
+
+    // Проверяем что удалено столько же сколько разрешено
+    if (result.deleted_count < result.allowed_count) {
+      result.error = `Partial delete: deleted=${result.deleted_count}, allowed=${result.allowed_count}`;
+      console.warn("[deleteTrainingAssets]", result.error);
+      return result;
+    }
+
+    result.ok = true;
+    return result;
   } catch (err) {
+    result.error = err instanceof Error ? err.message : "Unknown error";
     console.error("[deleteTrainingAssets] Failed:", err);
+    return result;
   }
 }

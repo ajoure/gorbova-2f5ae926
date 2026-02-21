@@ -5,6 +5,9 @@
 
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
 
+/** Паттерн для извлечения storagePath из publicUrl Supabase Storage */
+const PUBLIC_URL_PATTERN = /\/storage\/v1\/object\/public\/training-assets\/(.+)/;
+
 function isValidPath(p: unknown): p is string {
   if (!p || typeof p !== "string") return false;
   if (p.includes("..") || p.includes("//") || p.startsWith("/")) return false;
@@ -12,9 +15,23 @@ function isValidPath(p: unknown): p is string {
 }
 
 /**
- * Рекурсивно извлекает все storage_path / storagePath из произвольного JSON.
+ * Пытается извлечь storagePath из publicUrl.
+ * Возвращает null если это не URL нашего bucket или путь не проходит guards.
+ */
+function extractPathFromUrl(url: unknown): string | null {
+  if (!url || typeof url !== "string") return null;
+  const match = url.match(PUBLIC_URL_PATTERN);
+  if (!match) return null;
+  const path = match[1];
+  if (!isValidPath(path)) return null;
+  return path;
+}
+
+/**
+ * Рекурсивно извлекает все storage_path / storagePath / url из произвольного JSON.
+ * Обходит ВСЕ ключи объекта рекурсивно (не только items/files/content).
  * Поддерживает:
- * - block content: { storagePath: "..." }
+ * - block content: { storagePath: "..." } или { url: "https://.../training-assets/..." }
  * - gallery items: { items: [{ storagePath: "..." }] }
  * - student progress response: { files: [{ storage_path: "..." }] }
  * - legacy progress: { file: { storage_path: "..." } } или { storage_path: "..." }
@@ -36,12 +53,17 @@ export function extractTrainingAssetPaths(input: unknown): string[] {
     if (isValidPath(record.storagePath)) found.add(record.storagePath);
     if (isValidPath(record.storage_path)) found.add(record.storage_path);
 
-    // Recurse into known containers
-    if (record.items) walk(record.items);
-    if (record.files) walk(record.files);
-    if (record.file && typeof record.file === "object") walk(record.file);
-    // Also walk content if it's an object (for block content wrappers)
-    if (record.content && typeof record.content === "object") walk(record.content);
+    // Public URL → storagePath extraction (audio/file blocks store url)
+    const urlPath = extractPathFromUrl(record.url);
+    if (urlPath) found.add(urlPath);
+
+    // Recurse into ALL values of the object
+    for (const key of Object.keys(record)) {
+      const val = record[key];
+      if (val && typeof val === "object") {
+        walk(val);
+      }
+    }
   }
 
   walk(input);
