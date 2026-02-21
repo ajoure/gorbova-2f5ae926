@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { FileContent } from "@/hooks/useLessonBlocks";
 import { FileText, ExternalLink, Upload, Loader2 } from "lucide-react";
+import { getFileTypeIcon } from "./fileTypeIcons";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, formatFileSize, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
@@ -125,9 +126,10 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
       );
     }
 
+    const fileIcon = getFileTypeIcon(content.name);
     return (
       <div className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 select-none">
-        <FileText className="h-8 w-8 text-primary" />
+        <fileIcon.Icon className={`h-8 w-8 shrink-0 ${fileIcon.colorClass}`} />
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{content.name || "Файл"}</p>
           {content.size && (
@@ -237,9 +239,11 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
       </div>
 
       {/* Превью загруженного файла */}
-      {content.url && content.name && (
+      {content.url && content.name && (() => {
+        const previewIcon = getFileTypeIcon(content.name);
+        return (
         <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-          <FileText className="h-6 w-6 text-primary shrink-0" />
+          <previewIcon.Icon className={`h-6 w-6 shrink-0 ${previewIcon.colorClass}`} />
           <div className="flex-1 min-w-0">
             <p className="font-medium text-sm truncate">{content.name}</p>
             {content.size && (
@@ -255,7 +259,8 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
             <ExternalLink className="h-4 w-4 text-muted-foreground hover:text-primary transition-colors" />
           </a>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

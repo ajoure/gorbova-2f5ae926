@@ -153,8 +153,8 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   quiz_survey: { icon: ClipboardList, label: "Опросник", color: "bg-teal-500/10 text-teal-600", category: 'quiz' },
   
   // Input blocks — Блоки ввода
-  input_short: { icon: AlignLeft, label: "Короткий ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
-  input_long: { icon: AlignLeft, label: "Развёрнутый ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
+  input_short: { icon: AlignLeft, label: "Ответ ученика", color: "bg-green-500/10 text-green-600", category: 'input' },
+  input_long: { icon: AlignLeft, label: "Ответ ученика (длинный)", color: "bg-green-500/10 text-green-600", category: 'input' },
   checklist: { icon: ListChecks, label: "Чек-лист", color: "bg-green-500/10 text-green-600", category: 'input' },
   table_input: { icon: Table, label: "Таблица", color: "bg-green-500/10 text-green-600", category: 'input' },
   file_upload: { icon: Upload, label: "Загрузка файла", color: "bg-green-500/10 text-green-600", category: 'input' },
@@ -189,7 +189,7 @@ const availableBlocks: BlockType[] = [
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
   'video_unskippable', 'diagnostic_table', 'sequential_form', 'role_description',
-  'input_short', 'input_long', 'file_upload',
+  'input_short', 'file_upload',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -251,9 +251,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
     case 'role_description':
       return { executor_html: "", freelancer_html: "", entrepreneur_html: "", buttonText: "Перейти к видео" };
     case 'input_short':
-      return { title: "Ваш ответ", hint: "", mode: 'short', required: false, placeholder: "" };
     case 'input_long':
-      return { title: "Ваши мысли", hint: "", mode: 'long', required: false, placeholder: "" };
+      return { title: "Ваш ответ", hint: "", required: false };
     case 'file_upload':
       return { title: "Загрузите файл", instructions: "", allowedGroups: ['documents','images'], maxSizeMB: 50, required: false };
     case 'divider':

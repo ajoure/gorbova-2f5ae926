@@ -7,7 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Upload, FileText, Image, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { Upload, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { getFileTypeIcon } from "./fileTypeIcons";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, deleteTrainingAssets, formatFileSize } from "./uploadToTrainingAssets";
 import { useAuth } from "@/contexts/AuthContext";
@@ -275,7 +276,7 @@ function StudentUploadStudentView({
     );
   }
 
-  const isImage = uploadedFile?.mime?.startsWith("image/");
+  const fileIcon = uploadedFile ? getFileTypeIcon(uploadedFile.original_name || uploadedFile.mime) : null;
 
   return (
     <Card className="border-primary/20">
@@ -317,11 +318,7 @@ function StudentUploadStudentView({
           </div>
         ) : (
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-            {isImage ? (
-              <Image className="h-8 w-8 text-primary shrink-0" />
-            ) : (
-              <FileText className="h-8 w-8 text-primary shrink-0" />
-            )}
+            {fileIcon && <fileIcon.Icon className={`h-8 w-8 shrink-0 ${fileIcon.colorClass}`} />}
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{uploadedFile.original_name}</p>
               <p className="text-xs text-muted-foreground">

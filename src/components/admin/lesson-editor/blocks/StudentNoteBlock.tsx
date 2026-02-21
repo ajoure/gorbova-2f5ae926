@@ -3,15 +3,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent } from "@/components/ui/card";
 import { PenLine, Check, Loader2 } from "lucide-react";
 
 export interface StudentNoteContentData {
   title: string;
   hint?: string;
-  mode: "short" | "long";
   required: boolean;
+  // Backward compat: old blocks may have mode/placeholder — we just ignore them
+  mode?: "short" | "long";
   placeholder?: string;
 }
 
@@ -53,31 +53,6 @@ export function StudentNoteBlock({
             value={content.hint || ""}
             onChange={(e) => onChange({ ...content, hint: e.target.value })}
             placeholder="Подсказка для ученика"
-          />
-        </div>
-        <div>
-          <Label>Тип ответа</Label>
-          <RadioGroup
-            value={content.mode || "short"}
-            onValueChange={(v) => onChange({ ...content, mode: v as "short" | "long" })}
-            className="flex gap-4 mt-1"
-          >
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="short" id="mode-short" />
-              <Label htmlFor="mode-short" className="cursor-pointer">Короткий ответ</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="long" id="mode-long" />
-              <Label htmlFor="mode-long" className="cursor-pointer">Развёрнутый текст</Label>
-            </div>
-          </RadioGroup>
-        </div>
-        <div>
-          <Label>Плейсхолдер</Label>
-          <Input
-            value={content.placeholder || ""}
-            onChange={(e) => onChange({ ...content, placeholder: e.target.value })}
-            placeholder="Текст-подсказка в поле ввода"
           />
         </div>
         <div className="flex items-center gap-2">
@@ -192,21 +167,13 @@ function StudentNoteStudentView({
           </div>
         </div>
 
-        {content.mode === "short" ? (
-          <Input
-            value={text}
-            onChange={(e) => handleChange(e.target.value)}
-            placeholder={content.placeholder || "Введите ответ..."}
-          />
-        ) : (
-          <Textarea
-            value={text}
-            onChange={(e) => handleChange(e.target.value)}
-            placeholder={content.placeholder || "Введите ваш ответ..."}
-            rows={4}
-            className="resize-y min-h-[100px]"
-          />
-        )}
+        <Textarea
+          value={text}
+          onChange={(e) => handleChange(e.target.value)}
+          placeholder={content.hint || "Введите ваш ответ..."}
+          rows={3}
+          className="resize-y min-h-[80px]"
+        />
 
         {content.required && !text.trim() && (
           <p className="text-xs text-destructive">* Обязательное поле</p>

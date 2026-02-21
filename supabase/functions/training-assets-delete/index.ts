@@ -86,6 +86,24 @@ Deno.serve(async (req: Request) => {
     const body: DeleteRequest = await req.json();
     const { mode, paths, reason, entity } = body;
 
+    // Owner/admin check helper for student-uploads paths
+    async function canDeleteStudentUpload(path: string, userId: string): Promise<boolean> {
+      const segments = path.split("/");
+      if (segments.length < 5 || segments.some(s => s === "")) return false;
+      if (path.includes("..")) return false;
+      const pathUserId = segments[1];
+      if (userId === pathUserId) return true;
+      // Check admin/superadmin role
+      const svcClient = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      );
+      const { data: isAdmin } = await svcClient.rpc("has_role_v2", { _user_id: userId, _role_code: "admin" });
+      if (isAdmin) return true;
+      const { data: isSuperAdmin } = await svcClient.rpc("has_role_v2", { _user_id: userId, _role_code: "superadmin" });
+      return !!isSuperAdmin;
+    }
+
     // Валидация входных данных
     if (!mode || !["dry_run", "execute"].includes(mode)) {
       return new Response(
@@ -123,11 +141,19 @@ Deno.serve(async (req: Request) => {
     const blockedPaths: string[] = [];
 
     for (const path of paths) {
-      if (isPathAllowed(path, lessonId)) {
-        allowedPaths.push(path);
-      } else {
+      if (!isPathAllowed(path, lessonId)) {
         blockedPaths.push(path);
+        continue;
       }
+      // Owner/admin check for student-uploads
+      if (path.startsWith("student-uploads/")) {
+        const allowed = await canDeleteStudentUpload(path, user!.id);
+        if (!allowed) {
+          blockedPaths.push(path);
+          continue;
+        }
+      }
+      allowedPaths.push(path);
     }
 
     if (mode === "dry_run") {

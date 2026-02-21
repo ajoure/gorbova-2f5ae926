@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { User, Target, Crosshair, FileText, PenLine, Upload } from "lucide-react";
+import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -329,15 +330,19 @@ export function StudentProgressModal({
                   const block = lessonBlocks.find(b => b.id === blockId);
                   const blockTitle = (block?.content as any)?.title || `Блок ${blockId.slice(0, 6)}`;
                   const file = resp.file;
+                  const fIcon = getFileTypeIcon(file.original_name);
                   return (
                     <div key={blockId} className="flex items-center justify-between border-b pb-3 last:border-0">
-                      <div>
-                        <Label className="font-medium text-sm">📎 {blockTitle}</Label>
-                        <p className="text-sm text-muted-foreground">{file.original_name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ""}
-                          {file.uploaded_at && ` • ${format(new Date(file.uploaded_at), "dd MMM yyyy", { locale: ru })}`}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <fIcon.Icon className={`h-6 w-6 shrink-0 ${fIcon.colorClass}`} />
+                        <div>
+                          <Label className="font-medium text-sm">{blockTitle}</Label>
+                          <p className="text-sm text-muted-foreground">{file.original_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ""}
+                            {file.uploaded_at && ` • ${format(new Date(file.uploaded_at), "dd MMM yyyy", { locale: ru })}`}
+                          </p>
+                        </div>
                       </div>
                       <Button
                         variant="outline"
