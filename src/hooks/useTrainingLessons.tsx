@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
+import { extractPathsFromBlocks, extractPathsFromProgress } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
+import { deleteTrainingAssets } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
 
 export interface LessonAttachment {
   id: string;
@@ -188,6 +190,39 @@ export function useTrainingLessons(moduleId?: string) {
 
   const deleteLesson = async (id: string): Promise<boolean> => {
     try {
+      // P2: Собираем все storage paths перед удалением урока
+      const allPaths: string[] = [];
+
+      // A) Пути из lesson_blocks.content
+      const { data: blocks } = await supabase
+        .from("lesson_blocks")
+        .select("content")
+        .eq("lesson_id", id);
+
+      if (blocks && blocks.length > 0) {
+        allPaths.push(...extractPathsFromBlocks(blocks));
+      }
+
+      // B) Пути из user_lesson_progress.response (student uploads)
+      const { data: progressRecords } = await supabase
+        .from("user_lesson_progress")
+        .select("response")
+        .eq("lesson_id", id);
+
+      if (progressRecords && progressRecords.length > 0) {
+        allPaths.push(...extractPathsFromProgress(progressRecords));
+      }
+
+      // Дедуп
+      const uniquePaths = [...new Set(allPaths)];
+
+      // Удаляем файлы из Storage (если есть)
+      if (uniquePaths.length > 0) {
+        console.warn(`[deleteLesson] Cleaning up ${uniquePaths.length} storage paths for lesson ${id}`);
+        await deleteTrainingAssets(uniquePaths, { type: "lesson", id }, "lesson_deleted");
+      }
+
+      // Теперь удаляем запись урока
       const { error } = await supabase
         .from("training_lessons")
         .delete()
