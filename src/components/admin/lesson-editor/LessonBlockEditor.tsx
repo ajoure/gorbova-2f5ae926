@@ -108,7 +108,8 @@ import { VideoUnskippableBlock } from "./blocks/VideoUnskippableBlock";
 import { DiagnosticTableBlock } from "./blocks/DiagnosticTableBlock";
 import { SequentialFormBlock } from "./blocks/SequentialFormBlock";
 import { RoleDescriptionBlock } from "./blocks/RoleDescriptionBlock";
-
+import { StudentNoteBlock } from "./blocks/StudentNoteBlock";
+import { StudentUploadBlock } from "./blocks/StudentUploadBlock";
 // Block configuration with categories
 interface BlockConfig {
   icon: React.ElementType;
@@ -188,6 +189,7 @@ const availableBlocks: BlockType[] = [
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
   'video_unskippable', 'diagnostic_table', 'sequential_form', 'role_description',
+  'input_short', 'input_long', 'file_upload',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -248,6 +250,12 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { title: "Формула точки B", steps: [], submitButtonText: "Формула сформирована" };
     case 'role_description':
       return { executor_html: "", freelancer_html: "", entrepreneur_html: "", buttonText: "Перейти к видео" };
+    case 'input_short':
+      return { title: "Ваш ответ", hint: "", mode: 'short', required: false, placeholder: "" };
+    case 'input_long':
+      return { title: "Ваши мысли", hint: "", mode: 'long', required: false, placeholder: "" };
+    case 'file_upload':
+      return { title: "Загрузите файл", instructions: "", allowedGroups: ['documents','images'], maxSizeMB: 50, required: false };
     case 'divider':
     default:
       return {};
@@ -340,6 +348,11 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         return <SequentialFormBlock content={block.content as any} onChange={onUpdate} />;
       case 'role_description':
         return <RoleDescriptionBlock content={block.content as any} onChange={onUpdate} />;
+      case 'input_short':
+      case 'input_long':
+        return <StudentNoteBlock content={block.content as any} onChange={onUpdate} />;
+      case 'file_upload':
+        return <StudentUploadBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

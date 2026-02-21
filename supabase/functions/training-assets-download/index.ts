@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 // Строгий allowlist префиксов — только наши папки в training-assets
-const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
+const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
 
 function isPathAllowed(path: string): boolean {
   if (!path || typeof path !== "string") return false;
@@ -79,11 +79,41 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // service_role клиент для скачивания
+    // service_role клиент для скачивания и проверок
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
+
+    // Для student-uploads — строгая проверка owner/admin по сегментам пути
+    if (path.startsWith("student-uploads/")) {
+      const segments = path.split("/");
+      // Минимум: ["student-uploads", userId, lessonId, blockId, filename]
+      if (segments.length < 5 || segments.some(s => s === "")) {
+        return new Response(
+          JSON.stringify({ error: "Invalid student-uploads path structure" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const pathUserId = segments[1];
+      if (user.id !== pathUserId) {
+        // Проверяем admin/superadmin роль через has_role_v2
+        const { data: isAdm } = await adminClient.rpc("has_role_v2", {
+          _user_id: user.id,
+          _role_code: "admin",
+        });
+        const { data: isSuperAdm } = await adminClient.rpc("has_role_v2", {
+          _user_id: user.id,
+          _role_code: "superadmin",
+        });
+        if (!isAdm && !isSuperAdm) {
+          return new Response(
+            JSON.stringify({ error: "Forbidden" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+    }
 
     const { data: fileData, error: downloadError } = await adminClient.storage
       .from("training-assets")

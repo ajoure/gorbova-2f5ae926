@@ -29,6 +29,8 @@ import { VideoUnskippableBlock } from "@/components/admin/lesson-editor/blocks/V
 import { DiagnosticTableBlock } from "@/components/admin/lesson-editor/blocks/DiagnosticTableBlock";
 import { SequentialFormBlock } from "@/components/admin/lesson-editor/blocks/SequentialFormBlock";
 import { RoleDescriptionBlock } from "@/components/admin/lesson-editor/blocks/RoleDescriptionBlock";
+import { StudentNoteBlock } from "@/components/admin/lesson-editor/blocks/StudentNoteBlock";
+import { StudentUploadBlock } from "@/components/admin/lesson-editor/blocks/StudentUploadBlock";
 
 // Kvest-specific props passed from KvestLessonView
 export interface KvestBlockProps {
@@ -374,6 +376,48 @@ export function LessonBlockRenderer({
             userRole={kvestProps?.role || undefined}
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
+          />
+        );
+      case 'input_short':
+      case 'input_long':
+        return (
+          <StudentNoteBlock
+            content={block.content as any}
+            onChange={noop}
+            isEditing={false}
+            blockId={block.id}
+            lessonId={lessonId}
+            savedResponse={savedResponse}
+            onSave={async (text: string) => {
+              await saveBlockResponse(
+                block.id,
+                { type: 'note', text, saved_at: new Date().toISOString() },
+                null, 0, 0
+              );
+            }}
+          />
+        );
+      case 'file_upload':
+        return (
+          <StudentUploadBlock
+            content={block.content as any}
+            onChange={noop}
+            isEditing={false}
+            blockId={block.id}
+            lessonId={lessonId}
+            savedResponse={savedResponse}
+            onSaved={async (fileData: any) => {
+              if (fileData) {
+                await saveBlockResponse(
+                  block.id,
+                  { type: 'upload', file: fileData },
+                  null, 0, 0
+                );
+              } else {
+                // Файл удалён — очищаем response
+                await saveBlockResponse(block.id, null as any, null, 0, 0);
+              }
+            }}
           />
         );
       default:
