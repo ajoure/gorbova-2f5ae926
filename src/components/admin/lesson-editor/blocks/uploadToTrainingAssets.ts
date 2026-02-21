@@ -107,8 +107,10 @@ export async function uploadToTrainingAssets(
     ? `${folderPrefix}/${owner}/${Date.now()}-${uniqueId}-${safeName}`
     : `${folderPrefix}/${Date.now()}-${uniqueId}-${safeName}`;
 
-  // Определяем Content-Type: fallback по расширению если file.type пустой
-  const resolvedContentType = file.type || extensionToMime(fileExtension);
+  // BUGFIX: приоритет extensionToMime над file.type (браузер может отдать text/rtf вместо application/rtf)
+  const mapped = extensionToMime(fileExtension);
+  const resolvedContentType =
+    mapped !== "application/octet-stream" ? mapped : (file.type || mapped);
 
   const { error: uploadError } = await supabase.storage
     .from("training-assets")
@@ -221,9 +223,10 @@ export async function deleteTrainingAssets(
     });
     const dryData = await dryRes.json().catch(() => null);
 
-    if (!dryRes.ok || !dryData || dryData.allowed <= 0) {
-      if (dryData?.allowed === 0 && dryData?.blocked > 0) {
-        console.warn("[deleteTrainingAssets] Ownership mismatch — все пути заблокированы guard'ом, execute отменён");
+    // BUGFIX: edge returns allowed_count / blocked_count (not allowed / blocked)
+    if (!dryRes.ok || !dryData || dryData.allowed_count <= 0) {
+      if (dryData?.allowed_count === 0 && dryData?.blocked_count > 0) {
+        console.warn("[deleteTrainingAssets] Ownership mismatch — все пути заблокированы guard'ом, execute отменён. blocked_paths:", dryData.blocked_paths);
       } else if (!dryRes.ok) {
         console.error("[deleteTrainingAssets] dry_run failed:", dryData);
       }
@@ -231,9 +234,9 @@ export async function deleteTrainingAssets(
     }
 
     // STOP: если ownership mismatch (часть путей заблокирована при наличии entity.id)
-    if (entity?.id && dryData.allowed < safePaths.length) {
+    if (entity?.id && dryData.allowed_count < safePaths.length) {
       console.warn(
-        `[deleteTrainingAssets] Ownership mismatch: запрошено ${safePaths.length}, разрешено ${dryData.allowed}. Execute отменён.`
+        `[deleteTrainingAssets] Ownership mismatch: запрошено ${safePaths.length}, разрешено ${dryData.allowed_count}. blocked_paths:`, dryData.blocked_paths, "Execute отменён."
       );
       return;
     }
