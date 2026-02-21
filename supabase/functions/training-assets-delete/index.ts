@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 // Строгий allowlist префиксов — только наши папки в training-assets
-const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
+const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
 const MAX_PATHS_PER_BATCH = 50;
 
 interface DeleteRequest {
@@ -26,13 +26,22 @@ function isPathAllowed(path: string, lessonId?: string): boolean {
   const prefixOk = ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
   if (!prefixOk) return false;
 
-  // Ownership guard: если lessonId передан — путь обязан начинаться с prefix/<lessonId>/
-  // (startsWith, не includes — чтобы исключить traversal вида prefix/other-lessonId-that-contains-lessonId/)
+  // Ownership guard для lesson-* путей
   if (lessonId) {
-    const ownedOk = ALLOWED_PREFIXES.some((prefix) =>
-      path.startsWith(`${prefix}${lessonId}/`)
-    );
-    if (!ownedOk) return false;
+    const lessonPrefixes = ["lesson-audio/", "lesson-files/", "lesson-images/"];
+    if (lessonPrefixes.some((p) => path.startsWith(p))) {
+      const ownedOk = lessonPrefixes.some((prefix) =>
+        path.startsWith(`${prefix}${lessonId}/`)
+      );
+      if (!ownedOk) return false;
+    }
+  }
+
+  // Ownership guard для student-uploads: student-uploads/{userId}/{lessonId}/{blockId}/{file}
+  if (path.startsWith("student-uploads/")) {
+    const segments = path.split("/");
+    // Минимум 5 сегментов: prefix, userId, lessonId, blockId, filename
+    if (segments.length < 5 || segments.some(s => s === "")) return false;
   }
 
   return true;

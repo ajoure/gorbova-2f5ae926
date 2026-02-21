@@ -154,7 +154,7 @@ export function formatFileSize(bytes: number): string {
 }
 
 // Строгий allowlist для guard-проверки
-const STORAGE_ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
+const STORAGE_ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
 
 /**
  * Извлекает storagePath из publicUrl Supabase Storage.

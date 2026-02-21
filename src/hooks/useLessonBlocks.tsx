@@ -239,6 +239,8 @@ export type BlockContent =
   | DiagnosticTableContentData
   | SequentialFormContentData
   | RoleDescriptionContentData
+  | StudentNoteContentData
+  | StudentUploadContentData
   | Record<string, unknown>;
 
 // Kvest block content types
@@ -296,6 +298,23 @@ export interface QuizSurveyContentData {
     color?: string;
   }[];
   buttonText?: string;
+}
+
+// Student input block content types
+export interface StudentNoteContentData {
+  title: string;
+  hint?: string;
+  mode: "short" | "long";
+  required: boolean;
+  placeholder?: string;
+}
+
+export interface StudentUploadContentData {
+  title: string;
+  instructions?: string;
+  allowedGroups: Array<"images" | "documents" | "spreadsheets" | "audio" | "video" | "archives">;
+  maxSizeMB: number;
+  required: boolean;
 }
 
 export interface LessonBlock {
