@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { extractTrainingAssetPaths } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
+import { deleteTrainingAssets } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
+import { toast } from "sonner";
 
 export interface BlockProgress {
   id: string;
@@ -145,6 +148,23 @@ export function useUserProgress(lessonId: string) {
     if (!user?.id || !lessonId) return false;
 
     try {
+      // P1: Извлекаем storage_path из response перед удалением записи
+      const { data: existing } = await supabase
+        .from("user_lesson_progress")
+        .select("response")
+        .eq("user_id", user.id)
+        .eq("lesson_id", lessonId)
+        .eq("block_id", blockId)
+        .maybeSingle();
+
+      if (existing?.response) {
+        const paths = extractTrainingAssetPaths(existing.response);
+        if (paths.length > 0) {
+          console.warn("[resetBlockProgress] Cleaning up storage paths:", paths);
+          await deleteTrainingAssets(paths, { type: "lesson", id: lessonId }, "progress_reset_block");
+        }
+      }
+
       const { error } = await supabase
         .from("user_lesson_progress")
         .delete()
@@ -166,6 +186,27 @@ export function useUserProgress(lessonId: string) {
     if (!user?.id || !lessonId) return false;
 
     try {
+      // P1: Извлекаем все storage_path из всех response перед удалением
+      const { data: allProgress } = await supabase
+        .from("user_lesson_progress")
+        .select("response")
+        .eq("user_id", user.id)
+        .eq("lesson_id", lessonId);
+
+      if (allProgress && allProgress.length > 0) {
+        const allPaths: string[] = [];
+        for (const rec of allProgress) {
+          if (rec.response) {
+            allPaths.push(...extractTrainingAssetPaths(rec.response));
+          }
+        }
+        const uniquePaths = [...new Set(allPaths)];
+        if (uniquePaths.length > 0) {
+          console.warn("[resetLessonProgress] Cleaning up storage paths:", uniquePaths);
+          await deleteTrainingAssets(uniquePaths, { type: "lesson", id: lessonId }, "progress_reset_lesson");
+        }
+      }
+
       const { error } = await supabase
         .from("user_lesson_progress")
         .delete()
