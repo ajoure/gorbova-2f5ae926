@@ -7,7 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Строгий allowlist префиксов — только наши папки в training-assets
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
 const MAX_PATHS_PER_BATCH = 50;
 
@@ -37,10 +36,9 @@ function isPathAllowed(path: string, lessonId?: string): boolean {
     }
   }
 
-  // Ownership guard для student-uploads: student-uploads/{userId}/{lessonId}/{blockId}/{file}
+  // Structure guard для student-uploads: student-uploads/{userId}/{lessonId}/{blockId}/{file}
   if (path.startsWith("student-uploads/")) {
     const segments = path.split("/");
-    // Минимум 5 сегментов: prefix, userId, lessonId, blockId, filename
     if (segments.length < 5 || segments.some(s => s === "")) return false;
   }
 
@@ -83,26 +81,21 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // Один adminClient на весь запрос
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // Кешируем роль один раз
+    const [{ data: isAdmin }, { data: isSuper }] = await Promise.all([
+      adminClient.rpc("has_role_v2", { _user_id: user.id, _role_code: "admin" }),
+      adminClient.rpc("has_role_v2", { _user_id: user.id, _role_code: "superadmin" }),
+    ]);
+    const isAdminOrSuper = !!(isAdmin || isSuper);
+
     const body: DeleteRequest = await req.json();
     const { mode, paths, reason, entity } = body;
-
-    // Owner/admin check helper for student-uploads paths
-    async function canDeleteStudentUpload(path: string, userId: string): Promise<boolean> {
-      const segments = path.split("/");
-      if (segments.length < 5 || segments.some(s => s === "")) return false;
-      if (path.includes("..")) return false;
-      const pathUserId = segments[1];
-      if (userId === pathUserId) return true;
-      // Check admin/superadmin role
-      const svcClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      );
-      const { data: isAdmin } = await svcClient.rpc("has_role_v2", { _user_id: userId, _role_code: "admin" });
-      if (isAdmin) return true;
-      const { data: isSuperAdmin } = await svcClient.rpc("has_role_v2", { _user_id: userId, _role_code: "superadmin" });
-      return !!isSuperAdmin;
-    }
 
     // Валидация входных данных
     if (!mode || !["dry_run", "execute"].includes(mode)) {
@@ -119,7 +112,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // STOP: лимит батча
     if (paths.length > MAX_PATHS_PER_BATCH) {
       return new Response(
         JSON.stringify({ error: `Too many paths: max ${MAX_PATHS_PER_BATCH} per call` }),
@@ -134,8 +126,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Фильтрация путей через guards
-    // lessonId берётся из entity.id только если тип = lesson
+    // Фильтрация путей
     const lessonId = entity?.type === "lesson" ? entity?.id : undefined;
     const allowedPaths: string[] = [];
     const blockedPaths: string[] = [];
@@ -145,10 +136,11 @@ Deno.serve(async (req: Request) => {
         blockedPaths.push(path);
         continue;
       }
-      // Owner/admin check for student-uploads
+      // Owner/admin check для student-uploads
       if (path.startsWith("student-uploads/")) {
-        const allowed = await canDeleteStudentUpload(path, user!.id);
-        if (!allowed) {
+        const segments = path.split("/");
+        const pathUserId = segments[1];
+        if (user.id !== pathUserId && !isAdminOrSuper) {
           blockedPaths.push(path);
           continue;
         }
@@ -160,9 +152,9 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           mode: "dry_run",
-          requested: paths.length,
-          allowed: allowedPaths.length,
-          blocked: blockedPaths.length,
+          requested_paths_count: paths.length,
+          allowed_count: allowedPaths.length,
+          blocked_count: blockedPaths.length,
           would_delete: allowedPaths,
           blocked_paths: blockedPaths,
         }),
@@ -175,10 +167,11 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           mode: "execute",
-          requested: paths.length,
-          allowed: 0,
-          blocked: blockedPaths.length,
-          deleted: 0,
+          requested_paths_count: paths.length,
+          deleted_count: 0,
+          blocked_count: blockedPaths.length,
+          deleted_paths: [],
+          blocked_paths: blockedPaths,
           errors: [],
           message: "No paths passed guards — nothing deleted",
         }),
@@ -186,12 +179,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const adminClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-
-    // Удаление файлов
+    // Удаление ТОЛЬКО allowedPaths
     const { data: removeData, error: removeError } = await adminClient.storage
       .from("training-assets")
       .remove(allowedPaths);
@@ -202,32 +190,32 @@ Deno.serve(async (req: Request) => {
       errors.push(removeError.message);
     }
 
-    // Запись в audit_logs — SYSTEM ACTOR proof
+    // Audit log — SYSTEM ACTOR, no PII
     await adminClient.from("audit_logs").insert({
       action: "training_assets_deleted",
       actor_type: "system",
       actor_user_id: null,
       actor_label: "training-assets-delete edge function",
       meta: {
-        requested: paths.length,
-        allowed: allowedPaths.length,
-        blocked: blockedPaths.length,
-        deleted: deletedCount,
+        requested_paths_count: paths.length,
+        allowed_count: allowedPaths.length,
+        blocked_count: blockedPaths.length,
+        deleted_count: deletedCount,
         errors,
         reason,
         entity: entity || null,
         initiated_by_user_id: user.id,
-        // No PII: не логируем email/имя пользователя
       },
     });
 
     return new Response(
       JSON.stringify({
         mode: "execute",
-        requested: paths.length,
-        allowed: allowedPaths.length,
-        blocked: blockedPaths.length,
-        deleted: deletedCount,
+        requested_paths_count: paths.length,
+        deleted_count: deletedCount,
+        blocked_count: blockedPaths.length,
+        deleted_paths: allowedPaths,
+        blocked_paths: blockedPaths,
         errors,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

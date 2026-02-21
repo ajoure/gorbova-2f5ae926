@@ -126,7 +126,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
       );
     }
 
-    const fileIcon = getFileTypeIcon(content.name);
+    const fileIcon = getFileTypeIcon(content.name, { colored: true });
     return (
       <div className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 select-none">
         <fileIcon.Icon className={`h-8 w-8 shrink-0 ${fileIcon.colorClass}`} />
@@ -240,7 +240,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
 
       {/* Превью загруженного файла */}
       {content.url && content.name && (() => {
-        const previewIcon = getFileTypeIcon(content.name);
+        const previewIcon = getFileTypeIcon(content.name, { colored: true });
         return (
         <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
           <previewIcon.Icon className={`h-6 w-6 shrink-0 ${previewIcon.colorClass}`} />
