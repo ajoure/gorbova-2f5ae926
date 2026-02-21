@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { extractPathsFromBlocks, extractPathsFromProgress } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
-import { deleteTrainingAssets } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
+import { deleteTrainingAssets, type DeleteTrainingAssetsResult } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
 
 export interface LessonAttachment {
   id: string;
@@ -194,20 +194,32 @@ export function useTrainingLessons(moduleId?: string) {
       const allPaths: string[] = [];
 
       // A) Пути из lesson_blocks.content
-      const { data: blocks } = await supabase
+      const { data: blocks, error: blocksError } = await supabase
         .from("lesson_blocks")
         .select("content")
         .eq("lesson_id", id);
+
+      if (blocksError) {
+        console.error("[deleteLesson] SELECT lesson_blocks error, STOP:", blocksError);
+        toast.error("Ошибка чтения блоков урока, удаление отменено");
+        return false;
+      }
 
       if (blocks && blocks.length > 0) {
         allPaths.push(...extractPathsFromBlocks(blocks));
       }
 
       // B) Пути из user_lesson_progress.response (student uploads)
-      const { data: progressRecords } = await supabase
+      const { data: progressRecords, error: progressError } = await supabase
         .from("user_lesson_progress")
         .select("response")
         .eq("lesson_id", id);
+
+      if (progressError) {
+        console.error("[deleteLesson] SELECT user_lesson_progress error, STOP:", progressError);
+        toast.error("Ошибка чтения прогресса учеников, удаление отменено");
+        return false;
+      }
 
       if (progressRecords && progressRecords.length > 0) {
         allPaths.push(...extractPathsFromProgress(progressRecords));
@@ -216,13 +228,18 @@ export function useTrainingLessons(moduleId?: string) {
       // Дедуп
       const uniquePaths = [...new Set(allPaths)];
 
-      // Удаляем файлы из Storage (если есть)
+      // Удаляем файлы из Storage (если есть) — с STOP-guard
       if (uniquePaths.length > 0) {
         console.warn(`[deleteLesson] Cleaning up ${uniquePaths.length} storage paths for lesson ${id}`);
-        await deleteTrainingAssets(uniquePaths, { type: "lesson", id }, "lesson_deleted");
+        const result = await deleteTrainingAssets(uniquePaths, { type: "lesson", id }, "lesson_deleted");
+        if (!result.ok) {
+          console.error("[deleteLesson] Storage cleanup failed, STOP:", result.error, "blocked_paths:", result.blocked_paths);
+          toast.error(`Не удалось очистить файлы урока (${result.error}), удаление отменено`);
+          return false;
+        }
       }
 
-      // Теперь удаляем запись урока
+      // Теперь удаляем запись урока — ТОЛЬКО после успешного cleanup
       const { error } = await supabase
         .from("training_lessons")
         .delete()
