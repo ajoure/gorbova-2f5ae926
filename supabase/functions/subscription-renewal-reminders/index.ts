@@ -37,25 +37,43 @@ function getDaysWord(days: number): string {
   return 'дней';
 }
 
+/** Escape special chars for Telegram Markdown v1 */
+function escapeMd(text: string): string {
+  return text.replace(/([*_`\[\]])/g, '\\$1');
+}
+
 /**
  * Check if user has an active provider-managed (SBS) subscription for a given product.
  */
 async function hasActiveSBS(supabase: any, userId: string, productId: string | null): Promise<boolean> {
   if (!productId) return false;
   
-  // Check provider_subscriptions for active bePaid subscription linked to this user
-  const { data } = await supabase
+  // Product-scoped SBS check via provider_subscriptions → subscriptions_v2 → tariffs
+  const { data, error } = await supabase
     .from('provider_subscriptions')
-    .select('id, status')
+    .select(`
+      id, state, subscription_v2_id,
+      subscriptions_v2!inner (
+        id, tariff_id,
+        tariffs!inner ( product_id )
+      )
+    `)
     .eq('user_id', userId)
-    .in('status', ['active', 'pending']) // pending = just created, waiting for first payment
-    .limit(10);
+    .eq('state', 'active')
+    .limit(50);
+  
+  if (error) {
+    console.error('[reminders] hasActiveSBS query error:', error);
+    return false; // safe fallback: will send payment link
+  }
   
   if (!data || data.length === 0) return false;
   
-  // Any active provider subscription for this user counts
-  // (We can't easily filter by product_id in provider_subscriptions, but having any active SBS means bePaid handles renewal)
-  return data.some((ps: any) => ps.status === 'active');
+  // Filter by product_id in JS (PostgREST nested .eq on deep joins is fragile)
+  return data.some((ps: any) => {
+    const tariffs = ps.subscriptions_v2?.tariffs;
+    return tariffs?.product_id === productId;
+  });
 }
 
 /**
@@ -68,7 +86,8 @@ async function tryGeneratePaymentLink(
   productId: string | null,
   tariffId: string | null,
   amount: number, // BYN (not kopecks)
-  currency: string
+  currency: string,
+  billingType?: string | null
 ): Promise<string | null> {
   // STOP-GUARD: all fields must be present
   if (!productId || !tariffId || !amount || amount <= 0) {
@@ -93,7 +112,7 @@ async function tryGeneratePaymentLink(
       product_id: productId,
       tariff_id: tariffId,
       amount: amountKopecks,
-      payment_type: 'one_time', // renewal link is one-time payment
+      payment_type: billingType === 'provider_managed' ? 'subscription' : 'one_time',
       description: 'Продление подписки',
       origin: 'https://club.gorbova.by',
       actor_type: 'system',
@@ -210,6 +229,10 @@ async function sendTelegramReminder(
       month: 'long' 
     });
 
+    const safeUserName = escapeMd(userName);
+    const safeProductName = escapeMd(productName);
+    const safeTariffName = escapeMd(tariffName);
+
     // Unified texts: SBS vs !SBS (no hasCard/!hasCard)
     const ctaUrl = hasSBS 
       ? 'https://club.gorbova.by/purchases' 
@@ -220,7 +243,7 @@ async function sendTelegramReminder(
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
-${userName}, ваша подписка на *${productName}* заканчивается через неделю (${formattedDate}).
+${safeUserName}, ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
 
 Автопродление активно — подписка продлится автоматически.
 
@@ -228,10 +251,10 @@ ${userName}, ваша подписка на *${productName}* заканчива�
       } else {
         message = `📅 *Напоминание о подписке*
 
-${userName}, ваша подписка на *${productName}* заканчивается через неделю (${formattedDate}).
+${safeUserName}, ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
 
-📦 *Продукт:* ${productName}
-🎯 *Тариф:* ${tariffName}
+📦 *Продукт:* ${safeProductName}
+🎯 *Тариф:* ${safeTariffName}
 
 Для продления оплатите по ссылке.
 
@@ -241,7 +264,7 @@ ${userName}, ваша подписка на *${productName}* заканчива�
       if (hasSBS) {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${userName}, осталось 3 дня до окончания подписки на *${productName}* (${formattedDate}).
+${safeUserName}, осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
 
 Автопродление активно.
 
@@ -249,9 +272,9 @@ ${userName}, осталось 3 дня до окончания подписки 
       } else {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${userName}, осталось 3 дня до окончания подписки на *${productName}* (${formattedDate}).
+${safeUserName}, осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
 
-📦 *${productName}* / ${tariffName}
+📦 *${safeProductName}* / ${safeTariffName}
 
 Для продления оплатите по ссылке.
 
@@ -261,13 +284,13 @@ ${userName}, осталось 3 дня до окончания подписки 
       if (hasSBS) {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${userName}, это последнее напоминание. Подписка продлится автоматически.
+${safeUserName}, это последнее напоминание. Подписка продлится автоматически.
 
 🔗 [${ctaText}](${ctaUrl})`;
       } else {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${userName}, это последнее напоминание. Подписка на *${productName}* заканчивается ${formattedDate}.
+${safeUserName}, это последнее напоминание. Подписка на *${safeProductName}* заканчивается ${formattedDate}.
 
 Оплатите сейчас, чтобы сохранить доступ.
 
@@ -587,6 +610,7 @@ Deno.serve(async (req) => {
           access_end_at,
           payment_token,
           tariff_id,
+          billing_type,
           payment_method_id,
           tariffs (
             id,
@@ -663,7 +687,7 @@ Deno.serve(async (req) => {
         let paymentLinkUrl: string | null = null;
         if (!userHasSBS) {
           paymentLinkUrl = await tryGeneratePaymentLink(
-            supabase, userId, productId, sub.tariff_id, amount, currency
+            supabase, userId, productId, sub.tariff_id, amount, currency, (sub as any).billing_type
           );
         }
 
@@ -787,7 +811,7 @@ Deno.serve(async (req) => {
 
       // Generate payment link
       const paymentLinkUrl = await tryGeneratePaymentLink(
-        supabase, userId, productId, sub.tariff_id, amount, currency
+        supabase, userId, productId, sub.tariff_id, amount, currency, null // no billing_type context here
       );
 
       // Send via the unified sendTelegramReminder (with hasSBS=false)
