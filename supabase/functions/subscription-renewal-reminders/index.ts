@@ -751,6 +751,7 @@ Deno.serve(async (req) => {
         order_id,
         access_end_at,
         tariff_id,
+        billing_type,
         tariffs (
           id,
           name,
@@ -811,7 +812,7 @@ Deno.serve(async (req) => {
 
       // Generate payment link
       const paymentLinkUrl = await tryGeneratePaymentLink(
-        supabase, userId, productId, sub.tariff_id, amount, currency, null // no billing_type context here
+        supabase, userId, productId, sub.tariff_id, amount, currency, (sub as any).billing_type
       );
 
       // Send via the unified sendTelegramReminder (with hasSBS=false)
