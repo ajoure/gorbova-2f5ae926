@@ -304,9 +304,9 @@ export interface QuizSurveyContentData {
 export interface StudentNoteContentData {
   title: string;
   hint?: string;
-  mode: "short" | "long";
+  mode?: "short" | "long"; // backward compat, ignored in new UI
   required: boolean;
-  placeholder?: string;
+  placeholder?: string; // backward compat, ignored in new UI
 }
 
 export interface StudentUploadContentData {
