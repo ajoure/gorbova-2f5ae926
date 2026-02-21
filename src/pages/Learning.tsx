@@ -363,19 +363,39 @@ export default function Learning() {
 
   // PATCH-3: "Моя библиотека" = модули по has_access (не menu_section_key)
   // PATCH-6: Дедуп по slug
-  const seenSlugs = new Set<string>();
-  const libraryModules = modules
-    .filter(m => 
-      m.is_active &&
-      m.has_access === true &&
-      (m.menu_section_key?.startsWith("products") ?? true)
-    )
-    .filter(m => {
-      const key = m.slug || m.id;
-      if (seenSlugs.has(key)) return false;
-      seenSlugs.add(key);
+  // PATCH-P3: Скрывать дочерние модули если любой родитель неактивен (Map + memo cache)
+  const libraryModules = useMemo(() => {
+    const byId = new Map(modules.map(m => [m.id, m]));
+    const activeCache = new Map<string, boolean>();
+
+    function isChainActive(moduleId: string): boolean {
+      if (activeCache.has(moduleId)) return activeCache.get(moduleId)!;
+      const mod = byId.get(moduleId);
+      if (!mod) { activeCache.set(moduleId, false); return false; }
+      if (!mod.is_active) { activeCache.set(moduleId, false); return false; }
+      if (mod.parent_module_id) {
+        const parentOk = isChainActive(mod.parent_module_id);
+        activeCache.set(moduleId, parentOk);
+        return parentOk;
+      }
+      activeCache.set(moduleId, true);
       return true;
-    });
+    }
+
+    const seenSlugs = new Set<string>();
+    return modules
+      .filter(m =>
+        isChainActive(m.id) &&
+        m.has_access === true &&
+        (m.menu_section_key?.startsWith("products") ?? true)
+      )
+      .filter(m => {
+        const key = m.slug || m.id;
+        if (seenSlugs.has(key)) return false;
+        seenSlugs.add(key);
+        return true;
+      });
+  }, [modules]);
   
   // PATCH-2: allProductsModules больше НЕ используется (убран рендер ModuleCard из витрины)
 

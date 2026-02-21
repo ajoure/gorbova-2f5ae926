@@ -57,6 +57,15 @@ interface PointARow {
   communication_hours?: number;
 }
 
+interface UploadedFileItem {
+  storage_path: string;
+  original_name: string;
+  size?: number;
+  mime?: string;
+  uploaded_at?: string;
+  comment?: string;
+}
+
 interface StudentProgressModalProps {
   record: LessonProgressRecord | null;
   lessonBlocks: LessonBlock[];
@@ -76,6 +85,17 @@ function getSequentialFormSteps(blocks: LessonBlock[]): FormStep[] {
   if (!sequentialBlock?.content) return [];
   const content = sequentialBlock.content as { steps?: FormStep[] };
   return content.steps || [];
+}
+
+/** Normalize upload response to files[] (backward compat) */
+function normalizeUploadFiles(resp: any): UploadedFileItem[] {
+  if (!resp) return [];
+  if (resp.type === "upload") {
+    if (Array.isArray(resp.files)) return resp.files;
+    if (resp.file?.storage_path) return [resp.file];
+  }
+  if (resp.file?.storage_path) return [resp.file];
+  return [];
 }
 
 async function downloadFile(storagePath: string, originalName: string) {
@@ -127,7 +147,11 @@ export function StudentProgressModal({
   const hourlyRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
 
   const noteEntries = Object.entries(blockResponses || {}).filter(([, r]: any) => r?.type === "note");
-  const uploadEntries = Object.entries(blockResponses || {}).filter(([, r]: any) => r?.type === "upload" && r?.file?.storage_path);
+  const uploadEntries = Object.entries(blockResponses || {}).filter(([, r]: any) => {
+    if (r?.type !== "upload") return false;
+    // Support both old {file} and new {files:[]} formats
+    return (Array.isArray(r.files) && r.files.length > 0) || r.file?.storage_path;
+  });
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -329,28 +353,39 @@ export function StudentProgressModal({
                 {uploadEntries.map(([blockId, resp]: any) => {
                   const block = lessonBlocks.find(b => b.id === blockId);
                   const blockTitle = (block?.content as any)?.title || `Блок ${blockId.slice(0, 6)}`;
-                  const file = resp.file;
-                  const fIcon = getFileTypeIcon(file.original_name);
+                  const files = normalizeUploadFiles(resp);
                   return (
-                    <div key={blockId} className="flex items-center justify-between border-b pb-3 last:border-0">
-                      <div className="flex items-center gap-3">
-                        <fIcon.Icon className={`h-6 w-6 shrink-0 ${fIcon.colorClass}`} />
-                        <div>
-                          <Label className="font-medium text-sm">{blockTitle}</Label>
-                          <p className="text-sm text-muted-foreground">{file.original_name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ""}
-                            {file.uploaded_at && ` • ${format(new Date(file.uploaded_at), "dd MMM yyyy", { locale: ru })}`}
-                          </p>
-                        </div>
+                    <div key={blockId} className="border-b pb-3 last:border-0">
+                      <Label className="font-medium text-sm mb-2 block">📎 {blockTitle}</Label>
+                      <div className="space-y-2">
+                        {files.map((file, fIdx) => {
+                          const { Icon, colorClass } = getFileTypeIcon(file.original_name, { colored: true });
+                          return (
+                            <div key={fIdx} className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <Icon className={`h-5 w-5 shrink-0 ${colorClass}`} />
+                                <div className="min-w-0">
+                                  <p className="text-sm text-muted-foreground truncate">{file.original_name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ""}
+                                    {file.uploaded_at && ` • ${format(new Date(file.uploaded_at), "dd MMM yyyy", { locale: ru })}`}
+                                  </p>
+                                  {file.comment && (
+                                    <p className="text-xs text-muted-foreground italic mt-0.5">💬 {file.comment}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => downloadFile(file.storage_path, file.original_name)}
+                              >
+                                Открыть
+                              </Button>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => downloadFile(file.storage_path, file.original_name)}
-                      >
-                        Открыть
-                      </Button>
                     </div>
                   );
                 })}

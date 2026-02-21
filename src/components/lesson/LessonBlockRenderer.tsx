@@ -408,9 +408,10 @@ export function LessonBlockRenderer({
             savedResponse={savedResponse}
             onSaved={async (fileData: any) => {
               if (fileData) {
+                // Always save normalized format {type:'upload', files:[...]}
                 await saveBlockResponse(
                   block.id,
-                  { type: 'upload', file: fileData },
+                  fileData,
                   null, 0, 0
                 );
               } else {
