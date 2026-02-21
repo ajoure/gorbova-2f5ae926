@@ -94,6 +94,23 @@ export function getFileTypeIcon(
     if (EXTENSION_MAP[ext]) found = EXTENSION_MAP[ext];
   }
 
+  // Fallback: try suffix without dot (e.g. "...-3-__XLS")
+  if (!found && !filenameOrMime.includes("/")) {
+    const upper = filenameOrMime.toUpperCase();
+    const suffixMap: Record<string, string> = {
+      "_PDF": ".pdf", "_DOC": ".doc", "_DOCX": ".docx", "_ODT": ".odt", "_RTF": ".rtf",
+      "_XLS": ".xls", "_XLSX": ".xlsx", "_ODS": ".ods", "_CSV": ".csv",
+      "_PPT": ".ppt", "_PPTX": ".pptx",
+      "_JPG": ".jpg", "_JPEG": ".jpeg", "_PNG": ".png", "_GIF": ".gif", "_WEBP": ".webp", "_SVG": ".svg",
+      "_MP3": ".mp3", "_WAV": ".wav", "_M4A": ".m4a", "_OGG": ".ogg",
+      "_MP4": ".mp4", "_MOV": ".mov", "_AVI": ".avi", "_MKV": ".mkv", "_WEBM": ".webm",
+      "_ZIP": ".zip", "_RAR": ".rar", "_7Z": ".7z", "_TXT": ".txt",
+    };
+    for (const [suffix, ext] of Object.entries(suffixMap)) {
+      if (upper.endsWith(suffix)) { found = EXTENSION_MAP[ext] ?? null; break; }
+    }
+  }
+
   // Try MIME prefix
   if (!found) {
     const lower = filenameOrMime.toLowerCase();
