@@ -96,8 +96,8 @@ export function EditIntegrationDialog({
         const currentValue = String(safeConfig[field.key] || "");
         const originalValue = String((instance.config as Record<string, unknown>)?.[field.key] || "");
         if (currentValue === "" && originalValue !== "") {
-          // Don't overwrite existing key with empty
-          safeConfig[field.key] = originalValue;
+          // Don't include unchanged password in payload at all
+          delete safeConfig[field.key];
         }
       }
     }

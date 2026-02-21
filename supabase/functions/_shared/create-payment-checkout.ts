@@ -147,7 +147,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           notification_url: notificationUrl,
           language: 'ru',
           customer_fields: { read_only: ['email'] },
-          save_card_toggle: { customer_contract: true },
+          // No save_card_toggle for one-time: avoid creating recurring contracts
         },
         order: {
           amount,
@@ -155,7 +155,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           description: description || `${product.name} — ${tariff.name}`,
           tracking_id: trackingId,
           additional_data: {
-            contract: ['recurring', 'card_on_file'],
             receipt: [`${product.name} — ${tariff.name}`],
           },
         },
