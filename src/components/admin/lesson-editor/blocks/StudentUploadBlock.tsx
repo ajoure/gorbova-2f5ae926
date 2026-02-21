@@ -401,7 +401,7 @@ function StudentUploadStudentView({
         {uploadedFiles.length > 0 && (
           <div className="space-y-2">
             {uploadedFiles.map((file, idx) => {
-              const { Icon, colorClass } = getFileTypeIcon(file.original_name);
+              const { Icon, colorClass } = getFileTypeIcon(file.original_name, { colored: true });
               return (
                 <div key={file.storage_path} className="rounded-lg bg-muted/50 p-3">
                   <div className="flex items-center gap-3">
@@ -431,15 +431,31 @@ function StudentUploadStudentView({
                     </div>
                   </div>
                   {commentingIdx === idx && (
-                    <Input
-                      className="mt-2"
-                      placeholder="Добавьте комментарий к файлу..."
-                      value={file.comment || ""}
-                      onChange={(e) => handleCommentChange(idx, e.target.value)}
-                    />
+                    <div className="flex gap-2 mt-2">
+                      <Input
+                        placeholder="Добавьте комментарий к файлу..."
+                        value={file.comment || ""}
+                        onChange={(e) => handleCommentChange(idx, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            setCommentingIdx(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCommentingIdx(null)}
+                        className="shrink-0"
+                      >
+                        Готово
+                      </Button>
+                    </div>
                   )}
                   {commentingIdx !== idx && file.comment && (
-                    <p className="text-xs text-muted-foreground mt-1 italic">💬 {file.comment}</p>
+                    <p className="text-xs text-muted-foreground mt-1">💬 {file.comment}</p>
                   )}
                 </div>
               );
