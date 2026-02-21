@@ -589,41 +589,10 @@ export default function PaymentMethodsSettings() {
         </div>
 
         {/* Price Protection Alert - original */}
-        {hasActiveSubsWithoutCard && (
-          <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
-            <AlertTitle className="text-amber-800 dark:text-amber-200">
-              Ваша цена заблокирована
-            </AlertTitle>
-            <AlertDescription className="text-amber-700 dark:text-amber-300">
-              Сейчас вы пользуетесь клубом по специальной стоимости. 
-              Чтобы сохранить эти условия и избежать повышения цены при следующем продлении, 
-              пожалуйста, привяжите карту для автоматического списания.
-            </AlertDescription>
-          </Alert>
-        )}
+        {/* MIT pressure alert removed — no "price locked" warnings */}
 
         {/* PATCH 9: Alert for auto_renew subscriptions without payment method */}
-        {hasAutoRenewWithoutCard && !hasActiveSubsWithoutCard && (
-          <Alert className="border-destructive/50 bg-destructive/5">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
-            <AlertTitle className="text-destructive">
-              Привяжите карту для автопродления
-            </AlertTitle>
-            <AlertDescription className="text-muted-foreground">
-              У вас есть активная подписка с автопродлением, но карта не привязана.
-              Без карты доступ не продлится автоматически и потребуется ручная оплата.
-            </AlertDescription>
-            <Button 
-              onClick={handleAddCard} 
-              className="mt-3 gap-2"
-              variant="default"
-            >
-              <CreditCard className="h-4 w-4" />
-              Привязать карту сейчас
-            </Button>
-          </Alert>
-        )}
+        {/* MIT pressure alert removed — no "link card for auto-renewal" warnings */}
 
         {/* PATCH-C: Billing Method Choice - show each eligible subscription separately */}
         {hasEligibleSubs && (!paymentMethods || paymentMethods.length === 0) && (
@@ -660,17 +629,8 @@ export default function PaymentMethodsSettings() {
                       )}
                     </div>
                     
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {/* MIT Option */}
-                      <div className="space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          <strong>Привязать карту</strong> — мгновенные покупки, гибкое управление, пересчёт при накладных подписках
-                        </p>
-                        <Button onClick={handleAddCard} size="sm" className="w-full gap-2">
-                          <CreditCard className="h-4 w-4" />
-                          Привязать карту
-                        </Button>
-                      </div>
+                    <div className="grid gap-3 sm:grid-cols-1">
+                      {/* MIT option removed — only provider-managed (SBS) */}
                       
                       {/* Provider-managed Option */}
                       <div className="space-y-2">
@@ -709,7 +669,7 @@ export default function PaymentMethodsSettings() {
                   Привязанные карты
                 </CardTitle>
                 <CardDescription>
-                  Карты для автоматических списаний и быстрой оплаты
+                  Сохранённые карты
                 </CardDescription>
               </div>
               <Button onClick={handleAddCard} className="gap-2">
@@ -894,8 +854,7 @@ export default function PaymentMethodsSettings() {
                       {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
                         <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
                           <p className="text-sm text-amber-800 dark:text-amber-200">
-                            ⚠️ Эта карта требует 3D-Secure — не подходит для автосписаний. 
-                            Используйте bePaid в блоке «Настройка автопродления» выше.
+                            ⚠️ Оплата этой картой может требовать 3D-Secure.
                           </p>
                         </div>
                       )}
