@@ -149,7 +149,7 @@ export function PaymentDialog({
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
-  const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('mit');
+  const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
   
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
@@ -468,67 +468,13 @@ export function PaymentDialog({
         return;
       }
 
-      // If user has a saved card and tariffCode is provided, use direct charge
-      if (savedCard && tariffCode && user) {
-        console.log("Using direct charge with saved card:", savedCard.id, "offerId:", offerId);
-        const { data, error } = await supabase.functions.invoke("direct-charge", {
-          body: {
-            productId,
-            tariffCode,
-            offerId,
-            isTrial,
-            trialDays,
-            paymentMethodId: savedCard.id,
-          },
-        });
-
-        if (error) {
-          // Check if the error response contains alreadyUsedTrial flag
-          const errorData = data || {};
-          if (errorData.alreadyUsedTrial) {
-            setShowTrialUsedModal(true);
-            setStep("ready");
-            return;
-          }
-          throw new Error(error.message || errorData.error || "Ошибка при оплате");
-        }
-
-        if (!data.success) {
-          // If payment requires tokenization, fall back to redirect flow below
-          if (data.requiresTokenization) {
-            console.log("Falling back to redirect flow - tokenization required");
-          } else if (data.requiresRedirect && data.redirectUrl) {
-            // 3-D Secure required for saved-card charge
-            console.log("3DS redirect required:", data.redirectUrl);
-            window.location.href = data.redirectUrl;
-            return;
-          } else if (data.alreadyUsedTrial) {
-            setShowTrialUsedModal(true);
-            setStep("ready");
-            return;
-          } else {
-            // Payment failed (e.g., insufficient funds) - fall back to redirect flow
-            console.log("Direct charge failed, falling back to redirect flow:", data.error);
-            const russianError = translatePaymentError(data.error || "");
-            toast.warning(russianError + " Попробуйте оплатить другой картой.", {
-              duration: 6000,
-            });
-            // Continue to fallback bepaid-create-token below
-          }
-        } else {
-          // Payment status will be confirmed in UI (and purchases) based on the real provider result
-          onOpenChange(false);
-          const redirectUrl = data.orderId
-            ? `/purchases?payment=processing&order=${data.orderId}`
-            : `/purchases?payment=processing`;
-          window.location.href = redirectUrl;
-          return;
-        }
-      }
+      // CLIENT FLOW: never call direct-charge from client UI.
+      // direct-charge is an MIT server-initiated payment and must only be used by admin flows.
+      // Even if savedCard exists, client always goes through standard checkout with 3DS.
 
       // Default: redirect to bePaid checkout
-      // PATCH-3: For MIT flow, use useMitTokenization=true to avoid creating bePaid subscription
-      const shouldUseMitTokenization = paymentFlowType === 'mit' && isSubscription && !isTrial;
+      // MIT tokenization disabled in client flow — subscriptions always use provider_managed (SBS)
+      const shouldUseMitTokenization = false;
       
       console.log("Using bepaid-create-token with:", { 
         paymentFlowType, 
@@ -1128,47 +1074,7 @@ export function PaymentDialog({
               </div>
             )}
 
-            {/* PATCH-3: Payment Flow Choice - always show for recurring, non-trial */}
-            {isSubscription && !isTrial && (
-              <div className="rounded-lg border border-border/50 p-4 space-y-3">
-                <p className="font-medium text-sm flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-primary" />
-                  Способ автопродления
-                </p>
-                <RadioGroup 
-                  value={paymentFlowType} 
-                  onValueChange={(v) => setPaymentFlowType(v as PaymentFlowType)}
-                  className="space-y-2"
-                >
-                  <div className="flex items-start space-x-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer border border-transparent has-[input:checked]:border-primary/50">
-                    <RadioGroupItem value="mit" id="payment-flow-mit" className="mt-0.5" />
-                    <div className="flex-1">
-                      <Label htmlFor="payment-flow-mit" className="text-sm font-medium cursor-pointer flex items-center gap-2">
-                        <CreditCard className="h-4 w-4 text-muted-foreground" />
-                        Привязать карту
-                        <span className="text-xs text-primary bg-primary/10 px-1.5 py-0.5 rounded">Рекомендуем</span>
-                      </Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Мы сами спишем в нужный момент. Работает для пересчётов и апгрейдов.
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-start space-x-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer border border-transparent has-[input:checked]:border-primary/50">
-                    <RadioGroupItem value="provider_managed" id="payment-flow-bepaid" className="mt-0.5" />
-                    <div className="flex-1">
-                      <Label htmlFor="payment-flow-bepaid" className="text-sm font-medium cursor-pointer flex items-center gap-2">
-                        <Repeat className="h-4 w-4 text-muted-foreground" />
-                        Подписка bePaid
-                      </Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        bePaid сам спишет каждые 30 дней. Для карт, требующих 3D-Secure.
-                      </p>
-                    </div>
-                  </div>
-                </RadioGroup>
-              </div>
-            )}
+            {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
             <div className="flex gap-2">
               <Button

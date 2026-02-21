@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 
 interface CreatePaymentLinkRequest {
   user_id: string;
@@ -56,343 +56,37 @@ Deno.serve(async (req) => {
       return errorResponse('Minimum amount is 100 kopecks (1 BYN)');
     }
 
-    // Get bePaid credentials
-    const credsResult = await getBepaidCredsStrict(supabase);
-    if (isBepaidCredsError(credsResult)) {
-      console.error('[create-payment-link] bePaid credentials error:', credsResult.error);
-      return errorResponse(credsResult.error, 500);
-    }
-    const bepaidCreds = credsResult;
-    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
-
-    // Get product and tariff info
-    const [productResult, tariffResult, profileResult] = await Promise.all([
-      supabase.from('products_v2').select('id, name, code').eq('id', product_id).maybeSingle(),
-      supabase.from('tariffs').select('id, name, code, access_days').eq('id', tariff_id).maybeSingle(),
-      supabase.from('profiles').select('id, email, full_name').eq('user_id', user_id).maybeSingle(),
-    ]);
-
-    if (!productResult.data) {
-      return errorResponse('Product not found', 404);
-    }
-    if (!tariffResult.data) {
-      return errorResponse('Tariff not found', 404);
-    }
-
-    const product = productResult.data;
-    const tariff = tariffResult.data;
-    const profile = profileResult.data;
-    const profileId = profile?.id || null;
-    const customerEmail = profile?.email || 'unknown@example.com';
-
-    const amountByn = amount / 100;
-    const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
-
     // Determine origin for return URL
     const reqOrigin = req.headers.get('origin');
     const reqReferer = req.headers.get('referer');
     const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
 
-    if (payment_type === 'one_time') {
-      // === ONE-TIME PAYMENT ===
-      
-      // Generate order number
-      const { data: orderNumberData } = await supabase.rpc('generate_order_number');
-      const orderNumber = orderNumberData || `ORD-LINK-${Date.now()}`;
+    // Delegate to shared helper (same logic as before, just extracted)
+    const result = await createPaymentCheckout({
+      supabase,
+      user_id,
+      product_id,
+      tariff_id,
+      amount,
+      payment_type,
+      description,
+      offer_id,
+      origin,
+      actor_user_id: user.id,
+      actor_type: 'admin',
+    });
 
-      // Create pending order
-      const { data: order, error: orderError } = await supabase
-        .from('orders_v2')
-        .insert({
-          order_number: orderNumber,
-          user_id,
-          profile_id: profileId,
-          product_id,
-          tariff_id,
-          offer_id: offer_id || null,
-          base_price: amountByn,
-          final_price: amountByn,
-          paid_amount: 0,
-          currency: 'BYN',
-          status: 'pending',
-          customer_email: customerEmail,
-          meta: {
-            type: 'admin_payment_link',
-            description: description || null,
-            created_by: user.id,
-            product_name: product.name,
-            tariff_name: tariff.name,
-          },
-        })
-        .select('id')
-        .single();
-
-      if (orderError) {
-        console.error('[create-payment-link] Order creation error:', orderError);
-        return errorResponse('Failed to create order', 500);
-      }
-
-      const trackingId = `link:${order.id}`;
-      const returnUrl = `${origin}/purchases?order=${order.id}&status=success`;
-
-      // Create bePaid checkout
-      const checkoutPayload = {
-        checkout: {
-          test: bepaidCreds.test_mode,
-          transaction_type: 'payment',
-          attempts: 3,
-          settings: {
-            success_url: returnUrl,
-            decline_url: `${origin}/purchases?order=${order.id}&status=decline`,
-            fail_url: `${origin}/purchases?order=${order.id}&status=fail`,
-            notification_url: notificationUrl,
-            language: 'ru',
-            customer_fields: { read_only: ['email'] },
-            save_card_toggle: { customer_contract: true },
-          },
-          order: {
-            amount,
-            currency: 'BYN',
-            description: description || `${product.name} — ${tariff.name}`,
-            tracking_id: trackingId,
-            additional_data: {
-              contract: ['recurring', 'card_on_file'],
-              receipt: [`${product.name} — ${tariff.name}`],
-            },
-          },
-          customer: {
-            email: customerEmail,
-            first_name: profile?.full_name?.split(' ')[0] || undefined,
-            last_name: profile?.full_name?.split(' ').slice(1).join(' ') || undefined,
-          },
-        },
-      };
-
-      console.log('[create-payment-link] Creating one-time checkout:', {
-        order_id: order.id,
-        amount,
-        product: product.name,
-      });
-
-      const checkoutResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
-        method: 'POST',
-        headers: {
-          'Authorization': bepaidAuth,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(checkoutPayload),
-      });
-
-      const checkoutResult = await checkoutResponse.json();
-
-      if (!checkoutResponse.ok || !checkoutResult.checkout?.redirect_url) {
-        console.error('[create-payment-link] bePaid checkout error:', {
-          status: checkoutResponse.status,
-          result: checkoutResult,
-        });
-        // Clean up order
-        await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        return errorResponse(
-          checkoutResult.message || checkoutResult.errors?.base?.[0] || 'bePaid checkout creation failed',
-          500
-        );
-      }
-
-      const redirectUrl = checkoutResult.checkout.redirect_url;
-
-      // Update order meta with checkout token
-      await supabase.from('orders_v2').update({
-        meta: {
-          type: 'admin_payment_link',
-          description: description || null,
-          created_by: user.id,
-          product_name: product.name,
-          tariff_name: tariff.name,
-          bepaid_checkout_token: checkoutResult.checkout.token,
-        },
-      }).eq('id', order.id);
-
-      // Audit log
-      await supabase.from('audit_logs').insert({
-        actor_type: 'admin',
-        actor_user_id: user.id,
-        target_user_id: user_id,
-        action: 'admin.payment_link.created',
-        meta: {
-          payment_type: 'one_time',
-          order_id: order.id,
-          amount: amountByn,
-          product_name: product.name,
-          tariff_name: tariff.name,
-        },
-      });
-
-      return jsonResponse({
-        success: true,
-        redirect_url: redirectUrl,
-        order_id: order.id,
-        order_number: orderNumber,
-        payment_type: 'one_time',
-      });
-
-    } else if (payment_type === 'subscription') {
-      // === SUBSCRIPTION ===
-
-      // Generate order number
-      const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
-
-      // Create pending order
-      const { data: order, error: orderError } = await supabase
-        .from('orders_v2')
-        .insert({
-          order_number: orderNumber,
-          user_id,
-          profile_id: profileId,
-          product_id,
-          tariff_id,
-          offer_id: offer_id || null,
-          base_price: amountByn,
-          final_price: amountByn,
-          paid_amount: 0,
-          currency: 'BYN',
-          status: 'pending',
-          customer_email: customerEmail,
-          meta: {
-            type: 'admin_payment_link_subscription',
-            description: description || null,
-            created_by: user.id,
-            payment_flow: 'provider_managed_checkout',
-          },
-        })
-        .select('id')
-        .single();
-
-      if (orderError) {
-        console.error('[create-payment-link] Order creation error:', orderError);
-        return errorResponse('Failed to create order', 500);
-      }
-
-      const accessDays = tariff.access_days || 30;
-      const intervalDays = 30;
-      const trackingId = `link:order:${order.id}`;
-      const successReturnUrl = `${origin}/purchases?bepaid_sub=success&order=${order.id}`;
-
-      const planTitle = `${product.name} — ${tariff.name}`;
-      const planDescription = `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
-
-      // bePaid Subscriptions API
-      const bepaidPayload = {
-        notification_url: notificationUrl,
-        return_url: successReturnUrl,
-        tracking_id: trackingId,
-        customer: {
-          email: customerEmail,
-          first_name: profile?.full_name?.split(' ')[0] || undefined,
-          last_name: profile?.full_name?.split(' ').slice(1).join(' ') || undefined,
-          ip: '127.0.0.1',
-        },
-        plan: {
-          shop_id: Number(bepaidCreds.shop_id),
-          currency: 'BYN',
-          title: planTitle,
-          description: planDescription,
-          plan: {
-            amount,
-            interval: intervalDays,
-            interval_unit: 'day',
-          },
-        },
-        settings: {
-          language: 'ru',
-        },
-      };
-
-      console.log('[create-payment-link] Creating bePaid subscription:', {
-        order_id: order.id,
-        order_id: order.id,
-        amount,
-      });
-
-      const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
-        method: 'POST',
-        headers: {
-          'Authorization': bepaidAuth,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(bepaidPayload),
-      });
-
-      const bepaidResult = await bepaidResponse.json();
-
-      if (!bepaidResponse.ok || bepaidResult.errors) {
-        console.error('[create-payment-link] bePaid subscription error:', {
-          status: bepaidResponse.status,
-          errors: bepaidResult.errors || bepaidResult.message,
-        });
-        await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        return errorResponse(
-          bepaidResult.message || bepaidResult.errors?.base?.[0] || 'bePaid subscription creation failed',
-          500
-        );
-      }
-
-      const bepaidSubscription = bepaidResult.subscription || bepaidResult;
-      const bepaidSubId = bepaidSubscription.id;
-      const redirectUrl = bepaidSubscription.checkout_url || bepaidSubscription.redirect_url;
-
-      if (!bepaidSubId || !redirectUrl) {
-        console.error('[create-payment-link] No subscription ID or redirect URL in bePaid response');
-        await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-        return errorResponse('bePaid did not return a subscription URL', 500);
-      }
-
-      // Store provider subscription record (subscription_id will be set after payment via grant-access-for-order)
-      await supabase.from('provider_subscriptions').upsert({
-        provider: 'bepaid',
-        provider_subscription_id: String(bepaidSubId),
-        subscription_id: null,
-        user_id,
-        status: 'pending',
-        plan_title: planTitle,
-        plan_description: planDescription,
-        amount: amountByn,
-        currency: 'BYN',
-        interval_days: intervalDays,
-        meta: {
-          tracking_id: trackingId,
-          checkout_url: redirectUrl,
-          created_by_admin: user.id,
-          order_id: order.id,
-        },
-      }, { onConflict: 'provider,provider_subscription_id' });
-
-      // Audit log
-      await supabase.from('audit_logs').insert({
-        actor_type: 'admin',
-        actor_user_id: user.id,
-        target_user_id: user_id,
-        action: 'admin.payment_link.created',
-        meta: {
-          payment_type: 'subscription',
-          order_id: order.id,
-          bepaid_subscription_id: bepaidSubId,
-          amount: amountByn,
-          product_name: product.name,
-          tariff_name: tariff.name,
-        },
-      });
-
-      return jsonResponse({
-        success: true,
-        redirect_url: redirectUrl,
-        order_id: order.id,
-        payment_type: 'subscription',
-      });
-    } else {
-      return errorResponse('Invalid payment_type. Expected: one_time or subscription');
+    if (!result.success) {
+      return errorResponse(result.error, 500);
     }
+
+    return jsonResponse({
+      success: true,
+      redirect_url: result.redirect_url,
+      order_id: result.order_id,
+      order_number: result.order_number,
+      payment_type: result.payment_type,
+    });
 
   } catch (error) {
     console.error('[create-payment-link] Unexpected error:', error);
