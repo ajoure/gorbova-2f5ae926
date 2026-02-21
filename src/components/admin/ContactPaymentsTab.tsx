@@ -342,8 +342,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
             <p>Платежи не найдены</p>
             <p className="text-xs mt-1">
               {linkedCards && linkedCards.length > 0 
-                ? 'Нет платежей по привязанным картам' 
-                : 'Привяжите карту для отображения платежей'}
+                ? 'Нет платежей по добавленным картам' 
+                : 'Нет платежей'}
             </p>
           </CardContent>
         </Card>
