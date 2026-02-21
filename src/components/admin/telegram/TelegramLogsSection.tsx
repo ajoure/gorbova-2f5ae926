@@ -17,7 +17,7 @@ const EVENT_TYPE_OPTIONS = [
   { value: 'subscription_reminder_7d', label: 'Напоминание 7 дней' },
   { value: 'subscription_reminder_3d', label: 'Напоминание 3 дня' },
   { value: 'subscription_reminder_1d', label: 'Напоминание 1 день' },
-  { value: 'subscription_no_card_warning', label: 'Нет карты' },
+  { value: 'subscription_no_card_warning', label: 'Нет карты (legacy)' },
 ];
 
 const STATUS_OPTIONS = [

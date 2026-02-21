@@ -956,7 +956,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         revoke_access: "Доступ отозван",
         delete: "Подписка удалена",
         toggle_auto_renew: result.auto_renew 
-          ? "Автопродление включено" + (result.payment_method_linked ? " (карта привязана)" : " (карта не привязана)")
+          ? "Автопродление включено" + (result.payment_method_linked ? " (карта добавлена)" : " (карта не добавлена)")
           : "Автопродление отключено",
       };
       toast.success(messages[variables.action] || "Действие выполнено");

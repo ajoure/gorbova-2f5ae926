@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Save, ChevronDown, Settings2 } from "lucide-react";
+import { Loader2, Save, ChevronDown, Settings2, Eye, EyeOff } from "lucide-react";
 import {
   PROVIDERS,
   IntegrationInstance,
@@ -46,6 +46,7 @@ export function EditIntegrationDialog({
   const { updateInstance } = useIntegrationMutations();
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState<Record<string, boolean>>({});
 
   const provider = instance ? PROVIDERS.find((p) => p.id === instance.provider) : null;
 
@@ -78,16 +79,34 @@ export function EditIntegrationDialog({
     });
   };
 
+  const togglePasswordVisibility = (key: string) => {
+    setPasswordVisible((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const handleSubmit = async () => {
     if (!instance) return;
 
     const { alias, is_default, ...configFields } = formData;
 
+    // PATCH-MIT: Protect password fields from being overwritten with empty values
+    const safeConfig = { ...configFields };
+    const allFields = [...(provider?.fields || []), ...(provider?.advancedFields || [])];
+    for (const field of allFields) {
+      if (field.type === "password") {
+        const currentValue = String(safeConfig[field.key] || "");
+        const originalValue = String((instance.config as Record<string, unknown>)?.[field.key] || "");
+        if (currentValue === "" && originalValue !== "") {
+          // Don't overwrite existing key with empty
+          safeConfig[field.key] = originalValue;
+        }
+      }
+    }
+
     await updateInstance.mutateAsync({
       id: instance.id,
       alias: String(alias),
       is_default: Boolean(is_default),
-      config: configFields as Record<string, unknown>,
+      config: safeConfig as Record<string, unknown>,
     });
 
     onOpenChange(false);
@@ -166,15 +185,32 @@ export function EditIntegrationDialog({
                     {field.label}
                     {field.required && <span className="text-destructive ml-1">*</span>}
                   </Label>
-                  <Input
-                    id={field.key}
-                    name={`integration_edit_${field.key}`}
-                    type="text"
-                    value={String(formData[field.key] || "")}
-                    onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                    placeholder={field.placeholder}
-                    className={field.type === "password" ? "[&:not(:placeholder-shown)]:[-webkit-text-security:disc]" : ""}
-                  />
+                  <div className="relative">
+                    <Input
+                      id={field.key}
+                      name={`integration_edit_${field.key}`}
+                      type={field.type === "password" && !passwordVisible[field.key] ? "password" : "text"}
+                      value={String(formData[field.key] || "")}
+                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                      placeholder={field.type === "password" ? "••••••••" : field.placeholder}
+                      className={field.type === "password" ? "pr-10" : ""}
+                    />
+                    {field.type === "password" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => togglePasswordVisibility(field.key)}
+                      >
+                        {passwordVisible[field.key] ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </>
               )}
             </div>

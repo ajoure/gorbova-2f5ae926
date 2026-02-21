@@ -51,11 +51,11 @@ export const EVENT_LABELS: Record<string, string> = {
   
   // ===== Напоминания о подписке =====
   SEND_REMINDER: "Напоминание о подписке",
-  SEND_NO_CARD_WARNING: "Предупреждение: нет карты",
+  SEND_NO_CARD_WARNING: "Нет карты (legacy)",
   subscription_reminder_7d: "Напоминание (7 дней)",
   subscription_reminder_3d: "Напоминание (3 дня)",
   subscription_reminder_1d: "Напоминание (1 день)",
-  subscription_no_card_warning: "Предупреждение: нет карты",
+  subscription_no_card_warning: "Нет карты (legacy)",
   
   // ===== Сообщения =====
   ADMIN_CHAT_MESSAGE: "Сообщение от администратора",
