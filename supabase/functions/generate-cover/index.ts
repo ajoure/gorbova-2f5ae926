@@ -55,7 +55,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { title, description, moduleId } = body;
+    const { title, description, moduleId, previousCoverUrl } = body;
 
     if (!title) {
       return new Response(JSON.stringify({ error: "Title is required" }), { 
@@ -254,6 +254,24 @@ CRITICAL REQUIREMENTS:
     const { data: urlData } = supabase.storage
       .from("training-assets")
       .getPublicUrl(fileName);
+
+    // Cleanup previous cover if provided
+    if (previousCoverUrl && typeof previousCoverUrl === "string") {
+      const coverPathMatch = previousCoverUrl.match(/\/storage\/v1\/object\/public\/training-assets\/(.+)/);
+      if (coverPathMatch) {
+        const oldPath = coverPathMatch[1];
+        const coverPrefixes = ["ai-covers/", "training-covers/", "lesson-covers/"];
+        if (coverPrefixes.some(p => oldPath.startsWith(p))) {
+          const adminClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          const { error: delErr } = await adminClient.storage.from("training-assets").remove([oldPath]);
+          if (delErr) {
+            console.warn("Failed to cleanup old cover:", oldPath, delErr.message);
+          } else {
+            console.log("Cleaned up old cover:", oldPath);
+          }
+        }
+      }
+    }
 
     console.log("Cover generated and uploaded:", urlData.publicUrl);
 
