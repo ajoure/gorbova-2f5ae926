@@ -34,6 +34,14 @@ export interface SupportTicket {
   };
 }
 
+export interface TicketAttachment {
+  bucket: string;
+  path: string;
+  file_name: string;
+  size: number;
+  mime: string;
+}
+
 export interface TicketMessage {
   id: string;
   ticket_id: string;
@@ -41,7 +49,7 @@ export interface TicketMessage {
   author_type: "user" | "support" | "system";
   author_name: string | null;
   message: string;
-  attachments: string[];
+  attachments: (string | TicketAttachment)[];
   is_internal: boolean;
   is_read: boolean;
   created_at: string;
@@ -56,7 +64,7 @@ export interface CreateTicketData {
 export interface CreateMessageData {
   ticket_id: string;
   message: string;
-  attachments?: string[];
+  attachments?: TicketAttachment[];
   is_internal?: boolean;
   author_type?: "user" | "support" | "system";
 }
@@ -378,7 +386,7 @@ export function useSendMessage() {
           author_type: data.author_type || "user",
           author_name: profile?.full_name,
           message: data.message,
-          attachments: data.attachments || [],
+          attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
           is_internal: data.is_internal || false,
         })
         .select()

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, Paperclip, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -7,8 +7,11 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TicketMessage } from "./TicketMessage";
 import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
+import type { TicketAttachment } from "@/hooks/useTickets";
 import { useTicketReactions, useToggleReaction } from "@/hooks/useTicketReactions";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface TicketChatProps {
   ticketId: string;
@@ -19,12 +22,19 @@ interface TicketChatProps {
   onBridgeMessage?: (ticketMessageId: string) => void;
 }
 
+// match storage bucket limit for ticket-attachments
+const MAX_TICKET_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
 export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, onBridgeMessage }: TicketChatProps) {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [message, setMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
   const [sendToTelegram, setSendToTelegram] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: messages, isLoading } = useTicketMessages(ticketId, isAdmin);
 
@@ -62,14 +72,71 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   // Show TG checkbox only for admin when user has telegram and bridge is on
   const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
 
+  // Auto-enable sendToTelegram when bridge is available
+  useEffect(() => {
+    if (canBridgeToTelegram) {
+      setSendToTelegram(true);
+    }
+  }, [canBridgeToTelegram]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_TICKET_ATTACHMENT_BYTES) {
+      toast({
+        title: "Файл слишком большой",
+        description: `Максимальный размер: ${MAX_TICKET_ATTACHMENT_BYTES / 1024 / 1024} МБ`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setAttachedFile(file);
+    // Reset input so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleSend = async () => {
-    if (!message.trim()) return;
+    if (!message.trim() && !attachedFile) return;
+
+    let attachments: TicketAttachment[] = [];
+
+    // Upload file if attached
+    if (attachedFile) {
+      setIsUploading(true);
+      try {
+        const sanitizedName = attachedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `${ticketId}/${crypto.randomUUID()}-${sanitizedName}`;
+        const { error: uploadError } = await supabase.storage
+          .from("ticket-attachments")
+          .upload(path, attachedFile);
+
+        if (uploadError) throw uploadError;
+
+        attachments = [{
+          bucket: "ticket-attachments",
+          path,
+          file_name: attachedFile.name,
+          size: attachedFile.size,
+          mime: attachedFile.type || "application/octet-stream",
+        }];
+      } catch (err: any) {
+        toast({
+          title: "Ошибка загрузки файла",
+          description: err?.message || "Не удалось загрузить файл",
+          variant: "destructive",
+        });
+        setIsUploading(false);
+        return;
+      }
+      setIsUploading(false);
+    }
 
     const result = await sendMessageMutation.mutateAsync({
       ticket_id: ticketId,
       message: message.trim(),
       author_type: isAdmin ? "support" : "user",
       is_internal: isAdmin ? isInternal : false,
+      attachments: attachments.length > 0 ? attachments : undefined,
     });
 
     // Bridge to Telegram if checkbox checked & not internal
@@ -78,8 +145,8 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     }
 
     setMessage("");
+    setAttachedFile(null);
     setIsInternal(false);
-    setSendToTelegram(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -149,21 +216,65 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
               )}
             </div>
           )}
+          {/* Attached file preview */}
+          {attachedFile && (
+            <div className="flex items-center gap-2 mb-2 p-2 rounded-md bg-muted/50 border border-border">
+              {attachedFile.type.startsWith("image/") ? (
+                <img
+                  src={URL.createObjectURL(attachedFile)}
+                  alt={attachedFile.name}
+                  className="h-10 w-10 rounded object-cover"
+                />
+              ) : (
+                <Paperclip className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span className="text-xs truncate flex-1">{attachedFile.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {(attachedFile.size / 1024).toFixed(0)} КБ
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => setAttachedFile(null)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          )}
           <div className="flex gap-2">
-            <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isInternal ? "Внутренняя заметка..." : "Введите сообщение..."}
-              className="min-h-[80px] resize-none"
-            />
+            <div className="relative flex-1">
+              <Textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={isInternal ? "Внутренняя заметка..." : "Введите сообщение..."}
+                className="min-h-[80px] resize-none pr-10"
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xlsx,.zip,.rar"
+                onChange={handleFileSelect}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute bottom-2 right-2 h-7 w-7"
+                onClick={() => fileInputRef.current?.click()}
+                type="button"
+              >
+                <Paperclip className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
             <Button
               onClick={handleSend}
-              disabled={!message.trim() || sendMessageMutation.isPending}
+              disabled={(!message.trim() && !attachedFile) || sendMessageMutation.isPending || isUploading}
               size="icon"
               className="h-[80px] w-12"
             >
-              {sendMessageMutation.isPending ? (
+              {(sendMessageMutation.isPending || isUploading) ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />

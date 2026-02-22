@@ -1,6 +1,6 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { User, Headset, Bot, Lock, SmilePlus } from "lucide-react";
+import { User, Headset, Bot, Lock, SmilePlus, FileIcon, Download } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -10,10 +10,72 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { TicketMessage as TicketMessageType } from "@/hooks/useTickets";
+import type { TicketMessage as TicketMessageType, TicketAttachment } from "@/hooks/useTickets";
 import type { ReactionGroup } from "@/hooks/useTicketReactions";
+import { useSignedAttachments } from "@/hooks/useSignedAttachments";
 
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "👎"];
+
+function AttachmentsList({ attachments }: { attachments: (string | TicketAttachment)[] | null }) {
+  const { signedUrls, getKey } = useSignedAttachments(attachments);
+
+  if (!attachments || attachments.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {attachments.map((att, index) => {
+        // Backward compat: old string format
+        if (typeof att === "string") {
+          return (
+            <a
+              key={index}
+              href={att}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline"
+            >
+              📎 Вложение {index + 1}
+            </a>
+          );
+        }
+
+        // New object format
+        const key = getKey(att);
+        const signed = signedUrls.get(key);
+        const isImage = att.mime?.startsWith("image/");
+
+        if (isImage && signed?.url) {
+          return (
+            <a key={key} href={signed.url} target="_blank" rel="noopener noreferrer" className="block">
+              <img
+                src={signed.url}
+                alt={att.file_name}
+                className="max-w-[200px] max-h-[150px] rounded-md border border-border object-cover"
+              />
+            </a>
+          );
+        }
+
+        return (
+          <a
+            key={key}
+            href={signed?.url || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md border border-border bg-muted/50 hover:bg-accent transition-colors",
+              !signed?.url && "opacity-50 pointer-events-none"
+            )}
+          >
+            <FileIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="truncate max-w-[150px]">{att.file_name}</span>
+            <Download className="h-3 w-3 text-muted-foreground" />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
 
 interface TicketMessageProps {
   message: TicketMessageType;
@@ -148,21 +210,7 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
           </div>
         )}
 
-        {message.attachments && message.attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-2">
-            {message.attachments.map((url, index) => (
-              <a
-                key={index}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-primary hover:underline"
-              >
-                📎 Вложение {index + 1}
-              </a>
-            ))}
-          </div>
-        )}
+        <AttachmentsList attachments={message.attachments} />
       </div>
     </div>
   );

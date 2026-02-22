@@ -13,7 +13,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -23,7 +23,9 @@ interface ChatAction {
   db_message_id?: string;
   message_ids?: string[]; // For get_media_urls action
   ticket_id?: string; // For bridge_ticket_message
-  ticket_message_id?: string; // For bridge_ticket_message
+  ticket_message_id?: string; // For bridge_ticket_message / sync_reaction
+  emoji?: string; // For sync_reaction
+  remove?: boolean; // For sync_reaction
 }
 
 async function fetchAndSaveTelegramPhoto(
@@ -207,6 +209,44 @@ async function telegramSendFile(
     body: formData,
   });
 
+  return response.json();
+}
+
+/**
+ * Send a file to Telegram from raw bytes (Uint8Array).
+ * Uses Blob/File + FormData, no base64 layer.
+ * fieldName depends on type: photo/video/audio/document.
+ */
+async function telegramSendFileFromBytes(
+  botToken: string,
+  chatId: number,
+  bytes: Uint8Array,
+  fileName: string,
+  fileType: "photo" | "video" | "audio" | "document",
+  mimeType: string,
+  caption?: string
+) {
+  const blob = new Blob([bytes], { type: mimeType });
+  const file = new File([blob], fileName, { type: mimeType });
+
+  let method: string;
+  let fieldName: string;
+  switch (fileType) {
+    case "photo": method = "sendPhoto"; fieldName = "photo"; break;
+    case "video": method = "sendVideo"; fieldName = "video"; break;
+    case "audio": method = "sendAudio"; fieldName = "audio"; break;
+    default: method = "sendDocument"; fieldName = "document";
+  }
+
+  const formData = new FormData();
+  formData.append("chat_id", String(chatId));
+  formData.append(fieldName, file);
+  if (caption) formData.append("caption", caption);
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: "POST",
+    body: formData,
+  });
   return response.json();
 }
 
@@ -1305,10 +1345,10 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get the ticket message
+        // Get the ticket message (include attachments)
         const { data: ticketMsg, error: msgError } = await supabase
           .from("ticket_messages")
-          .select("id, message, is_internal, author_type")
+          .select("id, message, is_internal, author_type, attachments")
           .eq("id", ticket_message_id)
           .single();
 
@@ -1389,13 +1429,67 @@ Deno.serve(async (req) => {
 
         // Format the message for Telegram
         const prefix = ticketMsg.author_type === "support" ? "💬 <b>Поддержка:</b>\n" : "";
-        const tgText = `${prefix}${ticketMsg.message}`;
+        const tgText = ticketMsg.message ? `${prefix}${ticketMsg.message}` : "";
 
-        const sendResult = await telegramRequest(botToken, "sendMessage", {
-          chat_id: tgUserId,
-          text: tgText,
-          parse_mode: "HTML",
-        });
+        // Check if message has object-format attachments
+        const attachments = ticketMsg.attachments;
+        const hasObjectAttachments = Array.isArray(attachments) && attachments.length > 0 && typeof attachments[0] === "object" && attachments[0]?.bucket;
+
+        let sendResult: any;
+
+        if (hasObjectAttachments) {
+          // Send media file from Storage
+          const att = attachments[0] as { bucket: string; path: string; file_name: string; mime: string };
+          try {
+            const { data: fileData, error: downloadError } = await supabase.storage
+              .from(att.bucket)
+              .download(att.path);
+
+            if (downloadError || !fileData) {
+              console.error("[bridge] Failed to download attachment:", downloadError);
+              // Fallback to text-only
+              sendResult = await telegramRequest(botToken, "sendMessage", {
+                chat_id: tgUserId,
+                text: tgText || "(вложение недоступно)",
+                parse_mode: "HTML",
+              });
+            } else {
+              const arrayBuffer = await fileData.arrayBuffer();
+              const bytes = new Uint8Array(arrayBuffer);
+
+              // Determine file type from mime
+              let fileType: "photo" | "video" | "audio" | "document" = "document";
+              if (att.mime?.startsWith("image/")) fileType = "photo";
+              else if (att.mime?.startsWith("video/")) fileType = "video";
+              else if (att.mime?.startsWith("audio/")) fileType = "audio";
+
+              sendResult = await telegramSendFileFromBytes(
+                botToken,
+                tgUserId,
+                bytes,
+                att.file_name,
+                fileType,
+                att.mime || "application/octet-stream",
+                tgText || undefined
+              );
+            }
+          } catch (mediaErr) {
+            console.error("[bridge] Media send error:", mediaErr);
+            // Fallback to text
+            sendResult = await telegramRequest(botToken, "sendMessage", {
+              chat_id: tgUserId,
+              text: tgText || "(ошибка отправки вложения)",
+              parse_mode: "HTML",
+            });
+          }
+        } else {
+          // Text-only message
+          sendResult = await telegramRequest(botToken, "sendMessage", {
+            chat_id: tgUserId,
+            text: tgText,
+            parse_mode: "HTML",
+          });
+        }
 
         if (!sendResult.ok) {
           return new Response(JSON.stringify({ error: sendResult.description, success: false }), {
@@ -1423,12 +1517,120 @@ Deno.serve(async (req) => {
             ticket_message_id,
             telegram_user_id: tgUserId,
             telegram_message_id: sendResult.result?.message_id,
+            has_media: hasObjectAttachments,
           },
         });
 
         return new Response(JSON.stringify({ success: true, telegram_message_id: sendResult.result?.message_id }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // ==========================================
+      // SYNC EMOJI REACTION TO TELEGRAM
+      // ==========================================
+      case "sync_reaction": {
+        const { ticket_message_id, emoji, remove: removeReaction } = payload;
+
+        if (!ticket_message_id || !emoji) {
+          return new Response(JSON.stringify({ ok: false, reason: "ticket_message_id and emoji required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Find mapping in ticket_telegram_sync
+        const { data: syncRecord } = await supabase
+          .from("ticket_telegram_sync")
+          .select("telegram_message_id, ticket_id")
+          .eq("ticket_message_id", ticket_message_id)
+          .eq("direction", "to_telegram")
+          .maybeSingle();
+
+        if (!syncRecord) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_tg_mapping" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get chat_id from ticket's telegram_user_id
+        const { data: syncTicket } = await supabase
+          .from("support_tickets")
+          .select("telegram_user_id, profile_id")
+          .eq("id", syncRecord.ticket_id)
+          .single();
+
+        if (!syncTicket?.telegram_user_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_chat_id" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let reactionBotToken: string | null = null;
+        if (syncTicket.profile_id) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("telegram_link_bot_id")
+            .eq("id", syncTicket.profile_id)
+            .single();
+          if (prof?.telegram_link_bot_id) {
+            const { data: bot } = await supabase
+              .from("telegram_bots")
+              .select("bot_token_encrypted")
+              .eq("id", prof.telegram_link_bot_id)
+              .single();
+            reactionBotToken = bot?.bot_token_encrypted ?? null;
+          }
+        }
+        if (!reactionBotToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          reactionBotToken = anyBot?.bot_token_encrypted ?? null;
+        }
+
+        if (!reactionBotToken) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_bot" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Call Telegram setMessageReaction
+        const reactionPayload = {
+          chat_id: syncTicket.telegram_user_id,
+          message_id: syncRecord.telegram_message_id,
+          reaction: removeReaction ? [] : [{ type: "emoji", emoji }],
+        };
+
+        try {
+          const reactionResult = await telegramRequest(reactionBotToken, "setMessageReaction", reactionPayload);
+
+          // STOP-guard: if Telegram doesn't support this method
+          if (!reactionResult.ok) {
+            const desc = reactionResult.description?.toLowerCase() || "";
+            if (desc.includes("method not found") || desc.includes("bad request") || reactionResult.error_code === 400) {
+              return new Response(JSON.stringify({ ok: false, reason: "not_supported" }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+            return new Response(JSON.stringify({ ok: false, reason: reactionResult.description }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (reactionErr) {
+          console.error("[sync_reaction] Error:", reactionErr);
+          return new Response(JSON.stringify({ ok: false, reason: "not_supported" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
       }
 
       default:

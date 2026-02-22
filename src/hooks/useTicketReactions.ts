@@ -90,6 +90,8 @@ export function useToggleReaction(ticketId: string) {
         .eq("emoji", emoji)
         .maybeSingle();
 
+      const wasRemoved = !!existing;
+
       if (existing) {
         // Remove
         const { error } = await supabase
@@ -104,9 +106,33 @@ export function useToggleReaction(ticketId: string) {
           .insert({ message_id: messageId, user_id: user.id, emoji });
         if (error) throw error;
       }
+
+      return { messageId, emoji, wasRemoved };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] });
+
+      // Fire-and-forget: sync reaction to Telegram if mapping exists
+      if (result) {
+        supabase
+          .from("ticket_telegram_sync")
+          .select("telegram_message_id")
+          .eq("ticket_message_id", result.messageId)
+          .eq("direction", "to_telegram")
+          .maybeSingle()
+          .then(({ data: syncRecord }) => {
+            if (syncRecord) {
+              supabase.functions.invoke("telegram-admin-chat", {
+                body: {
+                  action: "sync_reaction",
+                  ticket_message_id: result.messageId,
+                  emoji: result.emoji,
+                  remove: result.wasRemoved,
+                },
+              }).catch(() => { /* fire-and-forget */ });
+            }
+          });
+      }
     },
   });
 }
