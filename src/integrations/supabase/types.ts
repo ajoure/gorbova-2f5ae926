@@ -8647,6 +8647,41 @@ export type Database = {
           },
         ]
       }
+      ticket_training_context: {
+        Row: {
+          block_id: string | null
+          created_at: string | null
+          id: string
+          lesson_id: string
+          module_id: string | null
+          ticket_id: string
+        }
+        Insert: {
+          block_id?: string | null
+          created_at?: string | null
+          id?: string
+          lesson_id: string
+          module_id?: string | null
+          ticket_id: string
+        }
+        Update: {
+          block_id?: string | null
+          created_at?: string | null
+          id?: string
+          lesson_id?: string
+          module_id?: string | null
+          ticket_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_training_context_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: true
+            referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       training_lessons: {
         Row: {
           audio_url: string | null
@@ -9661,6 +9696,17 @@ export type Database = {
           grant_samples: string[]
           grants_count: number
         }[]
+      }
+      create_feedback_ticket: {
+        Args: {
+          p_block_id?: string
+          p_description?: string
+          p_lesson_id: string
+          p_module_id?: string
+          p_student_user_id: string
+          p_subject?: string
+        }
+        Returns: Json
       }
       create_support_ticket: {
         Args: { p_category?: string; p_description: string; p_subject: string }
