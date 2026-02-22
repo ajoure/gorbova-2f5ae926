@@ -40,7 +40,7 @@ export interface TicketAttachment {
   file_name: string;
   size: number;
   mime: string;
-  kind?: "photo" | "video" | "video_note" | "audio" | "document";
+  kind?: "photo" | "video" | "video_note" | "audio" | "voice" | "document";
 }
 
 export interface TicketMessage {

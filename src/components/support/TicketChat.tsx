@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Send, Loader2, Plus, Image as ImageIcon, Video, Music, Circle, FileText, UserCircle } from "lucide-react";
+import { Send, Loader2, Plus, Image as ImageIcon, Video, Music, Circle, FileText, UserCircle, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,9 +27,10 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { OutboundMediaPreview } from "@/components/admin/chat/OutboundMediaPreview";
 import { VideoNoteRecorder } from "@/components/admin/VideoNoteRecorder";
+import { VoiceRecorder } from "@/components/support/VoiceRecorder";
 import { useQuery } from "@tanstack/react-query";
 
-type MediaFileType = "photo" | "video" | "audio" | "video_note" | "document";
+type MediaFileType = "photo" | "video" | "audio" | "video_note" | "voice" | "document";
 
 interface TicketChatProps {
   ticketId: string;
@@ -54,6 +55,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [selectedFileType, setSelectedFileType] = useState<MediaFileType | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [sendAsUserId, setSendAsUserId] = useState<string>("self");
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -193,6 +195,13 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     setShowVideoNoteRecorder(false);
   };
 
+  const handleVoiceRecorded = (file: File) => {
+    setAttachedFile(file);
+    setSelectedFileType("voice");
+    setSendToTelegram(false); // voice не отправляется в TG
+    setShowVoiceRecorder(false);
+  };
+
   const handleRemoveFile = () => {
     setAttachedFile(null);
     setSelectedFileType(null);
@@ -250,7 +259,9 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     });
 
     // Bridge to Telegram if checkbox checked & not internal
-    if (canBridgeToTelegram && sendToTelegram && !isInternal && result?.id && onBridgeMessage) {
+    // Voice не бриджится в Telegram
+    const isVoice = selectedFileType === "voice";
+    if (!isVoice && canBridgeToTelegram && sendToTelegram && !isInternal && result?.id && onBridgeMessage) {
       onBridgeMessage(result.id);
     }
 
@@ -258,6 +269,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     setAttachedFile(null);
     setSelectedFileType(null);
     setIsInternal(false);
+    setShowVoiceRecorder(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -332,7 +344,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                   Внутренняя заметка
                 </Label>
               </div>
-              {canBridgeToTelegram && !isInternal && (
+              {canBridgeToTelegram && !isInternal && selectedFileType !== "voice" && (
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="send-telegram"
@@ -392,6 +404,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                   <FileText className="h-4 w-4 mr-2" />
                   Документ
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowVoiceRecorder(true)}>
+                  <Mic className="h-4 w-4 mr-2" />
+                  Записать голосовое
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -442,6 +458,13 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
         open={showVideoNoteRecorder}
         onOpenChange={setShowVideoNoteRecorder}
         onRecorded={handleVideoNoteRecorded}
+      />
+
+      {/* Voice Recorder */}
+      <VoiceRecorder
+        open={showVoiceRecorder}
+        onOpenChange={setShowVoiceRecorder}
+        onRecorded={handleVoiceRecorded}
       />
     </div>
   );
