@@ -8,7 +8,11 @@ const corsHeaders = {
 };
 
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "ai-covers/", "training-covers/", "lesson-covers/"];
+const LESSON_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
 const MAX_PATHS_PER_BATCH = 50;
+
+/** Паттерн для извлечения storagePath из publicUrl Supabase Storage */
+const PUBLIC_URL_PATTERN = /\/storage\/v1\/object\/public\/training-assets\/(.+)/;
 
 interface DeleteRequest {
   mode: "dry_run" | "execute";
@@ -17,33 +21,112 @@ interface DeleteRequest {
   entity?: { type: string; id: string };
 }
 
-function isPathAllowed(path: string, lessonId?: string): boolean {
+// ─── Path validation (prefix + traversal only, no ownership) ───
+
+function isPathAllowed(path: string): boolean {
   if (!path || typeof path !== "string") return false;
   if (path.includes("..") || path.includes("//")) return false;
   if (path.startsWith("/")) return false;
+  return ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
 
-  const prefixOk = ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
-  if (!prefixOk) return false;
+// ─── Normalize value to storagePath ───
+// Handles: raw storagePath, public URL, signed URL
 
-  // Ownership guard для lesson-* путей
-  if (lessonId) {
-    const lessonPrefixes = ["lesson-audio/", "lesson-files/", "lesson-images/"];
-    if (lessonPrefixes.some((p) => path.startsWith(p))) {
-      const ownedOk = lessonPrefixes.some((prefix) =>
-        path.startsWith(`${prefix}${lessonId}/`)
-      );
-      if (!ownedOk) return false;
+function normalizeToStoragePath(value: unknown): string | null {
+  if (!value || typeof value !== "string") return null;
+  // Already a valid storage path
+  if (ALLOWED_PREFIXES.some((p) => value.startsWith(p))) {
+    if (!value.includes("..") && !value.includes("//")) return value;
+  }
+  // Public URL → extract path
+  const match = value.match(PUBLIC_URL_PATTERN);
+  if (match) {
+    const path = match[1];
+    if (ALLOWED_PREFIXES.some((p) => path.startsWith(p)) && !path.includes("..") && !path.includes("//")) {
+      return path;
+    }
+  }
+  return null;
+}
+
+// ─── Recursive path extractor from JSON (server-side version) ───
+
+function extractPathsFromJson(obj: unknown): Set<string> {
+  const found = new Set<string>();
+
+  function walk(node: unknown): void {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+
+    // Direct path fields
+    const sp = normalizeToStoragePath(record.storagePath);
+    if (sp) found.add(sp);
+    const sp2 = normalizeToStoragePath(record.storage_path);
+    if (sp2) found.add(sp2);
+    // URL fields (audio/file blocks store url)
+    const urlPath = normalizeToStoragePath(record.url);
+    if (urlPath) found.add(urlPath);
+
+    // Recurse into all values
+    for (const key of Object.keys(record)) {
+      const val = record[key];
+      if (val && typeof val === "object") walk(val);
     }
   }
 
-  // Structure guard для student-uploads: student-uploads/{userId}/{lessonId}/{blockId}/{file}
-  if (path.startsWith("student-uploads/")) {
-    const segments = path.split("/");
-    if (segments.length < 5 || segments.some(s => s === "")) return false;
+  walk(obj);
+  return found;
+}
+
+// ─── Build DB-allowed set for a lesson ───
+
+async function buildDbAllowedSet(
+  adminClient: ReturnType<typeof createClient>,
+  lessonId: string
+): Promise<Set<string>> {
+  const allowed = new Set<string>();
+
+  // A) lesson_blocks.content
+  const { data: blocks, error: bErr } = await adminClient
+    .from("lesson_blocks")
+    .select("content")
+    .eq("lesson_id", lessonId);
+
+  if (bErr) {
+    console.error("[buildDbAllowedSet] lesson_blocks error:", bErr.message);
+  } else if (blocks) {
+    for (const block of blocks) {
+      for (const p of extractPathsFromJson(block.content)) {
+        if (ALLOWED_PREFIXES.some((pfx) => p.startsWith(pfx))) allowed.add(p);
+      }
+    }
   }
 
-  return true;
+  // B) user_lesson_progress.response (student uploads)
+  const { data: progress, error: pErr } = await adminClient
+    .from("user_lesson_progress")
+    .select("response")
+    .eq("lesson_id", lessonId);
+
+  if (pErr) {
+    console.error("[buildDbAllowedSet] user_lesson_progress error:", pErr.message);
+  } else if (progress) {
+    for (const rec of progress) {
+      for (const p of extractPathsFromJson(rec.response)) {
+        if (ALLOWED_PREFIXES.some((pfx) => p.startsWith(pfx))) allowed.add(p);
+      }
+    }
+  }
+
+  return allowed;
 }
+
+// ─── Main handler ───
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -126,25 +209,52 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Фильтрация путей
+    // ─── DB-ownership guard: build allowed set from DB for lesson entities ───
+    let dbAllowedSet: Set<string> | null = null;
     const lessonId = entity?.type === "lesson" ? entity?.id : undefined;
+
+    if (lessonId) {
+      dbAllowedSet = await buildDbAllowedSet(adminClient, lessonId);
+    }
+
+    // ─── Фильтрация путей ───
     const allowedPaths: string[] = [];
     const blockedPaths: string[] = [];
 
     for (const path of paths) {
-      if (!isPathAllowed(path, lessonId)) {
+      // Basic guards: prefix + traversal
+      if (!isPathAllowed(path)) {
         blockedPaths.push(path);
         continue;
       }
+
+      // DB-ownership guard for lesson-* paths
+      if (dbAllowedSet && LESSON_PREFIXES.some((p) => path.startsWith(p))) {
+        if (!dbAllowedSet.has(path)) {
+          blockedPaths.push(path);
+          continue;
+        }
+      }
+
       // Owner/admin check для student-uploads
       if (path.startsWith("student-uploads/")) {
         const segments = path.split("/");
+        if (segments.length < 5 || segments.some(s => s === "")) {
+          blockedPaths.push(path);
+          continue;
+        }
         const pathUserId = segments[1];
         if (user.id !== pathUserId && !isAdminOrSuper) {
           blockedPaths.push(path);
           continue;
         }
+        // For lesson entities, also check DB-ownership for student-uploads
+        if (dbAllowedSet && !dbAllowedSet.has(path)) {
+          blockedPaths.push(path);
+          continue;
+        }
       }
+
       allowedPaths.push(path);
     }
 

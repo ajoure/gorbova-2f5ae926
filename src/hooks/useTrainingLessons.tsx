@@ -345,6 +345,44 @@ export function useTrainingLessons(moduleId?: string) {
     }
   };
 
+  const reorderLessons = async (orderedIds: string[]): Promise<boolean> => {
+    if (!moduleId) return false;
+
+    // Optimistic update
+    setLessons(prev => {
+      const map = new Map(prev.map(l => [l.id, l]));
+      return orderedIds
+        .map((id, i) => {
+          const item = map.get(id);
+          return item ? { ...item, sort_order: i * 10 } : null;
+        })
+        .filter(Boolean) as TrainingLesson[];
+    });
+
+    try {
+      const updates = orderedIds.map((id, index) =>
+        supabase.from("training_lessons")
+          .update({ sort_order: index * 10 })
+          .eq("id", id)
+          .eq("module_id", moduleId)
+      );
+      const results = await Promise.all(updates);
+      const failed = results.filter(r => r.error);
+      if (failed.length > 0) {
+        console.error("[reorderLessons] Partial failure:", failed.map(r => r.error));
+        toast.error("Ошибка сохранения порядка уроков");
+        await fetchLessons();
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error("[reorderLessons] Error:", error);
+      toast.error("Ошибка сохранения порядка");
+      await fetchLessons();
+      return false;
+    }
+  };
+
   return {
     lessons,
     loading,
@@ -352,6 +390,7 @@ export function useTrainingLessons(moduleId?: string) {
     createLesson,
     updateLesson,
     deleteLesson,
+    reorderLessons,
     markCompleted,
     markIncomplete,
     addAttachment,
