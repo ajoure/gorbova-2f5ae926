@@ -11,8 +11,12 @@ const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "s
 const LESSON_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
 const MAX_PATHS_PER_BATCH = 50;
 
-/** Паттерн для извлечения storagePath из publicUrl Supabase Storage */
-const PUBLIC_URL_PATTERN = /\/storage\/v1\/object\/public\/training-assets\/(.+)/;
+/** Паттерны для извлечения storagePath из Supabase Storage URL (public, signed, raw) */
+const STORAGE_URL_PATTERNS = [
+  /\/storage\/v1\/object\/public\/training-assets\/(.+)/,
+  /\/storage\/v1\/object\/sign\/training-assets\/([^?]+)/,
+  /\/storage\/v1\/object\/training-assets\/(.+)/,
+];
 
 interface DeleteRequest {
   mode: "dry_run" | "execute";
@@ -35,16 +39,26 @@ function isPathAllowed(path: string): boolean {
 
 function normalizeToStoragePath(value: unknown): string | null {
   if (!value || typeof value !== "string") return null;
+  const trimmed = value.startsWith("/") ? value.slice(1) : value;
   // Already a valid storage path
-  if (ALLOWED_PREFIXES.some((p) => value.startsWith(p))) {
-    if (!value.includes("..") && !value.includes("//")) return value;
+  if (ALLOWED_PREFIXES.some((p) => trimmed.startsWith(p))) {
+    if (!trimmed.includes("..") && !trimmed.includes("//")) return trimmed;
   }
-  // Public URL → extract path
-  const match = value.match(PUBLIC_URL_PATTERN);
-  if (match) {
-    const path = match[1];
-    if (ALLOWED_PREFIXES.some((p) => path.startsWith(p)) && !path.includes("..") && !path.includes("//")) {
-      return path;
+  // Try all URL patterns
+  for (const pattern of STORAGE_URL_PATTERNS) {
+    const match = value.match(pattern);
+    if (match) {
+      try {
+        const path = decodeURIComponent(match[1]);
+        if (ALLOWED_PREFIXES.some((p) => path.startsWith(p)) && !path.includes("..") && !path.includes("//")) {
+          return path;
+        }
+      } catch {
+        const path = match[1];
+        if (ALLOWED_PREFIXES.some((p) => path.startsWith(p)) && !path.includes("..") && !path.includes("//")) {
+          return path;
+        }
+      }
     }
   }
   return null;
@@ -221,17 +235,20 @@ Deno.serve(async (req: Request) => {
     const allowedPaths: string[] = [];
     const blockedPaths: string[] = [];
 
-    for (const path of paths) {
-      // Basic guards: prefix + traversal
+    for (const rawPath of paths) {
+      // Нормализуем путь перед всеми проверками
+      const path = normalizeToStoragePath(rawPath) ?? rawPath;
+
+      // Basic guards: prefix + traversal (только по нормализованному)
       if (!isPathAllowed(path)) {
-        blockedPaths.push(path);
+        blockedPaths.push(rawPath);
         continue;
       }
 
       // DB-ownership guard for lesson-* paths
       if (dbAllowedSet && LESSON_PREFIXES.some((p) => path.startsWith(p))) {
         if (!dbAllowedSet.has(path)) {
-          blockedPaths.push(path);
+          blockedPaths.push(rawPath);
           continue;
         }
       }
@@ -240,22 +257,22 @@ Deno.serve(async (req: Request) => {
       if (path.startsWith("student-uploads/")) {
         const segments = path.split("/");
         if (segments.length < 5 || segments.some(s => s === "")) {
-          blockedPaths.push(path);
+          blockedPaths.push(rawPath);
           continue;
         }
         const pathUserId = segments[1];
         if (user.id !== pathUserId && !isAdminOrSuper) {
-          blockedPaths.push(path);
+          blockedPaths.push(rawPath);
           continue;
         }
         // For lesson entities, also check DB-ownership for student-uploads
         if (dbAllowedSet && !dbAllowedSet.has(path)) {
-          blockedPaths.push(path);
+          blockedPaths.push(rawPath);
           continue;
         }
       }
 
-      allowedPaths.push(path);
+      allowedPaths.push(path); // нормализованный путь для remove()
     }
 
     if (mode === "dry_run") {

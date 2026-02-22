@@ -9,6 +9,7 @@ import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { KvestLessonView } from "@/components/lesson/KvestLessonView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -432,7 +433,10 @@ export default function LibraryLesson() {
                     rel="noopener noreferrer"
                     className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted transition-colors"
                   >
-                    <FileText className="h-5 w-5 text-muted-foreground" />
+                    {(() => {
+                      const icon = getFileTypeIcon(pickIconHint(attachment.file_name, null, attachment.file_url), { colored: true });
+                      return <icon.Icon className={`h-5 w-5 shrink-0 ${icon.colorClass}`} />;
+                    })()}
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate">{attachment.file_name}</p>
                       {attachment.file_size && (
