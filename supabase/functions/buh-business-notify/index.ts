@@ -332,34 +332,55 @@ serve(async (req) => {
         }
       }
     } else if (notifyType === "dry_run") {
-      // Just return counts without sending
-      const { data: hasCard } = await supabase.rpc("exec_sql", {
-        sql: `
-          SELECT COUNT(*) as cnt FROM course_preregistrations cp
-          JOIN profiles p ON p.user_id = cp.user_id
-          WHERE cp.product_code = 'buh_business'
-            AND cp.status IN ('new', 'confirmed', 'contacted')
-            AND EXISTS (SELECT 1 FROM payment_methods pm WHERE pm.user_id = cp.user_id AND pm.status = 'active')
-            AND NOT EXISTS (SELECT 1 FROM orders_v2 o WHERE o.product_id = '${productId}' AND o.status = 'paid' AND o.user_id = cp.user_id)
-        `,
-      });
+      // Just return counts without sending — safe query builder, no exec_sql
+      const { data: allPreregs } = await supabase
+        .from("course_preregistrations")
+        .select("id, user_id")
+        .eq("product_code", productCode)
+        .in("status", ["new", "confirmed", "contacted"])
+        .not("user_id", "is", null);
 
-      const { data: noCard } = await supabase.rpc("exec_sql", {
-        sql: `
-          SELECT COUNT(DISTINCT cp.user_id) as cnt FROM course_preregistrations cp
-          JOIN profiles p ON p.user_id = cp.user_id
-          WHERE cp.product_code = 'buh_business'
-            AND cp.status IN ('new', 'confirmed', 'contacted')
-            AND NOT EXISTS (SELECT 1 FROM payment_methods pm WHERE pm.user_id = cp.user_id AND pm.status = 'active')
-            AND NOT EXISTS (SELECT 1 FROM orders_v2 o WHERE o.product_id = '${productId}' AND o.status = 'paid' AND o.user_id = cp.user_id)
-        `,
-      });
+      let hasCardCount = 0;
+      let noCardCount = 0;
+      const seenUserIds = new Set<string>();
+
+      for (const prereg of allPreregs || []) {
+        if (seenUserIds.has(prereg.user_id)) continue;
+        seenUserIds.add(prereg.user_id);
+
+        // Check if already paid
+        const { data: paidOrder } = await supabase
+          .from("orders_v2")
+          .select("id")
+          .eq("product_id", productId)
+          .eq("status", "paid")
+          .eq("user_id", prereg.user_id)
+          .limit(1)
+          .maybeSingle();
+
+        if (paidOrder) continue;
+
+        // Check if has active payment method
+        const { data: pm } = await supabase
+          .from("payment_methods")
+          .select("id")
+          .eq("user_id", prereg.user_id)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+
+        if (pm) {
+          hasCardCount++;
+        } else {
+          noCardCount++;
+        }
+      }
 
       return new Response(JSON.stringify({
         success: true,
         dry_run: true,
-        has_card_count: hasCard,
-        no_card_count: noCard,
+        has_card_count: hasCardCount,
+        no_card_count: noCardCount,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
