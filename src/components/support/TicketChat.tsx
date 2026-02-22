@@ -56,6 +56,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [isUploading, setIsUploading] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null);
   const [sendAsUserId, setSendAsUserId] = useState<string>("self");
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +132,21 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       setSendToTelegram(true);
     }
   }, [canBridgeToTelegram]);
+
+  // Voice preview URL lifecycle (cleanup revokes previous URL automatically)
+  useEffect(() => {
+    if (!attachedFile || selectedFileType !== "voice") {
+      setVoicePreviewUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(attachedFile);
+    setVoicePreviewUrl(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [attachedFile, selectedFileType]);
 
   const handleMediaMenuSelect = (type: MediaFileType) => {
     if (type === "video_note") {
@@ -359,15 +375,42 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             </div>
           )}
 
-          {/* Attached file preview via OutboundMediaPreview */}
-          {attachedFile && (
+          {/* Attached file preview */}
+          {attachedFile && selectedFileType === "voice" ? (
+            <div className="rounded-lg border bg-muted/30 p-3 flex items-center gap-3 mb-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
+                    Голосовое
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {attachedFile.name} • {(attachedFile.size / 1024).toFixed(0)} КБ
+                  </span>
+                </div>
+                {voicePreviewUrl ? (
+                  <audio controls src={voicePreviewUrl} className="w-full" />
+                ) : (
+                  <div className="text-xs text-muted-foreground">Готовлю превью…</div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleRemoveFile}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Удалить вложение"
+                title="Удалить"
+              >
+                ✕
+              </button>
+            </div>
+          ) : attachedFile ? (
             <OutboundMediaPreview
               file={attachedFile}
-              fileType={selectedFileType}
+              fileType={selectedFileType === "voice" ? "document" : selectedFileType}
               isUploading={isUploading}
               onRemove={handleRemoveFile}
             />
-          )}
+          ) : null}
 
           <div className="flex gap-2 items-end">
             {/* Media menu (like contact center) */}

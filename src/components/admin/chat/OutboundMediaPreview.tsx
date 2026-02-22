@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 interface OutboundMediaPreviewProps {
   file: File;
-  fileType: "photo" | "video" | "audio" | "video_note" | "voice" | "document" | null;
+  fileType: "photo" | "video" | "audio" | "video_note" | "document" | null;
   isUploading?: boolean;
   error?: string | null;
   onRemove: () => void;
