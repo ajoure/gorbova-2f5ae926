@@ -13,7 +13,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -1684,14 +1684,42 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get ticket + telegram_user_id
-        const { data: notifTicket } = await supabase
-          .from("support_tickets")
-          .select("telegram_user_id, profile_id")
-          .eq("id", ticket_id)
-          .single();
+        // Safe number conversion (bigint protection)
+        const toNum = (v: any): number | null => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : null;
+        };
 
-        if (!notifTicket?.telegram_user_id) {
+        // Get ticket + telegram_user_id + user_id for fallback
+        const { data: notifTicket, error: ticketErr } = await supabase
+          .from("support_tickets")
+          .select("telegram_user_id, profile_id, user_id")
+          .eq("id", ticket_id)
+          .maybeSingle();
+
+        if (ticketErr || !notifTicket) {
+          return new Response(JSON.stringify({ ok: false, reason: "ticket_not_found" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        let chatId: number | null = notifTicket.telegram_user_id
+          ? toNum(notifTicket.telegram_user_id)
+          : null;
+
+        // Fallback: profiles.telegram_user_id
+        if (chatId === null && notifTicket.user_id) {
+          const { data: p, error: pErr } = await supabase
+            .from("profiles")
+            .select("telegram_user_id")
+            .eq("user_id", notifTicket.user_id)
+            .maybeSingle();
+          if (!pErr && p?.telegram_user_id) {
+            chatId = toNum(p.telegram_user_id);
+          }
+        }
+
+        if (chatId === null) {
           return new Response(JSON.stringify({ ok: false, reason: "no_telegram_user_id" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -1714,18 +1742,22 @@ Deno.serve(async (req) => {
           if (lesson?.title) lessonTitle = lesson.title;
         }
 
-        // Get message snippet
+        // Get message snippet + author info
         const { data: ticketMsg } = await supabase
           .from("ticket_messages")
-          .select("message, attachments")
+          .select("message, attachments, author_name, author_type")
           .eq("id", ticket_message_id)
-          .single();
+          .maybeSingle();
 
         const snippet = ticketMsg?.message
           ? ticketMsg.message.substring(0, 100) + (ticketMsg.message.length > 100 ? "…" : "")
           : (ticketMsg?.attachments && (ticketMsg.attachments as any[]).length > 0 ? "📎 Вложение" : "");
 
-        const displayName = author_name || "Преподаватель";
+        const displayName =
+          ticketMsg?.author_name ||
+          (ticketMsg?.author_type === "support" ? "Поддержка" :
+           ticketMsg?.author_type === "user" ? "Пользователь" :
+           "Система");
 
         // Build notification text
         const notifText = `💬 Комментарий к уроку\n📖 ${lessonTitle}\nОт: ${displayName}${snippet ? `\n\n${snippet}` : ""}`;
@@ -1767,7 +1799,7 @@ Deno.serve(async (req) => {
         const appUrl = Deno.env.get("APP_URL") || Deno.env.get("SITE_URL") || "https://gorbova.lovable.app";
 
         const sendResult = await telegramRequest(notifBotToken, "sendMessage", {
-          chat_id: notifTicket.telegram_user_id,
+          chat_id: chatId,
           text: notifText,
           parse_mode: "HTML",
           reply_markup: {
