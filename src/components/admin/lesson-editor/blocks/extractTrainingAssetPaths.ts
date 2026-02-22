@@ -5,26 +5,39 @@
 
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "ai-covers/", "training-covers/", "lesson-covers/"];
 
-/** Паттерн для извлечения storagePath из publicUrl Supabase Storage */
-const PUBLIC_URL_PATTERN = /\/storage\/v1\/object\/public\/training-assets\/(.+)/;
-
 function isValidPath(p: unknown): p is string {
   if (!p || typeof p !== "string") return false;
   if (p.includes("..") || p.includes("//") || p.startsWith("/")) return false;
   return ALLOWED_PREFIXES.some((prefix) => p.startsWith(prefix));
 }
 
+/** Паттерны для извлечения storagePath из Supabase Storage URL (public, signed, raw) */
+const STORAGE_URL_PATTERNS = [
+  /\/storage\/v1\/object\/public\/training-assets\/(.+)/,
+  /\/storage\/v1\/object\/sign\/training-assets\/([^?]+)/,
+  /\/storage\/v1\/object\/training-assets\/(.+)/,
+];
+
 /**
- * Пытается извлечь storagePath из publicUrl.
- * Возвращает null если это не URL нашего bucket или путь не проходит guards.
+ * Пытается извлечь storagePath из publicUrl / signedUrl.
+ * Поддерживает public, sign и raw форматы.
+ * Применяет decodeURIComponent для корректной обработки %20 и т.п.
  */
 function extractPathFromUrl(url: unknown): string | null {
   if (!url || typeof url !== "string") return null;
-  const match = url.match(PUBLIC_URL_PATTERN);
-  if (!match) return null;
-  const path = match[1];
-  if (!isValidPath(path)) return null;
-  return path;
+  for (const pattern of STORAGE_URL_PATTERNS) {
+    const match = url.match(pattern);
+    if (match) {
+      try {
+        const path = decodeURIComponent(match[1]);
+        if (isValidPath(path)) return path;
+      } catch {
+        const path = match[1];
+        if (isValidPath(path)) return path;
+      }
+    }
+  }
+  return null;
 }
 
 /**

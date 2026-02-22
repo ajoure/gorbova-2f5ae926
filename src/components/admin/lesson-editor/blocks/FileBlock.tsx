@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { FileContent } from "@/hooks/useLessonBlocks";
 import { FileText, ExternalLink, Upload, Loader2 } from "lucide-react";
-import { getFileTypeIcon } from "./fileTypeIcons";
+import { getFileTypeIcon, pickIconHint } from "./fileTypeIcons";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, formatFileSize, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
@@ -115,7 +115,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
     setIsDragOver(false);
   };
 
-  // Режим просмотра (для студента) — скачивание запрещено, только просмотр
+  // Режим просмотра (для студента) — файл кликабельный, открывается в новой вкладке
   if (!isEditing) {
     if (!content.url) {
       return (
@@ -126,9 +126,16 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
       );
     }
 
-    const fileIcon = getFileTypeIcon(content.name, { colored: true });
+    const sp = (content as any).storagePath || (content as any).storage_path;
+    const hint = pickIconHint(content.name, sp, content.url);
+    const fileIcon = getFileTypeIcon(hint, { colored: true });
     return (
-      <div className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 select-none">
+      <a
+        href={content.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer"
+      >
         <fileIcon.Icon className={`h-8 w-8 shrink-0 ${fileIcon.colorClass}`} />
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{content.name || "Файл"}</p>
@@ -136,7 +143,8 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
             <p className="text-sm text-muted-foreground">{formatFileSizeDisplay(content.size)}</p>
           )}
         </div>
-      </div>
+        <ExternalLink className="h-4 w-4 text-muted-foreground shrink-0" />
+      </a>
     );
   }
 
@@ -240,7 +248,9 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
 
       {/* Превью загруженного файла */}
       {content.url && content.name && (() => {
-        const previewIcon = getFileTypeIcon(content.name, { colored: true });
+        const sp = (content as any).storagePath || (content as any).storage_path;
+        const previewHint = pickIconHint(content.name, sp, content.url);
+        const previewIcon = getFileTypeIcon(previewHint, { colored: true });
         return (
         <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
           <previewIcon.Icon className={`h-6 w-6 shrink-0 ${previewIcon.colorClass}`} />

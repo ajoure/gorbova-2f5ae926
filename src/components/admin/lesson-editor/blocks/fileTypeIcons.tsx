@@ -136,3 +136,37 @@ export function getFileTypeIcon(
     label: found.label,
   };
 }
+
+/**
+ * Определяет строку с расширением для передачи в getFileTypeIcon.
+ * Приоритет: name (если содержит .ext) → storagePath last segment → url last segment.
+ * Приводит к lowercase для корректного сопоставления.
+ */
+export function pickIconHint(
+  name?: string | null,
+  storagePath?: string | null,
+  url?: string | null
+): string {
+  // 1) name содержит расширение?
+  if (name) {
+    const dotIdx = name.lastIndexOf(".");
+    if (dotIdx > 0 && dotIdx < name.length - 1) return name;
+  }
+  // 2) storagePath — последний сегмент (до ?)
+  if (storagePath) {
+    const seg = storagePath.split("/").pop()?.split("?")[0];
+    if (seg && seg.includes(".")) return seg.toLowerCase();
+  }
+  // 3) url — последний сегмент pathname (до ?)
+  if (url) {
+    try {
+      const pathname = new URL(url).pathname;
+      const seg = pathname.split("/").pop()?.split("?")[0];
+      if (seg && seg.includes(".")) return decodeURIComponent(seg).toLowerCase();
+    } catch {
+      const seg = url.split("/").pop()?.split("?")[0];
+      if (seg && seg.includes(".")) return seg.toLowerCase();
+    }
+  }
+  return name || "";
+}

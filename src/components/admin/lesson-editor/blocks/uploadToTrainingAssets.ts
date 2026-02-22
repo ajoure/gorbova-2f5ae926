@@ -309,12 +309,21 @@ export async function deleteTrainingAssets(
 
     result.deleted_count = execData.deleted_count ?? execData.allowed_count ?? 0;
     result.deleted_paths = execData.deleted_paths ?? [];
+    const execErrors: string[] = execData.errors ?? [];
 
-    // Проверяем что удалено столько же сколько разрешено
-    if (result.deleted_count < result.allowed_count) {
-      result.error = `Partial delete: deleted=${result.deleted_count}, allowed=${result.allowed_count}`;
-      console.warn("[deleteTrainingAssets]", result.error);
+    // Partial delete: если есть реальные ошибки storage — это ошибка
+    if (execErrors.length > 0) {
+      result.error = `Storage errors: ${execErrors.join("; ")}`;
+      console.error("[deleteTrainingAssets]", result.error);
       return result;
+    }
+
+    // Если deleted < allowed но ошибок нет — файлы уже отсутствовали (копии уроков)
+    if (result.deleted_count < result.allowed_count) {
+      console.warn(
+        `[deleteTrainingAssets] Partial: deleted=${result.deleted_count}, allowed=${result.allowed_count} — some files may not exist in storage`
+      );
+      // НЕ блокируем — файлы могли быть уже удалены или это копия урока
     }
 
     result.ok = true;
