@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Send, Loader2, Plus, Image as ImageIcon, Video, Music, Circle, FileText } from "lucide-react";
+import { Send, Loader2, Plus, Image as ImageIcon, Video, Music, Circle, FileText, UserCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,6 +11,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TicketMessage } from "./TicketMessage";
 import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
 import type { TicketAttachment } from "@/hooks/useTickets";
@@ -20,6 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { OutboundMediaPreview } from "@/components/admin/chat/OutboundMediaPreview";
 import { VideoNoteRecorder } from "@/components/admin/VideoNoteRecorder";
+import { useQuery } from "@tanstack/react-query";
 
 type MediaFileType = "photo" | "video" | "audio" | "video_note" | "document";
 
@@ -29,13 +37,14 @@ interface TicketChatProps {
   isClosed?: boolean;
   telegramUserId?: number | null;
   telegramBridgeEnabled?: boolean;
+  telegramMode?: "bridge" | "notify";
   onBridgeMessage?: (ticketMessageId: string) => void;
 }
 
 // match storage bucket limit for ticket-attachments
 const MAX_TICKET_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
-export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, onBridgeMessage }: TicketChatProps) {
+export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, telegramMode = "bridge", onBridgeMessage }: TicketChatProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [message, setMessage] = useState("");
@@ -45,8 +54,38 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [selectedFileType, setSelectedFileType] = useState<MediaFileType | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  const [sendAsUserId, setSendAsUserId] = useState<string>("self");
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load admin/support users for "Send as" dropdown
+  const { data: supportSenders } = useQuery({
+    queryKey: ["support-senders"],
+    queryFn: async () => {
+      // Get users with admin/support roles via user_roles_v2 + roles
+      const { data: roleUsers } = await supabase
+        .from("user_roles_v2")
+        .select("user_id, roles(code)")
+        .in("role_id", 
+          (await supabase.from("roles").select("id").in("code", ["super_admin", "admin", "support"])).data?.map(r => r.id) || []
+        );
+
+      if (!roleUsers || roleUsers.length === 0) return [];
+
+      const userIds = [...new Set(roleUsers.map(r => r.user_id))];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, full_name")
+        .in("user_id", userIds);
+
+      return (profiles || []).filter(p => p.full_name).map(p => ({
+        user_id: p.user_id,
+        full_name: p.full_name!,
+      }));
+    },
+    enabled: !!isAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const { data: messages, isLoading } = useTicketMessages(ticketId, isAdmin);
 
@@ -196,12 +235,18 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       setIsUploading(false);
     }
 
+    // Resolve "send as" display name
+    const selectedSender = sendAsUserId !== "self" && supportSenders
+      ? supportSenders.find(s => s.user_id === sendAsUserId)
+      : null;
+
     const result = await sendMessageMutation.mutateAsync({
       ticket_id: ticketId,
       message: message.trim(),
       author_type: isAdmin ? "support" : "user",
       is_internal: isAdmin ? isInternal : false,
       attachments: attachments.length > 0 ? attachments : undefined,
+      author_name_override: selectedSender?.full_name || undefined,
     });
 
     // Bridge to Telegram if checkbox checked & not internal
@@ -255,6 +300,25 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
         <div className="border-t p-4">
           {isAdmin && (
             <div className="flex items-center gap-4 mb-2 flex-wrap">
+              {/* "Send as" dropdown */}
+              {supportSenders && supportSenders.length > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <UserCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select value={sendAsUserId} onValueChange={setSendAsUserId}>
+                    <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs border-dashed">
+                      <SelectValue placeholder="От имени" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="self" className="text-xs">Я (по умолчанию)</SelectItem>
+                      {supportSenders.map((s) => (
+                        <SelectItem key={s.user_id} value={s.user_id} className="text-xs">
+                          {s.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="internal"
@@ -276,7 +340,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                     onCheckedChange={(checked) => setSendToTelegram(checked as boolean)}
                   />
                   <Label htmlFor="send-telegram" className="text-sm text-muted-foreground">
-                    Отправить в Telegram
+                    {telegramMode === "notify" ? "Уведомить в Telegram" : "Отправить в Telegram"}
                   </Label>
                 </div>
               )}

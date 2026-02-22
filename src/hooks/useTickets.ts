@@ -68,6 +68,7 @@ export interface CreateMessageData {
   attachments?: TicketAttachment[];
   is_internal?: boolean;
   author_type?: "user" | "support" | "system";
+  author_name_override?: string;
 }
 
 // Hook for user's tickets
@@ -385,7 +386,7 @@ export function useSendMessage() {
           ticket_id: data.ticket_id,
           author_id: user!.id,
           author_type: data.author_type || "user",
-          author_name: profile?.full_name,
+          author_name: data.author_name_override || profile?.full_name,
           message: data.message,
           attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
           is_internal: data.is_internal || false,

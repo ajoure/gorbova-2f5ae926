@@ -246,8 +246,13 @@ async function telegramSendFileFromBytes(
   if (fileType === "video_note") {
     // Video notes don't support captions; add length param
     formData.append("length", "384");
-  } else if (caption) {
-    formData.append("caption", caption);
+  } else {
+    if (fileType === "video") {
+      formData.append("supports_streaming", "true");
+    }
+    if (caption) {
+      formData.append("caption", caption);
+    }
   }
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
@@ -1575,7 +1580,9 @@ Deno.serve(async (req) => {
           .from("ticket_telegram_sync")
           .select("telegram_message_id, ticket_id")
           .eq("ticket_message_id", ticket_message_id)
-          .eq("direction", "to_telegram")
+          .in("direction", ["to_telegram", "from_telegram"])
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (!syncRecord) {
@@ -1662,6 +1669,120 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+      }
+
+      // ==========================================
+      // BRIDGE TICKET NOTIFICATION (feedback-only)
+      // ==========================================
+      case "bridge_ticket_notification": {
+        const { ticket_id, ticket_message_id, author_name } = payload;
+
+        if (!ticket_id || !ticket_message_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "ticket_id and ticket_message_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get ticket + telegram_user_id
+        const { data: notifTicket } = await supabase
+          .from("support_tickets")
+          .select("telegram_user_id, profile_id")
+          .eq("id", ticket_id)
+          .single();
+
+        if (!notifTicket?.telegram_user_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_telegram_user_id" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get training context for lesson title
+        const { data: trainingCtx } = await supabase
+          .from("ticket_training_context")
+          .select("lesson_id, block_id")
+          .eq("ticket_id", ticket_id)
+          .maybeSingle();
+
+        let lessonTitle = "Урок";
+        if (trainingCtx?.lesson_id) {
+          const { data: lesson } = await supabase
+            .from("training_lessons")
+            .select("title")
+            .eq("id", trainingCtx.lesson_id)
+            .single();
+          if (lesson?.title) lessonTitle = lesson.title;
+        }
+
+        // Get message snippet
+        const { data: ticketMsg } = await supabase
+          .from("ticket_messages")
+          .select("message, attachments")
+          .eq("id", ticket_message_id)
+          .single();
+
+        const snippet = ticketMsg?.message
+          ? ticketMsg.message.substring(0, 100) + (ticketMsg.message.length > 100 ? "…" : "")
+          : (ticketMsg?.attachments && (ticketMsg.attachments as any[]).length > 0 ? "📎 Вложение" : "");
+
+        const displayName = author_name || "Преподаватель";
+
+        // Build notification text
+        const notifText = `💬 Комментарий к уроку\n📖 ${lessonTitle}\nОт: ${displayName}${snippet ? `\n\n${snippet}` : ""}`;
+
+        // Get bot token
+        let notifBotToken: string | null = null;
+        if (notifTicket.profile_id) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("telegram_link_bot_id")
+            .eq("id", notifTicket.profile_id)
+            .single();
+          if (prof?.telegram_link_bot_id) {
+            const { data: bot } = await supabase
+              .from("telegram_bots")
+              .select("bot_token_encrypted")
+              .eq("id", prof.telegram_link_bot_id)
+              .single();
+            notifBotToken = bot?.bot_token_encrypted ?? null;
+          }
+        }
+        if (!notifBotToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          notifBotToken = anyBot?.bot_token_encrypted ?? null;
+        }
+
+        if (!notifBotToken) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_bot" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Determine app URL for button
+        const appUrl = Deno.env.get("APP_URL") || Deno.env.get("SITE_URL") || "https://gorbova.lovable.app";
+
+        const sendResult = await telegramRequest(notifBotToken, "sendMessage", {
+          chat_id: notifTicket.telegram_user_id,
+          text: notifText,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "📖 Открыть тред", url: `${appUrl}/support/${ticket_id}` }
+            ]],
+          },
+        });
+
+        // Do NOT create ticket_telegram_sync — this is a notification, not a synced message
+        console.log("[bridge_ticket_notification] sent:", sendResult.ok);
+
+        return new Response(JSON.stringify({ ok: sendResult.ok }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       default:

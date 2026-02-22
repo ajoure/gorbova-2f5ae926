@@ -118,7 +118,9 @@ export function useToggleReaction(ticketId: string) {
           .from("ticket_telegram_sync")
           .select("telegram_message_id")
           .eq("ticket_message_id", result.messageId)
-          .eq("direction", "to_telegram")
+          .in("direction", ["to_telegram", "from_telegram"])
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle()
           .then(({ data: syncRecord }) => {
             if (syncRecord) {
