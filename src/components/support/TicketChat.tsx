@@ -1,10 +1,16 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Send, Loader2, Paperclip, X } from "lucide-react";
+import { Send, Loader2, Plus, Image as ImageIcon, Video, Music, Circle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { TicketMessage } from "./TicketMessage";
 import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
 import type { TicketAttachment } from "@/hooks/useTickets";
@@ -12,6 +18,10 @@ import { useTicketReactions, useToggleReaction } from "@/hooks/useTicketReaction
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { OutboundMediaPreview } from "@/components/admin/chat/OutboundMediaPreview";
+import { VideoNoteRecorder } from "@/components/admin/VideoNoteRecorder";
+
+type MediaFileType = "photo" | "video" | "audio" | "video_note" | "document";
 
 interface TicketChatProps {
   ticketId: string;
@@ -32,7 +42,9 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [isInternal, setIsInternal] = useState(false);
   const [sendToTelegram, setSendToTelegram] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [selectedFileType, setSelectedFileType] = useState<MediaFileType | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +91,40 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     }
   }, [canBridgeToTelegram]);
 
+  const handleMediaMenuSelect = (type: MediaFileType) => {
+    if (type === "video_note") {
+      setShowVideoNoteRecorder(true);
+      return;
+    }
+
+    // Set accept dynamically based on type
+    if (fileInputRef.current) {
+      switch (type) {
+        case "photo":
+          fileInputRef.current.accept = "image/*";
+          break;
+        case "video":
+          fileInputRef.current.accept = "video/*";
+          break;
+        case "audio":
+          fileInputRef.current.accept = "audio/*";
+          break;
+        case "document":
+          fileInputRef.current.accept = "*/*";
+          break;
+      }
+      setSelectedFileType(type);
+      fileInputRef.current.click();
+    }
+  };
+
+  const detectFileType = (file: File): MediaFileType => {
+    if (file.type.startsWith("image/")) return "photo";
+    if (file.type.startsWith("video/")) return "video";
+    if (file.type.startsWith("audio/")) return "audio";
+    return "document";
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -91,8 +137,26 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       return;
     }
     setAttachedFile(file);
+    // Auto-detect type if not explicitly set (fallback)
+    if (!selectedFileType) {
+      setSelectedFileType(detectFileType(file));
+    }
     // Reset input so same file can be re-selected
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.accept = "*/*"; // Reset accept
+    }
+  };
+
+  const handleVideoNoteRecorded = (file: File) => {
+    setAttachedFile(file);
+    setSelectedFileType("video_note");
+    setShowVideoNoteRecorder(false);
+  };
+
+  const handleRemoveFile = () => {
+    setAttachedFile(null);
+    setSelectedFileType(null);
   };
 
   const handleSend = async () => {
@@ -118,6 +182,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
           file_name: attachedFile.name,
           size: attachedFile.size,
           mime: attachedFile.type || "application/octet-stream",
+          kind: selectedFileType || detectFileType(attachedFile),
         }];
       } catch (err: any) {
         toast({
@@ -146,6 +211,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
     setMessage("");
     setAttachedFile(null);
+    setSelectedFileType(null);
     setIsInternal(false);
   };
 
@@ -216,63 +282,78 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
               )}
             </div>
           )}
-          {/* Attached file preview */}
+
+          {/* Attached file preview via OutboundMediaPreview */}
           {attachedFile && (
-            <div className="flex items-center gap-2 mb-2 p-2 rounded-md bg-muted/50 border border-border">
-              {attachedFile.type.startsWith("image/") ? (
-                <img
-                  src={URL.createObjectURL(attachedFile)}
-                  alt={attachedFile.name}
-                  className="h-10 w-10 rounded object-cover"
-                />
-              ) : (
-                <Paperclip className="h-4 w-4 text-muted-foreground" />
-              )}
-              <span className="text-xs truncate flex-1">{attachedFile.name}</span>
-              <span className="text-xs text-muted-foreground">
-                {(attachedFile.size / 1024).toFixed(0)} КБ
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={() => setAttachedFile(null)}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
+            <OutboundMediaPreview
+              file={attachedFile}
+              fileType={selectedFileType}
+              isUploading={isUploading}
+              onRemove={handleRemoveFile}
+            />
           )}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
+
+          <div className="flex gap-2 items-end">
+            {/* Media menu (like contact center) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 flex-shrink-0"
+                  type="button"
+                  disabled={!!attachedFile || isUploading}
+                >
+                  <Plus className="h-5 w-5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top">
+                <DropdownMenuItem onClick={() => handleMediaMenuSelect("photo")}>
+                  <ImageIcon className="h-4 w-4 mr-2" />
+                  Фото
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleMediaMenuSelect("video")}>
+                  <Video className="h-4 w-4 mr-2" />
+                  Видео
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleMediaMenuSelect("video_note")}>
+                  <Circle className="h-4 w-4 mr-2" />
+                  Записать кружок
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleMediaMenuSelect("audio")}>
+                  <Music className="h-4 w-4 mr-2" />
+                  Аудио
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleMediaMenuSelect("document")}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Документ
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept="*/*"
+              onChange={handleFileSelect}
+            />
+
+            <div className="flex-1">
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={isInternal ? "Внутренняя заметка..." : "Введите сообщение..."}
-                className="min-h-[80px] resize-none pr-10"
+                className="min-h-[80px] resize-none"
               />
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xlsx,.zip,.rar"
-                onChange={handleFileSelect}
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute bottom-2 right-2 h-7 w-7"
-                onClick={() => fileInputRef.current?.click()}
-                type="button"
-              >
-                <Paperclip className="h-4 w-4 text-muted-foreground" />
-              </Button>
             </div>
+
             <Button
               onClick={handleSend}
               disabled={(!message.trim() && !attachedFile) || sendMessageMutation.isPending || isUploading}
               size="icon"
-              className="h-[80px] w-12"
+              className="h-[80px] w-12 flex-shrink-0"
             >
               {(sendMessageMutation.isPending || isUploading) ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -291,6 +372,13 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
           </p>
         </div>
       )}
+
+      {/* Video Note Recorder */}
+      <VideoNoteRecorder
+        open={showVideoNoteRecorder}
+        onOpenChange={setShowVideoNoteRecorder}
+        onRecorded={handleVideoNoteRecorded}
+      />
     </div>
   );
 }

@@ -222,7 +222,7 @@ async function telegramSendFileFromBytes(
   chatId: number,
   bytes: Uint8Array,
   fileName: string,
-  fileType: "photo" | "video" | "audio" | "document",
+  fileType: "photo" | "video" | "audio" | "video_note" | "document",
   mimeType: string,
   caption?: string
 ) {
@@ -235,13 +235,20 @@ async function telegramSendFileFromBytes(
     case "photo": method = "sendPhoto"; fieldName = "photo"; break;
     case "video": method = "sendVideo"; fieldName = "video"; break;
     case "audio": method = "sendAudio"; fieldName = "audio"; break;
+    case "video_note": method = "sendVideoNote"; fieldName = "video_note"; break;
     default: method = "sendDocument"; fieldName = "document";
   }
 
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   formData.append(fieldName, file);
-  if (caption) formData.append("caption", caption);
+
+  if (fileType === "video_note") {
+    // Video notes don't support captions; add length param
+    formData.append("length", "384");
+  } else if (caption) {
+    formData.append("caption", caption);
+  }
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
     method: "POST",
@@ -1431,15 +1438,18 @@ Deno.serve(async (req) => {
         const prefix = ticketMsg.author_type === "support" ? "💬 <b>Поддержка:</b>\n" : "";
         const tgText = ticketMsg.message ? `${prefix}${ticketMsg.message}` : "";
 
-        // Check if message has object-format attachments
+        // Check if message has object-format attachments (robust: find first object attachment)
         const attachments = ticketMsg.attachments;
-        const hasObjectAttachments = Array.isArray(attachments) && attachments.length > 0 && typeof attachments[0] === "object" && attachments[0]?.bucket;
+        const firstObjAtt = Array.isArray(attachments)
+          ? attachments.find((a: any) => typeof a === "object" && a?.bucket && a?.path)
+          : null;
+        const hasObjectAttachments = !!firstObjAtt;
 
         let sendResult: any;
 
         if (hasObjectAttachments) {
           // Send media file from Storage
-          const att = attachments[0] as { bucket: string; path: string; file_name: string; mime: string };
+          const att = firstObjAtt as { bucket: string; path: string; file_name: string; mime: string; kind?: string };
           try {
             const { data: fileData, error: downloadError } = await supabase.storage
               .from(att.bucket)
@@ -1457,11 +1467,17 @@ Deno.serve(async (req) => {
               const arrayBuffer = await fileData.arrayBuffer();
               const bytes = new Uint8Array(arrayBuffer);
 
-              // Determine file type from mime
-              let fileType: "photo" | "video" | "audio" | "document" = "document";
-              if (att.mime?.startsWith("image/")) fileType = "photo";
-              else if (att.mime?.startsWith("video/")) fileType = "video";
-              else if (att.mime?.startsWith("audio/")) fileType = "audio";
+              // Determine file type: priority kind -> fallback by mime
+              let fileType: "photo" | "video" | "audio" | "video_note" | "document" = "document";
+              if (att.kind === "video_note") {
+                fileType = "video_note";
+              } else if (att.kind === "photo" || att.mime?.startsWith("image/")) {
+                fileType = "photo";
+              } else if (att.kind === "video" || att.mime?.startsWith("video/")) {
+                fileType = "video";
+              } else if (att.kind === "audio" || att.mime?.startsWith("audio/")) {
+                fileType = "audio";
+              }
 
               sendResult = await telegramSendFileFromBytes(
                 botToken,
@@ -1472,6 +1488,21 @@ Deno.serve(async (req) => {
                 att.mime || "application/octet-stream",
                 tgText || undefined
               );
+
+              // STOP-guard: if Telegram rejected the file, fallback to text-only
+              if (!sendResult.ok) {
+                console.error("[bridge] Telegram rejected file:", sendResult.description);
+                if (tgText) {
+                  sendResult = await telegramRequest(botToken, "sendMessage", {
+                    chat_id: tgUserId,
+                    text: tgText,
+                    parse_mode: "HTML",
+                  });
+                  // Mark as partial success — text sent, media failed
+                  sendResult._media_fallback = true;
+                  sendResult._media_error = "tg_send_failed";
+                }
+              }
             }
           } catch (mediaErr) {
             console.error("[bridge] Media send error:", mediaErr);
