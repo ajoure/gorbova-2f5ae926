@@ -361,6 +361,9 @@ export default function AdminLessonProgress() {
           open={!!selectedRecord}
           onClose={() => setSelectedRecord(null)}
           blockResponses={selectedRecord ? blockResponsesMap?.[selectedRecord.user_id] ?? {} : {}}
+          lessonId={lessonId}
+          lessonTitle={lesson?.title}
+          moduleId={moduleId}
         />
 
         {/* Contact Detail Sheet */}

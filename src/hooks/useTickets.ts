@@ -62,12 +62,12 @@ export interface CreateMessageData {
 }
 
 // Hook for user's tickets
-export function useUserTickets(status?: string) {
+export function useUserTickets(status?: string, excludeCategory?: string) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const query = useQuery({
-    queryKey: ["user-tickets", user?.id, status],
+    queryKey: ["user-tickets", user?.id, status, excludeCategory],
     queryFn: async () => {
       let q = supabase
         .from("support_tickets")
@@ -79,6 +79,11 @@ export function useUserTickets(status?: string) {
         q = q.in("status", ["open", "in_progress", "waiting_user"]);
       } else if (status === "closed") {
         q = q.in("status", ["resolved", "closed"]);
+      }
+
+      // P6.1: NULL-safe category exclusion
+      if (excludeCategory) {
+        q = q.or(`category.is.null,category.neq.${excludeCategory}`);
       }
 
       const { data, error } = await q;

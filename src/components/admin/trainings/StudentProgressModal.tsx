@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { User, Target, Crosshair, FileText, PenLine, Upload } from "lucide-react";
+import { User, Target, Crosshair, FileText, PenLine, Upload, MessageSquare } from "lucide-react";
+import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -72,6 +74,9 @@ interface StudentProgressModalProps {
   open: boolean;
   onClose: () => void;
   blockResponses?: Record<string, any>;
+  lessonId?: string;
+  lessonTitle?: string;
+  moduleId?: string;
 }
 
 const roleLabels: Record<string, string> = {
@@ -124,7 +129,11 @@ export function StudentProgressModal({
   open,
   onClose,
   blockResponses,
+  lessonId,
+  lessonTitle,
+  moduleId,
 }: StudentProgressModalProps) {
+  const [feedbackTarget, setFeedbackTarget] = useState<{ blockId?: string; blockTitle?: string } | null>(null);
   if (!record) return null;
 
   const state = record.state_json as {
@@ -324,7 +333,20 @@ export function StudentProgressModal({
                   const blockTitle = (block?.content as any)?.title || `Блок ${blockId.slice(0, 6)}`;
                   return (
                     <div key={blockId} className="border-b pb-3 last:border-0">
-                      <Label className="font-medium text-sm">📌 {blockTitle}</Label>
+                      <div className="flex items-center justify-between">
+                        <Label className="font-medium text-sm">📌 {blockTitle}</Label>
+                        {lessonId && record && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setFeedbackTarget({ blockId, blockTitle })}
+                          >
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            Обратная связь
+                          </Button>
+                        )}
+                      </div>
                       <p className={`text-sm mt-1 ${resp.text ? "" : "text-muted-foreground italic"}`}>
                         {resp.text || "Нет ответа"}
                       </p>
@@ -356,7 +378,20 @@ export function StudentProgressModal({
                   const files = normalizeUploadFiles(resp);
                   return (
                     <div key={blockId} className="border-b pb-3 last:border-0">
-                      <Label className="font-medium text-sm mb-2 block">📎 {blockTitle}</Label>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="font-medium text-sm">📎 {blockTitle}</Label>
+                        {lessonId && record && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setFeedbackTarget({ blockId, blockTitle })}
+                          >
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            Обратная связь
+                          </Button>
+                        )}
+                      </div>
                       <div className="space-y-2">
                         {files.map((file, fIdx) => {
                           const { Icon, colorClass } = getFileTypeIcon(file.original_name, { colored: true });
@@ -400,8 +435,34 @@ export function StudentProgressModal({
               <p className="text-sm">Данные ещё не заполнены</p>
             </div>
           )}
+          {/* General lesson feedback button */}
+          {lessonId && record && (
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setFeedbackTarget({ blockId: undefined, blockTitle: undefined })}
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Обратная связь по уроку
+              </Button>
+            </div>
+          )}
         </div>
       </DialogContent>
+
+      {/* Feedback Drawer */}
+      {lessonId && record && (
+        <FeedbackDrawer
+          lessonId={lessonId}
+          blockId={feedbackTarget?.blockId}
+          studentUserId={record.user_id}
+          lessonTitle={lessonTitle}
+          blockTitle={feedbackTarget?.blockTitle}
+          moduleId={moduleId}
+          open={!!feedbackTarget}
+          onOpenChange={(v) => { if (!v) setFeedbackTarget(null); }}
+        />
+      )}
     </Dialog>
   );
 }
