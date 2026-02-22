@@ -1,13 +1,26 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { User, Headset, Bot, Lock, SmilePlus } from "lucide-react";
+import { User, Headset, Bot, Lock, SmilePlus, Pencil, Trash2, Check, X } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import type { TicketMessage as TicketMessageType, TicketAttachment } from "@/hooks/useTickets";
 import type { ReactionGroup } from "@/hooks/useTicketReactions";
@@ -69,15 +82,23 @@ function TicketAttachmentsList({ attachments, isOutgoing }: { attachments: (stri
 interface TicketMessageProps {
   message: TicketMessageType;
   isCurrentUser?: boolean;
+  isAdmin?: boolean;
   reactions?: ReactionGroup[];
   onToggleReaction?: (emoji: string) => void;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
   displayAvatarUrl?: string | null;
 }
 
-export function TicketMessage({ message, isCurrentUser, reactions, onToggleReaction, displayAvatarUrl }: TicketMessageProps) {
+export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onToggleReaction, onEditMessage, onDeleteMessage, displayAvatarUrl }: TicketMessageProps) {
   const isSystem = message.author_type === "system";
   const isSupport = message.author_type === "support";
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(message.message);
+
+  // Can edit/delete only support messages for admin
+  const canModify = isAdmin && isSupport && (onEditMessage || onDeleteMessage);
 
   if (isSystem) {
     return (
@@ -135,18 +156,99 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
         </div>
 
         <div className="relative">
-          <div
-            className={cn(
-              "rounded-lg px-4 py-2.5",
-              isCurrentUser
-                ? "bg-primary text-primary-foreground"
-                : message.is_internal
-                ? "bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900"
-                : "bg-muted"
-            )}
-          >
-            <p className="text-sm whitespace-pre-wrap">{message.message}</p>
-          </div>
+          {isEditing ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="min-h-[60px] text-sm"
+                autoFocus
+              />
+              <div className="flex gap-1 justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2"
+                  onClick={() => { setIsEditing(false); setEditText(message.message); }}
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Отмена
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 px-2"
+                  disabled={!editText.trim() || editText.trim() === message.message}
+                  onClick={() => {
+                    onEditMessage?.(message.id, editText.trim());
+                    setIsEditing(false);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5 mr-1" />
+                  Сохранить
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "rounded-lg px-4 py-2.5",
+                isCurrentUser
+                  ? "bg-primary text-primary-foreground"
+                  : message.is_internal
+                  ? "bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900"
+                  : "bg-muted"
+              )}
+            >
+              <p className="text-sm whitespace-pre-wrap">{message.message}</p>
+            </div>
+          )}
+
+          {/* Admin action buttons — edit / delete */}
+          {canModify && !isEditing && (
+            <div className={cn(
+              "absolute -top-2 opacity-0 group-hover/msg:opacity-100 transition-opacity flex gap-0.5",
+              isCurrentUser ? "left-0" : "right-0"
+            )}>
+              {onEditMessage && (
+                <button
+                  onClick={() => { setEditText(message.message); setIsEditing(true); }}
+                  className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                  title="Редактировать"
+                >
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                </button>
+              )}
+              {onDeleteMessage && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-destructive/10"
+                      title="Удалить"
+                    >
+                      <Trash2 className="h-3 w-3 text-destructive" />
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Удалить сообщение?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Это действие нельзя отменить. Сообщение будет удалено навсегда.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Отмена</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => onDeleteMessage(message.id)}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Удалить
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
+          )}
 
           {/* Emoji picker trigger — appears on hover */}
           {onToggleReaction && (
