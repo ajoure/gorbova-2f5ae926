@@ -99,6 +99,7 @@ interface TelegramMessage {
   sent_by_admin?: string | null;
   bot_id?: string | null;
   bot_username?: string | null; // for optimistic UI
+  bot_name?: string | null; // for optimistic UI
   admin_profile?: {
     full_name: string | null;
     avatar_url: string | null;
@@ -707,6 +708,7 @@ export function ContactTelegramChat({
         created_at: new Date().toISOString(),
         bot_id: selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
+        bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
       };
       queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
         [...(old || []), tempMessage]
@@ -1065,11 +1067,16 @@ export function ContactTelegramChat({
             )}
             
             <div className="flex items-center justify-end gap-1 mt-1">
-              {/* Bot badge */}
+              {/* Bot badge — приоритет bot_name, fallback @username, иначе null */}
               {(() => {
-                const botUsername = msg.bot_username || msg.telegram_bots?.bot_username || (msg.bot_id ? botsMap.get(msg.bot_id)?.bot_username : null);
-                return botUsername ? (
-                  <span className="text-[9px] opacity-40 mr-1">@{botUsername}</span>
+                const joined = msg.telegram_bots;
+                const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
+                const botName = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
+                const botUsername = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
+                const name = botName?.trim();
+                const label = name ? name : (botUsername?.trim() ? `@${botUsername.trim()}` : null);
+                return label ? (
+                  <span className="text-[10px] opacity-70 mr-1">{label}</span>
                 ) : null;
               })()}
               {isEdited && (
@@ -1334,7 +1341,7 @@ export function ContactTelegramChat({
                 <SelectContent>
                   {activeBots.map(bot => (
                     <SelectItem key={bot.id} value={bot.id} className="text-xs">
-                      @{bot.bot_username}
+                      {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
                     </SelectItem>
                   ))}
                 </SelectContent>

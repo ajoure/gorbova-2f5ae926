@@ -548,6 +548,15 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     return result;
   }, [dialogs, searchQuery, advancedFilters, filter, prefsMap, botFilter]);
 
+  // Unified bot display label: bot_name -> @bot_username -> "Бот"
+  const displayBotLabel = (botName?: string | null, botUsername?: string | null) => {
+    const name = botName?.trim();
+    if (name) return name;
+    const u = botUsername?.trim();
+    if (u) return `@${u}`;
+    return "Бот";
+  };
+
   const selectedDialog = filteredDialogs.find(d => d.user_id === selectedUserId) || dialogs.find(d => d.user_id === selectedUserId);
   const clearFilters = () => setAdvancedFilters(initialFilters);
 
@@ -779,7 +788,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                         <SelectItem value="all">Все боты</SelectItem>
                         {uniqueBots.map(bot => (
                           <SelectItem key={bot.id} value={bot.id}>
-                            @{bot.username}
+                            {displayBotLabel(bot.name, bot.username)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -862,9 +871,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                                     ? formatContactName({ full_name: dialog.profile.full_name }) 
                                     : dialog.profile?.email || "Неизвестный"}
                                 </span>
-                                {dialog.last_bot_username && (
+                                {(dialog.last_bot_name || dialog.last_bot_username) && (
                                   <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40">
-                                    @{dialog.last_bot_username}
+                                    {displayBotLabel(dialog.last_bot_name, dialog.last_bot_username)}
                                   </Badge>
                                 )}
                                 <span className="text-[10px] text-muted-foreground shrink-0">
