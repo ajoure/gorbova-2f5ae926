@@ -358,10 +358,21 @@ Deno.serve(async (req) => {
             .from("telegram_bots")
             .select("id, bot_token_encrypted")
             .eq("id", bot_id)
+            .eq("status", "active")
             .single();
           if (bot?.bot_token_encrypted) {
             botToken = bot.bot_token_encrypted;
             usedBotId = bot.id;
+          } else {
+            // STOP-guard: explicit bot_id provided but inactive/not found
+            return new Response(JSON.stringify({ 
+              error: "selected_bot_inactive", 
+              message: "Selected bot is inactive or not found",
+              success: false,
+            }), {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
           }
         }
 
@@ -377,14 +388,31 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Fallback to any active bot if user's linked bot not found
+        // Fallback to primary active bot
         if (!botToken) {
-          const { data: anyBot } = await supabase
+          const { data: primaryBots } = await supabase
+            .from("telegram_bots")
+            .select("id, bot_token_encrypted")
+            .eq("is_primary", true)
+            .eq("status", "active")
+            .order("created_at", { ascending: true })
+            .limit(1);
+          const primaryBot = primaryBots?.[0];
+          if (primaryBot?.bot_token_encrypted) {
+            botToken = primaryBot.bot_token_encrypted;
+            usedBotId = primaryBot.id;
+          }
+        }
+
+        // Fallback to any active bot
+        if (!botToken) {
+          const { data: anyBots } = await supabase
             .from("telegram_bots")
             .select("id, bot_token_encrypted")
             .eq("status", "active")
-            .limit(1)
-            .single();
+            .order("created_at", { ascending: true })
+            .limit(1);
+          const anyBot = anyBots?.[0];
           if (anyBot?.bot_token_encrypted) {
             botToken = anyBot.bot_token_encrypted;
             usedBotId = anyBot.id;

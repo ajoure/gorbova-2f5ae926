@@ -71,6 +71,7 @@ import {
   CheckSquare,
   RotateCcw,
   LifeBuoy,
+  Bot,
 } from "lucide-react";
 import { format, formatDistanceToNow, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -131,6 +132,9 @@ interface Dialog {
   unread_count: number;
   is_pinned?: boolean;
   is_favorite?: boolean;
+  last_bot_id?: string | null;
+  last_bot_username?: string | null;
+  last_bot_name?: string | null;
   orders?: {
     id: string;
     order_number: string;
@@ -199,6 +203,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
+  const [botFilter, setBotFilter] = useState<string>("all");
   const lastMessageCountRef = useRef<number>(0);
   const soundEnabledRef = useRef<boolean>(false);
 
@@ -346,6 +351,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
         profile: profileMap.get(d.user_id) || null,
         orders: ordersMap.get(d.user_id) || [],
         subscriptions: subsMap.get(d.user_id) || [],
+        last_bot_id: d.last_bot_id || null,
+        last_bot_username: d.last_bot_username || null,
+        last_bot_name: d.last_bot_name || null,
       }));
 
       // Already sorted by last_message_at DESC from RPC
@@ -499,6 +507,11 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       result = result.filter(d => d.is_pinned);
     }
 
+    // Bot filter (client-side)
+    if (botFilter !== "all") {
+      result = result.filter(d => d.last_bot_id === botFilter);
+    }
+
     if (searchQuery) {
       const search = searchQuery.toLowerCase();
       result = result.filter(dialog => 
@@ -533,10 +546,25 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     });
 
     return result;
-  }, [dialogs, searchQuery, advancedFilters, filter, prefsMap]);
+  }, [dialogs, searchQuery, advancedFilters, filter, prefsMap, botFilter]);
 
   const selectedDialog = filteredDialogs.find(d => d.user_id === selectedUserId) || dialogs.find(d => d.user_id === selectedUserId);
   const clearFilters = () => setAdvancedFilters(initialFilters);
+
+  // Unique bots from dialogs for filter
+  const uniqueBots = useMemo(() => {
+    const botsMap = new Map<string, { id: string; username: string; name: string }>();
+    dialogs.forEach(d => {
+      if (d.last_bot_id && d.last_bot_username) {
+        botsMap.set(d.last_bot_id, {
+          id: d.last_bot_id,
+          username: d.last_bot_username,
+          name: d.last_bot_name || d.last_bot_username,
+        });
+      }
+    });
+    return Array.from(botsMap.values());
+  }, [dialogs]);
 
   // Virtualization
   const parentRef = useRef<HTMLDivElement>(null);
@@ -735,6 +763,28 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                       )}
                     </Button>
                   ))}
+                  {/* Bot filter */}
+                  {uniqueBots.length > 1 && (
+                    <Select value={botFilter} onValueChange={setBotFilter}>
+                      <SelectTrigger className={cn(
+                        "h-7 w-auto min-w-[80px] text-xs rounded-full border-0",
+                        botFilter !== "all"
+                          ? "bg-primary text-primary-foreground shadow-md"
+                          : "bg-card/60 text-muted-foreground"
+                      )}>
+                        <Bot className="h-3 w-3 mr-1" />
+                        <SelectValue placeholder="Бот" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Все боты</SelectItem>
+                        {uniqueBots.map(bot => (
+                          <SelectItem key={bot.id} value={bot.id}>
+                            @{bot.username}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               </div>
 
@@ -812,6 +862,11 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                                     ? formatContactName({ full_name: dialog.profile.full_name }) 
                                     : dialog.profile?.email || "Неизвестный"}
                                 </span>
+                                {dialog.last_bot_username && (
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40">
+                                    @{dialog.last_bot_username}
+                                  </Badge>
+                                )}
                                 <span className="text-[10px] text-muted-foreground shrink-0">
                                   {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                                 </span>

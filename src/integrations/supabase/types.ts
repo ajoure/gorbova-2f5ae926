@@ -9850,6 +9850,9 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_search?: string }
         Returns: {
           has_pending_media: boolean
+          last_bot_id: string
+          last_bot_name: string
+          last_bot_username: string
           last_message_at: string
           last_message_id: string
           last_message_text: string
