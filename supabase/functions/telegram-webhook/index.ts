@@ -934,6 +934,17 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (bridgedTicket) {
+              // Check if this is a feedback ticket — skip inbound for feedback
+              const { data: feedbackCtx } = await supabase
+                .from('ticket_training_context')
+                .select('id')
+                .eq('ticket_id', bridgedTicket.id)
+                .limit(1)
+                .maybeSingle();
+
+              if (feedbackCtx) {
+                console.log('[BRIDGE] skip inbound for feedback ticket:', bridgedTicket.id);
+              } else {
               const msgText = msg.text || msg.caption || '[медиа]';
               
               // Get profile full_name for author_name
@@ -974,6 +985,7 @@ Deno.serve(async (req) => {
               }
 
               console.log(`[BRIDGE] TG message ${msg.message_id} → ticket ${bridgedTicket.id}`);
+              } // end else (not feedback)
             }
           } catch (bridgeErr) {
             console.error('[BRIDGE] Error:', bridgeErr);

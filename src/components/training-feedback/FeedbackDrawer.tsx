@@ -143,23 +143,23 @@ export function FeedbackDrawer({
                 <MessageSquare className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{title}</span>
               </SheetTitle>
-              {resolvedStudentName && (
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {resolvedStudentName}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {telegramUserId ? (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 gap-1">
-                  <SendIcon className="h-2.5 w-2.5" />
-                  TG
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 text-muted-foreground">
-                  Нет TG
-                </Badge>
-              )}
+              <div className="flex items-center gap-2 mt-0.5">
+                {resolvedStudentName && (
+                  <span className="text-xs text-muted-foreground truncate">
+                    {resolvedStudentName}
+                  </span>
+                )}
+                {telegramUserId ? (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 gap-1 shrink-0">
+                    <SendIcon className="h-2.5 w-2.5" />
+                    TG
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 text-muted-foreground shrink-0">
+                    Нет TG
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
         </SheetHeader>
@@ -187,10 +187,11 @@ export function FeedbackDrawer({
                   isClosed={isClosed}
                   telegramUserId={telegramUserId}
                   telegramBridgeEnabled={!!telegramUserId}
+                  telegramMode="notify"
                   onBridgeMessage={(ticketMessageId) => {
                     supabase.functions.invoke("telegram-admin-chat", {
                       body: {
-                        action: "bridge_ticket_message",
+                        action: "bridge_ticket_notification",
                         ticket_id: ticketId,
                         ticket_message_id: ticketMessageId,
                       },

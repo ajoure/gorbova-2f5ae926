@@ -1,6 +1,6 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { User, Headset, Bot, Lock, SmilePlus, FileIcon, Download } from "lucide-react";
+import { User, Headset, Bot, Lock, SmilePlus } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -8,21 +8,27 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { TicketMessage as TicketMessageType, TicketAttachment } from "@/hooks/useTickets";
 import type { ReactionGroup } from "@/hooks/useTicketReactions";
 import { useSignedAttachments } from "@/hooks/useSignedAttachments";
+import { ChatMediaMessage } from "@/components/admin/chat/ChatMediaMessage";
 
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "👎"];
+const EMOJI_LIST = [
+  "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
+  "😉", "😌", "😍", "🥰", "😘", "😋", "😛", "😜", "🤪", "😎",
+  "🤗", "🤔", "🤐", "😐", "😑", "😶", "😏", "😒", "🙄", "😬",
+  "👍", "👎", "👌", "✌️", "🤞", "🤝", "👏", "🙏", "💪", "❤️",
+  "🔥", "⭐", "✨", "💯", "✅", "❌", "⚠️", "📌", "📎", "💼",
+];
 
-function AttachmentsList({ attachments }: { attachments: (string | TicketAttachment)[] | null }) {
+function TicketAttachmentsList({ attachments, isOutgoing }: { attachments: (string | TicketAttachment)[] | null; isOutgoing?: boolean }) {
   const { signedUrls, getKey } = useSignedAttachments(attachments);
 
   if (!attachments || attachments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-2 mt-2">
+    <div className="flex flex-col gap-2 mt-2">
       {attachments.map((att, index) => {
         // Backward compat: old string format
         if (typeof att === "string") {
@@ -39,38 +45,21 @@ function AttachmentsList({ attachments }: { attachments: (string | TicketAttachm
           );
         }
 
-        // New object format
         const key = getKey(att);
         const signed = signedUrls.get(key);
-        const isImage = att.mime?.startsWith("image/");
-
-        if (isImage && signed?.url) {
-          return (
-            <a key={key} href={signed.url} target="_blank" rel="noopener noreferrer" className="block">
-              <img
-                src={signed.url}
-                alt={att.file_name}
-                className="max-w-[200px] max-h-[150px] rounded-md border border-border object-cover"
-              />
-            </a>
-          );
-        }
 
         return (
-          <a
+          <ChatMediaMessage
             key={key}
-            href={signed?.url || "#"}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              "flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md border border-border bg-muted/50 hover:bg-accent transition-colors",
-              !signed?.url && "opacity-50 pointer-events-none"
-            )}
-          >
-            <FileIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="truncate max-w-[150px]">{att.file_name}</span>
-            <Download className="h-3 w-3 text-muted-foreground" />
-          </a>
+            fileType={att.kind || null}
+            fileUrl={signed?.url || null}
+            fileName={att.file_name || null}
+            mimeType={att.mime || null}
+            isOutgoing={!!isOutgoing}
+            storageBucket={att.bucket || null}
+            storagePath={att.path || null}
+            uploadStatus={signed?.url ? "ok" : att.bucket ? "pending" : null}
+          />
         );
       })}
     </div>
@@ -169,16 +158,16 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
                   <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-1.5" side="top" align="center">
-                <div className="flex gap-1">
-                  {QUICK_EMOJIS.map((emoji) => (
+              <PopoverContent className="w-64 p-2" side="top" align="center">
+                <div className="grid grid-cols-10 gap-1">
+                  {EMOJI_LIST.map((emoji) => (
                     <button
                       key={emoji}
                       onClick={() => {
                         onToggleReaction(emoji);
                         setPickerOpen(false);
                       }}
-                      className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-accent text-base transition-colors"
+                      className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
                     >
                       {emoji}
                     </button>
@@ -210,7 +199,7 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
           </div>
         )}
 
-        <AttachmentsList attachments={message.attachments} />
+        <TicketAttachmentsList attachments={message.attachments} isOutgoing={isCurrentUser} />
       </div>
     </div>
   );
