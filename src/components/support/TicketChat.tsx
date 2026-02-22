@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TicketMessage } from "./TicketMessage";
-import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
+import { useTicketMessages, useSendMessage, useMarkTicketRead, useEditTicketMessage, useDeleteTicketMessage } from "@/hooks/useTickets";
 import { useDisplayProfiles } from "@/hooks/useDisplayProfiles";
 import type { TicketAttachment } from "@/hooks/useTickets";
 import { useTicketReactions, useToggleReaction } from "@/hooks/useTicketReactions";
@@ -117,6 +117,8 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   const sendMessageMutation = useSendMessage();
   const markRead = useMarkTicketRead();
+  const editMessage = useEditTicketMessage();
+  const deleteMessage = useDeleteTicketMessage();
 
   // Mark ticket as read when opened
   useEffect(() => {
@@ -328,10 +330,13 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             key={msg.id}
             message={msg}
             isCurrentUser={msg.author_id === user?.id && !isAdmin}
+            isAdmin={isAdmin}
             reactions={reactionsMap?.[msg.id]}
             onToggleReaction={(emoji) =>
               toggleReaction.mutate({ messageId: msg.id, emoji })
             }
+            onEditMessage={isAdmin ? (messageId, newText) => editMessage.mutate({ messageId, ticketId, newText }) : undefined}
+            onDeleteMessage={isAdmin ? (messageId) => deleteMessage.mutate({ messageId, ticketId }) : undefined}
             displayAvatarUrl={
               msg.display_user_id
                 ? displayProfilesMap?.get(msg.display_user_id)?.avatar_url ?? null

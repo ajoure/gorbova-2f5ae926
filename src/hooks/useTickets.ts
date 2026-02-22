@@ -510,3 +510,50 @@ export function useMarkTicketRead() {
     },
   });
 }
+
+// Hook to edit a ticket message
+export function useEditTicketMessage() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ messageId, ticketId, newText }: { messageId: string; ticketId: string; newText: string }) => {
+      const { error } = await supabase
+        .from("ticket_messages")
+        .update({ message: newText })
+        .eq("id", messageId);
+      if (error) throw error;
+      return { ticketId };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["ticket-messages", data.ticketId] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось отредактировать сообщение", variant: "destructive" });
+    },
+  });
+}
+
+// Hook to delete a ticket message
+export function useDeleteTicketMessage() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ messageId, ticketId }: { messageId: string; ticketId: string }) => {
+      const { error } = await supabase
+        .from("ticket_messages")
+        .delete()
+        .eq("id", messageId);
+      if (error) throw error;
+      return { ticketId };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["ticket-messages", data.ticketId] });
+      toast({ title: "Сообщение удалено" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось удалить сообщение", variant: "destructive" });
+    },
+  });
+}
