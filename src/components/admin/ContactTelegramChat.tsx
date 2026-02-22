@@ -31,6 +31,13 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Send,
   MessageCircle,
   Bot,
@@ -90,9 +97,16 @@ interface TelegramMessage {
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
+  bot_id?: string | null;
+  bot_username?: string | null; // for optimistic UI
   admin_profile?: {
     full_name: string | null;
     avatar_url: string | null;
+  } | null;
+  telegram_bots?: {
+    id: string;
+    bot_name: string;
+    bot_username: string;
   } | null;
   meta?: {
     file_type?: string | null;
@@ -205,7 +219,29 @@ export function ContactTelegramChat({
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
 
+  // Fetch available bots
+  const { data: telegramBots = [] } = useQuery({
+    queryKey: ["telegram-bots-for-chat"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_bots")
+        .select("id, bot_name, bot_username, status, is_primary")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 60000,
+  });
+
+  const botsMap = useMemo(() => {
+    const map = new Map<string, { bot_name: string; bot_username: string; status: string; is_primary: boolean }>();
+    telegramBots.forEach(b => map.set(b.id, { bot_name: b.bot_name, bot_username: b.bot_username, status: b.status, is_primary: b.is_primary || false }));
+    return map;
+  }, [telegramBots]);
+
+  const activeBots = useMemo(() => telegramBots.filter(b => b.status === "active"), [telegramBots]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
@@ -358,6 +394,33 @@ export function ContactTelegramChat({
       return (meta as any).upload_status === 'pending';
     });
   }, [messages]);
+
+  // === DEFAULT BOT SELECTION ===
+  useEffect(() => {
+    if (!messages || messages.length === 0 || activeBots.length === 0) return;
+
+    const savedBotId = localStorage.getItem(`tg_bot_${userId}`);
+    if (savedBotId && activeBots.some(b => b.id === savedBotId)) {
+      if (selectedBotId !== savedBotId) setSelectedBotId(savedBotId);
+      return;
+    }
+    if (savedBotId) localStorage.removeItem(`tg_bot_${userId}`);
+
+    const lastInbound = [...messages].reverse().find(m => m.direction === "incoming" && m.bot_id);
+    if (lastInbound?.bot_id && activeBots.some(b => b.id === lastInbound.bot_id)) {
+      setSelectedBotId(lastInbound.bot_id);
+      return;
+    }
+
+    const primaryBot = activeBots.find(b => b.is_primary);
+    if (primaryBot) { setSelectedBotId(primaryBot.id); return; }
+    if (activeBots[0]) { setSelectedBotId(activeBots[0].id); }
+  }, [messages, activeBots, userId]);
+
+  const handleBotChange = (botId: string) => {
+    setSelectedBotId(botId);
+    localStorage.setItem(`tg_bot_${userId}`, botId);
+  };
 
   const refetch = useCallback(() => {
     refetchMessages();
@@ -625,6 +688,7 @@ export function ContactTelegramChat({
           user_id: userId, 
           message: text || "",
           file: fileData,
+          bot_id: selectedBotId || undefined,
         },
       });
       if (error) throw error;
@@ -641,6 +705,8 @@ export function ContactTelegramChat({
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
+        bot_id: selectedBotId,
+        bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
       };
       queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
         [...(old || []), tempMessage]
@@ -999,6 +1065,13 @@ export function ContactTelegramChat({
             )}
             
             <div className="flex items-center justify-end gap-1 mt-1">
+              {/* Bot badge */}
+              {(() => {
+                const botUsername = msg.bot_username || msg.telegram_bots?.bot_username || (msg.bot_id ? botsMap.get(msg.bot_id)?.bot_username : null);
+                return botUsername ? (
+                  <span className="text-[9px] opacity-40 mr-1">@{botUsername}</span>
+                ) : null;
+              })()}
               {isEdited && (
                 <span className="text-xs opacity-60 mr-1">ред.</span>
               )}
@@ -1251,13 +1324,31 @@ export function ContactTelegramChat({
             className="min-h-[60px] max-h-[120px] resize-none flex-1"
             disabled={sendMutation.isPending || isUploading}
           />
-          <Button
-            onClick={handleSend}
-            disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading}
-            className="h-auto"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
+          <div className="flex flex-col gap-1 items-end">
+            {activeBots.length > 1 && (
+              <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
+                <SelectTrigger className="h-6 w-auto min-w-[90px] text-[10px] rounded-md border-border/40">
+                  <Bot className="h-3 w-3 mr-0.5" />
+                  <SelectValue placeholder="Бот" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeBots.map(bot => (
+                    <SelectItem key={bot.id} value={bot.id} className="text-xs">
+                      @{bot.bot_username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button
+              onClick={handleSend}
+              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || !selectedBotId}
+              className="h-auto"
+              title={!selectedBotId ? "Выберите бота для отправки" : undefined}
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          </div>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             Enter для отправки, Shift+Enter для новой строки
