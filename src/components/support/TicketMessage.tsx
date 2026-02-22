@@ -2,7 +2,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { User, Headset, Bot, Lock, SmilePlus } from "lucide-react";
 import { useState } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Popover,
   PopoverContent,
@@ -71,9 +71,10 @@ interface TicketMessageProps {
   isCurrentUser?: boolean;
   reactions?: ReactionGroup[];
   onToggleReaction?: (emoji: string) => void;
+  displayAvatarUrl?: string | null;
 }
 
-export function TicketMessage({ message, isCurrentUser, reactions, onToggleReaction }: TicketMessageProps) {
+export function TicketMessage({ message, isCurrentUser, reactions, onToggleReaction, displayAvatarUrl }: TicketMessageProps) {
   const isSystem = message.author_type === "system";
   const isSupport = message.author_type === "support";
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -101,6 +102,9 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
       )}
     >
       <Avatar className="h-8 w-8 shrink-0">
+        {isSupport && displayAvatarUrl && (
+          <AvatarImage src={displayAvatarUrl} alt={message.author_name || "Поддержка"} />
+        )}
         <AvatarFallback className={cn(
           isSupport 
             ? "bg-primary text-primary-foreground" 
@@ -117,7 +121,7 @@ export function TicketMessage({ message, isCurrentUser, reactions, onToggleReact
       <div className={cn("flex flex-col max-w-[75%]", isCurrentUser && "items-end")}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs font-medium">
-            {isSupport ? "Поддержка" : message.author_name || "Вы"}
+            {isSupport ? (message.author_name || "Поддержка") : (message.author_name || "Вы")}
           </span>
           {message.is_internal && (
             <span className="flex items-center gap-1 text-xs text-muted-foreground">

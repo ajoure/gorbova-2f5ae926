@@ -54,6 +54,7 @@ export interface TicketMessage {
   is_internal: boolean;
   is_read: boolean;
   created_at: string;
+  display_user_id: string | null;
 }
 
 export interface CreateTicketData {
@@ -69,6 +70,7 @@ export interface CreateMessageData {
   is_internal?: boolean;
   author_type?: "user" | "support" | "system";
   author_name_override?: string;
+  display_user_id?: string | null;
 }
 
 // Hook for user's tickets
@@ -390,6 +392,7 @@ export function useSendMessage() {
           message: data.message,
           attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
           is_internal: data.is_internal || false,
+          display_user_id: data.display_user_id || null,
         })
         .select()
         .single();

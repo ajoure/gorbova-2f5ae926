@@ -8565,6 +8565,7 @@ export type Database = {
           author_name: string | null
           author_type: string
           created_at: string | null
+          display_user_id: string | null
           id: string
           is_internal: boolean | null
           is_read: boolean | null
@@ -8577,6 +8578,7 @@ export type Database = {
           author_name?: string | null
           author_type: string
           created_at?: string | null
+          display_user_id?: string | null
           id?: string
           is_internal?: boolean | null
           is_read?: boolean | null
@@ -8589,6 +8591,7 @@ export type Database = {
           author_name?: string | null
           author_type?: string
           created_at?: string | null
+          display_user_id?: string | null
           id?: string
           is_internal?: boolean | null
           is_read?: boolean | null

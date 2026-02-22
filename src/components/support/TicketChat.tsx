@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { TicketMessage } from "./TicketMessage";
 import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
+import { useDisplayProfiles } from "@/hooks/useDisplayProfiles";
 import type { TicketAttachment } from "@/hooks/useTickets";
 import { useTicketReactions, useToggleReaction } from "@/hooks/useTicketReactions";
 import { useAuth } from "@/contexts/AuthContext";
@@ -94,6 +95,17 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   // Defense-in-depth: redundant render-level filter for non-admin views
   const visibleMessages = isAdmin ? messages : messages?.filter(m => !m.is_internal);
+
+  // Collect unique display_user_ids for avatar resolution
+  const displayUserIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleMessages?.forEach(m => {
+      if (m.display_user_id) ids.add(m.display_user_id);
+    });
+    return [...ids];
+  }, [visibleMessages]);
+
+  const { data: displayProfilesMap } = useDisplayProfiles(displayUserIds);
   
   // Reactions
   const messageIds = useMemo(
@@ -265,6 +277,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       ? supportSenders.find(s => s.user_id === sendAsUserId)
       : null;
 
+    const displayUserId = sendAsUserId !== "self" && selectedSender
+      ? selectedSender.user_id
+      : null;
+
     const result = await sendMessageMutation.mutateAsync({
       ticket_id: ticketId,
       message: message.trim(),
@@ -272,6 +288,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       is_internal: isAdmin ? isInternal : false,
       attachments: attachments.length > 0 ? attachments : undefined,
       author_name_override: selectedSender?.full_name || undefined,
+      display_user_id: displayUserId,
     });
 
     // Bridge to Telegram if checkbox checked & not internal
@@ -314,6 +331,11 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             reactions={reactionsMap?.[msg.id]}
             onToggleReaction={(emoji) =>
               toggleReaction.mutate({ messageId: msg.id, emoji })
+            }
+            displayAvatarUrl={
+              msg.display_user_id
+                ? displayProfilesMap?.get(msg.display_user_id)?.avatar_url ?? null
+                : null
             }
           />
         ))}
