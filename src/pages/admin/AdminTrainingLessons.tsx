@@ -67,9 +67,26 @@ import {
   Info,
   Layers,
   Copy,
+  GripVertical,
 } from "lucide-react";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const contentTypeOptions = [
   { value: "article", label: "Статья", icon: FileText },
@@ -85,6 +102,32 @@ const completionModeOptions = [
   { value: "watch_video", label: "Просмотр видео", description: "Автоматически при полном просмотре видео" },
   { value: "kvest", label: "Прохождение квеста", description: "Пошаговое прохождение интерактивного урока" },
 ];
+
+// ─── SortableItem wrapper ───
+
+function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: "relative" as const,
+    zIndex: isDragging ? 50 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-1">
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing touch-none p-1 text-muted-foreground hover:text-foreground shrink-0"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
 
 // Helper function for slug generation
 const generateSlug = (title: string) => {
@@ -388,7 +431,59 @@ export default function AdminTrainingLessons() {
     enabled: !!moduleId,
   });
 
-  const { lessons, loading, createLesson, updateLesson, deleteLesson } = useTrainingLessons(moduleId);
+  const { lessons, loading, createLesson, updateLesson, deleteLesson, reorderLessons } = useTrainingLessons(moduleId);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor)
+  );
+
+  // Local state for sortable child modules
+  const [sortedChildModules, setSortedChildModules] = useState(childModules);
+  useEffect(() => { setSortedChildModules(childModules); }, [childModules]);
+
+  const handleChildModuleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !moduleId) return;
+
+    const oldIndex = sortedChildModules.findIndex(m => m.id === active.id);
+    const newIndex = sortedChildModules.findIndex(m => m.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(sortedChildModules, oldIndex, newIndex);
+    setSortedChildModules(reordered);
+
+    try {
+      const updates = reordered.map((m, i) =>
+        supabase.from("training_modules")
+          .update({ sort_order: i * 10 })
+          .eq("id", m.id)
+          .eq("parent_module_id", moduleId)
+      );
+      const results = await Promise.all(updates);
+      const failed = results.filter(r => r.error);
+      if (failed.length > 0) {
+        toast.error("Ошибка сохранения порядка модулей");
+        refetchChildModules();
+      }
+    } catch {
+      toast.error("Ошибка сохранения порядка модулей");
+      refetchChildModules();
+    }
+  }, [sortedChildModules, moduleId, refetchChildModules]);
+
+  const handleLessonDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = lessons.findIndex(l => l.id === active.id);
+    const newIndex = lessons.findIndex(l => l.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(lessons, oldIndex, newIndex);
+    await reorderLessons(reordered.map(l => l.id));
+  }, [lessons, reorderLessons]);
 
   const resetForm = useCallback(() => {
     setFormData({
@@ -590,69 +685,74 @@ export default function AdminTrainingLessons() {
         </div>
 
         {/* Child Modules */}
-        {childModules.length > 0 && (
+        {sortedChildModules.length > 0 && (
           <div className="mb-6">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Дочерние модули</h3>
-            <div className="space-y-2">
-              {childModules.map((child) => (
-                <Card
-                  key={child.id}
-                  className="cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
-                >
-                  <CardContent className="flex items-center gap-3 p-4">
-                    <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Layers className="h-4 w-4 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-medium truncate">{child.title}</h4>
-                      <code className="text-xs text-muted-foreground">/{child.slug}</code>
-                    </div>
-                    <Badge variant={child.is_active ? "default" : "secondary"} className="shrink-0">
-                      {child.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
-                      <span className="hidden sm:inline">{child.is_active ? "Активен" : "Скрыт"}</span>
-                    </Badge>
-                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Копировать / Переместить"
-                        onClick={() => setCopyMoveTarget({ type: "module", id: child.id, title: child.title })}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleChildModuleDragEnd}>
+              <SortableContext items={sortedChildModules.map(m => m.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2">
+                  {sortedChildModules.map((child) => (
+                    <SortableItem key={child.id} id={child.id}>
+                      <Card
+                        className="cursor-pointer hover:border-primary/50 transition-colors"
                         onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
                       >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={async () => {
-                          if (!confirm(`Удалить модуль "${child.title}"?`)) return;
-                          const { error } = await supabase
-                            .from("training_modules")
-                            .delete()
-                            .eq("id", child.id);
-                          if (error) {
-                            toast.error("Ошибка удаления модуля");
-                          } else {
-                            toast.success("Модуль удалён");
-                            refetchChildModules();
-                          }
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                        <CardContent className="flex items-center gap-3 p-4">
+                          <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                            <Layers className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium truncate">{child.title}</h4>
+                            <code className="text-xs text-muted-foreground">/{child.slug}</code>
+                          </div>
+                          <Badge variant={child.is_active ? "default" : "secondary"} className="shrink-0">
+                            {child.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                            <span className="hidden sm:inline">{child.is_active ? "Активен" : "Скрыт"}</span>
+                          </Badge>
+                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Копировать / Переместить"
+                              onClick={() => setCopyMoveTarget({ type: "module", id: child.id, title: child.title })}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={async () => {
+                                if (!confirm(`Удалить модуль "${child.title}"?`)) return;
+                                const { error } = await supabase
+                                  .from("training_modules")
+                                  .delete()
+                                  .eq("id", child.id);
+                                if (error) {
+                                  toast.error("Ошибка удаления модуля");
+                                } else {
+                                  toast.success("Модуль удалён");
+                                  refetchChildModules();
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                        </CardContent>
+                      </Card>
+                    </SortableItem>
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           </div>
         )}
 
@@ -678,95 +778,101 @@ export default function AdminTrainingLessons() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-3">
-            {lessons.map((lesson, index) => {
-              const typeOpt = contentTypeOptions.find(o => o.value === lesson.content_type);
-              const TypeIcon = typeOpt?.icon || BookOpen;
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleLessonDragEnd}>
+            <SortableContext items={lessons.map(l => l.id)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-3">
+                {lessons.map((lesson, index) => {
+                  const typeOpt = contentTypeOptions.find(o => o.value === lesson.content_type);
+                  const TypeIcon = typeOpt?.icon || BookOpen;
 
-              return (
-                <Card key={lesson.id}>
-                  <CardContent className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-4">
-                    <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-                      {/* Order number */}
-                      <div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
-                        {index + 1}
-                      </div>
+                  return (
+                    <SortableItem key={lesson.id} id={lesson.id}>
+                      <Card>
+                        <CardContent className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-4">
+                          <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                            {/* Order number */}
+                            <div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
+                              {index + 1}
+                            </div>
 
-                      {/* Type icon */}
-                      <TypeIcon className="h-5 w-5 text-muted-foreground shrink-0 hidden sm:block" />
+                            {/* Type icon */}
+                            <TypeIcon className="h-5 w-5 text-muted-foreground shrink-0 hidden sm:block" />
 
-                      {/* Lesson info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-medium truncate">{lesson.title}</h3>
-                          <Badge variant={lesson.is_active ? "default" : "secondary"} className="shrink-0">
-                            {lesson.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
-                            <span className="hidden sm:inline">{lesson.is_active ? "Активен" : "Скрыт"}</span>
-                          </Badge>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
-                          <code className="bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[120px] sm:max-w-none">
-                            {lesson.slug}
-                          </code>
-                          {lesson.duration_minutes && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {lesson.duration_minutes} мин
-                            </span>
-                          )}
-                          <span className="hidden sm:inline">{typeOpt?.label}</span>
-                        </div>
-                      </div>
-                    </div>
+                            {/* Lesson info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-medium truncate">{lesson.title}</h3>
+                                <Badge variant={lesson.is_active ? "default" : "secondary"} className="shrink-0">
+                                  {lesson.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                                  <span className="hidden sm:inline">{lesson.is_active ? "Активен" : "Скрыт"}</span>
+                                </Badge>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
+                                <code className="bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[120px] sm:max-w-none">
+                                  {lesson.slug}
+                                </code>
+                                {lesson.duration_minutes && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {lesson.duration_minutes} мин
+                                  </span>
+                                )}
+                                <span className="hidden sm:inline">{typeOpt?.label}</span>
+                              </div>
+                            </div>
+                          </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-11 sm:ml-0">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Копировать / Переместить"
-                        onClick={() => setCopyMoveTarget({ type: "lesson", id: lesson.id, title: lesson.title })}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      {lesson.completion_mode === 'kvest' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/admin/training-lessons/${moduleId}/progress/${lesson.id}`)}
-                        >
-                          <Users className="h-4 w-4 sm:mr-1" />
-                          <span className="hidden sm:inline">Прогресс</span>
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigate(`/admin/training-lessons/${moduleId}/edit/${lesson.id}`)}
-                      >
-                        <Blocks className="h-4 w-4 sm:mr-1" />
-                        <span className="hidden sm:inline">Контент</span>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEditDialog(lesson)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleteConfirmId(lesson.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                          {/* Actions */}
+                          <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-11 sm:ml-0">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Копировать / Переместить"
+                              onClick={() => setCopyMoveTarget({ type: "lesson", id: lesson.id, title: lesson.title })}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                            {lesson.completion_mode === 'kvest' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/admin/training-lessons/${moduleId}/progress/${lesson.id}`)}
+                              >
+                                <Users className="h-4 w-4 sm:mr-1" />
+                                <span className="hidden sm:inline">Прогресс</span>
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => navigate(`/admin/training-lessons/${moduleId}/edit/${lesson.id}`)}
+                            >
+                              <Blocks className="h-4 w-4 sm:mr-1" />
+                              <span className="hidden sm:inline">Контент</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(lesson)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeleteConfirmId(lesson.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </SortableItem>
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
 
         {/* Create Dialog */}
