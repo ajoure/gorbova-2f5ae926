@@ -1,99 +1,86 @@
 
-# Экспорт сделок и контактов в Excel / CSV
+# Исправление проблем здоровья системы (INV-19B + INV-20)
 
-## Анализ существующего кода
+## Диагноз
 
-В проекте **нет** централизованной утилиты экспорта. Каждая страница реализует CSV-выгрузку inline:
-- `AdminConsents.tsx` -- ручная сборка CSV с BOM
-- `TelegramClubMembers.tsx` -- аналогично
-- `AdminMarketingInsights.tsx` -- аналогично
-- `BepaidRawDataTab.tsx` -- аналогично
+### INV-19B: "Token recurring без provider_subscriptions" — 125 найдено
 
-Пакет `xlsx` установлен, но используется **только для импорта** (чтение). Пакет `file-saver` установлен. Пакет `papaparse` установлен.
+**Из 125 записей:**
+- **123** — подписки с `billing_type = mit`. Они управляются платформой (token-based charging), а НЕ BePaid. У них по определению нет записи в `provider_subscriptions`, и это **нормально**. Инвариант INV-19B считает их ошибкой, но это **ложноположительное срабатывание**.
+- **3** — подписки с `billing_type = provider_managed`. Эти действительно должны иметь запись в `provider_subscriptions`, но её нет. Это реальная проблема.
 
-Централизованной функции `exportToExcel` / `exportToCSV` не существует -- нужно создать.
+**Причина**: запрос в `nightly-payments-invariants` (строки 143-174) фильтрует по `auto_renew = true` и наличию `payment_methods`, но **не исключает** подписки с `billing_type = mit`. MIT-подписки не нуждаются в `provider_subscriptions` — они списывают по токену напрямую.
 
-## Что будет сделано
+**Исправление**: добавить фильтр в INV-19B, чтобы проверять только `billing_type IN ('provider_managed')` или хотя бы исключить `mit`.
 
-### 1. Новый файл: `src/utils/exportTableData.ts`
+### INV-20: "Оплаченные заказы без платежей" — 4 найдено
 
-Создать **единый** утилитарный модуль для экспорта табличных данных. Переиспользуемый для любых страниц.
+Проверены все 4 заказа:
 
-Интерфейс:
+| Заказ | Причина | Решение |
+|---|---|---|
+| `b8d7b867` (ORD-26-MLUXHRPN) | Legacy-дубликат: bepaid_uid `9cc19de5` привязан к платежу другого заказа `fa019f5a` | Пометить `superseded_by_repair` |
+| `c0af8ad4` (ORD-26-MKDNM34Z) | Legacy-дубликат: bepaid_uid `6303b5a2` привязан к платежу другого заказа `1ea274b1` | Пометить `superseded_by_repair` |
+| `cb92d748` (REN-26-40888f51) | Backfill-артефакт: `meta.payment_id = caf2d8ed` не существует в `payments_v2` | Пометить `no_real_payment` |
+| `02302928` (ORD-ADM-1769114549787) | 3DS redirect с `reconciled_by`, но платёж не найден нигде | Пометить `superseded_by_repair` (reconciled) |
+
+Все 4 можно исправить запуском `admin-repair-missing-payments` в режиме **execute** — функция уже содержит логику для каждого из этих случаев.
+
+---
+
+## План исправления
+
+### P1 — Исправить INV-19B: убрать ложные срабатывания для MIT-подписок
+
+**Файл:** `supabase/functions/nightly-payments-invariants/index.ts`
+
+**Строки 143-148:** Добавить фильтр `billing_type`:
+
+Было:
 ```text
-interface ExportColumn<T> {
-  header: string;           // Заголовок колонки ("Дата", "Контакт")
-  getValue: (row: T) => string | number;  // Как извлечь значение
-}
-
-function exportToExcel<T>(data: T[], columns: ExportColumn<T>[], filename: string): void
-function exportToCSV<T>(data: T[], columns: ExportColumn<T>[], filename: string): void
+.in("status", ["active", "trial", "past_due"])
+.eq("auto_renew", true)
 ```
 
-Реализация:
-- `exportToExcel`: динамический `import("xlsx")` (как в остальном коде), `XLSX.utils.json_to_sheet` -> `XLSX.utils.book_new` -> `XLSX.writeFile`. Ширина колонок автоматически по содержимому.
-- `exportToCSV`: `papaparse.unparse()` с UTF-8 BOM (`\uFEFF`) для корректного открытия в Excel. Скачивание через `file-saver` (`saveAs`).
+Станет:
+```text
+.in("status", ["active", "trial", "past_due"])
+.eq("auto_renew", true)
+.in("billing_type", ["provider_managed"])
+```
 
-### 2. Кнопка экспорта в `AdminDeals.tsx`
+Это уберет 123 ложных срабатывания. Останутся только 3 реальные проблемы (provider_managed без записи в provider_subscriptions).
 
-Добавить в actions row (строка ~633, рядом с RefreshCw) кнопку с `DropdownMenu`:
-- Иконка `Download` + текст "Экспорт" (текст скрыт на мобильных)
-- Два пункта: "Excel (.xlsx)" с иконкой `FileSpreadsheet`, "CSV (.csv)" с иконкой `FileText`
-- Disabled если `sortedDeals.length === 0`
+### P2 — Исправить INV-20: запустить repair для 4 заказов
 
-Колонки экспорта (из `sortedDeals` -- уже отфильтрованные + отсортированные):
+**Действие:** вызвать edge function `admin-repair-missing-payments` с `dry_run: false`.
 
-| Заголовок | Источник |
-|---|---|
-| Дата | `deal.created_at` -> `dd.MM.yyyy HH:mm` |
-| Номер | `deal.order_number` |
-| Контакт | `profilesMap.get(deal.user_id)?.full_name` |
-| Email | `deal.customer_email` или `profile.email` |
-| Телефон | `profile.phone` |
-| Продукт | `deal.products_v2?.name` |
-| Тариф | `deal.tariffs?.name` |
-| Сумма | `deal.final_price` (число) |
-| Валюта | `deal.currency` |
-| Статус | `STATUS_CONFIG[deal.status]?.label` |
-| Доступ до | `deal.trial_end_at` -> `dd.MM.yyyy` |
+Функция уже обрабатывает все 4 случая:
+- UID collision (2 заказа с bepaid_uid, привязанным к другому заказу) -- пометит `superseded_by_repair`
+- Backfill artifact (1 заказ с `source: subscription-renewal` + `backfill: true`) -- пометит `no_real_payment`
+- Reconciled order (1 заказ с `reconciled_by`) -- пометит `superseded_by_repair`
 
-Имя файла: `sdelki_2026-02-23.xlsx` / `.csv`
+### P3 — Для 3 реальных INV-19B (provider_managed): запустить backfill
 
-Toast после скачивания: "Экспортировано N записей".
+**Действие:** вызвать edge function `admin-bepaid-backfill-subscriptions` для синхронизации 3 provider_managed подписок с BePaid API.
 
-### 3. Кнопка экспорта в `AdminContacts.tsx`
-
-Добавить в actions row (строка ~1165, рядом с RefreshCw) аналогичную кнопку с `DropdownMenu`.
-
-Колонки экспорта (из `sortedContacts`):
-
-| Заголовок | Источник |
-|---|---|
-| Имя | `contact.full_name` |
-| Email | `contact.email` |
-| Телефон | `contact.phone` |
-| Telegram | `contact.telegram_username` |
-| Сделок | `contact.deals_count` (число) |
-| Последняя сделка | `contact.last_deal_at` -> `dd.MM.yyyy` |
-| Статус | `contact.status_account` |
-| Дата регистрации | `contact.created_at` -> `dd.MM.yyyy HH:mm` |
-
-Имя файла: `kontakty_2026-02-23.xlsx` / `.csv`
+---
 
 ## Затронутые файлы
 
 | Файл | Изменение |
 |---|---|
-| `src/utils/exportTableData.ts` | **Новый** -- единый утилитарный модуль exportToExcel / exportToCSV |
-| `src/pages/admin/AdminDeals.tsx` | Кнопка "Экспорт" в toolbar (DropdownMenu с Excel/CSV) |
-| `src/pages/admin/AdminContacts.tsx` | Кнопка "Экспорт" в toolbar (DropdownMenu с Excel/CSV) |
+| `supabase/functions/nightly-payments-invariants/index.ts` | Добавить `.in("billing_type", ["provider_managed"])` в запрос INV-19B (строка 147) |
+
+## Операционные действия (после деплоя)
+
+1. Вызвать `admin-repair-missing-payments` с `{ dry_run: false, since_days: 90 }` -- исправит INV-20
+2. Вызвать `admin-bepaid-backfill-subscriptions` с `{ dry_run: false }` -- исправит 3 реальных INV-19B
+3. Запустить проверку здоровья повторно -- ожидаем 0 проблем
 
 ## DoD
 
-1. На странице Сделки есть кнопка "Экспорт" с dropdown (Excel / CSV)
-2. На странице Контакты есть кнопка "Экспорт" с dropdown (Excel / CSV)
-3. Экспорт выгружает только отфильтрованные и отсортированные данные
-4. Excel открывается корректно (кириллица, ширина колонок)
-5. CSV открывается в Excel корректно (UTF-8 BOM, разделитель)
-6. Кнопка disabled при пустом списке
-7. Нет ошибок сборки/TS
+1. INV-19B показывает 3 или 0 (не 125) после деплоя
+2. INV-20 показывает 0 после запуска repair
+3. SQL-пруф: все 4 заказа имеют флаги `superseded_by_repair` или `no_real_payment`
+4. Нет ошибок сборки Edge Function
