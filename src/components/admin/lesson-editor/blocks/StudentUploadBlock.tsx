@@ -16,11 +16,12 @@ import { useAuth } from "@/contexts/AuthContext";
 export interface StudentUploadContentData {
   title: string;
   instructions?: string;
-  allowedGroups: Array<"images" | "documents" | "spreadsheets" | "audio" | "video" | "archives">;
+  allowedGroups: Array<"images" | "documents" | "spreadsheets" | "audio" | "video" | "archives" | "mindmaps">;
   maxSizeMB: number;
   required: boolean;
   maxFiles?: number;
   maxTotalSizeMB?: number;
+  allowAny?: boolean;
 }
 
 interface UploadedFileData {
@@ -48,6 +49,7 @@ const GROUP_EXTENSIONS: Record<string, string[]> = {
   audio: [".mp3", ".wav", ".m4a", ".ogg", ".aac"],
   video: [".mp4", ".mov", ".avi", ".mkv", ".webm"],
   archives: [".zip", ".rar", ".7z"],
+  mindmaps: [".xmind", ".mm", ".mmap"],
 };
 
 const GROUP_LABELS: Record<string, string> = {
@@ -57,6 +59,7 @@ const GROUP_LABELS: Record<string, string> = {
   audio: "Аудио",
   video: "Видео",
   archives: "Архивы",
+  mindmaps: "Интеллект-карты (XMind)",
 };
 
 const DEFAULT_MAX_FILES = 5;
@@ -115,12 +118,20 @@ export function StudentUploadBlock({
         </div>
         <div>
           <Label>Допустимые типы файлов</Label>
-          <div className="grid grid-cols-2 gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-2 mb-2">
+            <Switch
+              checked={content.allowAny ?? false}
+              onCheckedChange={(v) => onChange({ ...content, allowAny: v })}
+            />
+            <Label className="cursor-pointer text-sm">Любые файлы (кроме исполняемых)</Label>
+          </div>
+          <div className={`grid grid-cols-2 gap-2 mt-1 ${content.allowAny ? "opacity-40 pointer-events-none" : ""}`}>
             {Object.entries(GROUP_LABELS).map(([key, label]) => (
               <div key={key} className="flex items-center gap-2">
                 <Checkbox
                   id={`group-${key}`}
                   checked={(content.allowedGroups || []).includes(key as any)}
+                  disabled={content.allowAny}
                   onCheckedChange={(checked) => {
                     const groups = content.allowedGroups || [];
                     if (checked) {
@@ -216,8 +227,8 @@ function StudentUploadStudentView({
   const maxTotalSizeMB = content.maxTotalSizeMB || DEFAULT_MAX_TOTAL_SIZE_MB;
 
   const allowedExts = useMemo(
-    () => (content.allowedGroups || []).flatMap((g) => GROUP_EXTENSIONS[g] || []),
-    [content.allowedGroups]
+    () => content.allowAny ? [] : (content.allowedGroups || []).flatMap((g) => GROUP_EXTENSIONS[g] || []),
+    [content.allowedGroups, content.allowAny]
   );
 
   const currentTotalSize = useMemo(
@@ -228,12 +239,14 @@ function StudentUploadStudentView({
   const validateFile = useCallback((file: File): boolean => {
     const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
 
+    // Blocklist исполняемых — всегда активен
     if (BLOCKED_EXTENSIONS.has(ext)) {
       toast.error("Этот тип файла запрещён");
       return false;
     }
 
-    if (allowedExts.length > 0 && !allowedExts.includes(ext)) {
+    // Если не allowAny — проверяем по группам
+    if (!content.allowAny && allowedExts.length > 0 && !allowedExts.includes(ext)) {
       toast.error(`Допустимые форматы: ${allowedExts.join(", ")}`);
       return false;
     }
@@ -245,7 +258,7 @@ function StudentUploadStudentView({
     }
 
     return true;
-  }, [allowedExts, content.maxSizeMB]);
+  }, [allowedExts, content.maxSizeMB, content.allowAny]);
 
   const isDuplicate = useCallback((file: File): boolean => {
     return uploadedFiles.some(

@@ -61,6 +61,13 @@ const EXTENSION_MAP: Record<string, RawIconDef> = {
   ".rar": { Icon: FileArchive, colorClass: "text-amber-600", label: "Archive" },
   ".7z": { Icon: FileArchive, colorClass: "text-amber-600", label: "Archive" },
   ".txt": { Icon: FileText, colorClass: "text-muted-foreground", label: "Text" },
+  ".xmind": { Icon: File, colorClass: "text-cyan-600", label: "XMind" },
+  ".mm": { Icon: File, colorClass: "text-cyan-600", label: "FreeMind" },
+  ".mmap": { Icon: File, colorClass: "text-cyan-600", label: "MindManager" },
+  ".key": { Icon: Presentation, colorClass: "text-orange-500", label: "Keynote" },
+  ".numbers": { Icon: FileSpreadsheet, colorClass: "text-green-600", label: "Numbers" },
+  ".pages": { Icon: FileText, colorClass: "text-blue-600", label: "Pages" },
+  ".fig": { Icon: File, colorClass: "text-purple-500", label: "Figma" },
 };
 
 const MIME_PREFIX_MAP: Array<{ prefix: string; result: RawIconDef }> = [
@@ -105,6 +112,8 @@ export function getFileTypeIcon(
       "_MP3": ".mp3", "_WAV": ".wav", "_M4A": ".m4a", "_OGG": ".ogg",
       "_MP4": ".mp4", "_MOV": ".mov", "_AVI": ".avi", "_MKV": ".mkv", "_WEBM": ".webm",
       "_ZIP": ".zip", "_RAR": ".rar", "_7Z": ".7z", "_TXT": ".txt",
+      "_XMIND": ".xmind", "_MM": ".mm", "_MMAP": ".mmap",
+      "_KEY": ".key", "_NUMBERS": ".numbers", "_PAGES": ".pages", "_FIG": ".fig",
     };
     for (const [suffix, ext] of Object.entries(suffixMap)) {
       if (upper.endsWith(suffix)) { found = EXTENSION_MAP[ext] ?? null; break; }

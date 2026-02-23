@@ -15,14 +15,7 @@ interface FileBlockProps {
   lessonId?: string;
 }
 
-// Allowlist расширений для FileBlock — без MIME-проверки, т.к. application/* нестабилен
-const ALLOWED_FILE_EXTENSIONS = [
-  ".pdf", ".doc", ".docx",
-  ".xls", ".xlsx",
-  ".ppt", ".pptx",
-  ".zip", ".rar",
-  ".txt", ".csv", ".rtf",
-];
+// Админ может загружать любые файлы — ограничение только по размеру
 
 function formatFileSizeDisplay(bytes?: number): string {
   if (!bytes) return "";
@@ -65,8 +58,8 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
         "lesson-files",
         50,
         undefined,
-        ALLOWED_FILE_EXTENSIONS,
-        ownerId // нормализованный ownerId → lesson-files/<lessonId>/...
+        undefined, // Админ: любые файлы, без ограничения расширений
+        ownerId
       );
       if (result) {
         const { publicUrl, storagePath } = result;
@@ -193,7 +186,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt,.csv,.rtf"
+          accept="*/*"
           onChange={handleInputChange}
           className="hidden"
         />
@@ -217,7 +210,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
                 Загрузить файл
               </Button>
               <p className="text-xs text-muted-foreground">
-                или перетащите файл сюда • PDF, Word, Excel, PowerPoint, ZIP, TXT • до 50 МБ
+                или перетащите файл сюда • любые файлы • до 50 МБ
               </p>
             </>
           )}
