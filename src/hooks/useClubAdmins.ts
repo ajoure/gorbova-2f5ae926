@@ -13,8 +13,8 @@ export interface AdminInfo {
 }
 
 /**
- * Загружает администраторов клуба напрямую из telegram_club_members
- * по полю last_telegram_check_result (chat.status / channel.status)
+ * Загружает администраторов клуба из telegram_club_members
+ * + ботов, привязанных к клубу через telegram_clubs.bot_id → telegram_bots
  */
 export function useClubAdmins(clubId: string | null) {
   return useQuery({
@@ -24,7 +24,7 @@ export function useClubAdmins(clubId: string | null) {
     queryFn: async (): Promise<AdminInfo[]> => {
       if (!clubId) return [];
 
-      // Fetch members whose check result contains administrator or creator
+      // 1. Fetch human admins from telegram_club_members
       const { data, error } = await supabase
         .from("telegram_club_members")
         .select("telegram_user_id, telegram_first_name, telegram_last_name, telegram_username, profile_id, last_telegram_check_result")
@@ -36,14 +36,13 @@ export function useClubAdmins(clubId: string | null) {
         return [];
       }
 
-      if (!data?.length) return [];
+      const memberAdmins = data ?? [];
 
       // Collect profile_ids to check access
-      const profileIds = data
+      const profileIds = memberAdmins
         .map((m: any) => m.profile_id)
         .filter(Boolean) as string[];
 
-      // Check active access for these profiles
       let accessMap: Record<string, boolean> = {};
       if (profileIds.length > 0) {
         const now = new Date().toISOString();
@@ -62,7 +61,9 @@ export function useClubAdmins(clubId: string | null) {
         }
       }
 
-      return data.map((m: any) => {
+      const existingTgIds = new Set(memberAdmins.map((m: any) => m.telegram_user_id));
+
+      const result: AdminInfo[] = memberAdmins.map((m: any) => {
         const r = m.last_telegram_check_result as Record<string, any> | null;
         const chatStatus = r?.chat?.status;
         const channelStatus = r?.channel?.status;
@@ -89,6 +90,36 @@ export function useClubAdmins(clubId: string | null) {
           is_bot,
         };
       });
+
+      // 2. Fetch bot linked to this club via telegram_clubs.bot_id → telegram_bots
+      const { data: clubRow } = await supabase
+        .from("telegram_clubs")
+        .select("bot_id")
+        .eq("id", clubId)
+        .single();
+
+      if (clubRow?.bot_id) {
+        const { data: bot } = await supabase
+          .from("telegram_bots")
+          .select("bot_id, bot_name, bot_username")
+          .eq("id", clubRow.bot_id)
+          .single();
+
+        if (bot?.bot_id && !existingTgIds.has(bot.bot_id)) {
+          result.push({
+            telegram_user_id: bot.bot_id,
+            telegram_first_name: bot.bot_name || null,
+            telegram_last_name: null,
+            telegram_username: bot.bot_username || null,
+            full_name: bot.bot_name || bot.bot_username || null,
+            role: "administrator",
+            has_active_access: false,
+            is_bot: true,
+          });
+        }
+      }
+
+      return result;
     },
   });
 }

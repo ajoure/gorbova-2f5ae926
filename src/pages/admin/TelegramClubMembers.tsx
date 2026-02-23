@@ -236,7 +236,7 @@ export default function TelegramClubMembers() {
       in_club: members.filter(m => m.in_any).length,
       with_access: members.filter(m => m.has_active_access).length,
       bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
-      violators: members.filter(m => m.is_violator).length,
+      violators: members.filter(m => m.is_violator && !adminTelegramIds.has(m.telegram_user_id)).length,
       removed: members.filter(m => m.access_status === 'removed' && !m.in_any).length,
       admins: adminsList.length,
     };
@@ -255,7 +255,7 @@ export default function TelegramClubMembers() {
         case 'bought_not_joined':
           return member.is_bought_not_joined;
         case 'violators':
-          return member.is_violator;
+          return member.is_violator && !adminTelegramIds.has(member.telegram_user_id);
         case 'removed':
           return member.access_status === 'removed' && !member.in_any;
         case 'admins':
@@ -264,7 +264,7 @@ export default function TelegramClubMembers() {
           return true;
       }
     });
-  }, [members, activeTab]);
+  }, [members, activeTab, adminTelegramIds]);
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
@@ -859,12 +859,14 @@ export default function TelegramClubMembers() {
           isLoading={isLoading || isBusinessStatsLoading}
           isError={isStatsError}
           onTabChange={setActiveTab}
-          violatorsCount={stats?.violators}
+          violatorsCount={counts.violators}
           outsideSystemCount={
             club?.members_count_chat !== undefined && stats?.in_chat !== undefined
               ? Math.max(0, (club.members_count_chat ?? 0) - (stats.in_chat ?? 0))
               : null
           }
+          period={businessStatsPeriod}
+          onPeriodChange={setBusinessStatsPeriod}
         />
 
         {/* Error Alert for members or stats */}
