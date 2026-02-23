@@ -1,36 +1,53 @@
 
-# FIX: Ошибка добавления блока html_raw — отсутствует в CHECK constraint
+# Улучшение визуального дизайна блока "Чек-лист"
 
-## Проблема
+## Что делаем
 
-Таблица `lesson_blocks` имеет CHECK-ограничение `lesson_blocks_block_type_check`, которое перечисляет допустимые значения `block_type`. Тип `'html_raw'` **отсутствует** в этом списке, поэтому INSERT падает с ошибкой на уровне базы данных.
+Обновляем только StudentView (студенческий вид) компонента `ChecklistBlock` — делаем его визуально современным, с использованием Card-стиля, как у других интерактивных блоков (StudentNote, DiagnosticTable и т.д.).
 
-Тип `checklist` уже присутствует в constraint — его добавление работает корректно.
+## Визуальные изменения
 
-## Решение
+**Общая обертка:**
+- Card с `border-primary/20` (как у StudentNoteBlock) для консистентности
+- Заголовок с иконкой `ListChecks` (из lucide) + текст + описание
+- Статус сохранения (анимированный индикатор "Сохранено")
 
-Одна SQL-миграция: пересоздать CHECK-ограничение с добавлением `'html_raw'`.
+**Группы:**
+- Название группы: uppercase, tracking-wide, с тонкой разделительной линией слева (border-l-2 primary)
+- Между группами — увеличенные отступы
 
-```sql
-ALTER TABLE lesson_blocks DROP CONSTRAINT lesson_blocks_block_type_check;
-ALTER TABLE lesson_blocks ADD CONSTRAINT lesson_blocks_block_type_check
-  CHECK (block_type = ANY (ARRAY[
-    'heading','text','accordion','tabs','spoiler','callout','quote',
-    'video','audio','image','gallery','file',
-    'button','embed','divider','timeline','steps',
-    'quiz_single','quiz_multiple','quiz_true_false','quiz_fill_blank',
-    'quiz_matching','quiz_sequence','quiz_hotspot','quiz_survey',
-    'input_short','input_long','checklist','table_input','file_upload','rating',
-    'container','columns','condition',
-    'video_unskippable','diagnostic_table','sequential_form','role_description',
-    'html_raw'
-  ]));
-```
+**Пункты чек-листа:**
+- Каждый пункт в отдельной строке с `rounded-xl` фоном при hover
+- Чекбокс увеличен до `h-5 w-5` с primary-цветом
+- При отметке: текст становится `text-muted-foreground` + зачеркивание, плюс мягкая зеленая иконка галочки
+- Description — под основным текстом, мягким цветом
+- Вся строка кликабельная (label)
+- Transition анимация при toggle
+
+**Прогресс-бар:**
+- Обернут в закругленный блок с фоном `bg-muted/30`
+- Показывает процент + фракцию ("5 из 8")
+- При 100% — зеленый цвет прогресс-бара и текст "Все выполнено!"
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| SQL-миграция | DROP + ADD constraint с `html_raw` |
+| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Обновить только `ChecklistStudentView` — стили и разметка |
 
-Код фронтенда изменений не требует — блоки уже зарегистрированы.
+Админский редактор (ChecklistEditor) — без изменений.
+
+## Технические детали
+
+Изменения в файле `ChecklistBlock.tsx`:
+
+1. Добавить импорты: `Card, CardContent` из `@/components/ui/card`, иконки `ListChecks, Check, Loader2` из lucide
+2. Добавить состояние `saveStatus` для отображения статуса сохранения (idle/saving/saved)
+3. Обновить JSX `ChecklistStudentView`:
+   - Обертка: `<Card className="border-primary/20">`
+   - Header: иконка ListChecks + заголовок + описание + статус сохранения
+   - Группы: `border-l-2 border-primary/30 pl-4` для визуальной иерархии
+   - Пункты: `p-3 rounded-xl hover:bg-primary/5 transition-all duration-200`
+   - Чекбокс: `h-5 w-5` (крупнее)
+   - Checked-состояние: `line-through opacity-60` + зеленый check
+   - Прогресс-бар внизу в `rounded-xl bg-muted/30 p-3` с условным цветом при 100%
