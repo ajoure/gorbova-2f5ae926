@@ -160,7 +160,7 @@ export function QuizMultipleBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                {content.explanation}
+                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
               </div>
             )}
 

@@ -60,9 +60,7 @@ export function StepsBlock({ content, onChange, isEditing = true }: StepsBlockPr
                   {index + 1}
                 </div>
                 <div className="mt-3 text-center px-2">
-                  <div className="font-semibold text-sm">
-                    {step.title || `Шаг ${index + 1}`}
-                  </div>
+                  <div className="font-semibold text-sm" dangerouslySetInnerHTML={{ __html: step.title || `Шаг ${index + 1}` }} />
                   {step.description && (
                     <div 
                       className="text-xs text-muted-foreground mt-1 line-clamp-3"
@@ -97,9 +95,7 @@ export function StepsBlock({ content, onChange, isEditing = true }: StepsBlockPr
             </div>
             <div className="flex-1 pb-6">
               <div className="bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/50">
-                <div className="font-semibold text-foreground">
-                  {step.title || `Шаг ${index + 1}`}
-                </div>
+                <div className="font-semibold text-foreground" dangerouslySetInnerHTML={{ __html: step.title || `Шаг ${index + 1}` }} />
                 {step.description && (
                   <div 
                     className="prose prose-sm max-w-none dark:prose-invert mt-2 text-muted-foreground"

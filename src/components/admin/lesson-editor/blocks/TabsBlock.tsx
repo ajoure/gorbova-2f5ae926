@@ -64,7 +64,7 @@ export function TabsBlock({ content, onChange, isEditing = true }: TabsBlockProp
               value={tab.id}
               className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm"
             >
-              {tab.title}
+              <span dangerouslySetInnerHTML={{ __html: tab.title }} />
             </TabsTrigger>
           ))}
         </TabsList>
