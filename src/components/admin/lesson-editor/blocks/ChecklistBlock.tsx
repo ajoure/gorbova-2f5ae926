@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -125,16 +126,17 @@ function ChecklistEditor({ content, onChange }: { content: ChecklistContentData;
               <div key={item.id} className="flex items-start gap-2">
                 <Checkbox disabled className="mt-2.5" />
                 <div className="flex-1 space-y-1">
-                  <Input
+                  <RichTextarea
                     value={item.label}
-                    onChange={(e) => updateItem(gIdx, iIdx, { label: e.target.value })}
+                    onChange={(html) => updateItem(gIdx, iIdx, { label: html })}
                     placeholder="Текст пункта"
+                    minHeight="40px"
                   />
-                  <Input
+                  <RichTextarea
                     value={item.description || ''}
-                    onChange={(e) => updateItem(gIdx, iIdx, { description: e.target.value })}
+                    onChange={(html) => updateItem(gIdx, iIdx, { description: html })}
                     placeholder="Подсказка (опционально)"
-                    className="text-xs"
+                    minHeight="32px"
                   />
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => removeItem(gIdx, iIdx)} className="h-8 w-8 text-destructive">
@@ -254,11 +256,15 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
                         className="mt-0.5 h-5 w-5"
                       />
                       <div className={`flex-1 min-w-0 transition-opacity duration-200 ${isChecked ? 'opacity-60' : ''}`}>
-                        <span className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}>
-                          {item.label}
-                        </span>
+                        <span
+                          className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}
+                          dangerouslySetInnerHTML={{ __html: item.label }}
+                        />
                         {item.description && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
+                          <div
+                            className="text-xs text-muted-foreground mt-0.5"
+                            dangerouslySetInnerHTML={{ __html: item.description }}
+                          />
                         )}
                       </div>
                       {isChecked && (
