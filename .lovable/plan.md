@@ -1,120 +1,87 @@
 
 
-# План закрытия DoD для PATCH P3.0.1c
+# PATCH P3.0.1d — FIX queue write: убрать 42P10
 
-## Текущая ситуация
+## Проблема
 
-Код `admin-bepaid-webhook-replay` и `bepaid-webhook` задеплоен и работает корректно:
-- 401 при неверном/отсутствующем секрете -- подтверждено
-- Логика аудита, trace_only guard, bypass по `BEPAID_WEBHOOK_INTERNAL_SECRET` -- в коде
-- **Проблема**: инструмент `curl_edge_functions` в Lovable не может подставить реальное значение `CRON_SECRET` из env -- он передает строки буквально
+Таблица `payment_reconcile_queue` имеет **3 partial unique index** на `bepaid_uid` (все с `WHERE bepaid_uid IS NOT NULL`):
 
-## Решение: одноразовая edge function для self-test
+- `idx_queue_bepaid_uid_unique` -- `(bepaid_uid) WHERE NOT NULL`
+- `idx_payment_queue_bepaid_uid_unique` -- `(bepaid_uid) WHERE NOT NULL`
+- `idx_payment_queue_provider_uid_unique` -- `(provider, bepaid_uid) WHERE NOT NULL`
 
-Создать минимальную edge function `admin-replay-self-test`, которая:
-1. Читает `CRON_SECRET` и `SUPABASE_URL` из `Deno.env`
-2. Вызывает `admin-bepaid-webhook-replay` с правильным `x-cron-secret`
-3. Возвращает полный результат (http_status, webhook_response, audit, queue, events)
+Postgres не принимает `ON CONFLICT (bepaid_uid)` с partial index -- ошибка `42P10`. Текущий `.upsert(..., { onConflict: 'bepaid_uid' })` на строках 933-967 файла `bepaid-webhook/index.ts` всегда падает.
 
-Эта функция не требует внешних секретов для вызова -- достаточно `Authorization: Bearer <service_role>` (подставляется автоматически инструментом curl).
+При этом в таблице 973 записи (все с `bepaid_uid`) -- значит реальные вебхуки как-то пишут (возможно через другой путь или старую версию кода).
 
-### Код edge function
+## Решение (Вариант A -- без миграций БД)
 
-```typescript
-// supabase/functions/admin-replay-self-test/index.ts
-import { createClient } from 'npm:@supabase/supabase-js@2';
+Заменить `.upsert(... onConflict: 'bepaid_uid')` на ручную идемпотентность: `SELECT` -> `INSERT`.
 
-Deno.serve(async (req) => {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  };
-  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+### Изменение в файле
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const cronSecret = Deno.env.get('CRON_SECRET');
+**Файл:** `supabase/functions/bepaid-webhook/index.ts`
+**Строки:** 928-996 (блок queue write)
 
-  if (!cronSecret) {
-    return new Response(JSON.stringify({ error: 'CRON_SECRET not in env' }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
-  }
-
-  // Call replay endpoint with real CRON_SECRET
-  const testBody = JSON.stringify({
-    body_text: JSON.stringify({
-      event: "test_replay_dod",
-      data: {
-        transaction: { uid: "test-replay-dod-001", status: "successful", type: "payment", amount: 100, currency: "BYN" },
-        tracking_id: "dod-test-replay"
-      }
-    }),
-    replay_mode: "trace_only"
-  });
-
-  const resp = await fetch(`${supabaseUrl}/functions/v1/admin-bepaid-webhook-replay`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-cron-secret': cronSecret,
-    },
-    body: testBody,
-  });
-
-  const result = await resp.text();
-  let parsed;
-  try { parsed = JSON.parse(result); } catch { parsed = { raw: result }; }
-
-  // Collect SQL proofs
-  const supabase = createClient(supabaseUrl, serviceKey);
-
-  const [audit, queue, events] = await Promise.all([
-    supabase.from('audit_logs').select('id, actor_type, actor_label, action, meta, created_at')
-      .eq('action', 'webhook.replay').order('created_at', { ascending: false }).limit(3),
-    supabase.from('payment_reconcile_queue').select('id, source, status, bepaid_uid, created_at')
-      .in('source', ['webhook_replay', 'webhook_orphan']).order('created_at', { ascending: false }).limit(5),
-    supabase.from('webhook_events').select('id, outcome, http_status, error_message, created_at')
-      .order('created_at', { ascending: false }).limit(5),
-  ]);
-
-  return new Response(JSON.stringify({
-    replay_http_status: resp.status,
-    replay_response: parsed,
-    proof_audit_logs: audit.data,
-    proof_queue: queue.data,
-    proof_webhook_events: events.data,
-  }, null, 2), {
-    status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-  });
-});
+Текущий код (строки 933-967):
+```
+const { data: queueRow, error: queueError } = await supabase
+  .from('payment_reconcile_queue')
+  .upsert({...}, { onConflict: 'bepaid_uid', ignoreDuplicates: false })
+  .select(...)
+  .maybeSingle();
 ```
 
-### Последовательность действий
+Заменить на:
+```
+// Step 1: Check if already exists by bepaid_uid
+const { data: existingRow } = await supabase
+  .from('payment_reconcile_queue')
+  .select('id, source, bepaid_uid')
+  .eq('bepaid_uid', webhookTransaction.uid)
+  .maybeSingle();
 
-1. Создать `supabase/functions/admin-replay-self-test/index.ts`
-2. Добавить в `supabase/config.toml` секцию `[functions.admin-replay-self-test]` с `verify_jwt = false`
-3. Задеплоить функцию
-4. Вызвать через `curl_edge_functions` (GET/POST без секретов)
-5. Получить полный ответ с пруфами:
-   - `replay_http_status` = 200
-   - `proof_audit_logs` содержит `action='webhook.replay'`
-   - `proof_queue` содержит `source='webhook_replay'`
-   - `proof_webhook_events` содержит `outcome='replay_trace_only'`
-6. Подтвердить SQL-пруфами из ответа
-7. **Удалить** `admin-replay-self-test` после закрытия DoD (одноразовый инструмент)
+let queueRow = null;
+let queueError = null;
 
-### Безопасность
+if (existingRow) {
+  // Duplicate -- reuse existing row
+  queueRow = existingRow;
+  console.log(`[WEBHOOK-QUEUE] DUPLICATE existing id=${existingRow.id} uid=${existingRow.bepaid_uid}`);
+} else {
+  // Insert new row (NOT upsert)
+  const { data, error } = await supabase
+    .from('payment_reconcile_queue')
+    .insert({ /* same fields as current upsert */ })
+    .select('id, source, bepaid_uid, created_at')
+    .maybeSingle();
+  queueRow = data;
+  queueError = error;
+}
+```
 
-- Функция `verify_jwt = false`, но это одноразовый тест -- удаляется сразу после проверки
-- Не принимает произвольных данных, тело теста захардкожено
-- Не создает сайд-эффектов (trace_only)
+Остальной код (строки 969-996: error logging, trace assignment) остается без изменений.
 
-### Файлы
+### Что НЕ трогаем
+
+- `admin-bepaid-webhook-replay/index.ts` -- без изменений
+- Индексы/миграции БД -- без изменений
+- Любые другие файлы проекта
+
+## Проверка DoD
+
+1. Пересоздать временный `admin-replay-self-test` (тот же код, что уже утвержден)
+2. Вызвать -- ожидать `queue_write_ok: true`, `queue_row_id != null`
+3. Вызвать повторно с тем же uid -- ожидать `queue_write_ok: true` (duplicate reuse)
+4. SQL-пруф: `SELECT count(*) FROM payment_reconcile_queue WHERE source IN ('webhook_replay') AND created_at > now() - interval '10 min'` > 0
+5. В логах `bepaid-webhook` нет `42P10`
+6. Удалить `admin-replay-self-test` после подтверждения
+
+## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `supabase/functions/admin-replay-self-test/index.ts` | Создать (временно) |
-| `supabase/config.toml` | Добавить секцию для self-test |
-| После DoD: оба выше | Удалить |
+| `supabase/functions/bepaid-webhook/index.ts` | Правка строк 928-996: upsert -> select+insert |
+| `supabase/functions/admin-replay-self-test/index.ts` | Создать (временно, для DoD) |
+| `supabase/config.toml` | Добавить секцию self-test (временно) |
 
