@@ -21,7 +21,9 @@ export type BlockType =
   // Kvest blocks (Итерация 5)
   | 'video_unskippable' | 'diagnostic_table' | 'sequential_form'
   // Role description block
-  | 'role_description';
+  | 'role_description'
+  // HTML raw block
+  | 'html_raw';
 
 export interface HeadingContent {
   text: string;
@@ -241,7 +243,30 @@ export type BlockContent =
   | RoleDescriptionContentData
   | StudentNoteContentData
   | StudentUploadContentData
+  | HtmlRawContentData
+  | ChecklistBlockContentData
   | Record<string, unknown>;
+
+// HTML raw block content type
+export interface HtmlRawContentData {
+  html: string;
+  title?: string;
+}
+
+// Checklist block content type
+export interface ChecklistBlockContentData {
+  title?: string;
+  description?: string;
+  groups: {
+    id: string;
+    title: string;
+    items: {
+      id: string;
+      label: string;
+      description?: string;
+    }[];
+  }[];
+}
 
 // Kvest block content types
 export interface VideoUnskippableContentData {

@@ -31,6 +31,8 @@ import { SequentialFormBlock } from "@/components/admin/lesson-editor/blocks/Seq
 import { RoleDescriptionBlock } from "@/components/admin/lesson-editor/blocks/RoleDescriptionBlock";
 import { StudentNoteBlock } from "@/components/admin/lesson-editor/blocks/StudentNoteBlock";
 import { StudentUploadBlock } from "@/components/admin/lesson-editor/blocks/StudentUploadBlock";
+import { HtmlRawBlock } from "@/components/admin/lesson-editor/blocks/HtmlRawBlock";
+import { ChecklistBlock } from "@/components/admin/lesson-editor/blocks/ChecklistBlock";
 
 // Kvest-specific props passed from KvestLessonView
 export interface KvestBlockProps {
@@ -418,6 +420,26 @@ export function LessonBlockRenderer({
                 // Файл удалён — очищаем response
                 await saveBlockResponse(block.id, null as any, null, 0, 0);
               }
+            }}
+          />
+        );
+      case 'html_raw':
+        return <HtmlRawBlock content={block.content as any} onChange={noop} isEditing={false} />;
+      case 'checklist':
+        return (
+          <ChecklistBlock
+            content={block.content as any}
+            onChange={noop}
+            isEditing={false}
+            blockId={block.id}
+            lessonId={lessonId}
+            savedResponse={savedResponse}
+            onSave={async (checkedIds: string[]) => {
+              await saveBlockResponse(
+                block.id,
+                { type: 'checklist', checked_ids: checkedIds, saved_at: new Date().toISOString() },
+                null, 0, 0
+              );
             }}
           />
         );

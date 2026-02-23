@@ -110,6 +110,8 @@ import { SequentialFormBlock } from "./blocks/SequentialFormBlock";
 import { RoleDescriptionBlock } from "./blocks/RoleDescriptionBlock";
 import { StudentNoteBlock } from "./blocks/StudentNoteBlock";
 import { StudentUploadBlock } from "./blocks/StudentUploadBlock";
+import { HtmlRawBlock } from "./blocks/HtmlRawBlock";
+import { ChecklistBlock } from "./blocks/ChecklistBlock";
 // Block configuration with categories
 interface BlockConfig {
   icon: React.ElementType;
@@ -170,6 +172,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   diagnostic_table: { icon: Table, label: "Диагн. таблица", color: "bg-emerald-500/10 text-emerald-600", category: 'input' },
   sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
   role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
+  html_raw: { icon: Code, label: "HTML-конспект", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
 };
 
 const categoryConfig = {
@@ -190,6 +193,7 @@ const availableBlocks: BlockType[] = [
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
   'video_unskippable', 'diagnostic_table', 'sequential_form', 'role_description',
   'input_short', 'file_upload',
+  'html_raw', 'checklist',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -255,6 +259,10 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { title: "Ваш ответ", hint: "", required: false };
     case 'file_upload':
       return { title: "Загрузите файл", instructions: "", allowedGroups: ['documents','images'], maxSizeMB: 50, required: false };
+    case 'html_raw':
+      return { html: '', title: '' };
+    case 'checklist':
+      return { title: 'Чек-лист', description: '', groups: [] };
     case 'divider':
     default:
       return {};
@@ -352,6 +360,10 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         return <StudentNoteBlock content={block.content as any} onChange={onUpdate} />;
       case 'file_upload':
         return <StudentUploadBlock content={block.content as any} onChange={onUpdate} />;
+      case 'html_raw':
+        return <HtmlRawBlock content={block.content as any} onChange={onUpdate} />;
+      case 'checklist':
+        return <ChecklistBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">
