@@ -1,57 +1,44 @@
 
-# Исправление сохранения прогресса чек-листа
+# Добавление форматирования в чек-лист + выравнивание текста
 
-## Корневая причина
+## Задача 1: Кнопки выравнивания текста в RichTextarea
 
-`ChecklistStudentView` использует `useState` для инициализации отмеченных пунктов:
+Добавить в тулбар `RichTextarea` три кнопки выравнивания:
+- По левому краю (`justifyLeft`)
+- По центру (`justifyCenter`)
+- По правому краю (`justifyRight`)
 
-```typescript
-const initialChecked: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
-const [checked, setChecked] = useState<Set<string>>(new Set(initialChecked));
-```
+Используем `document.execCommand("justifyCenter")` и т.д. — аналогично существующим кнопкам форматирования.
 
-Проблема: `useUserProgress` загружает данные асинхронно. При первом рендере `savedResponse` равен `undefined`, и `useState` инициализирует пустой `Set`. Когда данные загрузятся и `savedResponse` станет доступен, `useState` **не обновляет** состояние — он использует начальное значение только один раз.
+Добавляем иконки `AlignLeft`, `AlignCenter`, `AlignRight` из `lucide-react`.
 
-Данные в БД **сохраняются корректно** (подтверждено SQL-запросом — записи с `checked_ids` существуют), но при перезагрузке страницы они не восстанавливаются в UI.
+### Файл: `src/components/ui/RichTextarea.tsx`
 
-## Два типа чек-листов на скриншоте
+- Импортировать `AlignLeft`, `AlignCenter`, `AlignRight` из lucide-react
+- Добавить разделитель и три кнопки выравнивания после блока размера текста
 
-1. **Верхние чекбоксы** — это HTML-чекбоксы внутри блока `html_raw` (iframe). Они не могут сохранять состояние — это ограничение sandboxed iframe.
-2. **Нижний чек-лист "Чек-лист внедрения"** — это блок `ChecklistBlock`, прогресс которого должен сохраняться через `user_lesson_progress`. Именно он сломан из-за описанного бага.
+## Задача 2: RichTextarea в ChecklistBlock
 
-## Решение
+В админском редакторе чек-листа (`ChecklistEditor`) заменить `Input` на `RichTextarea` для полей:
+- `item.label` (текст пункта)
+- `item.description` (подсказка)
+
+Студенческий вид (`ChecklistStudentView`) — рендерить label и description через `dangerouslySetInnerHTML` вместо обычного текста, чтобы HTML-форматирование отображалось.
 
 ### Файл: `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx`
 
-Добавить `useEffect`, который синхронизирует `checked` state с `savedResponse` при его изменении:
-
-```typescript
-useEffect(() => {
-  const ids: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
-  if (ids.length > 0) {
-    setChecked(new Set(ids));
-  }
-}, [savedResponse]);
-```
-
-Это обеспечит:
-- При первом рендере (savedResponse = undefined): пустой чек-лист
-- Когда данные загрузятся (savedResponse с checked_ids): состояние обновится
-- При повторном заходе на страницу: отметки восстановятся
-
-### Импорт
-
-Добавить `useEffect` в импорт из React (сейчас его нет в компоненте).
-
-## Что НЕ трогаем
-
-- Админский редактор (ChecklistEditor) — без изменений
-- HTML-блок (html_raw) — чекбоксы внутри iframe не могут сохранять состояние по архитектурным ограничениям
-- Таблицу `user_lesson_progress` — данные сохраняются корректно
-- Логику `onSave` — работает правильно
+- Импортировать `RichTextarea`
+- В `ChecklistEditor`: заменить два `Input` (label, description) на `RichTextarea`
+- В `ChecklistStudentView`: заменить `{item.label}` и `{item.description}` на `<span dangerouslySetInnerHTML>` для корректного отображения HTML
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `ChecklistBlock.tsx` | Добавить useEffect для синхронизации savedResponse с state |
+| `src/components/ui/RichTextarea.tsx` | Добавить 3 кнопки выравнивания (left, center, right) |
+| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Заменить Input на RichTextarea для label и description |
+
+## Что НЕ трогаем
+- Остальные блоки — без изменений
+- Студенческую логику сохранения прогресса — без изменений
+- БД — без изменений
