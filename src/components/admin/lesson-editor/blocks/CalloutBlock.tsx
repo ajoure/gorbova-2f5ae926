@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { 
   Select, 
   SelectContent, 
@@ -146,11 +146,11 @@ export function CalloutBlock({ content, onChange, isEditing = true }: CalloutBlo
             className="flex-1 bg-transparent border-none outline-none font-semibold placeholder:text-muted-foreground/50"
           />
         </div>
-        <Textarea
+        <RichTextarea
           value={content.content || ""}
-          onChange={(e) => onChange({ ...content, content: e.target.value })}
-          placeholder="Содержимое блока (HTML)..."
-          className="min-h-[80px] font-mono text-sm bg-background/50"
+          onChange={(html) => onChange({ ...content, content: html })}
+          placeholder="Содержимое блока..."
+          minHeight="80px"
         />
       </div>
     </div>

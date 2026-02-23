@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -162,11 +162,11 @@ export function StepsBlock({ content, onChange, isEditing = true }: StepsBlockPr
             placeholder="Заголовок шага..."
             className="font-medium"
           />
-          <Textarea
+          <RichTextarea
             value={step.description}
-            onChange={(e) => updateStep(step.id, "description", e.target.value)}
-            placeholder="Описание шага (HTML)..."
-            className="min-h-[60px] font-mono text-sm"
+            onChange={(html) => updateStep(step.id, "description", html)}
+            placeholder="Описание шага..."
+            minHeight="60px"
           />
         </div>
       ))}
