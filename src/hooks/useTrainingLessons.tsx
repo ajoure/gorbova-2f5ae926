@@ -237,6 +237,12 @@ export function useTrainingLessons(moduleId?: string) {
           toast.error(`Не удалось очистить файлы урока (${result.error}), удаление отменено`);
           return false;
         }
+        // Информативные toast о shared/partial (не блокируют удаление)
+        if ((result.skipped_shared_count ?? 0) > 0) {
+          toast.info(`Файлы используются в других уроках — удаление файлов пропущено: ${result.skipped_shared_count}`);
+        } else if ((result.attempted_delete_count ?? 0) > 0 && (result.deleted_count ?? 0) < (result.attempted_delete_count ?? 0)) {
+          toast.info("Часть файлов уже отсутствовала в хранилище");
+        }
       }
 
       // Теперь удаляем запись урока — ТОЛЬКО после успешного cleanup
