@@ -42,7 +42,17 @@ import {
   Trash2,
   Link2,
   Tag,
+  Download,
+  FileSpreadsheet,
+  FileText,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
@@ -291,6 +301,21 @@ export default function AdminDeals() {
     });
     return counts;
   }, [deals, VALID_DEAL_STATUSES]);
+
+  // Export columns builder
+  const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
+    { header: "Дата", getValue: (d) => d.created_at ? format(new Date(d.created_at), "dd.MM.yyyy HH:mm") : "" },
+    { header: "Номер", getValue: (d) => d.order_number || "" },
+    { header: "Контакт", getValue: (d) => profilesMap?.get(d.user_id)?.full_name || "" },
+    { header: "Email", getValue: (d) => d.customer_email || profilesMap?.get(d.user_id)?.email || "" },
+    { header: "Телефон", getValue: (d) => profilesMap?.get(d.user_id)?.phone || "" },
+    { header: "Продукт", getValue: (d) => (d.products_v2 as any)?.name || "" },
+    { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
+    { header: "Сумма", getValue: (d) => d.final_price ?? "" },
+    { header: "Валюта", getValue: (d) => d.currency || "" },
+    { header: "Статус", getValue: (d) => STATUS_CONFIG[d.status]?.label || d.status || "" },
+    { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
+  ], [profilesMap]);
 
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -623,6 +648,32 @@ export default function AdminDeals() {
               <span className="hidden sm:inline">Удалить архив</span>
             </Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8" disabled={sortedDeals.length === 0}>
+                <Download className="h-3.5 w-3.5 sm:mr-1.5" />
+                <span className="hidden sm:inline">Экспорт</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={async () => {
+                const cols = getDealsExportColumns();
+                await exportToExcel(sortedDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                toast.success(`Экспортировано ${sortedDeals.length} записей`);
+              }}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Excel (.xlsx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => {
+                const cols = getDealsExportColumns();
+                exportToCSV(sortedDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.csv`);
+                toast.success(`Экспортировано ${sortedDeals.length} записей`);
+              }}>
+                <FileText className="h-4 w-4 mr-2" />
+                CSV (.csv)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" size="sm" className="h-8" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
             queryClient.invalidateQueries({ queryKey: ["profiles-map"] });
