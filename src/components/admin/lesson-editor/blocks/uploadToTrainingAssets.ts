@@ -29,6 +29,13 @@ function extensionToMime(ext: string): string {
     ".png": "image/png",
     ".webp": "image/webp",
     ".gif": "image/gif",
+    ".xmind": "application/x-xmind",
+    ".mm": "application/x-freemind",
+    ".mmap": "application/octet-stream",
+    ".key": "application/x-iwork-keynote-sffkey",
+    ".numbers": "application/x-iwork-numbers-sffnumbers",
+    ".pages": "application/x-iwork-pages-sffpages",
+    ".fig": "application/octet-stream",
   };
   return map[ext] || "application/octet-stream";
 }
