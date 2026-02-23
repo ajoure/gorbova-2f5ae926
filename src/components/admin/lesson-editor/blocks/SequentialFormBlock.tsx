@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -286,11 +287,11 @@ export function SequentialFormBlock({
                           onChange={(e) => updateStep(step.id, { title: e.target.value })}
                           placeholder="Заголовок"
                         />
-                        <Textarea
+                        <RichTextarea
                           value={step.description}
-                          onChange={(e) => updateStep(step.id, { description: e.target.value })}
+                          onChange={(html) => updateStep(step.id, { description: html })}
                           placeholder="Вопрос"
-                          rows={2}
+                          minHeight="60px"
                         />
                         <div className="flex gap-2">
                           <Select

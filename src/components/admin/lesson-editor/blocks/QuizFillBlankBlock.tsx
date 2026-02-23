@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -256,11 +256,11 @@ export function QuizFillBlankBlock({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Текст перед пропусками</Label>
-        <Textarea
+        <RichTextarea
           value={content.textBefore || ""}
-          onChange={(e) => onChange({ ...content, textBefore: e.target.value })}
+          onChange={(html) => onChange({ ...content, textBefore: html })}
           placeholder="Введите текст до первого пропуска..."
-          className="min-h-[60px]"
+          minHeight="60px"
         />
       </div>
 

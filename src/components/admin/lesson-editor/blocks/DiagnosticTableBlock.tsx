@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -265,11 +265,11 @@ export function DiagnosticTableBlock({
 
         <div className="space-y-2">
           <Label>Инструкция</Label>
-          <Textarea
+          <RichTextarea
             value={content.instruction || ''}
-            onChange={(e) => onChange({ ...content, instruction: e.target.value })}
+            onChange={(html) => onChange({ ...content, instruction: html })}
             placeholder="Заполните таблицу..."
-            rows={2}
+            minHeight="60px"
           />
         </div>
 
