@@ -140,6 +140,62 @@ async function buildDbAllowedSet(
   return allowed;
 }
 
+// ─── Shared asset guard: find paths used by OTHER lessons ───
+
+async function findSharedPaths(
+  adminClient: ReturnType<typeof createClient>,
+  lessonId: string,
+  allowedPaths: string[]
+): Promise<Set<string>> {
+  const allowedSet = new Set(allowedPaths);
+  const sharedSet = new Set<string>();
+
+  // Paginated fetch: only blocks that reference training-assets
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data: blocks, error } = await adminClient
+      .from("lesson_blocks")
+      .select("content")
+      .neq("lesson_id", lessonId)
+      .or("content->>url.ilike.%training-assets%,content->>storagePath.not.is.null,content->>storage_path.not.is.null")
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("[findSharedPaths] query error:", error.message);
+      break;
+    }
+
+    if (!blocks || blocks.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    for (const block of blocks) {
+      for (const p of extractPathsFromJson(block.content)) {
+        if (allowedSet.has(p)) {
+          sharedSet.add(p);
+        }
+      }
+      // Early exit if all paths found shared
+      if (sharedSet.size === allowedSet.size) {
+        hasMore = false;
+        break;
+      }
+    }
+
+    if (blocks.length < PAGE_SIZE) {
+      hasMore = false;
+    } else {
+      offset += PAGE_SIZE;
+    }
+  }
+
+  return sharedSet;
+}
+
 // ─── Main handler ───
 
 Deno.serve(async (req: Request) => {
@@ -275,6 +331,17 @@ Deno.serve(async (req: Request) => {
       allowedPaths.push(path); // нормализованный путь для remove()
     }
 
+    // ─── Shared asset guard ───
+    let sharedSet = new Set<string>();
+    let sharedPaths: string[] = [];
+
+    if (lessonId && allowedPaths.length > 0) {
+      sharedSet = await findSharedPaths(adminClient, lessonId, allowedPaths);
+      sharedPaths = allowedPaths.filter(p => sharedSet.has(p));
+    }
+
+    const finalDeletePaths = allowedPaths.filter(p => !sharedSet.has(p));
+
     if (mode === "dry_run") {
       return new Response(
         JSON.stringify({
@@ -282,15 +349,20 @@ Deno.serve(async (req: Request) => {
           requested_paths_count: paths.length,
           allowed_count: allowedPaths.length,
           blocked_count: blockedPaths.length,
-          would_delete: allowedPaths,
+          would_delete: finalDeletePaths,
           blocked_paths: blockedPaths,
+          shared_paths: sharedPaths,
+          skipped_shared_count: sharedPaths.length,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // mode === "execute"
-    if (allowedPaths.length === 0) {
+    if (finalDeletePaths.length === 0) {
+      const message = sharedPaths.length > 0
+        ? "All paths shared with other lessons — nothing deleted"
+        : "No paths passed guards — nothing deleted";
       return new Response(
         JSON.stringify({
           mode: "execute",
@@ -299,17 +371,19 @@ Deno.serve(async (req: Request) => {
           blocked_count: blockedPaths.length,
           deleted_paths: [],
           blocked_paths: blockedPaths,
+          shared_paths: sharedPaths,
+          skipped_shared_count: sharedPaths.length,
           errors: [],
-          message: "No paths passed guards — nothing deleted",
+          message,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Удаление ТОЛЬКО allowedPaths
+    // Удаление ТОЛЬКО finalDeletePaths (без shared)
     const { data: removeData, error: removeError } = await adminClient.storage
       .from("training-assets")
-      .remove(allowedPaths);
+      .remove(finalDeletePaths);
 
     const deletedCount = removeData?.length ?? 0;
     const errors: string[] = [];
@@ -327,6 +401,7 @@ Deno.serve(async (req: Request) => {
         requested_paths_count: paths.length,
         allowed_count: allowedPaths.length,
         blocked_count: blockedPaths.length,
+        shared_count: sharedPaths.length,
         deleted_count: deletedCount,
         errors,
         reason,
@@ -341,8 +416,10 @@ Deno.serve(async (req: Request) => {
         requested_paths_count: paths.length,
         deleted_count: deletedCount,
         blocked_count: blockedPaths.length,
-        deleted_paths: allowedPaths,
+        deleted_paths: finalDeletePaths,
         blocked_paths: blockedPaths,
+        shared_paths: sharedPaths,
+        skipped_shared_count: sharedPaths.length,
         errors,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

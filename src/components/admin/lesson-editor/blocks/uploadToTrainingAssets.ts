@@ -286,11 +286,15 @@ export async function deleteTrainingAssets(
       return result;
     }
 
-    // STOP: если ownership mismatch (часть путей заблокирована)
-    if (result.allowed_count < safePaths.length) {
-      result.error = `Ownership mismatch: requested=${safePaths.length}, allowed=${result.allowed_count}`;
-      console.warn("[deleteTrainingAssets]", result.error, "blocked_paths:", result.blocked_paths);
+    // STOP: если есть заблокированные пути (безопасность/ownership)
+    if ((result.blocked_count ?? 0) > 0) {
+      result.error = `Blocked paths: ${(result.blocked_paths ?? []).join(", ")}`;
+      console.warn("[deleteTrainingAssets]", result.error);
       return result;
+    }
+    // Shared paths — нормально, не блокируем (файлы используются другими уроками)
+    if (dryData.skipped_shared_count > 0) {
+      console.info("[deleteTrainingAssets] Shared assets skipped:", dryData.shared_paths);
     }
 
     // Шаг 2: execute
