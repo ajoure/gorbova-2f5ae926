@@ -6,6 +6,9 @@ import {
   Strikethrough,
   Palette,
   Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -185,6 +188,18 @@ export function RichTextarea({
             ))}
           </PopoverContent>
         </Popover>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <ToolbarButton onClick={() => exec("justifyLeft")} title="По левому краю">
+          <AlignLeft className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton onClick={() => exec("justifyCenter")} title="По центру">
+          <AlignCenter className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton onClick={() => exec("justifyRight")} title="По правому краю">
+          <AlignRight className="h-3.5 w-3.5" />
+        </ToolbarButton>
       </div>
 
       {/* Editor */}
