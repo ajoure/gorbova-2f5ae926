@@ -145,6 +145,7 @@ Deno.serve(async (req) => {
       .select("id, user_id, product_id")
       .in("status", ["active", "trial", "past_due"])
       .eq("auto_renew", true)
+      .in("billing_type", ["provider_managed"])
       .limit(500);
 
     let inv19bMissing = 0;
