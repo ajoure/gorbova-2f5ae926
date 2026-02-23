@@ -1,66 +1,85 @@
 
-# Исправление всплывающей панели форматирования
+# Исправление FloatingToolbar — тулбар исчезает после первого показа
 
-## Проблема
+## Корневая причина
 
-Всплывающий тулбар (`FloatingToolbar`) не появляется при выделении текста в полях `RichTextarea`. Также в чек-листе заголовок, описание и название группы остались обычными `Input` без поддержки форматирования.
+В `FloatingToolbar.tsx` есть listener `window.addEventListener("scroll", onScroll, true)` с `capture: true`. Это означает, что ЛЮБОЙ скролл в любом элементе на странице (включая контент-область редактора) мгновенно прячет тулбар. После скрытия selection сбрасывается, и тулбар больше не появляется.
 
-## Корневые причины
-
-### 1. Заголовок, описание и группа чек-листа -- обычные Input
-В `ChecklistBlock.tsx` строки 93-106 и 113-117: поля `title`, `description`, `group.title` используют `Input`, а не `RichTextarea`. Они не имеют атрибута `data-rich-editable`, поэтому тулбар их игнорирует.
-
-### 2. FloatingToolbar не появляется даже для RichTextarea
-Тулбар слушает `selectionchange` и ищет `data-rich-editable` элемент через `sel.anchorNode.parentNode` вверх по DOM. Проблема в том, что `anchorNode` -- текстовый узел внутри contentEditable div, и обход `parentNode` должен работать. Однако есть подозрение, что таймаут 150мс или условие `sel.isCollapsed` могут мешать. Нужно добавить отладочные логи и убедиться что обход DOM правильный.
-
-Дополнительно: событие `mouseup` более надёжно для определения момента завершения выделения, чем `selectionchange` с таймаутом. Добавим `mouseup` listener как резервный механизм.
+Кроме того, `mousedown` listener на document (строка 158) для закрытия подменю конфликтует с работой тулбара.
 
 ## Решение
 
-### Файл 1: `src/components/ui/FloatingToolbar.tsx`
+### Файл: `src/components/ui/FloatingToolbar.tsx`
 
-Добавить дополнительный listener на `mouseup` для более надёжного обнаружения выделения. `selectionchange` с таймаутом может не срабатывать во всех браузерах.
+Три точечных исправления:
+
+### 1. Убрать агрессивный scroll listener
+
+Вместо того чтобы скрывать тулбар при любом скролле, нужно **пересчитывать позицию** при скролле. Если selection ещё активна — обновить координаты. Если selection пропала — скрыть.
 
 ```typescript
-// Добавить mouseup listener рядом с selectionchange
+// БЫЛО (строки 146-154):
 useEffect(() => {
-  const onSelectionChange = () => {
-    if (hideTimeout.current) clearTimeout(hideTimeout.current);
-    hideTimeout.current = setTimeout(updatePosition, 150);
+  const onScroll = () => {
+    setVisible(false);
+    setShowColors(false);
+    setShowSizes(false);
   };
+  window.addEventListener("scroll", onScroll, true);
+  return () => window.removeEventListener("scroll", onScroll, true);
+}, []);
 
-  const onMouseUp = () => {
-    setTimeout(updatePosition, 10);
+// СТАНЕТ:
+useEffect(() => {
+  const onScroll = () => {
+    // Пересчитать позицию вместо скрытия
+    updatePosition();
+    setShowColors(false);
+    setShowSizes(false);
   };
-
-  document.addEventListener("selectionchange", onSelectionChange);
-  document.addEventListener("mouseup", onMouseUp);
-
-  return () => {
-    document.removeEventListener("selectionchange", onSelectionChange);
-    document.removeEventListener("mouseup", onMouseUp);
-    if (hideTimeout.current) clearTimeout(hideTimeout.current);
-  };
+  window.addEventListener("scroll", onScroll, true);
+  return () => window.removeEventListener("scroll", onScroll, true);
 }, [updatePosition]);
 ```
 
-### Файл 2: `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx`
+### 2. Исправить mousedown listener
 
-Заменить `Input` на `RichTextarea inline` для:
-- `content.title` (строка 93-97)
-- `content.description` (строка 101-105)
-- `group.title` (строка 113-118)
+Текущий `handleClick` на `mousedown` может конфликтовать с кликами. Нужно убедиться, что он только закрывает подменю (цвет/размер), но не мешает основному тулбару.
+
+Логика уже правильная (проверяет `toolbarRef.current.contains`), но нужно добавить проверку: если клик внутри `data-rich-editable` элемента — не закрывать подменю сразу, просто пусть `selectionchange` разберётся.
+
+### 3. Добавить защиту от мерцания
+
+При скролле `updatePosition` может вызываться слишком часто. Добавить `requestAnimationFrame` throttle для scroll handler.
+
+```typescript
+useEffect(() => {
+  let rafId: number | null = null;
+  const onScroll = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      updatePosition();
+      setShowColors(false);
+      setShowSizes(false);
+    });
+  };
+  window.addEventListener("scroll", onScroll, true);
+  return () => {
+    window.removeEventListener("scroll", onScroll, true);
+    if (rafId) cancelAnimationFrame(rafId);
+  };
+}, [updatePosition]);
+```
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `src/components/ui/FloatingToolbar.tsx` | Добавить mouseup listener для надёжного обнаружения выделения |
-| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Заменить 3 поля Input на RichTextarea inline (title, description, group.title) |
+| `src/components/ui/FloatingToolbar.tsx` | Исправить scroll handler (пересчёт позиции вместо скрытия) + RAF throttle |
 
 ## Что НЕ трогаем
 
-- RichTextarea.tsx -- без изменений
-- Студенческий вид чек-листа -- без изменений
-- Другие блоки -- без изменений
-- БД -- без изменений
+- RichTextarea.tsx — без изменений
+- Блоки конструктора — без изменений
+- LessonBlockEditor.tsx — без изменений
+- БД — без изменений
