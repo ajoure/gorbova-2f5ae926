@@ -930,41 +930,60 @@ Deno.serve(async (req) => {
         const errorMsg = webhookTxStatus !== 'successful' ? (webhookTransaction.message || `Status: ${webhookTxStatus}`) : null;
         const errorCategory = errorMsg ? normalizeErrorCategory(errorMsg, webhookTransaction.decline_code) : null;
         
-        const { data: queueRow, error: queueError } = await supabase.from('payment_reconcile_queue').upsert({
-          bepaid_uid: webhookTransaction.uid,
-          tracking_id: rawTrackingIdEarly || null,
-          amount: webhookTransaction.amount ? webhookTransaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
-          currency: webhookTransaction.currency || body.plan?.currency || 'BYN',
-          customer_email: webhookTransaction.customer?.email || body.customer?.email || webhookAdditionalData.customer_email || null,
-          customer_phone: webhookTransaction.customer?.phone || body.customer?.phone || null,
-          card_holder: webhookTransaction.credit_card?.holder || null,
-          card_last4: webhookTransaction.credit_card?.last_4 || null,
-          card_brand: webhookTransaction.credit_card?.brand || null,
-          card_bank: webhookTransaction.credit_card?.bank || null,
-          card_bank_country: webhookTransaction.credit_card?.issuer_country || null,
-          receipt_url: webhookTransaction.receipt_url || null,
-          raw_payload: {
-            ...(body ?? {}),
-            _trace: {
-              replay: bypassSignature,
-              replay_mode: bypassSignature ? replayMode : null,
-              body_hash: trace.bodyHash ?? null,
-              handler: 'bepaid-webhook',
-              queued_at: new Date().toISOString(),
-            },
-          },
-          source: queueSource,
-          status: webhookTxStatus === 'successful' ? 'pending' : 'error',
-          status_normalized: webhookNormalizedStatus,
-          transaction_type: isWebhookRefund ? 'Возврат средств' : 'Оплата',
-          paid_at: webhookTransaction.paid_at || webhookTransaction.created_at || new Date().toISOString(),
-          reference_transaction_uid: webhookReferenceUid,
-          last_error: errorMsg,
-          error_category: errorCategory,
-          three_d_secure: webhookTransaction.three_d_secure_verification?.status === 'successful',
-        }, { onConflict: 'bepaid_uid', ignoreDuplicates: false })
-          .select('id, source, bepaid_uid, created_at')
+        // P3.0.1d: Manual idempotency (SELECT→INSERT) to avoid 42P10 with partial unique index
+        const { data: existingRow } = await supabase
+          .from('payment_reconcile_queue')
+          .select('id, source, bepaid_uid')
+          .eq('bepaid_uid', webhookTransaction.uid)
           .maybeSingle();
+
+        let queueRow: any = null;
+        let queueError: any = null;
+
+        if (existingRow) {
+          // Duplicate — reuse existing row
+          queueRow = existingRow;
+          console.log(`[WEBHOOK-QUEUE] DUPLICATE existing id=${existingRow.id} uid=${existingRow.bepaid_uid}`);
+        } else {
+          // Insert new row (NOT upsert — avoids 42P10)
+          const { data, error } = await supabase.from('payment_reconcile_queue').insert({
+            bepaid_uid: webhookTransaction.uid,
+            tracking_id: rawTrackingIdEarly || null,
+            amount: webhookTransaction.amount ? webhookTransaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
+            currency: webhookTransaction.currency || body.plan?.currency || 'BYN',
+            customer_email: webhookTransaction.customer?.email || body.customer?.email || webhookAdditionalData.customer_email || null,
+            customer_phone: webhookTransaction.customer?.phone || body.customer?.phone || null,
+            card_holder: webhookTransaction.credit_card?.holder || null,
+            card_last4: webhookTransaction.credit_card?.last_4 || null,
+            card_brand: webhookTransaction.credit_card?.brand || null,
+            card_bank: webhookTransaction.credit_card?.bank || null,
+            card_bank_country: webhookTransaction.credit_card?.issuer_country || null,
+            receipt_url: webhookTransaction.receipt_url || null,
+            raw_payload: {
+              ...(body ?? {}),
+              _trace: {
+                replay: bypassSignature,
+                replay_mode: bypassSignature ? replayMode : null,
+                body_hash: trace.bodyHash ?? null,
+                handler: 'bepaid-webhook',
+                queued_at: new Date().toISOString(),
+              },
+            },
+            source: queueSource,
+            status: webhookTxStatus === 'successful' ? 'pending' : 'error',
+            status_normalized: webhookNormalizedStatus,
+            transaction_type: isWebhookRefund ? 'Возврат средств' : 'Оплата',
+            paid_at: webhookTransaction.paid_at || webhookTransaction.created_at || new Date().toISOString(),
+            reference_transaction_uid: webhookReferenceUid,
+            last_error: errorMsg,
+            error_category: errorCategory,
+            three_d_secure: webhookTransaction.three_d_secure_verification?.status === 'successful',
+          })
+            .select('id, source, bepaid_uid, created_at')
+            .maybeSingle();
+          queueRow = data;
+          queueError = error;
+        }
 
         if (queueError) {
           console.error('[WEBHOOK-QUEUE] DB error:', JSON.stringify({
@@ -984,7 +1003,7 @@ Deno.serve(async (req) => {
         } else {
           console.log(`[WEBHOOK-QUEUE] OK id=${queueRow.id} source=${queueRow.source} uid=${queueRow.bepaid_uid}`);
         }
-        // P3.0.1a: Store in local trace (no globalThis)
+        // P3.0.1d: Store in local trace
         trace.queueWriteOk = !queueError && !!queueRow;
         trace.queueRowId = queueRow?.id || null;
       } catch (queueErr) {
