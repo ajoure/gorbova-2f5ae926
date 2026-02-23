@@ -1,62 +1,57 @@
 
-# Исправления: RichTextarea везде, чек-лист, HTML-блок, sidebar
+# Исправление сохранения прогресса чек-листа
 
-## Проблема 1: RichTextarea не добавлен во все блоки
+## Корневая причина
 
-RichTextarea был добавлен только в 7 блоков (TextBlock, AccordionBlock, TabsBlock, SpoilerBlock, CalloutBlock, TimelineBlock, StepsBlock). Остались 6 блоков, где текстовые поля с HTML-содержимым все еще используют обычный `Textarea`:
+`ChecklistStudentView` использует `useState` для инициализации отмеченных пунктов:
 
-| Блок | Поля для замены |
-|---|---|
-| `QuoteBlock` | `text` (текст цитаты) |
-| `DiagnosticTableBlock` | `instruction` |
-| `RoleDescriptionBlock` | `executor_html`, `freelancer_html`, `entrepreneur_html` |
-| `QuizSurveyBlock` | `instruction`, `question` (в каждом вопросе), `description` (в результатах) |
-| `QuizFillBlankBlock` | `textBefore` |
-| `QuizHotspotBlock` | `question`, `explanation` |
-| `QuizMatchingBlock` | `question`, `explanation` |
-| `QuizSequenceBlock` | `question`, `explanation` |
-| `SequentialFormBlock` | поля инструкций/описаний |
-| `StudentUploadBlock` | `instructions` |
-| `StudentNoteBlock` | студенческая заметка (plain text, тут RichTextarea не нужен) |
+```typescript
+const initialChecked: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
+const [checked, setChecked] = useState<Set<string>>(new Set(initialChecked));
+```
 
-**Решение:** Заменить `Textarea` на `RichTextarea` во всех блоках, где содержимое рендерится как HTML (`dangerouslySetInnerHTML`). Блоки StudentNoteBlock (plain text заметка студента) и StudentUploadBlock (инструкция) оставить как есть — там нет HTML-рендеринга.
+Проблема: `useUserProgress` загружает данные асинхронно. При первом рендере `savedResponse` равен `undefined`, и `useState` инициализирует пустой `Set`. Когда данные загрузятся и `savedResponse` станет доступен, `useState` **не обновляет** состояние — он использует начальное значение только один раз.
 
-## Проблема 2: Чек-лист не виден на странице
+Данные в БД **сохраняются корректно** (подтверждено SQL-запросом — записи с `checked_ids` существуют), но при перезагрузке страницы они не восстанавливаются в UI.
 
-Чек-лист **виден** на студенческой странице (подтверждено скриншотом). Проблема в том, что блок HTML-кода (iframe) занимает слишком много пространства с внутренней прокруткой, из-за чего чек-лист "уходит" далеко вниз. Это связано с проблемой 3.
+## Два типа чек-листов на скриншоте
 
-## Проблема 3: Прокрутка внутри HTML-блока
+1. **Верхние чекбоксы** — это HTML-чекбоксы внутри блока `html_raw` (iframe). Они не могут сохранять состояние — это ограничение sandboxed iframe.
+2. **Нижний чек-лист "Чек-лист внедрения"** — это блок `ChecklistBlock`, прогресс которого должен сохраняться через `user_lesson_progress`. Именно он сломан из-за описанного бага.
 
-Блок `html_raw` рендерится в iframe с ограничением высоты `max: 5000px`. Это создает внутреннюю прокрутку iframe вместо естественной прокрутки страницы.
+## Решение
 
-**Решение:** Убрать ограничение высоты iframe (`Math.min(..., 5000)`) — пусть iframe автоматически подстраивается под полную высоту контента. Также добавить `overflow: hidden` на iframe, чтобы убрать внутреннюю прокрутку. Увеличить лимит до 50000px или убрать верхний предел.
+### Файл: `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx`
 
-## Проблема 4: Сохранение прогресса collapsible-блоков внутри HTML
+Добавить `useEffect`, который синхронизирует `checked` state с `savedResponse` при его изменении:
 
-Collapsible-блоки (`details/summary`) внутри HTML-кода работают нативно в браузере. Их состояние (открыт/закрыт) **не сохраняется** между сессиями — это стандартное поведение HTML. Реализация per-user persistence для произвольного HTML внутри sandboxed iframe потребовала бы сложной системы коммуникации между iframe и родительской страницей + хранения состояния в БД. Это архитектурно тяжелая задача, не связанная с текущими исправлениями. Состояние collapsible-блоков будет сбрасываться при перезагрузке страницы.
+```typescript
+useEffect(() => {
+  const ids: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
+  if (ids.length > 0) {
+    setChecked(new Set(ids));
+  }
+}, [savedResponse]);
+```
 
-## Проблема 5: Растягивание строк в левом админ-меню
+Это обеспечит:
+- При первом рендере (savedResponse = undefined): пустой чек-лист
+- Когда данные загрузятся (savedResponse с checked_ids): состояние обновится
+- При повторном заходе на страницу: отметки восстановятся
 
-На скриншоте и при проверке sidebar выглядит нормально. Возможно, баг проявляется при определенных условиях (ресайз окна, конкретный контент). Проведу проверку CSS sidebar на наличие потенциальных проблем с `line-height` или `leading` классами. Текущие стили sidebar используют `leading-tight` и фиксированные `text-xs` — они не должны растягиваться. Если проблема в `SidebarMenuButton`, то его стили заданы через `cva` и не зависят от контента страницы.
+### Импорт
+
+Добавить `useEffect` в импорт из React (сейчас его нет в компоненте).
+
+## Что НЕ трогаем
+
+- Админский редактор (ChecklistEditor) — без изменений
+- HTML-блок (html_raw) — чекбоксы внутри iframe не могут сохранять состояние по архитектурным ограничениям
+- Таблицу `user_lesson_progress` — данные сохраняются корректно
+- Логику `onSave` — работает правильно
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `QuoteBlock.tsx` | Заменить Textarea на RichTextarea для поля text |
-| `DiagnosticTableBlock.tsx` | Заменить Textarea на RichTextarea для instruction |
-| `RoleDescriptionBlock.tsx` | Заменить Textarea на RichTextarea для 3 полей HTML |
-| `QuizSurveyBlock.tsx` | Заменить Textarea на RichTextarea для instruction, question, description |
-| `QuizFillBlankBlock.tsx` | Заменить Textarea на RichTextarea для textBefore |
-| `QuizHotspotBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
-| `QuizMatchingBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
-| `QuizSequenceBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
-| `SequentialFormBlock.tsx` | Заменить Textarea на RichTextarea для текстовых полей |
-| `HtmlRawBlock.tsx` | Убрать лимит высоты iframe, добавить overflow: hidden |
-
-## Что НЕ трогаем
-- Миграции БД — не нужны
-- StudentNoteBlock — plain text, RichTextarea не нужен
-- StudentUploadBlock — инструкция не рендерится как HTML
-- Студенческие view всех блоков — без изменений
-- AdminSidebar.tsx — CSS корректен, растягивание не воспроизводится
+| `ChecklistBlock.tsx` | Добавить useEffect для синхронизации savedResponse с state |
