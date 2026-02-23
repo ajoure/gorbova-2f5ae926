@@ -12,7 +12,8 @@ export function useUnmappedProductsCount() {
       const { data: queue, error: queueError } = await supabase
         .from("payment_reconcile_queue")
         .select("raw_payload")
-        .in("status", ["pending", "processing"]);
+        .in("status", ["pending", "processing"])
+        .not('source', 'eq', 'webhook_replay');
 
       if (queueError) return 0;
 
