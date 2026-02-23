@@ -8,3 +8,5 @@ export { FileBlock } from './blocks/FileBlock';
 export { ButtonBlock } from './blocks/ButtonBlock';
 export { EmbedBlock } from './blocks/EmbedBlock';
 export { DividerBlock } from './blocks/DividerBlock';
+export { HtmlRawBlock } from './blocks/HtmlRawBlock';
+export { ChecklistBlock } from './blocks/ChecklistBlock';
