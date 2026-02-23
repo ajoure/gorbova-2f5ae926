@@ -1,56 +1,48 @@
 
-# Исправление отображения HTML в чек-листе (студенческий вид)
+# Удаление тестовой записи и фильтрация webhook_replay из статистики
 
 ## Проблема
 
-В `ChecklistStudentView` три поля выводятся через `{value}` вместо `dangerouslySetInnerHTML`:
-- Строка 217: `{content.title || "Чек-лист"}` 
-- Строка 219: `{content.description}`
-- Строка 245: `{group.title}`
-
-Это приводит к тому, что HTML-теги (например `<FONT COLOR="#E03E3E">`) отображаются как текст.
+1. В `payment_reconcile_queue` есть тестовая запись от webhook replay (`source = 'webhook_replay'`, `bepaid_uid = 'test-replay-dod-1771853656930'`, amount=1 BYN, status=pending). Она создаёт "единичку" на бейдже платежей и попадает в выписку.
+2. Хук `useUnmappedProductsCount` не фильтрует записи с `source = 'webhook_replay'`, поэтому тестовые replay-записи считаются как "немаппированные продукты".
 
 ## Решение
 
-### Файл: `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx`
+### 1. Удалить тестовую запись из БД
 
-3 точечных замены в студенческом виде:
+Удалить конкретную запись (UUID `98dfe8e8-df33-4cf2-93c3-80a145eff959`) из `payment_reconcile_queue`.
 
-**Строка 217** — заголовок чек-листа:
-```tsx
+### 2. Исключить webhook_replay из счётчика немаппированных
+
+**Файл: `src/hooks/useUnmappedProductsCount.tsx`**
+
+Добавить фильтр `.not('source', 'eq', 'webhook_replay')` в запрос к `payment_reconcile_queue`, чтобы тестовые replay-записи не влияли на бейдж.
+
+```
 // Было:
-<p className="font-medium">{content.title || "Чек-лист"}</p>
+.in("status", ["pending", "processing"]);
 
 // Станет:
-<p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Чек-лист" }} />
+.in("status", ["pending", "processing"])
+.not('source', 'eq', 'webhook_replay');
 ```
 
-**Строка 219** — описание:
-```tsx
-// Было:
-<p className="text-sm text-muted-foreground">{content.description}</p>
+### 3. Исключить webhook_replay из выписки BePaid
 
-// Станет:
-<p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.description }} />
-```
+**Файл: `src/hooks/useBepaidStatement.ts`** (или где формируется запрос для выписки)
 
-**Строка 245** — заголовок группы:
-```tsx
-// Было:
-<h4 className="...">{group.title}</h4>
-
-// Станет:
-<h4 className="..." dangerouslySetInnerHTML={{ __html: group.title }} />
-```
+Добавить аналогичный фильтр, чтобы replay-записи не попадали в таблицу выписки и статистику.
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | 3 замены в студенческом виде (title, description, group.title) |
+| БД (data delete) | Удалить 1 запись из `payment_reconcile_queue` |
+| `src/hooks/useUnmappedProductsCount.tsx` | Добавить фильтр `.not('source', 'eq', 'webhook_replay')` |
+| `src/hooks/useBepaidStatement.ts` | Добавить фильтр исключения webhook_replay (если данные оттуда) |
 
 ## Что НЕ трогаем
 
-- Редактор (ChecklistEditor) -- без изменений
-- item.label и item.description -- уже используют dangerouslySetInnerHTML (строки 264, 270)
-- Другие файлы -- без изменений
+- Edge function `admin-bepaid-webhook-replay` -- без изменений
+- Таблица `webhook_events` -- без изменений
+- Остальные хуки и компоненты платежей -- без изменений
