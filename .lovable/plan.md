@@ -1,103 +1,62 @@
 
+# Исправления: RichTextarea везде, чек-лист, HTML-блок, sidebar
 
-# Мини-редактор текста + загрузка HTML-файлов
+## Проблема 1: RichTextarea не добавлен во все блоки
 
-## Задача 1: Всплывающая панель форматирования текста
+RichTextarea был добавлен только в 7 блоков (TextBlock, AccordionBlock, TabsBlock, SpoilerBlock, CalloutBlock, TimelineBlock, StepsBlock). Остались 6 блоков, где текстовые поля с HTML-содержимым все еще используют обычный `Textarea`:
 
-### Что делаем
-Создаем переиспользуемый компонент `RichTextarea` — поле ввода с поддержкой форматирования текста. При вводе/выделении текста появляется компактный тулбар с кнопками:
-- **Жирный** (B)
-- **Курсив** (I)
-- **Подчеркнутый** (U)
-- **Зачеркнутый** (S)
-- **Цвет текста** (палитра из 8-10 цветов)
-- **Размер текста** (маленький / обычный / средний / большой)
+| Блок | Поля для замены |
+|---|---|
+| `QuoteBlock` | `text` (текст цитаты) |
+| `DiagnosticTableBlock` | `instruction` |
+| `RoleDescriptionBlock` | `executor_html`, `freelancer_html`, `entrepreneur_html` |
+| `QuizSurveyBlock` | `instruction`, `question` (в каждом вопросе), `description` (в результатах) |
+| `QuizFillBlankBlock` | `textBefore` |
+| `QuizHotspotBlock` | `question`, `explanation` |
+| `QuizMatchingBlock` | `question`, `explanation` |
+| `QuizSequenceBlock` | `question`, `explanation` |
+| `SequentialFormBlock` | поля инструкций/описаний |
+| `StudentUploadBlock` | `instructions` |
+| `StudentNoteBlock` | студенческая заметка (plain text, тут RichTextarea не нужен) |
 
-Компонент заменит обычные `<Textarea>` во всех блоках, где редактируется контент с поддержкой HTML.
+**Решение:** Заменить `Textarea` на `RichTextarea` во всех блоках, где содержимое рендерится как HTML (`dangerouslySetInnerHTML`). Блоки StudentNoteBlock (plain text заметка студента) и StudentUploadBlock (инструкция) оставить как есть — там нет HTML-рендеринга.
 
-### Где применяется
-Блоки, в которых контент рендерится через `dangerouslySetInnerHTML` (т.е. поддерживают HTML):
-- **TextBlock** — основное текстовое поле
-- **AccordionBlock** — контент каждой секции
-- **TabsBlock** — контент каждой вкладки
-- **SpoilerBlock** — скрытый контент
-- **CalloutBlock** — текст выноски
-- **TimelineBlock** — описание событий
-- **StepsBlock** — описание шагов
+## Проблема 2: Чек-лист не виден на странице
 
-### Техническая реализация
+Чек-лист **виден** на студенческой странице (подтверждено скриншотом). Проблема в том, что блок HTML-кода (iframe) занимает слишком много пространства с внутренней прокруткой, из-за чего чек-лист "уходит" далеко вниз. Это связано с проблемой 3.
 
-**Новый файл:** `src/components/ui/RichTextarea.tsx`
+## Проблема 3: Прокрутка внутри HTML-блока
 
-Подход: `contentEditable` div + `document.execCommand` для форматирования + floating toolbar.
+Блок `html_raw` рендерится в iframe с ограничением высоты `max: 5000px`. Это создает внутреннюю прокрутку iframe вместо естественной прокрутки страницы.
 
-```
-+------------------------------------------+
-| B  I  U  S  | A (цвет) | Aa (размер)    |  <-- тулбар (всегда видим сверху)
-+------------------------------------------+
-|                                          |
-|  [contentEditable div]                   |
-|  Введите текст...                        |
-|                                          |
-+------------------------------------------+
-```
+**Решение:** Убрать ограничение высоты iframe (`Math.min(..., 5000)`) — пусть iframe автоматически подстраивается под полную высоту контента. Также добавить `overflow: hidden` на iframe, чтобы убрать внутреннюю прокрутку. Увеличить лимит до 50000px или убрать верхний предел.
 
-Принцип работы:
-- `contentEditable="true"` div с минимальной стилизацией
-- Тулбар зафиксирован сверху (не floating при выделении — проще и надежнее)
-- Форматирование через `document.execCommand('bold')`, `execCommand('italic')` и т.д.
-- Цвет текста: execCommand('foreColor', color) + popup с палитрой
-- Размер текста: execCommand('fontSize') + dropdown (1-7 уровней)
-- `onInput` событие передает `innerHTML` наружу через `onChange`
-- Поддержка placeholder через CSS `:empty::before`
+## Проблема 4: Сохранение прогресса collapsible-блоков внутри HTML
 
-Props компонента:
-```typescript
-interface RichTextareaProps {
-  value: string;           // HTML-строка
-  onChange: (html: string) => void;
-  placeholder?: string;
-  className?: string;
-  minHeight?: string;      // default "100px"
-}
-```
+Collapsible-блоки (`details/summary`) внутри HTML-кода работают нативно в браузере. Их состояние (открыт/закрыт) **не сохраняется** между сессиями — это стандартное поведение HTML. Реализация per-user persistence для произвольного HTML внутри sandboxed iframe потребовала бы сложной системы коммуникации между iframe и родительской страницей + хранения состояния в БД. Это архитектурно тяжелая задача, не связанная с текущими исправлениями. Состояние collapsible-блоков будет сбрасываться при перезагрузке страницы.
 
-## Задача 2: Загрузка HTML-файла в блок "HTML код"
+## Проблема 5: Растягивание строк в левом админ-меню
 
-### Что делаем
-В блоке `html_raw` добавляем кнопку "Загрузить .html файл" рядом с кнопкой "Предпросмотр". При клике:
-1. Открывается стандартный диалог выбора файла (accept=".html,.htm")
-2. Файл читается через `FileReader.readAsText()`
-3. Содержимое парсится: если это полный HTML-документ (`<html>...</html>`), извлекается содержимое `<head><style>` + `<body>`, иначе берется как есть
-4. Результат вставляется в textarea
-
-### Техническая реализация
-
-**Файл:** `src/components/admin/lesson-editor/blocks/HtmlRawBlock.tsx`
-
-Добавляем:
-- Скрытый `<input type="file" accept=".html,.htm">` 
-- Кнопку "Загрузить файл" с иконкой `Upload`
-- Функцию парсинга: DOMParser для извлечения `<style>` и `<body>` из полного HTML-документа
-- Поддержка collapsible-блоков (details/summary) — они работают нативно в HTML, поэтому парсер их не трогает
+На скриншоте и при проверке sidebar выглядит нормально. Возможно, баг проявляется при определенных условиях (ресайз окна, конкретный контент). Проведу проверку CSS sidebar на наличие потенциальных проблем с `line-height` или `leading` классами. Текущие стили sidebar используют `leading-tight` и фиксированные `text-xs` — они не должны растягиваться. Если проблема в `SidebarMenuButton`, то его стили заданы через `cva` и не зависят от контента страницы.
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `src/components/ui/RichTextarea.tsx` | Создать: contentEditable + toolbar |
-| `src/components/admin/lesson-editor/blocks/TextBlock.tsx` | Заменить Textarea на RichTextarea |
-| `src/components/admin/lesson-editor/blocks/AccordionBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
-| `src/components/admin/lesson-editor/blocks/TabsBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
-| `src/components/admin/lesson-editor/blocks/SpoilerBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
-| `src/components/admin/lesson-editor/blocks/CalloutBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
-| `src/components/admin/lesson-editor/blocks/TimelineBlock.tsx` | Заменить Textarea на RichTextarea (поле description) |
-| `src/components/admin/lesson-editor/blocks/StepsBlock.tsx` | Заменить Textarea на RichTextarea (поле description) |
-| `src/components/admin/lesson-editor/blocks/HtmlRawBlock.tsx` | Добавить кнопку загрузки .html файла + парсер |
+| `QuoteBlock.tsx` | Заменить Textarea на RichTextarea для поля text |
+| `DiagnosticTableBlock.tsx` | Заменить Textarea на RichTextarea для instruction |
+| `RoleDescriptionBlock.tsx` | Заменить Textarea на RichTextarea для 3 полей HTML |
+| `QuizSurveyBlock.tsx` | Заменить Textarea на RichTextarea для instruction, question, description |
+| `QuizFillBlankBlock.tsx` | Заменить Textarea на RichTextarea для textBefore |
+| `QuizHotspotBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
+| `QuizMatchingBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
+| `QuizSequenceBlock.tsx` | Заменить Textarea на RichTextarea для question, explanation |
+| `SequentialFormBlock.tsx` | Заменить Textarea на RichTextarea для текстовых полей |
+| `HtmlRawBlock.tsx` | Убрать лимит высоты iframe, добавить overflow: hidden |
 
 ## Что НЕ трогаем
 - Миграции БД — не нужны
-- Студенческие view — без изменений
-- Обычные Input (заголовки, названия) — остаются plain text
-- Существующий HTML-рендеринг на стороне студента — без изменений
-
+- StudentNoteBlock — plain text, RichTextarea не нужен
+- StudentUploadBlock — инструкция не рендерится как HTML
+- Студенческие view всех блоков — без изменений
+- AdminSidebar.tsx — CSS корректен, растягивание не воспроизводится
