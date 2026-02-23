@@ -1,67 +1,78 @@
 
-# Исправление: часы в диагностической таблице показываются как 0
+
+# Показ администраторов поименно в статистике клуба
 
 ## Проблема
 
-Модальное окно прогресса ученика (`StudentProgressModal`) читает данные из `pointA_rows` используя **неправильные имена полей**:
-
-| Что ищет модальное окно | Что реально хранится в БД | Результат |
-|---|---|---|
-| `source_name` | `source` | "—" вместо названия |
-| `task_hours` | `work_hours` | 0 вместо реальных часов |
-| `communication_hours` | `overhead_hours` | 0 вместо реальных часов |
-
-Подтверждено SQL-запросом: в `lesson_progress_state.state_json.pointA_rows` данные хранятся с ключами `source`, `work_hours`, `overhead_hours` (так как именно эти `id` заданы в колонках `DiagnosticTableBlock`).
+На скриншоте видно, что блок «Администраторы клуба» вообще НЕ отображается внизу панели статистики. Это может означать, что логика определения админов из `last_telegram_check_result` не находит их (например, поле пустое или формат отличается). Нужно: (1) починить детекцию, (2) показать всех 4 админов (3 человека + 1 бот) поименно.
 
 ## Решение
 
-Точечное исправление в одном файле -- привести имена полей к реальной схеме данных.
+### Файл: `src/components/telegram/ClubQuickStats.tsx`
 
-### Файл: `src/components/admin/trainings/StudentProgressModal.tsx`
+**1) Исправить логику определения админов (строки 271-288)**
 
-**1) Интерфейс `PointARow` (строки 55-60):** заменить имена полей:
+Текущая логика парсит `last_telegram_check_result` и ищет `status === "administrator" | "creator"`. Возможно, результаты проверки пустые или формат другой. Нужно:
+- Добавить fallback: если `last_telegram_check_result` пустой, но у мембера `role` или иной признак админа -- учитывать
+- Расширить парсинг: проверять вложенные структуры (`r?.chat?.status`, `r?.channel?.status`, `r?.status`)
+- Вернуть массив `adminsList` вместо просто счетчиков:
 
-```
-interface PointARow {
-  source?: string;         // было source_name
-  income?: number;
-  work_hours?: number;     // было task_hours
-  overhead_hours?: number; // было communication_hours
+```text
+interface AdminInfo {
+  telegram_name: string | null;
+  telegram_username: string | null;
+  full_name: string | null;
+  role: "creator" | "administrator";
+  has_active_access: boolean;
+  is_bot?: boolean;
 }
 ```
 
-**2) Агрегация (строки 152-154):** обновить ключи:
+Имя собирается из: `m.telegram_first_name` + `m.telegram_last_name`, fallback на `m.full_name`, fallback на `@username`.
 
-```
-const totalTaskHours = pointARows.reduce((sum, r) => sum + (r.work_hours || 0), 0);
-const totalCommHours = pointARows.reduce((sum, r) => sum + (r.overhead_hours || 0), 0);
+**2) Заменить нижнюю инфо-строку (строки 415-437)**
+
+Вместо:
+```text
+Администраторы клуба   Всего: 3   Без доступа: 1
 ```
 
-**3) Таблица строк (строки 222-225):** обновить отображение:
+Показать поименный список:
+```text
+Администраторы клуба (4)
+[Crown] Катерина Горбова @username -- С доступом
+[Shield] Сергей Федорчук @fs_by -- С доступом
+[Shield] Имя Админ3 @username3 -- Без доступа
+[Bot] BotName @bot_username -- Без доступа
+```
 
-```
-<TableCell>{row.source || "—"}</TableCell>
-<TableCell className="text-right">{row.income || 0} BYN</TableCell>
-<TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
-<TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
-```
+- Crown (иконка) = creator
+- Shield = administrator
+- Bot (иконка) = если `is_bot === true` или имя содержит "bot"
+- Зеленый текст "С доступом" / янтарный "Без доступа" по `has_active_access`
+- Компоновка: flex-wrap, каждый админ -- inline-pill
+
+**3) Убрать условие скрытия блока**
+
+Строка 415: `{!isLoading && adminsCount > 0 && (` -- оставить как есть, но убедиться, что adminsCount теперь корректно считается (включая бота). Если после исправления детекции adminsCount все равно 0, добавить диагностический лог.
 
 ## Затронутые файлы
 
 | Файл | Изменение |
 |---|---|
-| `src/components/admin/trainings/StudentProgressModal.tsx` | Исправить 3 места: интерфейс, агрегация, рендер таблицы |
+| `src/components/telegram/ClubQuickStats.tsx` | Исправить детекцию админов (включая бота), вернуть adminsList, показать поименный список с ролями и статусом доступа |
 
 ## НЕ трогаем
 
-- `DiagnosticTableBlock.tsx` -- данные сохраняются корректно
-- `KvestLessonView.tsx` -- передаёт rows as-is
-- `useLessonProgressState.tsx` -- хранит rows as-is
-- Схему БД -- данные в БД корректны
+- Логику подсчета totalWithAccess, tariffs, динамику
+- RPC `get_club_business_stats`
+- Хук `useTelegramIntegration`
+- Другие компоненты
 
 ## DoD
 
-1. Часы задач и переписки отображаются корректно (реальные значения из БД)
-2. Источник дохода показывает название, а не "—"
-3. Итоги (суммы и доход/час) рассчитываются правильно
+1. Блок "Администраторы клуба" отображается (сейчас скрыт)
+2. Все 4 админа (3 человека + 1 бот) показаны поименно
+3. У каждого видна роль (creator/administrator/bot) и статус доступа
 4. Нет ошибок сборки/TS
+
