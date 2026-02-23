@@ -1,53 +1,103 @@
 
-# Улучшение визуального дизайна блока "Чек-лист"
 
-## Что делаем
+# Мини-редактор текста + загрузка HTML-файлов
 
-Обновляем только StudentView (студенческий вид) компонента `ChecklistBlock` — делаем его визуально современным, с использованием Card-стиля, как у других интерактивных блоков (StudentNote, DiagnosticTable и т.д.).
+## Задача 1: Всплывающая панель форматирования текста
 
-## Визуальные изменения
+### Что делаем
+Создаем переиспользуемый компонент `RichTextarea` — поле ввода с поддержкой форматирования текста. При вводе/выделении текста появляется компактный тулбар с кнопками:
+- **Жирный** (B)
+- **Курсив** (I)
+- **Подчеркнутый** (U)
+- **Зачеркнутый** (S)
+- **Цвет текста** (палитра из 8-10 цветов)
+- **Размер текста** (маленький / обычный / средний / большой)
 
-**Общая обертка:**
-- Card с `border-primary/20` (как у StudentNoteBlock) для консистентности
-- Заголовок с иконкой `ListChecks` (из lucide) + текст + описание
-- Статус сохранения (анимированный индикатор "Сохранено")
+Компонент заменит обычные `<Textarea>` во всех блоках, где редактируется контент с поддержкой HTML.
 
-**Группы:**
-- Название группы: uppercase, tracking-wide, с тонкой разделительной линией слева (border-l-2 primary)
-- Между группами — увеличенные отступы
+### Где применяется
+Блоки, в которых контент рендерится через `dangerouslySetInnerHTML` (т.е. поддерживают HTML):
+- **TextBlock** — основное текстовое поле
+- **AccordionBlock** — контент каждой секции
+- **TabsBlock** — контент каждой вкладки
+- **SpoilerBlock** — скрытый контент
+- **CalloutBlock** — текст выноски
+- **TimelineBlock** — описание событий
+- **StepsBlock** — описание шагов
 
-**Пункты чек-листа:**
-- Каждый пункт в отдельной строке с `rounded-xl` фоном при hover
-- Чекбокс увеличен до `h-5 w-5` с primary-цветом
-- При отметке: текст становится `text-muted-foreground` + зачеркивание, плюс мягкая зеленая иконка галочки
-- Description — под основным текстом, мягким цветом
-- Вся строка кликабельная (label)
-- Transition анимация при toggle
+### Техническая реализация
 
-**Прогресс-бар:**
-- Обернут в закругленный блок с фоном `bg-muted/30`
-- Показывает процент + фракцию ("5 из 8")
-- При 100% — зеленый цвет прогресс-бара и текст "Все выполнено!"
+**Новый файл:** `src/components/ui/RichTextarea.tsx`
+
+Подход: `contentEditable` div + `document.execCommand` для форматирования + floating toolbar.
+
+```
++------------------------------------------+
+| B  I  U  S  | A (цвет) | Aa (размер)    |  <-- тулбар (всегда видим сверху)
++------------------------------------------+
+|                                          |
+|  [contentEditable div]                   |
+|  Введите текст...                        |
+|                                          |
++------------------------------------------+
+```
+
+Принцип работы:
+- `contentEditable="true"` div с минимальной стилизацией
+- Тулбар зафиксирован сверху (не floating при выделении — проще и надежнее)
+- Форматирование через `document.execCommand('bold')`, `execCommand('italic')` и т.д.
+- Цвет текста: execCommand('foreColor', color) + popup с палитрой
+- Размер текста: execCommand('fontSize') + dropdown (1-7 уровней)
+- `onInput` событие передает `innerHTML` наружу через `onChange`
+- Поддержка placeholder через CSS `:empty::before`
+
+Props компонента:
+```typescript
+interface RichTextareaProps {
+  value: string;           // HTML-строка
+  onChange: (html: string) => void;
+  placeholder?: string;
+  className?: string;
+  minHeight?: string;      // default "100px"
+}
+```
+
+## Задача 2: Загрузка HTML-файла в блок "HTML код"
+
+### Что делаем
+В блоке `html_raw` добавляем кнопку "Загрузить .html файл" рядом с кнопкой "Предпросмотр". При клике:
+1. Открывается стандартный диалог выбора файла (accept=".html,.htm")
+2. Файл читается через `FileReader.readAsText()`
+3. Содержимое парсится: если это полный HTML-документ (`<html>...</html>`), извлекается содержимое `<head><style>` + `<body>`, иначе берется как есть
+4. Результат вставляется в textarea
+
+### Техническая реализация
+
+**Файл:** `src/components/admin/lesson-editor/blocks/HtmlRawBlock.tsx`
+
+Добавляем:
+- Скрытый `<input type="file" accept=".html,.htm">` 
+- Кнопку "Загрузить файл" с иконкой `Upload`
+- Функцию парсинга: DOMParser для извлечения `<style>` и `<body>` из полного HTML-документа
+- Поддержка collapsible-блоков (details/summary) — они работают нативно в HTML, поэтому парсер их не трогает
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Обновить только `ChecklistStudentView` — стили и разметка |
+| `src/components/ui/RichTextarea.tsx` | Создать: contentEditable + toolbar |
+| `src/components/admin/lesson-editor/blocks/TextBlock.tsx` | Заменить Textarea на RichTextarea |
+| `src/components/admin/lesson-editor/blocks/AccordionBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
+| `src/components/admin/lesson-editor/blocks/TabsBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
+| `src/components/admin/lesson-editor/blocks/SpoilerBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
+| `src/components/admin/lesson-editor/blocks/CalloutBlock.tsx` | Заменить Textarea на RichTextarea (поле content) |
+| `src/components/admin/lesson-editor/blocks/TimelineBlock.tsx` | Заменить Textarea на RichTextarea (поле description) |
+| `src/components/admin/lesson-editor/blocks/StepsBlock.tsx` | Заменить Textarea на RichTextarea (поле description) |
+| `src/components/admin/lesson-editor/blocks/HtmlRawBlock.tsx` | Добавить кнопку загрузки .html файла + парсер |
 
-Админский редактор (ChecklistEditor) — без изменений.
+## Что НЕ трогаем
+- Миграции БД — не нужны
+- Студенческие view — без изменений
+- Обычные Input (заголовки, названия) — остаются plain text
+- Существующий HTML-рендеринг на стороне студента — без изменений
 
-## Технические детали
-
-Изменения в файле `ChecklistBlock.tsx`:
-
-1. Добавить импорты: `Card, CardContent` из `@/components/ui/card`, иконки `ListChecks, Check, Loader2` из lucide
-2. Добавить состояние `saveStatus` для отображения статуса сохранения (idle/saving/saved)
-3. Обновить JSX `ChecklistStudentView`:
-   - Обертка: `<Card className="border-primary/20">`
-   - Header: иконка ListChecks + заголовок + описание + статус сохранения
-   - Группы: `border-l-2 border-primary/30 pl-4` для визуальной иерархии
-   - Пункты: `p-3 rounded-xl hover:bg-primary/5 transition-all duration-200`
-   - Чекбокс: `h-5 w-5` (крупнее)
-   - Checked-состояние: `line-through opacity-60` + зеленый check
-   - Прогресс-бар внизу в `rounded-xl bg-muted/30 p-3` с условным цветом при 100%
