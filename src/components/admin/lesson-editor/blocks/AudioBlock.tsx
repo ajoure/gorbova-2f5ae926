@@ -21,6 +21,7 @@ export function AudioBlock({ content, onChange, isEditing = true, lessonId }: Au
   const [localTitle, setLocalTitle] = useState(content.title || "");
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [audioError, setAudioError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Проверяем, является ли URL Google Drive ссылкой
@@ -136,12 +137,18 @@ export function AudioBlock({ content, onChange, isEditing = true, lessonId }: Au
               </a>
             </div>
           </div>
+        ) : audioError ? (
+          <div className="flex items-center gap-2 p-3 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-700">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>Аудио недоступно. Файл мог быть удален из хранилища.</span>
+          </div>
         ) : (
           <audio
             controls
             controlsList="nodownload"
             onContextMenu={(e) => e.preventDefault()}
             className="w-full"
+            onError={() => setAudioError(true)}
           >
             <source src={content.url} />
             Ваш браузер не поддерживает аудио элемент.

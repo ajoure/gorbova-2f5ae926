@@ -1,9 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { FileContent } from "@/hooks/useLessonBlocks";
-import { FileText, ExternalLink, Upload, Loader2 } from "lucide-react";
+import { FileText, ExternalLink, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { getFileTypeIcon, pickIconHint } from "./fileTypeIcons";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, formatFileSize, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
@@ -115,6 +115,20 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
     setIsDragOver(false);
   };
 
+  // ── Проверка доступности файла (view mode) ──
+  const [fileAvailable, setFileAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (isEditing || !content.url) return;
+    const controller = new AbortController();
+    fetch(content.url, { method: "GET", headers: { Range: "bytes=0-0" }, signal: controller.signal })
+      .then(res => setFileAvailable(res.ok))
+      .catch(err => {
+        if (err.name !== "AbortError") setFileAvailable(false);
+      });
+    return () => controller.abort();
+  }, [content.url, isEditing]);
+
   // Режим просмотра (для студента) — файл кликабельный, открывается в новой вкладке
   if (!isEditing) {
     if (!content.url) {
@@ -122,6 +136,19 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
         <div className="flex items-center gap-3 p-4 border rounded-lg bg-muted/30">
           <FileText className="h-8 w-8 text-muted-foreground" />
           <span className="text-muted-foreground">Файл не загружен</span>
+        </div>
+      );
+    }
+
+    // Файл недоступен (404 / ошибка)
+    if (fileAvailable === false) {
+      return (
+        <div className="flex items-center gap-3 p-4 border rounded-lg bg-amber-50 border-amber-200">
+          <AlertTriangle className="h-8 w-8 text-amber-500 shrink-0" />
+          <div>
+            <p className="font-medium text-amber-800">Файл недоступен</p>
+            <p className="text-sm text-amber-600">Файл удален из хранилища.</p>
+          </div>
         </div>
       );
     }
