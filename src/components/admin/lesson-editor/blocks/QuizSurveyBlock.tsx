@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -282,11 +282,11 @@ export function QuizSurveyBlock({
           </div>
           <div>
             <Label>Инструкция (HTML)</Label>
-            <Textarea
+            <RichTextarea
               value={content.instruction || ""}
-              onChange={(e) => updateContent({ instruction: e.target.value })}
-              placeholder="<strong>Выберите один ответ</strong> в каждом вопросе..."
-              rows={2}
+              onChange={(html) => updateContent({ instruction: html })}
+              placeholder="Выберите один ответ в каждом вопросе..."
+              minHeight="60px"
             />
           </div>
         </div>
@@ -305,11 +305,11 @@ export function QuizSurveyBlock({
             <GlassCard key={q.id} className="p-4 space-y-3">
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <Textarea
+                  <RichTextarea
                     value={q.question}
-                    onChange={(e) => updateQuestion(qIndex, { question: e.target.value })}
+                    onChange={(html) => updateQuestion(qIndex, { question: html })}
                     placeholder={`Вопрос ${qIndex + 1}`}
-                    rows={2}
+                    minHeight="60px"
                   />
                 </div>
                 <Button
@@ -408,11 +408,11 @@ export function QuizSurveyBlock({
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
-              <Textarea
+              <RichTextarea
                 value={r.description}
-                onChange={(e) => updateResult(rIndex, { description: e.target.value })}
+                onChange={(html) => updateResult(rIndex, { description: html })}
                 placeholder="Описание результата..."
-                rows={2}
+                minHeight="60px"
               />
             </GlassCard>
           ))}
@@ -456,11 +456,11 @@ export function QuizSurveyBlock({
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
-              <Textarea
+              <RichTextarea
                 value={m.description}
-                onChange={(e) => updateMixedResult(mIndex, { description: e.target.value })}
+                onChange={(html) => updateMixedResult(mIndex, { description: html })}
                 placeholder="Описание..."
-                rows={2}
+                minHeight="60px"
               />
             </GlassCard>
           ))}

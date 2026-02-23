@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -99,34 +99,31 @@ export function RoleDescriptionBlock({
           
           <TabsContent value="executor" className="space-y-2">
             <Label>Бухгалтер-исполнитель (HTML)</Label>
-            <Textarea
+            <RichTextarea
               value={content.executor_html || ''}
-              onChange={(e) => onChange({ ...content, executor_html: e.target.value })}
-              placeholder="<h3>Бухгалтер-исполнитель</h3><p>Описание роли...</p>"
-              rows={6}
-              className="font-mono text-sm"
+              onChange={(html) => onChange({ ...content, executor_html: html })}
+              placeholder="Описание роли исполнителя..."
+              minHeight="120px"
             />
           </TabsContent>
           
           <TabsContent value="freelancer" className="space-y-2">
             <Label>Бухгалтер-фрилансер (HTML)</Label>
-            <Textarea
+            <RichTextarea
               value={content.freelancer_html || ''}
-              onChange={(e) => onChange({ ...content, freelancer_html: e.target.value })}
-              placeholder="<h3>Бухгалтер-фрилансер</h3><p>Описание роли...</p>"
-              rows={6}
-              className="font-mono text-sm"
+              onChange={(html) => onChange({ ...content, freelancer_html: html })}
+              placeholder="Описание роли фрилансера..."
+              minHeight="120px"
             />
           </TabsContent>
           
           <TabsContent value="entrepreneur" className="space-y-2">
             <Label>Бухгалтер-предприниматель (HTML)</Label>
-            <Textarea
+            <RichTextarea
               value={content.entrepreneur_html || ''}
-              onChange={(e) => onChange({ ...content, entrepreneur_html: e.target.value })}
-              placeholder="<h3>Бухгалтер-предприниматель</h3><p>Описание роли...</p>"
-              rows={6}
-              className="font-mono text-sm"
+              onChange={(html) => onChange({ ...content, entrepreneur_html: html })}
+              placeholder="Описание роли предпринимателя..."
+              minHeight="120px"
             />
           </TabsContent>
         </Tabs>

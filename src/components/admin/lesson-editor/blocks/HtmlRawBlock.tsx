@@ -55,7 +55,7 @@ function IframePreview({ html }: { html: string }) {
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'iframe-resize' && typeof e.data.height === 'number') {
-        setHeight(Math.max(100, Math.min(e.data.height, 5000)));
+        setHeight(Math.max(100, e.data.height));
       }
     };
     window.addEventListener('message', handler);
@@ -76,7 +76,7 @@ function IframePreview({ html }: { html: string }) {
       ref={iframeRef}
       srcDoc={buildSrcdoc(html)}
       sandbox="allow-scripts"
-      style={{ width: '100%', height: `${height}px`, border: 'none' }}
+      style={{ width: '100%', height: `${height}px`, border: 'none', overflow: 'hidden' }}
       title="HTML Preview"
     />
   );

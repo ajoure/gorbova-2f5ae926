@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { 
   DndContext, 
   closestCenter, 
@@ -393,11 +393,11 @@ export function QuizMatchingBlock({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Вопрос / Инструкция</Label>
-        <Textarea
+        <RichTextarea
           value={content.question || ""}
-          onChange={(e) => onChange({ ...content, question: e.target.value })}
+          onChange={(html) => onChange({ ...content, question: html })}
           placeholder="Установите соответствие между элементами..."
-          rows={2}
+          minHeight="60px"
         />
       </div>
 
@@ -442,11 +442,11 @@ export function QuizMatchingBlock({
 
       <div className="space-y-2">
         <Label>Пояснение (показывается после ответа)</Label>
-        <Textarea
+        <RichTextarea
           value={content.explanation || ""}
-          onChange={(e) => onChange({ ...content, explanation: e.target.value })}
+          onChange={(html) => onChange({ ...content, explanation: html })}
           placeholder="Объяснение правильных соответствий..."
-          rows={2}
+          minHeight="60px"
         />
       </div>
 
