@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -164,6 +164,14 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
 }) {
   const initialChecked: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
   const [checked, setChecked] = useState<Set<string>>(new Set(initialChecked));
+
+  // Sync checked state when savedResponse loads asynchronously
+  useEffect(() => {
+    const ids: string[] = savedResponse?.checkedIds || savedResponse?.checked_ids || [];
+    if (ids.length > 0) {
+      setChecked(new Set(ids));
+    }
+  }, [savedResponse]);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
