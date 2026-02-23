@@ -172,7 +172,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   diagnostic_table: { icon: Table, label: "Диагн. таблица", color: "bg-emerald-500/10 text-emerald-600", category: 'input' },
   sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
   role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
-  html_raw: { icon: Code, label: "HTML-конспект", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
+  html_raw: { icon: Code, label: "HTML код", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
 };
 
 const categoryConfig = {
