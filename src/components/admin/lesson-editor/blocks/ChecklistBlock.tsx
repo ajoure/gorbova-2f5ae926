@@ -90,18 +90,20 @@ function ChecklistEditor({ content, onChange }: { content: ChecklistContentData;
       <div className="grid gap-3">
         <div className="space-y-1.5">
           <Label>Заголовок</Label>
-          <Input
+          <RichTextarea
             value={content.title || ''}
-            onChange={(e) => onChange({ ...content, title: e.target.value })}
+            onChange={(html) => onChange({ ...content, title: html })}
             placeholder="Чек-лист действий"
+            inline
           />
         </div>
         <div className="space-y-1.5">
           <Label>Описание</Label>
-          <Input
+          <RichTextarea
             value={content.description || ''}
-            onChange={(e) => onChange({ ...content, description: e.target.value })}
+            onChange={(html) => onChange({ ...content, description: html })}
             placeholder="Отметьте выполненные пункты"
+            inline
           />
         </div>
       </div>
@@ -110,10 +112,11 @@ function ChecklistEditor({ content, onChange }: { content: ChecklistContentData;
         <div key={group.id} className="border rounded-lg p-3 space-y-3">
           <div className="flex items-center gap-2">
             <GripVertical className="h-4 w-4 text-muted-foreground" />
-            <Input
+            <RichTextarea
               value={group.title}
-              onChange={(e) => updateGroup(gIdx, { title: e.target.value })}
+              onChange={(html) => updateGroup(gIdx, { title: html })}
               placeholder="Название группы"
+              inline
               className="flex-1"
             />
             <Button variant="ghost" size="icon" onClick={() => removeGroup(gIdx)} className="h-8 w-8 text-destructive">

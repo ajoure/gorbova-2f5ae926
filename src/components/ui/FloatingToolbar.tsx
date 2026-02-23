@@ -128,10 +128,16 @@ export function FloatingToolbar() {
       hideTimeout.current = setTimeout(updatePosition, 150);
     };
 
+    const onMouseUp = () => {
+      setTimeout(updatePosition, 10);
+    };
+
     document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("mouseup", onMouseUp);
 
     return () => {
       document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mouseup", onMouseUp);
       if (hideTimeout.current) clearTimeout(hideTimeout.current);
     };
   }, [updatePosition]);
