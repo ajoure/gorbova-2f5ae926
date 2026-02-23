@@ -1,136 +1,66 @@
 
-
-# Всплывающая панель форматирования текста
+# Исправление всплывающей панели форматирования
 
 ## Проблема
 
-Сейчас каждое поле `RichTextarea` имеет постоянный тулбар сверху (B, I, U, S, цвет, размер, выравнивание). Когда таких полей много (например, в чек-листе по 2 на каждый пункт), интерфейс перегружается повторяющимися панелями.
+Всплывающий тулбар (`FloatingToolbar`) не появляется при выделении текста в полях `RichTextarea`. Также в чек-листе заголовок, описание и название группы остались обычными `Input` без поддержки форматирования.
 
-Пользователь хочет:
-- Всплывающую панель форматирования при выделении текста
-- Панель должна работать на ВСЕХ текстовых полях конструктора (заголовки, описания, названия)
-- Чистый, минималистичный дизайн без постоянных тулбаров
+## Корневые причины
+
+### 1. Заголовок, описание и группа чек-листа -- обычные Input
+В `ChecklistBlock.tsx` строки 93-106 и 113-117: поля `title`, `description`, `group.title` используют `Input`, а не `RichTextarea`. Они не имеют атрибута `data-rich-editable`, поэтому тулбар их игнорирует.
+
+### 2. FloatingToolbar не появляется даже для RichTextarea
+Тулбар слушает `selectionchange` и ищет `data-rich-editable` элемент через `sel.anchorNode.parentNode` вверх по DOM. Проблема в том, что `anchorNode` -- текстовый узел внутри contentEditable div, и обход `parentNode` должен работать. Однако есть подозрение, что таймаут 150мс или условие `sel.isCollapsed` могут мешать. Нужно добавить отладочные логи и убедиться что обход DOM правильный.
+
+Дополнительно: событие `mouseup` более надёжно для определения момента завершения выделения, чем `selectionchange` с таймаутом. Добавим `mouseup` listener как резервный механизм.
 
 ## Решение
 
-### 1. Новый компонент `FloatingToolbar`
+### Файл 1: `src/components/ui/FloatingToolbar.tsx`
 
-Глобальный компонент, который:
-- Слушает событие `selectionchange` на document
-- Определяет, находится ли выделение внутри `contentEditable` элемента с атрибутом `data-rich-editable`
-- Позиционируется над выделенным текстом (`position: fixed`, координаты из `getClientRects()`)
-- Содержит компактные кнопки: жирный, курсив, подчеркивание, зачёркивание, цвет, размер, выравнивание
-- Скрывается при потере выделения или клике вне
+Добавить дополнительный listener на `mouseup` для более надёжного обнаружения выделения. `selectionchange` с таймаутом может не срабатывать во всех браузерах.
 
-### 2. Переработка `RichTextarea`
+```typescript
+// Добавить mouseup listener рядом с selectionchange
+useEffect(() => {
+  const onSelectionChange = () => {
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+    hideTimeout.current = setTimeout(updatePosition, 150);
+  };
 
-- Убрать постоянный тулбар полностью
-- Оставить только `contentEditable` div с рамкой и placeholder
-- Добавить атрибут `data-rich-editable="true"` на редактируемый div (чтобы FloatingToolbar его распознавал)
-- Добавить поддержку режима `inline` (для замены однострочных Input): `minHeight="auto"`, однострочный вид
+  const onMouseUp = () => {
+    setTimeout(updatePosition, 10);
+  };
 
-### 3. Замена Input на RichTextarea в блоках
+  document.addEventListener("selectionchange", onSelectionChange);
+  document.addEventListener("mouseup", onMouseUp);
 
-Все текстовые поля конструктора (кроме URL, файловых путей, технических) заменяются на `RichTextarea` в компактном режиме:
-
-| Блок | Поля для замены Input -> RichTextarea |
-|---|---|
-| ChecklistBlock | title, description, group.title |
-| AccordionBlock | item.title |
-| TabsBlock | tab.title |
-| StepsBlock | step.title |
-| TimelineBlock | event.title, event.date |
-| SpoilerBlock | buttonText |
-| HeadingBlock | text (заголовок) |
-| AudioBlock | title |
-| VideoBlock | title |
-| ImageBlock | alt |
-| ButtonBlock | label |
-| QuoteBlock | author, source |
-| QuizSingleBlock | question, option labels, explanation |
-| QuizMultipleBlock | question, option labels, explanation |
-| QuizTrueFalseBlock | question, explanation |
-| QuizFillBlankBlock | blank labels |
-| QuizHotspotBlock | hotspot labels |
-| QuizMatchingBlock | pair labels |
-| QuizSequenceBlock | item labels |
-| QuizSurveyBlock | option labels, result titles |
-| DiagnosticTableBlock | column/row headers |
-| RoleDescriptionBlock | role titles |
-| SequentialFormBlock | field labels |
-
-**НЕ заменяем:** URL-поля, email, числовые значения, Select/Slider, файловые поля.
-
-### 4. Размещение FloatingToolbar
-
-Компонент монтируется один раз на уровне страницы редактора урока (в `LessonEditor` или layout). Не дублируется для каждого поля.
-
-## Технические детали
-
-### FloatingToolbar (новый файл: `src/components/ui/FloatingToolbar.tsx`)
-
-```text
-+--------------------------------------------------+
-| Слушает document selectionchange                  |
-| Проверяет: selection внутри [data-rich-editable]? |
-| Да -> показать тулбар над выделением              |
-| Нет -> скрыть                                     |
-+--------------------------------------------------+
+  return () => {
+    document.removeEventListener("selectionchange", onSelectionChange);
+    document.removeEventListener("mouseup", onMouseUp);
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+  };
+}, [updatePosition]);
 ```
 
-- `position: fixed` с `z-index: 50`
-- Координаты из `selection.getRangeAt(0).getBoundingClientRect()`
-- Тулбар размещается над выделением (или снизу, если не помещается)
-- Анимация появления: `opacity` + `scale` transition
-- Кнопки используют `document.execCommand()` как сейчас
-- Popover для цвета и размера шрифта
+### Файл 2: `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx`
 
-### RichTextarea (модификация)
-
-- Убирается весь блок `<div className="flex items-center gap-0.5 px-2 py-1.5 border-b ...">` (постоянный тулбар)
-- Добавляется `data-rich-editable="true"` на contentEditable div
-- Новый prop `inline?: boolean` — для однострочных полей (убирает min-height, padding)
-
-### Монтирование FloatingToolbar
-
-В файле `LessonContentEditor.tsx` (или аналогичном layout конструктора) добавляется `<FloatingToolbar />` один раз.
+Заменить `Input` на `RichTextarea inline` для:
+- `content.title` (строка 93-97)
+- `content.description` (строка 101-105)
+- `group.title` (строка 113-118)
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| `src/components/ui/FloatingToolbar.tsx` | Новый файл — всплывающая панель |
-| `src/components/ui/RichTextarea.tsx` | Убрать постоянный тулбар, добавить data-атрибут и inline режим |
-| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Input -> RichTextarea (title, description, group.title) |
-| `src/components/admin/lesson-editor/blocks/AccordionBlock.tsx` | Input -> RichTextarea (item.title) |
-| `src/components/admin/lesson-editor/blocks/TabsBlock.tsx` | Input -> RichTextarea (tab.title) |
-| `src/components/admin/lesson-editor/blocks/StepsBlock.tsx` | Input -> RichTextarea (step.title) |
-| `src/components/admin/lesson-editor/blocks/TimelineBlock.tsx` | Input -> RichTextarea (event title/date) |
-| `src/components/admin/lesson-editor/blocks/SpoilerBlock.tsx` | Input -> RichTextarea (buttonText) |
-| `src/components/admin/lesson-editor/blocks/HeadingBlock.tsx` | Input -> RichTextarea (text) |
-| `src/components/admin/lesson-editor/blocks/AudioBlock.tsx` | Input -> RichTextarea (title) |
-| `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` | Input -> RichTextarea (title) |
-| `src/components/admin/lesson-editor/blocks/ImageBlock.tsx` | Input -> RichTextarea (alt) |
-| `src/components/admin/lesson-editor/blocks/ButtonBlock.tsx` | Input -> RichTextarea (label) |
-| `src/components/admin/lesson-editor/blocks/QuoteBlock.tsx` | Input -> RichTextarea (author, source) |
-| `src/components/admin/lesson-editor/blocks/QuizSingleBlock.tsx` | Input -> RichTextarea (вопрос, варианты) |
-| `src/components/admin/lesson-editor/blocks/QuizMultipleBlock.tsx` | Input -> RichTextarea (вопрос, варианты) |
-| `src/components/admin/lesson-editor/blocks/QuizTrueFalseBlock.tsx` | Input -> RichTextarea (вопрос) |
-| `src/components/admin/lesson-editor/blocks/QuizFillBlankBlock.tsx` | Input -> RichTextarea (метки) |
-| `src/components/admin/lesson-editor/blocks/QuizHotspotBlock.tsx` | Input -> RichTextarea (метки) |
-| `src/components/admin/lesson-editor/blocks/QuizMatchingBlock.tsx` | Input -> RichTextarea (метки пар) |
-| `src/components/admin/lesson-editor/blocks/QuizSequenceBlock.tsx` | Input -> RichTextarea (метки) |
-| `src/components/admin/lesson-editor/blocks/QuizSurveyBlock.tsx` | Input -> RichTextarea (варианты, результаты) |
-| `src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx` | Input -> RichTextarea (заголовки) |
-| `src/components/admin/lesson-editor/blocks/RoleDescriptionBlock.tsx` | Input -> RichTextarea (названия ролей) |
-| `src/components/admin/lesson-editor/blocks/SequentialFormBlock.tsx` | Input -> RichTextarea (метки полей) |
-| Layout конструктора | Монтирование `<FloatingToolbar />` |
+| `src/components/ui/FloatingToolbar.tsx` | Добавить mouseup listener для надёжного обнаружения выделения |
+| `src/components/admin/lesson-editor/blocks/ChecklistBlock.tsx` | Заменить 3 поля Input на RichTextarea inline (title, description, group.title) |
 
 ## Что НЕ трогаем
 
-- Студенческие view всех блоков — без изменений
-- URL поля (видео, аудио, изображения, embed, кнопки) — остаются Input
-- Числовые и технические поля (slider, select, switch) — без изменений
-- БД и миграции — не нужны
-- RLS политики — без изменений
-
+- RichTextarea.tsx -- без изменений
+- Студенческий вид чек-листа -- без изменений
+- Другие блоки -- без изменений
+- БД -- без изменений
