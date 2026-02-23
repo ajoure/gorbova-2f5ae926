@@ -214,9 +214,9 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
           <div className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-primary shrink-0" />
             <div>
-              <p className="font-medium">{content.title || "Чек-лист"}</p>
+              <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Чек-лист" }} />
               {content.description && (
-                <p className="text-sm text-muted-foreground">{content.description}</p>
+                <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.description }} />
               )}
             </div>
           </div>
@@ -242,7 +242,7 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
             <div key={group.id} className="space-y-2">
               <div className="border-l-2 border-primary/30 pl-3">
                 <h4 className="font-medium text-xs text-muted-foreground uppercase tracking-wide">
-                  {group.title}
+                  <span dangerouslySetInnerHTML={{ __html: group.title }} />
                 </h4>
               </div>
               <div className="space-y-1">
