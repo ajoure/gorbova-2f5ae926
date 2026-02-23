@@ -144,14 +144,21 @@ export function FloatingToolbar() {
 
   // Hide on scroll
   useEffect(() => {
+    let rafId: number | null = null;
     const onScroll = () => {
-      setVisible(false);
-      setShowColors(false);
-      setShowSizes(false);
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        updatePosition();
+        setShowColors(false);
+        setShowSizes(false);
+      });
     };
     window.addEventListener("scroll", onScroll, true);
-    return () => window.removeEventListener("scroll", onScroll, true);
-  }, []);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [updatePosition]);
 
   // Click outside to close sub-menus
   useEffect(() => {
