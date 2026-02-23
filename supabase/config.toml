@@ -365,3 +365,6 @@ verify_jwt = false
 
 [functions.training-assets-delete]
 verify_jwt = false
+
+[functions.admin-bepaid-webhook-replay]
+verify_jwt = false
