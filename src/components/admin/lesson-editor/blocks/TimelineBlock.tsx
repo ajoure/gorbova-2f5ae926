@@ -65,13 +65,9 @@ export function TimelineBlock({ content, onChange, isEditing = true }: TimelineB
               
               <div className="bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/50">
                 {item.date && (
-                  <div className="text-xs text-muted-foreground mb-1 font-medium">
-                    {item.date}
-                  </div>
+                  <div className="text-xs text-muted-foreground mb-1 font-medium" dangerouslySetInnerHTML={{ __html: item.date }} />
                 )}
-                <div className="font-semibold text-foreground">
-                  {item.title || `Шаг ${index + 1}`}
-                </div>
+                <div className="font-semibold text-foreground" dangerouslySetInnerHTML={{ __html: item.title || `Шаг ${index + 1}` }} />
                 {item.description && (
                   <div 
                     className="prose prose-sm max-w-none dark:prose-invert mt-2 text-muted-foreground"

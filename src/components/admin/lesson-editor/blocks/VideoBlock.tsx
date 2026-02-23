@@ -177,7 +177,7 @@ export function VideoBlock({
       return (
         <div className="space-y-2">
           {content.title && (
-            <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
+            <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
           )}
           {/* Outer wrapper controls geometry (aspect-ratio) */}
           <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
@@ -212,7 +212,7 @@ export function VideoBlock({
     return (
       <div className="space-y-2">
         {content.title && (
-          <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
+          <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
         )}
         <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
           <iframe

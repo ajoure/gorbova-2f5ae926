@@ -372,7 +372,7 @@ export function SequentialFormBlock({
       {/* Header with progress */}
       {content.title && (
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{content.title}</h3>
+          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
           <Badge variant="outline">
             Шаг {currentStepIndex + 1} из {totalSteps}
           </Badge>
@@ -407,7 +407,7 @@ export function SequentialFormBlock({
           <div className="flex items-start gap-3">
             <Badge className="shrink-0 mt-0.5">{currentStepIndex + 1}</Badge>
             <div>
-              <h4 className="font-semibold">{currentStep.title}</h4>
+              <h4 className="font-semibold" dangerouslySetInnerHTML={{ __html: currentStep.title }} />
               <p className="text-muted-foreground mt-1">{currentStep.description}</p>
             </div>
           </div>

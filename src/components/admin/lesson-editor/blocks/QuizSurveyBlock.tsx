@@ -491,7 +491,7 @@ export function QuizSurveyBlock({
       {content.title && (
         <div className="flex items-center gap-3 mb-2">
           <ClipboardList className="h-6 w-6 text-primary" />
-          <h2 className="text-xl font-semibold">{content.title}</h2>
+          <h2 className="text-xl font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
         </div>
       )}
 
@@ -649,8 +649,8 @@ export function QuizSurveyBlock({
                     />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-lg">{resultToShow.title}</h4>
-                    <p className="text-muted-foreground/90 mt-1">{resultToShow.description}</p>
+                    <h4 className="font-semibold text-lg" dangerouslySetInnerHTML={{ __html: resultToShow.title }} />
+                    <p className="text-muted-foreground/90 mt-1" dangerouslySetInnerHTML={{ __html: resultToShow.description }} />
                   </div>
                 </div>
               </div>

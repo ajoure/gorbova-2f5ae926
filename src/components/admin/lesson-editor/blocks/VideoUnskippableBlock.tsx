@@ -183,7 +183,7 @@ export function VideoUnskippableBlock({
     return (
       <div className="space-y-4">
         {content.title && (
-          <h3 className="text-lg font-semibold">{content.title}</h3>
+          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title }} />
         )}
         
         {embedUrl && (
@@ -209,7 +209,7 @@ export function VideoUnskippableBlock({
   return (
     <div className="space-y-4">
       {content.title && (
-        <h3 className="text-lg font-semibold">{content.title}</h3>
+        <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title }} />
       )}
 
       {embedUrl ? (

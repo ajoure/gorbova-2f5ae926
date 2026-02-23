@@ -393,7 +393,7 @@ export function DiagnosticTableBlock({
   return (
     <div className="space-y-4">
       {content.title && (
-        <h3 className="text-lg font-semibold">{content.title}</h3>
+        <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
       )}
       
       {content.instruction && (

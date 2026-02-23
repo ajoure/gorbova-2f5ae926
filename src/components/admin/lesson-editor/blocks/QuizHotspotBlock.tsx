@@ -259,7 +259,7 @@ export function QuizHotspotBlock({
                 >
                   {area.label && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs bg-background px-2 py-0.5 rounded border">
-                      {area.label}
+                      <span dangerouslySetInnerHTML={{ __html: area.label! }} />
                     </div>
                   )}
                 </div>
@@ -312,7 +312,7 @@ export function QuizHotspotBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                {content.explanation}
+                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
               </div>
             )}
 
