@@ -53,10 +53,10 @@ interface FormStep {
 }
 
 interface PointARow {
-  source_name?: string;
+  source?: string;
   income?: number;
-  task_hours?: number;
-  communication_hours?: number;
+  work_hours?: number;
+  overhead_hours?: number;
 }
 
 interface UploadedFileItem {
@@ -150,8 +150,8 @@ export function StudentProgressModal({
 
   const pointARows = state?.pointA_rows || [];
   const totalIncome = pointARows.reduce((sum, r) => sum + (r.income || 0), 0);
-  const totalTaskHours = pointARows.reduce((sum, r) => sum + (r.task_hours || 0), 0);
-  const totalCommHours = pointARows.reduce((sum, r) => sum + (r.communication_hours || 0), 0);
+  const totalTaskHours = pointARows.reduce((sum, r) => sum + (r.work_hours || 0), 0);
+  const totalCommHours = pointARows.reduce((sum, r) => sum + (r.overhead_hours || 0), 0);
   const totalHours = totalTaskHours + totalCommHours;
   const hourlyRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
 
@@ -219,10 +219,10 @@ export function StudentProgressModal({
                       <TableBody>
                         {pointARows.map((row, idx) => (
                           <TableRow key={idx}>
-                            <TableCell>{row.source_name || "—"}</TableCell>
+                            <TableCell>{row.source || "—"}</TableCell>
                             <TableCell className="text-right">{row.income || 0} BYN</TableCell>
-                            <TableCell className="text-right">{row.task_hours || 0} ч</TableCell>
-                            <TableCell className="text-right">{row.communication_hours || 0} ч</TableCell>
+                            <TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
+                            <TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
