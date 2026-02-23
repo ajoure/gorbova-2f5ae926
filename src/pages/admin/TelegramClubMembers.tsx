@@ -89,6 +89,7 @@ import {
   EnrichedClubMember,
   ClubMemberScope,
 } from '@/hooks/useTelegramIntegration';
+import { useClubAdmins } from '@/hooks/useClubAdmins';
 import { Switch } from '@/components/ui/switch';
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
@@ -118,7 +119,7 @@ interface SheetContact {
   last_deal_at: string | null;
 }
 
-type FilterTab = 'in_club' | 'with_access' | 'bought_not_joined' | 'violators' | 'removed';
+type FilterTab = 'in_club' | 'with_access' | 'bought_not_joined' | 'violators' | 'removed' | 'admins';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -127,6 +128,7 @@ export default function TelegramClubMembers() {
   
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
+  const { data: adminsList = [] } = useClubAdmins(clubId || null);
   
   // Scope toggle: 'relevant' = only club-related, 'all' = all synced
   const [showAllScope, setShowAllScope] = useState(false);
@@ -224,22 +226,21 @@ export default function TelegramClubMembers() {
     }
   };
   // Calculate counts for tabs - using computed flags from RPC (A-G definitions)
+  // Set of admin telegram_user_ids for filtering
+  const adminTelegramIds = useMemo(() => new Set(adminsList.map(a => a.telegram_user_id)), [adminsList]);
+
   const counts = useMemo(() => {
-    if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0 };
+    if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
     
     return {
-      // C: in_any = in_chat OR in_channel
       in_club: members.filter(m => m.in_any).length,
-      // A: has_active_access (computed via EXISTS on 3 access tables)
       with_access: members.filter(m => m.has_active_access).length,
-      // F: is_bought_not_joined = has_active_access AND NOT in_any
       bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
-      // E: is_violator = in_any AND NOT has_active_access
       violators: members.filter(m => m.is_violator).length,
-      // Removed: access_status='removed' AND NOT in_any
       removed: members.filter(m => m.access_status === 'removed' && !m.in_any).length,
+      admins: adminsList.length,
     };
-  }, [members]);
+  }, [members, adminsList]);
 
   // Filter members by active tab - search is now server-side via RPC
   const filteredMembers = useMemo(() => {
@@ -248,20 +249,17 @@ export default function TelegramClubMembers() {
     return members.filter(member => {
       switch (activeTab) {
         case 'in_club':
-          // C: in_any = in_chat OR in_channel
           return member.in_any;
         case 'with_access':
-          // A: has_active_access (computed via EXISTS)
           return member.has_active_access;
         case 'bought_not_joined':
-          // F: is_bought_not_joined = A AND NOT C
           return member.is_bought_not_joined;
         case 'violators':
-          // E: is_violator = C AND NOT A
           return member.is_violator;
         case 'removed':
-          // Удалённые: access_status='removed' AND NOT in_any
           return member.access_status === 'removed' && !member.in_any;
+        case 'admins':
+          return adminTelegramIds.has(member.telegram_user_id);
         default:
           return true;
       }
@@ -675,7 +673,16 @@ export default function TelegramClubMembers() {
     return selectedMembers.filter(m => m.in_chat || m.in_channel);
   }, [selectedMembers]);
 
-  const getAccessStatusBadge = (status: string, linkStatus?: string) => {
+  const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
+    // has_active_access is the source of truth — overrides cached access_status
+    if (hasActiveAccess) {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
+          <CheckCircle className="h-3 w-3" />
+          С доступом
+        </Badge>
+      );
+    }
     switch (status) {
       case 'ok':
         return (
@@ -893,7 +900,7 @@ export default function TelegramClubMembers() {
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <TabsList className="inline-flex w-auto min-w-full sm:grid sm:w-full sm:grid-cols-5 gap-1">
+            <TabsList className="inline-flex w-auto min-w-full sm:grid sm:w-full sm:grid-cols-6 gap-1">
               <TabsTrigger value="in_club" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><Users className="h-4 w-4" /></span>
                 В клубе
@@ -918,6 +925,11 @@ export default function TelegramClubMembers() {
                 <span className="hidden sm:inline"><MinusCircle className="h-4 w-4" /></span>
                 Удалённые
                 <Badge variant="outline" className="h-5 px-1.5 text-xs">{counts.removed}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="admins" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><ShieldCheck className="h-4 w-4" /></span>
+                Админы
+                <Badge variant="outline" className="h-5 px-1.5 text-xs">{counts.admins}</Badge>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -1107,8 +1119,9 @@ export default function TelegramClubMembers() {
                 </TableHeader>
                 <TableBody>
                   {filteredMembers.map((member) => {
-                    // Определяем нарушителя - без доступа, но в чате/канале
-                    const isViolator = member.access_status !== 'ok' && (member.in_chat === true || member.in_channel === true);
+                    // Use has_active_access as source of truth for violator detection
+                    const isViolator = !member.has_active_access && (member.in_chat === true || member.in_channel === true);
+                    const effectiveNoAccess = !member.has_active_access && (member.access_status === 'no_access' || member.access_status === 'removed');
                     
                     return (
                     <TableRow 
@@ -1117,9 +1130,9 @@ export default function TelegramClubMembers() {
                         ${selectedIds.has(member.id) ? 'bg-primary/5' : ''}
                         ${isViolator 
                           ? 'bg-red-500/10 border-l-2 border-l-red-500' 
-                          : member.access_status === 'no_access' || member.access_status === 'removed' 
+                          : effectiveNoAccess
                             ? 'bg-destructive/5' 
-                            : member.access_status === 'expired' 
+                            : !member.has_active_access && member.access_status === 'expired' 
                               ? 'bg-yellow-500/5' 
                               : ''
                         }
@@ -1173,7 +1186,7 @@ export default function TelegramClubMembers() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {getAccessStatusBadge(member.access_status, member.link_status)}
+                        {getAccessStatusBadge(member.access_status, member.link_status, member.has_active_access)}
                       </TableCell>
                       <TableCell className="text-center">
                         {getTelegramStatus(member)}
