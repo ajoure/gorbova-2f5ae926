@@ -557,9 +557,33 @@ async function recordWebhookEvent(
     http_status?: number | null;
     processing_ms?: number | null;
     error_message?: string | null;
+    body_hash?: string | null;
+    handler_result?: string | null;
+    queue_write_ok?: boolean | null;
+    queue_row_id?: string | null;
   }
 ): Promise<void> {
   try {
+    // P3.0.5: Append tracing data to error_message ONLY for non-processed outcomes
+    let finalErrorMessage = data.error_message?.substring(0, 500) || null;
+    const isNonProcessed = data.outcome !== 'processed' && data.outcome !== 'already_processed'
+      && data.outcome !== 'skipped_not_successful' && data.outcome !== 'ignored_provider_events';
+
+    if (isNonProcessed && (data.body_hash || data.handler_result || data.queue_row_id)) {
+      const trace = JSON.stringify({
+        body_hash: data.body_hash || null,
+        handler_result: data.handler_result || null,
+        queue_write_ok: data.queue_write_ok ?? null,
+        queue_row_id: data.queue_row_id || null,
+      });
+      const traceStr = ` | TRACE: ${trace}`;
+      // Guard against overly long error_message (max ~4KB)
+      const base = finalErrorMessage || '';
+      if (base.length + traceStr.length < 4000) {
+        finalErrorMessage = base + traceStr;
+      }
+    }
+
     await supabase.from('webhook_events').insert({
       provider: data.provider,
       event_type: data.event_type || null,
@@ -571,7 +595,7 @@ async function recordWebhookEvent(
       outcome: data.outcome,
       http_status: data.http_status || null,
       processing_ms: data.processing_ms || null,
-      error_message: data.error_message?.substring(0, 500) || null,
+      error_message: finalErrorMessage,
     });
   } catch (err) {
     console.error('[WEBHOOK-EVENT] Best-effort write failed:', err);
@@ -647,6 +671,16 @@ Deno.serve(async (req) => {
     
     // Log webhook receipt for audit trail
     console.log(`[WEBHOOK-RECEIVED] Timestamp: ${new Date().toISOString()}, Size: ${bodyText.length} bytes`);
+
+    // P3.0.5: Compute body_hash for tracing/dedup
+    try {
+      const encoder = new TextEncoder();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(bodyText));
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      (globalThis as any).__bodyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (_hashErr) {
+      (globalThis as any).__bodyHash = null;
+    }
     
     // Log webhook signature header for debugging
     // bePaid uses Content-Signature header (primary), fallback to X-Signature or X-Webhook-Signature
@@ -854,12 +888,13 @@ Deno.serve(async (req) => {
     const webhookNormalizedStatus = normalizeWebhookStatus(webhookTxStatus);
     
     // Save to queue (upsert by bepaid_uid to avoid duplicates)
+    // P3.0.1: Destructure {data, error} and log always
     if (webhookTransaction.uid) {
       try {
         const errorMsg = webhookTxStatus !== 'successful' ? (webhookTransaction.message || `Status: ${webhookTxStatus}`) : null;
         const errorCategory = errorMsg ? normalizeErrorCategory(errorMsg, webhookTransaction.decline_code) : null;
         
-        await supabase.from('payment_reconcile_queue').upsert({
+        const { data: queueRow, error: queueError } = await supabase.from('payment_reconcile_queue').upsert({
           bepaid_uid: webhookTransaction.uid,
           tracking_id: rawTrackingIdEarly || null,
           amount: webhookTransaction.amount ? webhookTransaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
@@ -882,11 +917,35 @@ Deno.serve(async (req) => {
           last_error: errorMsg,
           error_category: errorCategory,
           three_d_secure: webhookTransaction.three_d_secure_verification?.status === 'successful',
-        }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
-        
-        console.log(`[WEBHOOK-QUEUE] Saved transaction ${webhookTransaction.uid} with status ${webhookNormalizedStatus}`);
+        }, { onConflict: 'bepaid_uid', ignoreDuplicates: false })
+          .select('id, source, bepaid_uid, created_at')
+          .maybeSingle();
+
+        if (queueError) {
+          console.error('[WEBHOOK-QUEUE] DB error:', JSON.stringify({
+            code: queueError.code,
+            message: queueError.message,
+            details: queueError.details,
+            hint: queueError.hint,
+            bepaid_uid: webhookTransaction.uid,
+            source: 'webhook',
+          }));
+        } else if (!queueRow) {
+          console.error('[WEBHOOK-QUEUE] No row returned (silent rejection):', JSON.stringify({
+            bepaid_uid: webhookTransaction.uid,
+            tracking_id: rawTrackingIdEarly,
+            source: 'webhook',
+          }));
+        } else {
+          console.log(`[WEBHOOK-QUEUE] OK id=${queueRow.id} source=${queueRow.source} uid=${queueRow.bepaid_uid}`);
+        }
+        // Store for tracing
+        (globalThis as any).__queueWriteOk = !queueError && !!queueRow;
+        (globalThis as any).__queueRowId = queueRow?.id || null;
       } catch (queueErr) {
-        console.error('[WEBHOOK-QUEUE] Failed to save to queue:', queueErr);
+        console.error('[WEBHOOK-QUEUE] JS exception saving to queue:', queueErr);
+        (globalThis as any).__queueWriteOk = false;
+        (globalThis as any).__queueRowId = null;
         // Continue processing even if queue save fails
       }
     }
@@ -1037,15 +1096,42 @@ Deno.serve(async (req) => {
               raw_data: createSafeOrphanData(body, rawTrackingId),
               processed: false,
             }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+            // P3.0.2: Enqueue orphan for recovery + return 202 (not 500)
+            try {
+              const { data: orphanQueueRow, error: orphanQueueErr } = await supabase
+                .from('payment_reconcile_queue')
+                .insert({
+                  bepaid_uid: transactionUid || null,
+                  tracking_id: rawTrackingId || null,
+                  amount: transaction?.amount ? transaction.amount / 100 : null,
+                  currency: transaction?.currency || body.plan?.currency || 'BYN',
+                  customer_email: transaction?.customer?.email || null,
+                  raw_payload: body,
+                  source: 'webhook_orphan',
+                  status: 'error',
+                  last_error: 'orphan_subv2_missing_order_id',
+                })
+                .select('id')
+                .maybeSingle();
+              if (orphanQueueErr) {
+                console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: orphanQueueErr.code, message: orphanQueueErr.message }));
+              } else {
+                console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan:', orphanQueueRow?.id);
+              }
+            } catch (oqErr) {
+              console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqErr);
+            }
             await recordWebhookEvent(supabase, {
               provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
               subscription_id: subscriptionId ? String(subscriptionId) : null,
               tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
-              outcome: 'orphan_subv2_missing_order_id', http_status: 500,
+              outcome: 'orphan_subv2_missing_order_id', http_status: 202,
               processing_ms: Date.now() - startTime,
+              body_hash: (globalThis as any).__bodyHash || null,
+              handler_result: 'orphan_enqueued',
             });
             return new Response(JSON.stringify({ ok: false, status: 'orphan_subv2_missing_order_id' }), {
-              status: 500,
+              status: 202,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
@@ -1075,17 +1161,27 @@ Deno.serve(async (req) => {
       
       console.log('[WEBHOOK-SUBSCRIPTION] Parsed:', { subscriptionV2Id, orderV2Id, subscriptionState, transactionStatus });
       
-      // IDEMPOTENCY CHECK: Check if already processed by transaction uid
+      // P3.0.7: IDEMPOTENCY CHECK with provider filter + recordWebhookEvent
       if (transactionUid) {
         const { data: existingPayment } = await supabase
           .from('payments_v2')
           .select('id')
           .eq('provider_payment_id', transactionUid)
+          .eq('provider', 'bepaid')
           .maybeSingle();
         
         if (existingPayment) {
           console.log('[WEBHOOK-SUBSCRIPTION] Already processed (idempotency):', transactionUid);
-          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+            subscription_id: subscriptionId ? String(subscriptionId) : null,
+            tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
+            outcome: 'duplicate_ignored', http_status: 200,
+            processing_ms: Date.now() - startTime,
+            body_hash: (globalThis as any).__bodyHash || null,
+          });
+          return new Response(JSON.stringify({ ok: true, status: 'duplicate_ignored' }), {
+            status: 200,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
@@ -1501,15 +1597,39 @@ Deno.serve(async (req) => {
           raw_data: createSafeOrphanData(body, rawTrackingId),
           processed: false,
         }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
+        // P3.0.2: Enqueue orphan for recovery (no uid → use body_hash in raw_payload)
+        try {
+          const { data: oqRow, error: oqErr } = await supabase
+            .from('payment_reconcile_queue')
+            .insert({
+              bepaid_uid: null,
+              tracking_id: rawTrackingId || null,
+              amount: transaction?.amount ? transaction.amount / 100 : null,
+              currency: transaction?.currency || body.plan?.currency || 'BYN',
+              customer_email: transaction?.customer?.email || body.customer?.email || null,
+              raw_payload: { ...body, _trace: { body_hash: (globalThis as any).__bodyHash, outcome: 'failed_no_transaction_uid' } },
+              source: 'webhook_orphan',
+              status: 'error',
+              last_error: 'failed_no_transaction_uid',
+            })
+            .select('id')
+            .maybeSingle();
+          if (oqErr) console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
+          else console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued no-uid orphan:', oqRow?.id);
+        } catch (oqEx) {
+          console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqEx);
+        }
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'subscription', tracking_id: rawTrackingId,
           subscription_id: subscriptionId ? String(subscriptionId) : null,
           parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
-          outcome: 'failed_no_transaction_uid', http_status: 500,
+          outcome: 'failed_no_transaction_uid', http_status: 202,
           processing_ms: Date.now() - startTime,
+          body_hash: (globalThis as any).__bodyHash || null,
+          handler_result: 'orphan_enqueued_no_uid',
         });
         return new Response(JSON.stringify({ ok: false, status: 'failed_no_transaction_uid' }), {
-          status: 500,
+          status: 202,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
@@ -1581,15 +1701,39 @@ Deno.serve(async (req) => {
         } catch (orphErr) {
           console.error('[WEBHOOK-LINK-ORDER] Best-effort orphan write failed:', orphErr);
         }
+        // P3.0.2: Enqueue orphan + return 202 (not 500)
+        try {
+          const { data: oqRow, error: oqErr } = await supabase
+            .from('payment_reconcile_queue')
+            .insert({
+              bepaid_uid: transactionUid || null,
+              tracking_id: rawTrackingId || null,
+              amount: transaction?.amount ? transaction.amount / 100 : null,
+              currency: transaction?.currency || body.plan?.currency || 'BYN',
+              customer_email: transaction?.customer?.email || null,
+              raw_payload: body,
+              source: 'webhook_orphan',
+              status: 'error',
+              last_error: 'orphaned_order_not_found',
+            })
+            .select('id')
+            .maybeSingle();
+          if (oqErr) console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
+          else console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan order_not_found:', oqRow?.id);
+        } catch (oqEx) {
+          console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqEx);
+        }
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
           tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
           parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
-          outcome: 'orphaned_order_not_found', http_status: 500,
+          outcome: 'orphaned_order_not_found', http_status: 202,
           processing_ms: Date.now() - startTime,
+          body_hash: (globalThis as any).__bodyHash || null,
+          handler_result: 'orphan_enqueued',
         });
         return new Response(JSON.stringify({ ok: false, status: 'orphaned' }), {
-          status: 500,
+          status: 202,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
@@ -1600,8 +1744,16 @@ Deno.serve(async (req) => {
         || Number(linkOrder.final_price) || 0;
       
       // PATCH P2: Amount != 0 guard
+      // P3.0.4: Enhanced cascade debug log (keep 500 — this is a mapping error, bePaid should retry)
       if (paymentAmount <= 0) {
-        console.error('[WEBHOOK-LINK-ORDER] Amount is 0 after cascade — cannot process');
+        console.error('[WEBHOOK-LINK-ORDER] Amount=0 cascade debug:', JSON.stringify({
+          plan_amount: body.plan?.amount,
+          tx_amount: transaction?.amount,
+          order_final_price: linkOrder.final_price,
+          sbs_id: subscriptionId,
+          tracking_id: rawTrackingId,
+          order_id: parsedOrderId,
+        }));
         await supabase.from('provider_webhook_orphans').upsert({
           provider: 'bepaid',
           provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
@@ -2103,8 +2255,8 @@ Deno.serve(async (req) => {
         } catch (createErr) {
           console.error('[WEBHOOK] Failed to create orphan order:', createErr);
           
-          // Queue for manual review instead of failing
-          await supabase.from('payment_reconcile_queue').insert({
+          // P3.0.1: Queue for manual review with observability
+          const { data: fallbackQueueRow, error: fallbackQueueErr } = await supabase.from('payment_reconcile_queue').insert({
             bepaid_uid: transactionUid,
             tracking_id: rawTrackingId,
             amount: transaction.amount / 100,
@@ -2114,7 +2266,17 @@ Deno.serve(async (req) => {
             source: 'webhook_orphan',
             status: 'pending',
             last_error: `Failed to create order: ${String(createErr)}`,
-          });
+          })
+            .select('id, source, bepaid_uid')
+            .maybeSingle();
+          
+          if (fallbackQueueErr) {
+            console.error('[WEBHOOK-QUEUE-FALLBACK] DB error:', JSON.stringify({ code: fallbackQueueErr.code, message: fallbackQueueErr.message }));
+          } else if (!fallbackQueueRow) {
+            console.error('[WEBHOOK-QUEUE-FALLBACK] No row returned:', { bepaid_uid: transactionUid });
+          } else {
+            console.log(`[WEBHOOK-QUEUE-FALLBACK] OK id=${fallbackQueueRow.id} source=${fallbackQueueRow.source} uid=${fallbackQueueRow.bepaid_uid}`);
+          }
           
           // Notify admins
           try {

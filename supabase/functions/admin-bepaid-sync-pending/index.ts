@@ -245,23 +245,79 @@ Deno.serve(async (req: Request) => {
           else if (newState === "canceled") result.became_canceled++;
           else if (newState === "failed") result.became_failed++;
 
+          // P3.0.6: If became active and no subscription_v2_id, try autolink by tracking_id
+          if (newState === "active" && !candidate.subscription_v2_id) {
+            try {
+              const apiTrackingId = sub?.tracking_id || null;
+              let linkedSubV2Id: string | null = null;
+              let linkMethod = '';
+
+              if (apiTrackingId) {
+                // Try subv2:{uuid} pattern
+                const subv2Match = apiTrackingId.match(/^subv2:([0-9a-f-]{36})/i);
+                if (subv2Match) {
+                  linkedSubV2Id = subv2Match[1];
+                  linkMethod = 'subv2_direct';
+                } else {
+                  // Try link:order:{uuid} or just order UUID
+                  const orderMatch = apiTrackingId.match(/(?:link:order:|order:)([0-9a-f-]{36})/i)
+                    || apiTrackingId.match(/^([0-9a-f-]{36})$/i);
+                  if (orderMatch) {
+                    const { data: subByOrder } = await serviceClient
+                      .from("subscriptions_v2")
+                      .select("id")
+                      .eq("order_id", orderMatch[1])
+                      .maybeSingle();
+                    if (subByOrder) {
+                      linkedSubV2Id = subByOrder.id;
+                      linkMethod = 'order_lookup';
+                    }
+                  }
+                }
+              }
+
+              if (linkedSubV2Id) {
+                const { error: linkErr } = await serviceClient
+                  .from("provider_subscriptions")
+                  .update({ subscription_v2_id: linkedSubV2Id })
+                  .eq("id", candidate.id);
+
+                if (!linkErr) {
+                  (result as any).subscription_linked = ((result as any).subscription_linked || 0) + 1;
+                  if (result.samples.length < 10) {
+                    result.samples.push({ id: sbsId, old_state: oldState, new_state: newState, linked_sub_v2: linkedSubV2Id, link_method: linkMethod } as any);
+                  }
+                  console.log(`[SYNC] Autolinked ${sbsId} -> subscription_v2 ${linkedSubV2Id} via ${linkMethod}`);
+                } else {
+                  console.error(`[SYNC] Failed to link ${sbsId}:`, linkErr.message);
+                }
+              }
+            } catch (linkEx) {
+              console.error(`[SYNC] Autolink exception for ${sbsId}:`, linkEx);
+            }
+          }
+
           // If became active and linked subscription has billing_type='mit', update to provider_managed
-          if (newState === "active" && candidate.subscription_v2_id) {
-            const { data: linkedSub } = await serviceClient
-              .from("subscriptions_v2")
-              .select("id, billing_type")
-              .eq("id", candidate.subscription_v2_id)
-              .eq("billing_type", "mit")
-              .maybeSingle();
-
-            if (linkedSub) {
-              const { error: btErr } = await serviceClient
+          if (newState === "active" && (candidate.subscription_v2_id || true)) {
+            // Re-fetch to get potentially updated subscription_v2_id
+            const subV2Id = candidate.subscription_v2_id;
+            if (subV2Id) {
+              const { data: linkedSub } = await serviceClient
                 .from("subscriptions_v2")
-                .update({ billing_type: "provider_managed" })
-                .eq("id", linkedSub.id);
+                .select("id, billing_type")
+                .eq("id", subV2Id)
+                .eq("billing_type", "mit")
+                .maybeSingle();
 
-              if (!btErr) {
-                result.billing_type_updated++;
+              if (linkedSub) {
+                const { error: btErr } = await serviceClient
+                  .from("subscriptions_v2")
+                  .update({ billing_type: "provider_managed" })
+                  .eq("id", linkedSub.id);
+
+                if (!btErr) {
+                  result.billing_type_updated++;
+                }
               }
             }
           }
