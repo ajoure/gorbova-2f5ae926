@@ -9,8 +9,6 @@ import {
   Crown,
   Layers,
   UserCheck,
-  Shield,
-  Bot,
 } from "lucide-react";
 import {
   Tooltip,
@@ -22,7 +20,7 @@ import {
   EnrichedClubMember,
   ClubBusinessStats,
 } from "@/hooks/useTelegramIntegration";
-import { useClubAdmins, type AdminInfo } from "@/hooks/useClubAdmins";
+
 
 // ---------- Типы ----------
 
@@ -131,8 +129,7 @@ function GlassStatCard({
     <div
       onClick={onClick}
       className={cn(
-        // фиксированная высота — все карточки одинаковые
-        "relative overflow-hidden rounded-[22px] p-4 h-[108px]",
+        "relative overflow-hidden rounded-[18px] px-3 py-2.5 h-[80px]",
         "flex flex-col justify-between",
         "bg-white/[0.07] border",
         s.border,
@@ -152,11 +149,11 @@ function GlassStatCard({
       </div>
 
       {/* Верхняя строка: заголовок + иконка */}
-      <div className="relative z-10 flex items-start justify-between gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/50 leading-tight">
+      <div className="relative z-10 flex items-start justify-between gap-1">
+        <p className="text-[9px] font-semibold uppercase tracking-widest text-white/50 leading-tight">
           {title}
         </p>
-        <div className={cn("shrink-0 p-1.5 rounded-xl", s.iconBg)}>
+        <div className={cn("shrink-0 p-1 rounded-lg", s.iconBg)}>
           {icon}
         </div>
       </div>
@@ -164,11 +161,11 @@ function GlassStatCard({
       {/* Нижняя строка: значение + субтитл */}
       <div className="relative z-10">
         {isLoading ? (
-          <div className="h-7 w-16 rounded-md bg-white/10 animate-pulse" />
+          <div className="h-6 w-14 rounded-md bg-white/10 animate-pulse" />
         ) : (
           <p
             className={cn(
-              "text-2xl font-bold tabular-nums tracking-tight leading-none",
+              "text-xl font-bold tabular-nums tracking-tight leading-none",
               s.text
             )}
           >
@@ -176,7 +173,7 @@ function GlassStatCard({
           </p>
         )}
         {subtitle && (
-          <p className="text-[11px] text-white/40 mt-0.5 leading-tight">
+          <p className="text-[10px] text-white/40 mt-0.5 leading-tight">
             {subtitle}
           </p>
         )}
@@ -250,7 +247,7 @@ function SkeletonGrid({ count }: { count: number }) {
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          className="h-[108px] rounded-[22px] bg-white/[0.07] animate-pulse"
+          className="h-[80px] rounded-[18px] bg-white/[0.07] animate-pulse"
         />
       ))}
     </div>
@@ -268,10 +265,7 @@ export function ClubQuickStats({
   violatorsCount,
   outsideSystemCount,
 }: ClubQuickStatsProps) {
-  const { data: adminsList = [] } = useClubAdmins(club?.id ?? null);
   const [period, setPeriod] = useState(30);
-
-  const adminsCount = adminsList.length;
 
   const fmt = (n: number | null | undefined): string =>
     n === null || n === undefined ? "—" : String(n);
@@ -354,10 +348,10 @@ export function ClubQuickStats({
             <GlassStatCard
               title="Новые"
               value={isError ? "—" : fmt(businessStats?.newCount)}
-              subtitle="впервые вступили"
+              subtitle="получили первый доступ"
               icon={<TrendingUp className="h-4 w-4 text-emerald-300" />}
               variant="success"
-              tooltip={`Люди, впервые вступившие в клуб за последние ${period} дней (не считая повторные подписки)`}
+              tooltip={`Пользователи, чей первый доступ (грант) был создан за последние ${period} дней. Включает тех, кто уже ушёл.`}
               onClick={() => onTabChange?.("with_access")}
               isLoading={isLoading}
             />
@@ -398,59 +392,6 @@ export function ClubQuickStats({
         )}
       </div>
 
-      {/* ---- Нижняя инфо-строка (администраторы поименно) ---- */}
-      {!isLoading && adminsCount > 0 && (
-        <div
-          className="relative mt-3 rounded-2xl px-4 py-3"
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.10)",
-          }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[11px] text-white/40 font-semibold uppercase tracking-widest">
-              Администраторы клуба
-            </span>
-            <span className="text-[11px] text-white/30 font-semibold">
-              ({adminsCount})
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {adminsList.map((admin) => {
-              const displayName = admin.full_name || (admin.telegram_username ? `@${admin.telegram_username}` : `ID ${admin.telegram_user_id}`);
-              const username = admin.telegram_username ? `@${admin.telegram_username}` : null;
-              const RoleIcon = admin.is_bot ? Bot : admin.role === "creator" ? Crown : Shield;
-              const roleColor = admin.is_bot ? "text-sky-300" : admin.role === "creator" ? "text-amber-300" : "text-white/60";
-
-              return (
-                <div
-                  key={admin.telegram_user_id}
-                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <RoleIcon className={cn("h-3.5 w-3.5 shrink-0", roleColor)} />
-                  <span className="text-[12px] text-white/80 font-medium">
-                    {displayName}
-                  </span>
-                  {username && admin.full_name && (
-                    <span className="text-[11px] text-white/30">{username}</span>
-                  )}
-                  <span className="text-[10px] ml-0.5">
-                    {admin.has_active_access ? (
-                      <span className="text-emerald-400">✓</span>
-                    ) : (
-                      <span className="text-amber-400">нет доступа</span>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
