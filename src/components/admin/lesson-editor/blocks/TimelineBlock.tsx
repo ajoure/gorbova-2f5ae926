@@ -1,4 +1,3 @@
-import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Circle } from "lucide-react";
@@ -112,16 +111,18 @@ export function TimelineBlock({ content, onChange, isEditing = true }: TimelineB
             </Button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Input
+            <RichTextarea
               value={item.title}
-              onChange={(e) => updateItem(item.id, "title", e.target.value)}
+              onChange={(html) => updateItem(item.id, "title", html)}
               placeholder="Заголовок..."
+              inline
               className="font-medium"
             />
-            <Input
+            <RichTextarea
               value={item.date || ""}
-              onChange={(e) => updateItem(item.id, "date", e.target.value)}
+              onChange={(html) => updateItem(item.id, "date", html)}
               placeholder="Дата / метка..."
+              inline
             />
           </div>
           <RichTextarea

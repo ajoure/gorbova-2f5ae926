@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
-import { Input } from "@/components/ui/input";
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -130,10 +130,11 @@ export function RoleDescriptionBlock({
 
         <div className="space-y-2">
           <Label>Текст кнопки</Label>
-          <Input
+          <RichTextarea
             value={content.buttonText || ''}
-            onChange={(e) => onChange({ ...content, buttonText: e.target.value })}
+            onChange={(html) => onChange({ ...content, buttonText: html })}
             placeholder="Перейти к видео"
+            inline
           />
         </div>
       </div>

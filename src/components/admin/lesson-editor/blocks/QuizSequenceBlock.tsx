@@ -354,10 +354,11 @@ export function QuizSequenceBlock({
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium flex-shrink-0">
                 {index + 1}
               </div>
-              <Input
+              <RichTextarea
                 value={item.text}
-                onChange={(e) => updateItem(item.id, e.target.value)}
+                onChange={(html) => updateItem(item.id, html)}
                 placeholder={`Элемент ${index + 1}...`}
+                inline
                 className="flex-1"
               />
               <Button

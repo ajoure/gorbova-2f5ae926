@@ -247,19 +247,21 @@ export function SequentialFormBlock({
       <div className="space-y-4">
         <div className="space-y-2">
           <Label>Заголовок</Label>
-          <Input
+          <RichTextarea
             value={content.title || ''}
-            onChange={(e) => onChange({ ...content, title: e.target.value })}
+            onChange={(html) => onChange({ ...content, title: html })}
             placeholder="Формула точки B"
+            inline
           />
         </div>
 
         <div className="space-y-2">
           <Label>Текст кнопки завершения</Label>
-          <Input
+          <RichTextarea
             value={content.submitButtonText || ''}
-            onChange={(e) => onChange({ ...content, submitButtonText: e.target.value })}
+            onChange={(html) => onChange({ ...content, submitButtonText: html })}
             placeholder="Формула сформирована"
+            inline
           />
         </div>
 

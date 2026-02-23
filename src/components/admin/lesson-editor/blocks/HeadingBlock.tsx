@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HeadingContent } from "@/hooks/useLessonBlocks";
 
@@ -10,12 +10,6 @@ interface HeadingBlockProps {
 }
 
 export function HeadingBlock({ content, onChange, isEditing = true }: HeadingBlockProps) {
-  const [localText, setLocalText] = useState(content.text || "");
-  
-  const handleTextBlur = () => {
-    onChange({ ...content, text: localText });
-  };
-
   const handleLevelChange = (level: string) => {
     onChange({ ...content, level: parseInt(level) as 1 | 2 | 3 | 4 });
   };
@@ -30,7 +24,7 @@ export function HeadingBlock({ content, onChange, isEditing = true }: HeadingBlo
     };
     return (
       <Tag className={sizeClasses[content.level || 2]}>
-        {content.text || "Заголовок"}
+        <span dangerouslySetInnerHTML={{ __html: content.text || "Заголовок" }} />
       </Tag>
     );
   }
@@ -48,12 +42,12 @@ export function HeadingBlock({ content, onChange, isEditing = true }: HeadingBlo
           <SelectItem value="4">H4</SelectItem>
         </SelectContent>
       </Select>
-      <Input
-        value={localText}
-        onChange={(e) => setLocalText(e.target.value)}
-        onBlur={handleTextBlur}
+      <RichTextarea
+        value={content.text || ""}
+        onChange={(html) => onChange({ ...content, text: html })}
         placeholder="Введите заголовок..."
-        className="text-lg font-semibold"
+        inline
+        className="flex-1 text-lg font-semibold"
       />
     </div>
   );

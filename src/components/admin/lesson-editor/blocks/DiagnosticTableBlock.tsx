@@ -256,10 +256,11 @@ export function DiagnosticTableBlock({
       <div className="space-y-4">
         <div className="space-y-2">
           <Label>Заголовок</Label>
-          <Input
+          <RichTextarea
             value={content.title || ''}
-            onChange={(e) => onChange({ ...content, title: e.target.value })}
+            onChange={(html) => onChange({ ...content, title: html })}
             placeholder="Диагностика точки А"
+            inline
           />
         </div>
 

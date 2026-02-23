@@ -1,5 +1,6 @@
 import { useState, useId, useCallback, useEffect } from "react";
 import { Input } from "@/components/ui/input";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { VideoContent } from "@/hooks/useLessonBlocks";
@@ -253,11 +254,11 @@ export function VideoBlock({
       
       <div className="space-y-1.5">
         <Label>Название (опционально)</Label>
-        <Input
+        <RichTextarea
           value={localTitle}
-          onChange={(e) => setLocalTitle(e.target.value)}
-          onBlur={handleTitleBlur}
+          onChange={(html) => { setLocalTitle(html); onChange({ ...content, title: html }); }}
           placeholder="Название видео"
+          inline
         />
       </div>
 

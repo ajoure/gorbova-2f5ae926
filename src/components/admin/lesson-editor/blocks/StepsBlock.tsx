@@ -1,4 +1,3 @@
-import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Check } from "lucide-react";
@@ -156,10 +155,11 @@ export function StepsBlock({ content, onChange, isEditing = true }: StepsBlockPr
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
-          <Input
+          <RichTextarea
             value={step.title}
-            onChange={(e) => updateStep(step.id, "title", e.target.value)}
+            onChange={(html) => updateStep(step.id, "title", html)}
             placeholder="Заголовок шага..."
+            inline
             className="font-medium"
           />
           <RichTextarea

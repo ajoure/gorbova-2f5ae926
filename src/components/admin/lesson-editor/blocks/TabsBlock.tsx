@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -99,10 +98,11 @@ export function TabsBlock({ content, onChange, isEditing = true }: TabsBlockProp
           {tabs.map((tab) => (
             <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-3">
               <div className="flex items-center gap-2">
-                <Input
+                <RichTextarea
                   value={tab.title}
-                  onChange={(e) => updateTab(tab.id, "title", e.target.value)}
+                  onChange={(html) => updateTab(tab.id, "title", html)}
                   placeholder="Название вкладки..."
+                  inline
                   className="flex-1"
                 />
                 <Button
