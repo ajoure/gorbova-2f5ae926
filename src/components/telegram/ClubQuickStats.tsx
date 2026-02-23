@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   Users,
@@ -36,6 +36,9 @@ interface ClubQuickStatsProps {
   // Данные из useClubMemberStats для нарушителей и вне системы
   violatorsCount?: number;
   outsideSystemCount?: number | null;
+  // Управляемый период (из родителя)
+  period: number;
+  onPeriodChange: (v: number) => void;
 }
 
 // ---------- Варианты карточек ----------
@@ -264,8 +267,9 @@ export function ClubQuickStats({
   onTabChange,
   violatorsCount,
   outsideSystemCount,
+  period,
+  onPeriodChange,
 }: ClubQuickStatsProps) {
-  const [period, setPeriod] = useState(30);
 
   const fmt = (n: number | null | undefined): string =>
     n === null || n === undefined ? "—" : String(n);
@@ -289,7 +293,7 @@ export function ClubQuickStats({
         <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">
           Статистика клуба
         </p>
-        <PeriodSwitcher value={period} onChange={setPeriod} />
+        <PeriodSwitcher value={period} onChange={onPeriodChange} />
       </div>
 
       {/* ---- РЯД 1: Тарифы + Всего с доступом ---- */}
