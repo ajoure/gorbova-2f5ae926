@@ -60,7 +60,15 @@ import {
   UserX,
   GripVertical,
   Link2,
+  Download,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -769,6 +777,18 @@ export default function AdminContacts() {
     return applyFilters(result, activeFilters, getContactFieldValue);
   }, [contactsWithIndex, debouncedSearch, activeFilters, getContactFieldValue]);
 
+  // Export columns builder
+  const getContactsExportColumns = useCallback((): ExportColumn<Contact>[] => [
+    { header: "Имя", getValue: (c) => c.full_name || "" },
+    { header: "Email", getValue: (c) => c.email || "" },
+    { header: "Телефон", getValue: (c) => c.phone || "" },
+    { header: "Telegram", getValue: (c) => c.telegram_username ? `@${c.telegram_username}` : "" },
+    { header: "Сделок", getValue: (c) => c.deals_count },
+    { header: "Последняя сделка", getValue: (c) => c.last_deal_at ? format(new Date(c.last_deal_at), "dd.MM.yyyy") : "" },
+    { header: "Статус", getValue: (c) => c.status || "" },
+    { header: "Дата регистрации", getValue: (c) => c.created_at ? format(new Date(c.created_at), "dd.MM.yyyy HH:mm") : "" },
+  ], []);
+
   // Sorting
   const { sortedData: sortedContacts, sortKey, sortDirection, handleSort } = useTableSort({
     data: filteredContacts,
@@ -1162,6 +1182,32 @@ export default function AdminContacts() {
           >
             <Sparkles className="h-3.5 w-3.5" />
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8" disabled={sortedContacts.length === 0}>
+                <Download className="h-3.5 w-3.5 sm:mr-1.5" />
+                <span className="hidden sm:inline">Экспорт</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={async () => {
+                const cols = getContactsExportColumns();
+                await exportToExcel(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                toast.success(`Экспортировано ${sortedContacts.length} записей`);
+              }}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Excel (.xlsx)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => {
+                const cols = getContactsExportColumns();
+                exportToCSV(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.csv`);
+                toast.success(`Экспортировано ${sortedContacts.length} записей`);
+              }}>
+                <FileText className="h-4 w-4 mr-2" />
+                CSV (.csv)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" size="sm" className="h-8" onClick={() => refetch()}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
