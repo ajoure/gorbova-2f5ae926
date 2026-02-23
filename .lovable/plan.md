@@ -1,78 +1,80 @@
 
+# Исправление: Точка Б показывается незаполненной при наличии ответов
 
-# Показ администраторов поименно в статистике клуба
+## Диагноз
 
-## Проблема
+SQL-анализ таблицы `lesson_progress_state` для урока `96c970e6-...`:
 
-На скриншоте видно, что блок «Администраторы клуба» вообще НЕ отображается внизу панели статистики. Это может означать, что логика определения админов из `last_telegram_check_result` не находит их (например, поле пустое или формат отличается). Нужно: (1) починить детекцию, (2) показать всех 4 админов (3 человека + 1 бот) поименно.
+| Метрика | Значение |
+|---|---|
+| Всего учеников | 33 |
+| Заполнили ответы pointB_answers | **29** |
+| Имеют флаг pointB_completed = true | **26** |
+| **Потерянные** (ответы есть, флаг нет) | **3** |
 
-## Решение
+Причина потери флага: при завершении sequential_form вызывается `generateSummary()` (AI Edge Function). Если она упала/таймаутнула, `handleComplete` все равно вызывает `onComplete()`, но из-за race condition с debounced `updateState` флаг `pointB_completed` мог не сохраниться.
 
-### Файл: `src/components/telegram/ClubQuickStats.tsx`
+## Решение (2 части)
 
-**1) Исправить логику определения админов (строки 271-288)**
+### Часть 1: Исправить отображение (надежная детекция)
 
-Текущая логика парсит `last_telegram_check_result` и ищет `status === "administrator" | "creator"`. Возможно, результаты проверки пустые или формат другой. Нужно:
-- Добавить fallback: если `last_telegram_check_result` пустой, но у мембера `role` или иной признак админа -- учитывать
-- Расширить парсинг: проверять вложенные структуры (`r?.chat?.status`, `r?.channel?.status`, `r?.status`)
-- Вернуть массив `adminsList` вместо просто счетчиков:
+**Файл:** `src/pages/admin/AdminLessonProgress.tsx`
 
-```text
-interface AdminInfo {
-  telegram_name: string | null;
-  telegram_username: string | null;
-  full_name: string | null;
-  role: "creator" | "administrator";
-  has_active_access: boolean;
-  is_bot?: boolean;
-}
+Вместо проверки только `pointB_completed` флага, проверять **наличие заполненных ответов** как дополнительный критерий:
+
+**Карточка статистики (строка 215):**
+
+Было:
+```
+progressRecords?.filter(r => (r.state_json as any)?.pointB_completed).length
 ```
 
-Имя собирается из: `m.telegram_first_name` + `m.telegram_last_name`, fallback на `m.full_name`, fallback на `@username`.
-
-**2) Заменить нижнюю инфо-строку (строки 415-437)**
-
-Вместо:
-```text
-Администраторы клуба   Всего: 3   Без доступа: 1
+Станет:
+```
+progressRecords?.filter(r => {
+  const s = r.state_json as any;
+  return s?.pointB_completed || 
+    (s?.pointB_answers && Object.keys(s.pointB_answers).length > 0);
+}).length
 ```
 
-Показать поименный список:
-```text
-Администраторы клуба (4)
-[Crown] Катерина Горбова @username -- С доступом
-[Shield] Сергей Федорчук @fs_by -- С доступом
-[Shield] Имя Админ3 @username3 -- Без доступа
-[Bot] BotName @bot_username -- Без доступа
+**Таблица, колонка "Точка B" (строка 315):**
+
+Было:
+```
+state?.pointB_completed ? <Badge>check</Badge> : "—"
 ```
 
-- Crown (иконка) = creator
-- Shield = administrator
-- Bot (иконка) = если `is_bot === true` или имя содержит "bot"
-- Зеленый текст "С доступом" / янтарный "Без доступа" по `has_active_access`
-- Компоновка: flex-wrap, каждый админ -- inline-pill
+Станет:
+```
+const hasPointB = state?.pointB_completed || 
+  (state?.pointB_answers && Object.keys(state.pointB_answers).length > 0);
+hasPointB ? <Badge>check</Badge> : "—"
+```
 
-**3) Убрать условие скрытия блока**
+### Часть 2: Починить данные (3 записи)
 
-Строка 415: `{!isLoading && adminsCount > 0 && (` -- оставить как есть, но убедиться, что adminsCount теперь корректно считается (включая бота). Если после исправления детекции adminsCount все равно 0, добавить диагностический лог.
+Обновить 3 записи в `lesson_progress_state`, где `pointB_answers` заполнены, но `pointB_completed = false` -- установить `pointB_completed = true` через SQL UPDATE.
+
+Это разовая операция для конкретного урока, но логика отображения (Часть 1) защитит от повторения проблемы в любых уроках.
 
 ## Затронутые файлы
 
 | Файл | Изменение |
 |---|---|
-| `src/components/telegram/ClubQuickStats.tsx` | Исправить детекцию админов (включая бота), вернуть adminsList, показать поименный список с ролями и статусом доступа |
+| `src/pages/admin/AdminLessonProgress.tsx` | Карточка "Точка B" и колонка таблицы: проверять pointB_answers как fallback |
 
 ## НЕ трогаем
 
-- Логику подсчета totalWithAccess, tariffs, динамику
-- RPC `get_club_business_stats`
-- Хук `useTelegramIntegration`
-- Другие компоненты
+- `SequentialFormBlock.tsx` -- логика завершения работает корректно в 90% случаев
+- `KvestLessonView.tsx` -- handleSequentialFormComplete корректен
+- `useLessonProgressState.tsx` -- debounce логика уже исправлена ранее
+- `StudentProgressModal.tsx` -- уже проверяет `pointB_answers || pointB_completed`
 
 ## DoD
 
-1. Блок "Администраторы клуба" отображается (сейчас скрыт)
-2. Все 4 админа (3 человека + 1 бот) показаны поименно
-3. У каждого видна роль (creator/administrator/bot) и статус доступа
-4. Нет ошибок сборки/TS
-
+1. Карточка "Точка B" показывает 29 (не 26)
+2. В таблице у всех учеников с заполненными ответами стоит галочка
+3. 3 "потерянных" записи исправлены в БД
+4. Логика работает для ВСЕХ уроков с sequential_form, не только для конкретного
+5. Нет ошибок сборки/TS
