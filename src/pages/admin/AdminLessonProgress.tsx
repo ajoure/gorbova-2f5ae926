@@ -212,7 +212,10 @@ export default function AdminLessonProgress() {
           <Card>
             <CardContent className="pt-4">
               <div className="text-2xl font-bold text-primary/60">
-                {progressRecords?.filter(r => (r.state_json as any)?.pointB_completed).length || 0}
+                {progressRecords?.filter(r => {
+                  const s = r.state_json as any;
+                  return s?.pointB_completed || (s?.pointB_answers && Object.keys(s.pointB_answers).length > 0);
+                }).length || 0}
               </div>
               <p className="text-sm text-muted-foreground">Точка B</p>
             </CardContent>
@@ -312,7 +315,7 @@ export default function AdminLessonProgress() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {state?.pointB_completed ? (
+                          {(state?.pointB_completed || (state?.pointB_answers && Object.keys(state.pointB_answers).length > 0)) ? (
                             <Badge variant="default">✓</Badge>
                           ) : (
                             <span className="text-muted-foreground">—</span>
