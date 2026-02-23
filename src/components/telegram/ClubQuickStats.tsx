@@ -9,6 +9,8 @@ import {
   Crown,
   Layers,
   UserCheck,
+  Shield,
+  Bot,
 } from "lucide-react";
 import {
   Tooltip,
@@ -20,6 +22,7 @@ import {
   EnrichedClubMember,
   ClubBusinessStats,
 } from "@/hooks/useTelegramIntegration";
+import { useClubAdmins, type AdminInfo } from "@/hooks/useClubAdmins";
 
 // ---------- Типы ----------
 
@@ -265,27 +268,10 @@ export function ClubQuickStats({
   violatorsCount,
   outsideSystemCount,
 }: ClubQuickStatsProps) {
+  const { data: adminsList = [] } = useClubAdmins(club?.id ?? null);
   const [period, setPeriod] = useState(30);
 
-  // Администраторы из members
-  const { adminsCount, adminsWithoutAccess } = (() => {
-    if (!members) return { adminsCount: 0, adminsWithoutAccess: 0 };
-    const admins = members.filter((m) => {
-      const r = m.last_telegram_check_result as Record<string, any> | null;
-      const chatStatus = r?.chat?.status ?? r?.status;
-      const channelStatus = r?.channel?.status;
-      return (
-        chatStatus === "administrator" ||
-        chatStatus === "creator" ||
-        channelStatus === "administrator" ||
-        channelStatus === "creator"
-      );
-    });
-    return {
-      adminsCount: admins.length,
-      adminsWithoutAccess: admins.filter((m) => !m.has_active_access).length,
-    };
-  })();
+  const adminsCount = adminsList.length;
 
   const fmt = (n: number | null | undefined): string =>
     n === null || n === undefined ? "—" : String(n);
@@ -412,27 +398,57 @@ export function ClubQuickStats({
         )}
       </div>
 
-      {/* ---- Нижняя инфо-строка (администраторы) ---- */}
+      {/* ---- Нижняя инфо-строка (администраторы поименно) ---- */}
       {!isLoading && adminsCount > 0 && (
         <div
-          className="relative mt-3 rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1"
+          className="relative mt-3 rounded-2xl px-4 py-3"
           style={{
             background: "rgba(255,255,255,0.04)",
             border: "1px solid rgba(255,255,255,0.10)",
           }}
         >
-          <span className="text-[11px] text-white/40 font-semibold uppercase tracking-widest">
-            Администраторы клуба
-          </span>
-          <span className="text-[12px] text-white/70">
-            Всего: <span className="text-white font-semibold">{adminsCount}</span>
-          </span>
-          {adminsWithoutAccess > 0 && (
-            <span className="text-[12px] text-amber-300">
-              Без доступа:{" "}
-              <span className="font-semibold">{adminsWithoutAccess}</span>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[11px] text-white/40 font-semibold uppercase tracking-widest">
+              Администраторы клуба
             </span>
-          )}
+            <span className="text-[11px] text-white/30 font-semibold">
+              ({adminsCount})
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {adminsList.map((admin) => {
+              const displayName = admin.full_name || (admin.telegram_username ? `@${admin.telegram_username}` : `ID ${admin.telegram_user_id}`);
+              const username = admin.telegram_username ? `@${admin.telegram_username}` : null;
+              const RoleIcon = admin.is_bot ? Bot : admin.role === "creator" ? Crown : Shield;
+              const roleColor = admin.is_bot ? "text-sky-300" : admin.role === "creator" ? "text-amber-300" : "text-white/60";
+
+              return (
+                <div
+                  key={admin.telegram_user_id}
+                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <RoleIcon className={cn("h-3.5 w-3.5 shrink-0", roleColor)} />
+                  <span className="text-[12px] text-white/80 font-medium">
+                    {displayName}
+                  </span>
+                  {username && admin.full_name && (
+                    <span className="text-[11px] text-white/30">{username}</span>
+                  )}
+                  <span className="text-[10px] ml-0.5">
+                    {admin.has_active_access ? (
+                      <span className="text-emerald-400">✓</span>
+                    ) : (
+                      <span className="text-amber-400">нет доступа</span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
