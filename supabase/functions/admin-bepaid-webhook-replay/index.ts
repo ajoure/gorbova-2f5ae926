@@ -1,12 +1,12 @@
-// admin-bepaid-webhook-replay: Admin-only endpoint to replay a webhook body
+// admin-bepaid-webhook-replay: Admin/cron-only endpoint to replay a webhook body
 // through the bepaid-webhook handler for DoD verification.
-// Protected by X-Admin-Secret or admin JWT.
+// P3.0.1c: Secrets-only auth (no JWT), correct replay headers, audit_logs.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-admin-secret',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-admin-secret, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -20,81 +20,99 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
+    // ===== AUTH: strictly secrets only (no JWT) =====
     const adminSecret = req.headers.get('x-admin-secret');
     const cronSecret = req.headers.get('x-cron-secret');
-    const expectedSecret = Deno.env.get('ADMIN_SECRET') || Deno.env.get('X_ADMIN_SECRET');
+    const expectedAdminSecret = Deno.env.get('ADMIN_SECRET');
     const expectedCronSecret = Deno.env.get('CRON_SECRET');
 
-    let isAuthorized = false;
+    let authorizedVia: string | null = null;
 
-    if (adminSecret && expectedSecret && adminSecret === expectedSecret) {
-      isAuthorized = true;
+    if (adminSecret && expectedAdminSecret && adminSecret === expectedAdminSecret) {
+      authorizedVia = 'admin_secret';
     } else if (cronSecret && expectedCronSecret && cronSecret === expectedCronSecret) {
-      isAuthorized = true;
-    } else {
-      // Try JWT auth
-      const authHeader = req.headers.get('authorization');
-      if (authHeader) {
-        const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || supabaseServiceKey;
-        const anonClient = createClient(supabaseUrl, anonKey, {
-          global: { headers: { Authorization: authHeader } },
-        });
-        const { data: { user } } = await anonClient.auth.getUser();
-        if (user) {
-          const { data: hasRole } = await supabase.rpc('has_any_role', {
-            _user_id: user.id,
-            _role_codes: ['admin', 'super_admin'],
-          });
-          isAuthorized = !!hasRole;
-        }
-      }
+      authorizedVia = 'cron_secret';
     }
 
-    if (!isAuthorized) {
+    // If NEITHER secret exists in env → always 401 (no accidental open access)
+    if (!expectedAdminSecret && !expectedCronSecret) {
+      return new Response(JSON.stringify({ error: 'No auth secrets configured in env' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!authorizedVia) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const { body_text, source_webhook_event_id } = await req.json();
+    // ===== Parse request =====
+    const { body_text, replay_mode } = await req.json();
 
-    let replayBody = body_text;
+    if (!body_text || typeof body_text !== 'string') {
+      return new Response(JSON.stringify({ error: 'body_text (string) is required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    // Option B: replay from an existing webhook_events row
-    if (!replayBody && source_webhook_event_id) {
-      // webhook_events doesn't store raw body, so this is informational only
+    const replayMode = (replay_mode === 'full') ? 'full' : 'trace_only';
+    const bodyHash = await computeHash(body_text);
+
+    // ===== Audit log BEFORE calling webhook =====
+    const requestIp = req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || null;
+
+    const { data: auditRow } = await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'replay',
+      action: 'webhook.replay',
+      meta: {
+        body_hash: bodyHash,
+        body_size: body_text.length,
+        replay_mode: replayMode,
+        authorized_via: authorizedVia,
+        request_ip: requestIp,
+        trace_only_forced: replayMode === 'trace_only' && replay_mode === 'full',
+        target: `${supabaseUrl}/functions/v1/bepaid-webhook`,
+      },
+    }).select('id').maybeSingle();
+
+    const auditLogId = auditRow?.id || null;
+
+    // ===== Call bepaid-webhook with correct replay headers =====
+    const internalSecret = Deno.env.get('BEPAID_WEBHOOK_INTERNAL_SECRET');
+
+    if (!internalSecret) {
       return new Response(JSON.stringify({
-        error: 'webhook_events does not store raw body. Provide body_text directly.',
+        error: 'BEPAID_WEBHOOK_INTERNAL_SECRET not configured — replay bypass impossible',
+        audit_log_id: auditLogId,
       }), {
-        status: 400,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    if (!replayBody) {
-      return new Response(JSON.stringify({ error: 'body_text is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Call bepaid-webhook with the provided body
-    console.log('[REPLAY] Sending body to bepaid-webhook, size:', replayBody.length);
+    console.log(`[REPLAY] Sending body to bepaid-webhook, size=${body_text.length}, mode=${replayMode}, via=${authorizedVia}`);
 
     const webhookUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // P3.0.1a: Internal bypass for signature verification
-        'X-Internal-Key': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'X-Internal-Key': internalSecret,
+        'X-Replay': '1',
+        'X-Replay-Mode': replayMode,
       },
-      body: replayBody,
+      body: body_text,
     });
 
     const responseText = await response.text();
-    let responseJson: any = null;
+    let responseJson: unknown = null;
     try {
       responseJson = JSON.parse(responseText);
     } catch {
@@ -103,11 +121,11 @@ Deno.serve(async (req) => {
 
     console.log('[REPLAY] Response:', response.status, responseJson);
 
-    // Check queue for proof
-    const bodyHash = await computeHash(replayBody);
+    // ===== Collect proof data =====
     const { data: queueRows } = await supabase
       .from('payment_reconcile_queue')
       .select('id, source, bepaid_uid, status, created_at')
+      .in('source', ['webhook_replay', 'webhook_orphan', 'webhook'])
       .order('created_at', { ascending: false })
       .limit(5);
 
@@ -122,6 +140,9 @@ Deno.serve(async (req) => {
       http_status: response.status,
       webhook_response: responseJson,
       body_hash: bodyHash,
+      replay_mode: replayMode,
+      authorized_via: authorizedVia,
+      audit_log_id: auditLogId,
       recent_queue_rows: queueRows,
       recent_webhook_events: webhookEvents,
     }), {

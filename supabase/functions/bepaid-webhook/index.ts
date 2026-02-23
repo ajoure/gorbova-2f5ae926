@@ -835,13 +835,39 @@ Deno.serve(async (req) => {
     
     console.log(`[WEBHOOK-SIGNATURE] verified=${signatureVerified}, reason=${signatureSkipReason}`);
     
-    // P3.0.1a: Allow internal replay bypass (service role key via X-Internal-Key)
+    // P3.0.1c: Secure replay bypass — dedicated secret + explicit replay markers + env guard
     const internalKey = req.headers.get('x-internal-key');
-    if (!signatureVerified && internalKey && internalKey === supabaseServiceKey) {
+    const expectedInternalKey = Deno.env.get('BEPAID_WEBHOOK_INTERNAL_SECRET');
+    const isReplay = req.headers.get('x-replay') === '1';
+    const requestedReplayMode = (req.headers.get('x-replay-mode') || 'trace_only') as 'trace_only' | 'full';
+
+    // Environment guards
+    const replayEnabled = Deno.env.get('BEPAID_WEBHOOK_REPLAY_ENABLED') === '1';
+    const replayFullEnabled = Deno.env.get('BEPAID_WEBHOOK_REPLAY_FULL_ENABLED') === '1';
+
+    // Bypass only if: secret exists + matches + explicit replay marker + env allows
+    const bypassSignature =
+      !!internalKey &&
+      !!expectedInternalKey &&
+      internalKey === expectedInternalKey &&
+      isReplay &&
+      replayEnabled;
+
+    // Force trace_only unless FULL is explicitly enabled
+    let replayMode: 'trace_only' | 'full' = requestedReplayMode;
+    if (replayMode === 'full' && !replayFullEnabled) {
+      replayMode = 'trace_only';
+      console.warn('[WEBHOOK-REPLAY] full mode blocked, downgraded to trace_only');
+    }
+
+    if (!signatureVerified && bypassSignature) {
       signatureVerified = true;
       signatureSkipReason = null;
-      console.log('[WEBHOOK-OK] Internal replay bypass (X-Internal-Key verified)');
+      console.log(`[WEBHOOK-OK] Replay bypass verified (mode=${replayMode})`);
     }
+
+    // Queue source marker for replay traceability
+    const queueSource = bypassSignature ? 'webhook_replay' : 'webhook';
 
     // PATCH-1.7: STRICT - If signature not verified → 401 + orphan (safe subset)
     if (!signatureVerified) {
@@ -917,8 +943,17 @@ Deno.serve(async (req) => {
           card_bank: webhookTransaction.credit_card?.bank || null,
           card_bank_country: webhookTransaction.credit_card?.issuer_country || null,
           receipt_url: webhookTransaction.receipt_url || null,
-          raw_payload: body,
-          source: 'webhook',
+          raw_payload: {
+            ...(body ?? {}),
+            _trace: {
+              replay: bypassSignature,
+              replay_mode: bypassSignature ? replayMode : null,
+              body_hash: trace.bodyHash ?? null,
+              handler: 'bepaid-webhook',
+              queued_at: new Date().toISOString(),
+            },
+          },
+          source: queueSource,
           status: webhookTxStatus === 'successful' ? 'pending' : 'error',
           status_normalized: webhookNormalizedStatus,
           transaction_type: isWebhookRefund ? 'Возврат средств' : 'Оплата',
@@ -960,7 +995,42 @@ Deno.serve(async (req) => {
       }
     }
 
-    // bePaid sends subscription webhooks with data directly in body (not nested in .subscription)
+    // P3.0.1c: trace_only mode — NO side effects beyond webhook_events + queue
+    if (bypassSignature && replayMode === 'trace_only') {
+      const earlyEventType = body?.event || body?.type || null;
+      const earlyTxUid = body?.transaction?.uid || body?.last_transaction?.uid || null;
+      const earlySubId = body?.id || body?.subscription?.id || null;
+
+      await recordWebhookEvent(supabase, {
+        provider: 'bepaid',
+        event_type: earlyEventType,
+        transaction_uid: earlyTxUid,
+        subscription_id: earlySubId ? String(earlySubId) : null,
+        tracking_id: rawTrackingIdEarly,
+        parsed_kind: null,
+        parsed_order_id: null,
+        outcome: 'replay_trace_only',
+        http_status: 200,
+        processing_ms: Date.now() - startTime,
+        error_message: null,
+        body_hash: trace.bodyHash,
+        handler_result: JSON.stringify({ mode: 'trace_only', queue_source: queueSource }),
+        queue_write_ok: trace.queueWriteOk,
+        queue_row_id: trace.queueRowId,
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        outcome: 'replay_trace_only',
+        replay_mode: 'trace_only',
+        body_hash: trace.bodyHash,
+        queue_write_ok: trace.queueWriteOk,
+        queue_row_id: trace.queueRowId,
+        queue_source: queueSource,
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+
     // Check if this is a subscription webhook (has 'state' and 'plan' fields directly in body)
     const isSubscriptionWebhook = body.state && body.plan;
     
