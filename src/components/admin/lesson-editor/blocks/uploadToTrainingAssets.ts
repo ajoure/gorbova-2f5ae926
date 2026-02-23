@@ -198,6 +198,9 @@ export interface DeleteTrainingAssetsResult {
   blocked_paths: string[];
   deleted_paths: string[];
   error?: string;
+  skipped_shared_count?: number;
+  shared_paths?: string[];
+  attempted_delete_count?: number;
 }
 
 const EMPTY_RESULT: DeleteTrainingAssetsResult = {
@@ -277,22 +280,25 @@ export async function deleteTrainingAssets(
     result.blocked_count = dryData.blocked_count ?? 0;
     result.blocked_paths = dryData.blocked_paths ?? [];
 
-    // STOP: если нечего удалять
-    if (result.allowed_count <= 0) {
-      result.error = "dry_run: allowed_count=0";
-      if (result.blocked_count > 0) {
-        console.warn("[deleteTrainingAssets] All paths blocked:", result.blocked_paths);
-      }
+    // STOP только при реальных blocked paths (безопасность/ownership)
+    if ((result.blocked_count ?? 0) > 0) {
+      result.error = `Blocked paths: ${(result.blocked_paths ?? []).join(", ")}`;
+      console.warn("[deleteTrainingAssets] Blocked:", result.blocked_paths);
       return result;
     }
 
-    // STOP: если есть заблокированные пути (безопасность/ownership)
-    if ((result.blocked_count ?? 0) > 0) {
-      result.error = `Blocked paths: ${(result.blocked_paths ?? []).join(", ")}`;
-      console.warn("[deleteTrainingAssets]", result.error);
+    // Пробросить shared-данные из dry_run
+    result.skipped_shared_count = dryData.skipped_shared_count ?? 0;
+    result.shared_paths = dryData.shared_paths ?? [];
+
+    // Если allowed_count=0 и нет blocked — файлы shared или уже отсутствуют, это OK
+    if (result.allowed_count <= 0) {
+      console.info("[deleteTrainingAssets] allowed_count=0, no blocked — skipping execute");
+      result.ok = true;
       return result;
     }
-    // Shared paths — нормально, не блокируем (файлы используются другими уроками)
+
+    // Shared paths info (не блокируем)
     if (dryData.skipped_shared_count > 0) {
       console.info("[deleteTrainingAssets] Shared assets skipped:", dryData.shared_paths);
     }
@@ -313,6 +319,7 @@ export async function deleteTrainingAssets(
 
     result.deleted_count = execData.deleted_count ?? execData.allowed_count ?? 0;
     result.deleted_paths = execData.deleted_paths ?? [];
+    result.attempted_delete_count = execData.attempted_delete_count ?? result.allowed_count;
     const execErrors: string[] = execData.errors ?? [];
 
     // Partial delete: если есть реальные ошибки storage — это ошибка

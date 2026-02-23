@@ -367,6 +367,7 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           mode: "execute",
           requested_paths_count: paths.length,
+          attempted_delete_count: 0,
           deleted_count: 0,
           blocked_count: blockedPaths.length,
           deleted_paths: [],
@@ -414,6 +415,7 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         mode: "execute",
         requested_paths_count: paths.length,
+        attempted_delete_count: finalDeletePaths.length,
         deleted_count: deletedCount,
         blocked_count: blockedPaths.length,
         deleted_paths: finalDeletePaths,
