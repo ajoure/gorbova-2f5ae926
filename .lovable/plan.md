@@ -1,72 +1,120 @@
 
 
-# Исправление: админы-нарушители, переключатель периода, счетчик админов
+# План закрытия DoD для PATCH P3.0.1c
 
-## Проблемы
+## Текущая ситуация
 
-### 1. Админы попадают в нарушители
-SQL-функция `get_club_members_enriched` вычисляет `is_violator = in_any AND NOT has_active_access`. Администраторы клуба (Сергей Федорчук, Катерина Горбова) физически в чате, но если у них нет active access grant -- они считаются нарушителями. Это неправильно: администраторы Telegram не подлежат удалению.
+Код `admin-bepaid-webhook-replay` и `bepaid-webhook` задеплоен и работает корректно:
+- 401 при неверном/отсутствующем секрете -- подтверждено
+- Логика аудита, trace_only guard, bypass по `BEPAID_WEBHOOK_INTERNAL_SECRET` -- в коде
+- **Проблема**: инструмент `curl_edge_functions` в Lovable не может подставить реальное значение `CRON_SECRET` из env -- он передает строки буквально
 
-**Решение:** На фронтенде исключить админов из нарушителей. В `TelegramClubMembers.tsx`:
-- При подсчете `counts.violators` исключать участников, чей `telegram_user_id` есть в `adminTelegramIds`
-- При фильтрации для вкладки `violators` -- аналогично
-- В карточке "Нарушители" в `ClubQuickStats` -- передавать скорректированное число
+## Решение: одноразовая edge function для self-test
 
-### 2. Переключатель 7/30/90 дней ни на что не влияет
-`ClubQuickStats` имеет свой локальный state `period`, который никуда не передается. Родительский компонент `TelegramClubMembers` имеет `businessStatsPeriod` + `setBusinessStatsPeriod`, передает период в `useClubBusinessStats`, но НЕ передает эти значения в `ClubQuickStats`.
+Создать минимальную edge function `admin-replay-self-test`, которая:
+1. Читает `CRON_SECRET` и `SUPABASE_URL` из `Deno.env`
+2. Вызывает `admin-bepaid-webhook-replay` с правильным `x-cron-secret`
+3. Возвращает полный результат (http_status, webhook_response, audit, queue, events)
 
-**Решение:**
-- Добавить в `ClubQuickStatsProps` проп `period` и `onPeriodChange`
-- В `TelegramClubMembers.tsx` передать `businessStatsPeriod` и `setBusinessStatsPeriod`
-- Убрать локальный `useState(30)` из `ClubQuickStats`
+Эта функция не требует внешних секретов для вызова -- достаточно `Authorization: Bearer <service_role>` (подставляется автоматически инструментом curl).
 
-### 3. Админов показывает 3, а не 4
-В БД этого клуба бот НЕ записан как member с ролью administrator. Хук `useClubAdmins` ищет только в `telegram_club_members`. Бот (link-бот) не проходит sync как участник, поэтому его нет в таблице.
+### Код edge function
 
-**Решение:** Расширить хук `useClubAdmins`: помимо поиска в `telegram_club_members`, также подтянуть ботов, привязанных к клубу через таблицу `telegram_bots` (или `telegram_club_bots`), и добавить их в список администраторов с ролью `administrator` и флагом `is_bot = true`.
+```typescript
+// supabase/functions/admin-replay-self-test/index.ts
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
----
+Deno.serve(async (req) => {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-## Технический план
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const cronSecret = Deno.env.get('CRON_SECRET');
 
-### Файл: `src/hooks/useClubAdmins.ts`
+  if (!cronSecret) {
+    return new Response(JSON.stringify({ error: 'CRON_SECRET not in env' }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
 
-1. После получения админов из `telegram_club_members`, дополнительно запросить ботов, привязанных к клубу
-2. Добавить ботов в результирующий массив с `role: "administrator"`, `is_bot: true`
-3. Исключить дубликаты (если бот уже найден как member)
+  // Call replay endpoint with real CRON_SECRET
+  const testBody = JSON.stringify({
+    body_text: JSON.stringify({
+      event: "test_replay_dod",
+      data: {
+        transaction: { uid: "test-replay-dod-001", status: "successful", type: "payment", amount: 100, currency: "BYN" },
+        tracking_id: "dod-test-replay"
+      }
+    }),
+    replay_mode: "trace_only"
+  });
 
-### Файл: `src/components/telegram/ClubQuickStats.tsx`
+  const resp = await fetch(`${supabaseUrl}/functions/v1/admin-bepaid-webhook-replay`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-cron-secret': cronSecret,
+    },
+    body: testBody,
+  });
 
-4. Добавить пропсы `period: number` и `onPeriodChange: (v: number) => void`
-5. Убрать локальный `useState(30)` для `period`
-6. Использовать пропсы для `PeriodSwitcher`
+  const result = await resp.text();
+  let parsed;
+  try { parsed = JSON.parse(result); } catch { parsed = { raw: result }; }
 
-### Файл: `src/pages/admin/TelegramClubMembers.tsx`
+  // Collect SQL proofs
+  const supabase = createClient(supabaseUrl, serviceKey);
 
-7. **Исключить админов из нарушителей**: в `counts.violators` и в фильтре вкладки `violators` добавить условие `&& !adminTelegramIds.has(m.telegram_user_id)`
-8. **Передать period** в `ClubQuickStats`: `period={businessStatsPeriod}` и `onPeriodChange={setBusinessStatsPeriod}`
-9. **Передать скорректированный violatorsCount** в `ClubQuickStats`: вычислять на основе `members`, исключая админов
+  const [audit, queue, events] = await Promise.all([
+    supabase.from('audit_logs').select('id, actor_type, actor_label, action, meta, created_at')
+      .eq('action', 'webhook.replay').order('created_at', { ascending: false }).limit(3),
+    supabase.from('payment_reconcile_queue').select('id, source, status, bepaid_uid, created_at')
+      .in('source', ['webhook_replay', 'webhook_orphan']).order('created_at', { ascending: false }).limit(5),
+    supabase.from('webhook_events').select('id, outcome, http_status, error_message, created_at')
+      .order('created_at', { ascending: false }).limit(5),
+  ]);
 
-## Затронутые файлы
+  return new Response(JSON.stringify({
+    replay_http_status: resp.status,
+    replay_response: parsed,
+    proof_audit_logs: audit.data,
+    proof_queue: queue.data,
+    proof_webhook_events: events.data,
+  }, null, 2), {
+    status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  });
+});
+```
 
-| Файл | Изменение |
+### Последовательность действий
+
+1. Создать `supabase/functions/admin-replay-self-test/index.ts`
+2. Добавить в `supabase/config.toml` секцию `[functions.admin-replay-self-test]` с `verify_jwt = false`
+3. Задеплоить функцию
+4. Вызвать через `curl_edge_functions` (GET/POST без секретов)
+5. Получить полный ответ с пруфами:
+   - `replay_http_status` = 200
+   - `proof_audit_logs` содержит `action='webhook.replay'`
+   - `proof_queue` содержит `source='webhook_replay'`
+   - `proof_webhook_events` содержит `outcome='replay_trace_only'`
+6. Подтвердить SQL-пруфами из ответа
+7. **Удалить** `admin-replay-self-test` после закрытия DoD (одноразовый инструмент)
+
+### Безопасность
+
+- Функция `verify_jwt = false`, но это одноразовый тест -- удаляется сразу после проверки
+- Не принимает произвольных данных, тело теста захардкожено
+- Не создает сайд-эффектов (trace_only)
+
+### Файлы
+
+| Файл | Действие |
 |---|---|
-| `src/hooks/useClubAdmins.ts` | Добавить ботов клуба в список админов |
-| `src/components/telegram/ClubQuickStats.tsx` | Пропсы period/onPeriodChange вместо локального state |
-| `src/pages/admin/TelegramClubMembers.tsx` | Исключить админов из нарушителей, передать period, скорректировать violatorsCount |
-
-## НЕ трогаем
-
-- SQL-функции `get_club_members_enriched`, `search_club_members_enriched` -- is_violator остается как есть в БД
-- RPC `get_club_business_stats`
-- Edge-функции `telegram-club-members`, `telegram-kick-violators`
-- Хук `useTelegramIntegration`
-
-## DoD
-
-1. Администраторы клуба (creator, administrator) НЕ попадают в "Нарушители"
-2. Переключатель 7/30/90 дней влияет на данные "Динамика" (Новые, Не продлили)
-3. Вкладка "Админы" показывает 4 (включая бота)
-4. Логика работает для всех клубов
-5. Нет ошибок сборки/TS
+| `supabase/functions/admin-replay-self-test/index.ts` | Создать (временно) |
+| `supabase/config.toml` | Добавить секцию для self-test |
+| После DoD: оба выше | Удалить |
 
