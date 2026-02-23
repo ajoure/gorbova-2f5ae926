@@ -643,6 +643,8 @@ Deno.serve(async (req) => {
 
   const startTime = Date.now();
   let bodyText = '';
+  // P3.0.1a: Local trace object — NO globalThis (race-condition safe)
+  const trace = { bodyHash: null as string | null, queueWriteOk: false, queueRowId: null as string | null };
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -672,14 +674,14 @@ Deno.serve(async (req) => {
     // Log webhook receipt for audit trail
     console.log(`[WEBHOOK-RECEIVED] Timestamp: ${new Date().toISOString()}, Size: ${bodyText.length} bytes`);
 
-    // P3.0.5: Compute body_hash for tracing/dedup
+    // P3.0.5: Compute body_hash for tracing/dedup (P3.0.1a: local trace, no globalThis)
     try {
       const encoder = new TextEncoder();
       const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(bodyText));
       const hashArray = Array.from(new Uint8Array(hashBuffer));
-      (globalThis as any).__bodyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      trace.bodyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     } catch (_hashErr) {
-      (globalThis as any).__bodyHash = null;
+      trace.bodyHash = null;
     }
     
     // Log webhook signature header for debugging
@@ -833,6 +835,14 @@ Deno.serve(async (req) => {
     
     console.log(`[WEBHOOK-SIGNATURE] verified=${signatureVerified}, reason=${signatureSkipReason}`);
     
+    // P3.0.1a: Allow internal replay bypass (service role key via X-Internal-Key)
+    const internalKey = req.headers.get('x-internal-key');
+    if (!signatureVerified && internalKey && internalKey === supabaseServiceKey) {
+      signatureVerified = true;
+      signatureSkipReason = null;
+      console.log('[WEBHOOK-OK] Internal replay bypass (X-Internal-Key verified)');
+    }
+
     // PATCH-1.7: STRICT - If signature not verified → 401 + orphan (safe subset)
     if (!signatureVerified) {
       console.error('[WEBHOOK-REJECT] Invalid/missing signature - saving to orphans only');
@@ -939,13 +949,13 @@ Deno.serve(async (req) => {
         } else {
           console.log(`[WEBHOOK-QUEUE] OK id=${queueRow.id} source=${queueRow.source} uid=${queueRow.bepaid_uid}`);
         }
-        // Store for tracing
-        (globalThis as any).__queueWriteOk = !queueError && !!queueRow;
-        (globalThis as any).__queueRowId = queueRow?.id || null;
+        // P3.0.1a: Store in local trace (no globalThis)
+        trace.queueWriteOk = !queueError && !!queueRow;
+        trace.queueRowId = queueRow?.id || null;
       } catch (queueErr) {
         console.error('[WEBHOOK-QUEUE] JS exception saving to queue:', queueErr);
-        (globalThis as any).__queueWriteOk = false;
-        (globalThis as any).__queueRowId = null;
+        trace.queueWriteOk = false;
+        trace.queueRowId = null;
         // Continue processing even if queue save fails
       }
     }
@@ -1106,7 +1116,7 @@ Deno.serve(async (req) => {
                   amount: transaction?.amount ? transaction.amount / 100 : null,
                   currency: transaction?.currency || body.plan?.currency || 'BYN',
                   customer_email: transaction?.customer?.email || null,
-                  raw_payload: body,
+                  raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'orphan_subv2_missing_order_id', tracking_id: rawTrackingId } },
                   source: 'webhook_orphan',
                   status: 'error',
                   last_error: 'orphan_subv2_missing_order_id',
@@ -1115,8 +1125,12 @@ Deno.serve(async (req) => {
                 .maybeSingle();
               if (orphanQueueErr) {
                 console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: orphanQueueErr.code, message: orphanQueueErr.message }));
+              } else if (!orphanQueueRow) {
+                console.error('[WEBHOOK-ORPHAN-QUEUE] No row returned (silent rejection):', { bepaid_uid: transactionUid });
               } else {
-                console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan:', orphanQueueRow?.id);
+                console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan:', orphanQueueRow.id);
+                trace.queueWriteOk = true;
+                trace.queueRowId = orphanQueueRow.id;
               }
             } catch (oqErr) {
               console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqErr);
@@ -1127,8 +1141,10 @@ Deno.serve(async (req) => {
               tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
               outcome: 'orphan_subv2_missing_order_id', http_status: 202,
               processing_ms: Date.now() - startTime,
-              body_hash: (globalThis as any).__bodyHash || null,
+              body_hash: trace.bodyHash,
               handler_result: 'orphan_enqueued',
+              queue_write_ok: trace.queueWriteOk,
+              queue_row_id: trace.queueRowId,
             });
             return new Response(JSON.stringify({ ok: false, status: 'orphan_subv2_missing_order_id' }), {
               status: 202,
@@ -1178,7 +1194,9 @@ Deno.serve(async (req) => {
             tracking_id: rawTrackingId, parsed_kind: 'subv2', parsed_order_id: null,
             outcome: 'duplicate_ignored', http_status: 200,
             processing_ms: Date.now() - startTime,
-            body_hash: (globalThis as any).__bodyHash || null,
+            body_hash: trace.bodyHash,
+            queue_write_ok: trace.queueWriteOk,
+            queue_row_id: trace.queueRowId,
           });
           return new Response(JSON.stringify({ ok: true, status: 'duplicate_ignored' }), {
             status: 200,
@@ -1607,15 +1625,22 @@ Deno.serve(async (req) => {
               amount: transaction?.amount ? transaction.amount / 100 : null,
               currency: transaction?.currency || body.plan?.currency || 'BYN',
               customer_email: transaction?.customer?.email || body.customer?.email || null,
-              raw_payload: { ...body, _trace: { body_hash: (globalThis as any).__bodyHash, outcome: 'failed_no_transaction_uid' } },
+              raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'failed_no_transaction_uid', tracking_id: rawTrackingId, subscription_id: subscriptionId } },
               source: 'webhook_orphan',
               status: 'error',
               last_error: 'failed_no_transaction_uid',
             })
             .select('id')
             .maybeSingle();
-          if (oqErr) console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
-          else console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued no-uid orphan:', oqRow?.id);
+          if (oqErr) {
+            console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
+          } else if (!oqRow) {
+            console.error('[WEBHOOK-ORPHAN-QUEUE] No row returned (silent rejection):', { tracking_id: rawTrackingId });
+          } else {
+            console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued no-uid orphan:', oqRow.id);
+            trace.queueWriteOk = true;
+            trace.queueRowId = oqRow.id;
+          }
         } catch (oqEx) {
           console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqEx);
         }
@@ -1625,8 +1650,10 @@ Deno.serve(async (req) => {
           parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
           outcome: 'failed_no_transaction_uid', http_status: 202,
           processing_ms: Date.now() - startTime,
-          body_hash: (globalThis as any).__bodyHash || null,
+          body_hash: trace.bodyHash,
           handler_result: 'orphan_enqueued_no_uid',
+          queue_write_ok: trace.queueWriteOk,
+          queue_row_id: trace.queueRowId,
         });
         return new Response(JSON.stringify({ ok: false, status: 'failed_no_transaction_uid' }), {
           status: 202,
@@ -1711,15 +1738,22 @@ Deno.serve(async (req) => {
               amount: transaction?.amount ? transaction.amount / 100 : null,
               currency: transaction?.currency || body.plan?.currency || 'BYN',
               customer_email: transaction?.customer?.email || null,
-              raw_payload: body,
+              raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'orphaned_order_not_found', tracking_id: rawTrackingId, order_id: parsedOrderId } },
               source: 'webhook_orphan',
               status: 'error',
               last_error: 'orphaned_order_not_found',
             })
             .select('id')
             .maybeSingle();
-          if (oqErr) console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
-          else console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan order_not_found:', oqRow?.id);
+          if (oqErr) {
+            console.error('[WEBHOOK-ORPHAN-QUEUE] DB error:', JSON.stringify({ code: oqErr.code, message: oqErr.message }));
+          } else if (!oqRow) {
+            console.error('[WEBHOOK-ORPHAN-QUEUE] No row returned (silent rejection):', { bepaid_uid: transactionUid });
+          } else {
+            console.log('[WEBHOOK-ORPHAN-QUEUE] Enqueued orphan order_not_found:', oqRow.id);
+            trace.queueWriteOk = true;
+            trace.queueRowId = oqRow.id;
+          }
         } catch (oqEx) {
           console.error('[WEBHOOK-ORPHAN-QUEUE] JS exception:', oqEx);
         }
@@ -1729,8 +1763,10 @@ Deno.serve(async (req) => {
           parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
           outcome: 'orphaned_order_not_found', http_status: 202,
           processing_ms: Date.now() - startTime,
-          body_hash: (globalThis as any).__bodyHash || null,
+          body_hash: trace.bodyHash,
           handler_result: 'orphan_enqueued',
+          queue_write_ok: trace.queueWriteOk,
+          queue_row_id: trace.queueRowId,
         });
         return new Response(JSON.stringify({ ok: false, status: 'orphaned' }), {
           status: 202,
