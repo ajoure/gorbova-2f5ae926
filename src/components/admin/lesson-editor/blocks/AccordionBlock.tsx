@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { 
@@ -94,10 +93,11 @@ export function AccordionBlock({ content, onChange, isEditing = true }: Accordio
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
-          <Input
+          <RichTextarea
             value={item.title}
-            onChange={(e) => updateItem(item.id, "title", e.target.value)}
+            onChange={(html) => updateItem(item.id, "title", html)}
             placeholder="Заголовок секции..."
+            inline
             className="font-medium"
           />
           <RichTextarea

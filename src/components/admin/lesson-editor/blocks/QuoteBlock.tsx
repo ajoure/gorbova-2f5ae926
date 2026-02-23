@@ -1,4 +1,3 @@
-import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Quote } from "lucide-react";
 
@@ -43,15 +42,17 @@ export function QuoteBlock({ content, onChange, isEditing = true }: QuoteBlockPr
         minHeight="80px"
       />
       <div className="grid grid-cols-2 gap-3">
-        <Input
+        <RichTextarea
           value={content.author || ""}
-          onChange={(e) => onChange({ ...content, author: e.target.value })}
+          onChange={(html) => onChange({ ...content, author: html })}
           placeholder="Автор..."
+          inline
         />
-        <Input
+        <RichTextarea
           value={content.source || ""}
-          onChange={(e) => onChange({ ...content, source: e.target.value })}
+          onChange={(html) => onChange({ ...content, source: html })}
           placeholder="Источник..."
+          inline
         />
       </div>
     </div>

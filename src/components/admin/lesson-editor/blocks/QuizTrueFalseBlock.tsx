@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Check, X, RotateCcw } from "lucide-react";
@@ -140,10 +141,11 @@ export function QuizTrueFalseBlock({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Вопрос</Label>
-        <Input
+        <RichTextarea
           value={content.question || ""}
-          onChange={(e) => onChange({ ...content, question: e.target.value })}
+          onChange={(html) => onChange({ ...content, question: html })}
           placeholder="Введите вопрос (да/нет)..."
+          inline
           className="font-medium"
         />
       </div>
@@ -201,10 +203,11 @@ export function QuizTrueFalseBlock({
 
       <div className="space-y-2">
         <Label>Пояснение</Label>
-        <Input
+        <RichTextarea
           value={content.explanation || ""}
-          onChange={(e) => onChange({ ...content, explanation: e.target.value })}
+          onChange={(html) => onChange({ ...content, explanation: html })}
           placeholder="Объяснение ответа..."
+          inline
         />
       </div>
 

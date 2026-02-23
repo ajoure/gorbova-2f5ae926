@@ -406,17 +406,19 @@ export function QuizMatchingBlock({
         <div className="space-y-2">
           {pairs.map((pair, index) => (
             <div key={pair.id} className="flex items-center gap-2">
-              <Input
+              <RichTextarea
                 value={pair.left}
-                onChange={(e) => updatePair(pair.id, "left", e.target.value)}
+                onChange={(html) => updatePair(pair.id, "left", html)}
                 placeholder={`Левый элемент ${index + 1}...`}
+                inline
                 className="flex-1"
               />
               <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              <Input
+              <RichTextarea
                 value={pair.right}
-                onChange={(e) => updatePair(pair.id, "right", e.target.value)}
+                onChange={(html) => updatePair(pair.id, "right", html)}
                 placeholder={`Правый элемент ${index + 1}...`}
+                inline
                 className="flex-1"
               />
               <Button

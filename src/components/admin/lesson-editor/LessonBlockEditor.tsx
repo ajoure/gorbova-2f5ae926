@@ -112,6 +112,7 @@ import { StudentNoteBlock } from "./blocks/StudentNoteBlock";
 import { StudentUploadBlock } from "./blocks/StudentUploadBlock";
 import { HtmlRawBlock } from "./blocks/HtmlRawBlock";
 import { ChecklistBlock } from "./blocks/ChecklistBlock";
+import { FloatingToolbar } from "@/components/ui/FloatingToolbar";
 // Block configuration with categories
 interface BlockConfig {
   icon: React.ElementType;
@@ -410,6 +411,7 @@ interface LessonBlockEditorProps {
 }
 
 export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
+  // FloatingToolbar is rendered once at this level for all editable fields
   const { blocks, loading, addBlock, updateBlock, deleteBlock, reorderBlocks } = useLessonBlocks(lessonId);
   const [deleteBlockId, setDeleteBlockId] = useState<string | null>(null);
 
@@ -497,6 +499,7 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
 
   return (
     <div className="space-y-4">
+      <FloatingToolbar />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" className="w-full bg-card/50 border-dashed hover:bg-card/80">

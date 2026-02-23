@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -170,10 +171,11 @@ export function QuizSingleBlock({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Вопрос</Label>
-        <Input
+        <RichTextarea
           value={content.question || ""}
-          onChange={(e) => onChange({ ...content, question: e.target.value })}
+          onChange={(html) => onChange({ ...content, question: html })}
           placeholder="Введите вопрос..."
+          inline
           className="font-medium"
         />
       </div>
@@ -195,10 +197,11 @@ export function QuizSingleBlock({
               >
                 {option.isCorrect && <Check className="h-3 w-3" />}
               </button>
-              <Input
+              <RichTextarea
                 value={option.text}
-                onChange={(e) => updateOption(option.id, "text", e.target.value)}
+                onChange={(html) => updateOption(option.id, "text", html)}
                 placeholder={`Вариант ${index + 1}...`}
+                inline
                 className="flex-1"
               />
               <Button
@@ -224,10 +227,11 @@ export function QuizSingleBlock({
 
       <div className="space-y-2">
         <Label>Пояснение (показывается после ответа)</Label>
-        <Input
+        <RichTextarea
           value={content.explanation || ""}
-          onChange={(e) => onChange({ ...content, explanation: e.target.value })}
+          onChange={(html) => onChange({ ...content, explanation: html })}
           placeholder="Объяснение правильного ответа..."
+          inline
         />
       </div>
 

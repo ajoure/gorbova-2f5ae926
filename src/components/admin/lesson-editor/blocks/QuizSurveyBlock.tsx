@@ -274,10 +274,11 @@ export function QuizSurveyBlock({
         <div className="space-y-3">
           <div>
             <Label>Заголовок теста</Label>
-            <Input
+            <RichTextarea
               value={content.title || ""}
-              onChange={(e) => updateContent({ title: e.target.value })}
+              onChange={(html) => updateContent({ title: html })}
               placeholder="Название опросника"
+              inline
             />
           </div>
           <div>
@@ -333,10 +334,11 @@ export function QuizSurveyBlock({
                       placeholder="A"
                       className="w-12 text-center font-medium"
                     />
-                    <Input
+                    <RichTextarea
                       value={opt.text}
-                      onChange={(e) => updateOption(qIndex, oIndex, { text: e.target.value })}
+                      onChange={(html) => updateOption(qIndex, oIndex, { text: html })}
                       placeholder="Текст варианта ответа"
+                      inline
                       className="flex-1"
                     />
                     <Button
@@ -382,10 +384,11 @@ export function QuizSurveyBlock({
                   placeholder="A"
                   className="w-16 text-center font-medium"
                 />
-                <Input
+                <RichTextarea
                   value={r.title}
-                  onChange={(e) => updateResult(rIndex, { title: e.target.value })}
+                  onChange={(html) => updateResult(rIndex, { title: html })}
                   placeholder="Название результата"
+                  inline
                   className="flex-1"
                 />
                 <select
@@ -441,10 +444,11 @@ export function QuizSurveyBlock({
                   placeholder="A, B"
                   className="w-24 text-center font-medium"
                 />
-                <Input
+                <RichTextarea
                   value={m.title}
-                  onChange={(e) => updateMixedResult(mIndex, { title: e.target.value })}
+                  onChange={(html) => updateMixedResult(mIndex, { title: html })}
                   placeholder="Название"
+                  inline
                   className="flex-1"
                 />
                 <Button
@@ -469,10 +473,11 @@ export function QuizSurveyBlock({
         {/* Button text */}
         <div>
           <Label>Текст кнопки</Label>
-          <Input
+          <RichTextarea
             value={content.buttonText || "Узнать результат"}
-            onChange={(e) => updateContent({ buttonText: e.target.value })}
+            onChange={(html) => updateContent({ buttonText: html })}
             placeholder="Узнать результат"
+            inline
           />
         </div>
       </div>

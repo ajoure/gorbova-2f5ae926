@@ -355,10 +355,11 @@ export function QuizFillBlankBlock({
 
       <div className="space-y-2">
         <Label>Пояснение</Label>
-        <Input
+        <RichTextarea
           value={content.explanation || ""}
-          onChange={(e) => onChange({ ...content, explanation: e.target.value })}
+          onChange={(html) => onChange({ ...content, explanation: html })}
           placeholder="Объяснение ответа..."
+          inline
         />
       </div>
 

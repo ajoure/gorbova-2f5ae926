@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
+
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -54,10 +54,11 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
 
   return (
     <div className="space-y-3">
-      <Input
+      <RichTextarea
         value={content.buttonText || ""}
-        onChange={(e) => onChange({ ...content, buttonText: e.target.value })}
+        onChange={(html) => onChange({ ...content, buttonText: html })}
         placeholder="Текст кнопки (например: Показать ответ)..."
+        inline
       />
       <RichTextarea
         value={content.content || ""}
