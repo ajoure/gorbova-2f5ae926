@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Eye, Edit, Code } from "lucide-react";
+import { Eye, Edit, Code, Upload } from "lucide-react";
 
 export interface HtmlRawContentData {
   html: string;
@@ -82,13 +82,52 @@ function IframePreview({ html }: { html: string }) {
   );
 }
 
+/** Parse uploaded HTML file: extract <style> + <body> content */
+function parseHtmlFile(raw: string): string {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(raw, 'text/html');
+
+    // Collect all <style> tags
+    const styles = Array.from(doc.querySelectorAll('style'))
+      .map((s) => s.outerHTML)
+      .join('\n');
+
+    // Get body innerHTML (preserves details/summary etc.)
+    const body = doc.body?.innerHTML?.trim() || raw;
+
+    return styles ? `${styles}\n${body}` : body;
+  } catch {
+    return raw;
+  }
+}
+
 export function HtmlRawBlock({ content, onChange, isEditing = true }: HtmlRawBlockProps) {
   const [showPreview, setShowPreview] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleHtmlChange = useCallback((html: string) => {
     onChange({ ...content, html });
   }, [content, onChange]);
+
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (text) {
+        const parsed = parseHtmlFile(text);
+        handleHtmlChange(parsed);
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
+  }, [handleHtmlChange]);
 
   // Student / preview mode
   if (!isEditing) {
@@ -109,17 +148,34 @@ export function HtmlRawBlock({ content, onChange, isEditing = true }: HtmlRawBlo
 
       <div className="flex items-center justify-between">
         <Label>HTML-код</Label>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowPreview(!showPreview)}
-        >
-          {showPreview ? (
-            <><Edit className="h-3.5 w-3.5 mr-1.5" />Редактор</>
-          ) : (
-            <><Eye className="h-3.5 w-3.5 mr-1.5" />Предпросмотр</>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".html,.htm"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="h-3.5 w-3.5 mr-1.5" />
+            Загрузить файл
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPreview(!showPreview)}
+          >
+            {showPreview ? (
+              <><Edit className="h-3.5 w-3.5 mr-1.5" />Редактор</>
+            ) : (
+              <><Eye className="h-3.5 w-3.5 mr-1.5" />Предпросмотр</>
+            )}
+          </Button>
+        </div>
       </div>
 
       {showPreview ? (

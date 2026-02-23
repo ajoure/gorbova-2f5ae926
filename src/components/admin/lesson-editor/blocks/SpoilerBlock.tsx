@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, Eye, EyeOff } from "lucide-react";
@@ -59,11 +59,11 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
         onChange={(e) => onChange({ ...content, buttonText: e.target.value })}
         placeholder="Текст кнопки (например: Показать ответ)..."
       />
-      <Textarea
+      <RichTextarea
         value={content.content || ""}
-        onChange={(e) => onChange({ ...content, content: e.target.value })}
-        placeholder="Скрытое содержимое (HTML)..."
-        className="min-h-[100px] font-mono text-sm"
+        onChange={(html) => onChange({ ...content, content: html })}
+        placeholder="Скрытое содержимое..."
+        minHeight="100px"
       />
     </div>
   );

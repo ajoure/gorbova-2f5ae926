@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { 
   Accordion, 
@@ -100,11 +100,11 @@ export function AccordionBlock({ content, onChange, isEditing = true }: Accordio
             placeholder="Заголовок секции..."
             className="font-medium"
           />
-          <Textarea
+          <RichTextarea
             value={item.content}
-            onChange={(e) => updateItem(item.id, "content", e.target.value)}
-            placeholder="Содержимое секции (HTML)..."
-            className="min-h-[80px] font-mono text-sm"
+            onChange={(html) => updateItem(item.id, "content", html)}
+            placeholder="Содержимое секции..."
+            minHeight="80px"
           />
         </div>
       ))}

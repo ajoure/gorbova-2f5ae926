@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { TextContent } from "@/hooks/useLessonBlocks";
 
 interface TextBlockProps {
@@ -9,12 +8,6 @@ interface TextBlockProps {
 }
 
 export function TextBlock({ content, onChange, isEditing = true }: TextBlockProps) {
-  const [localHtml, setLocalHtml] = useState(content.html || "");
-  
-  const handleBlur = () => {
-    onChange({ html: localHtml });
-  };
-
   if (!isEditing) {
     return (
       <div 
@@ -25,12 +18,11 @@ export function TextBlock({ content, onChange, isEditing = true }: TextBlockProp
   }
 
   return (
-    <Textarea
-      value={localHtml}
-      onChange={(e) => setLocalHtml(e.target.value)}
-      onBlur={handleBlur}
+    <RichTextarea
+      value={content.html || ""}
+      onChange={(html) => onChange({ html })}
       placeholder="Введите текст (поддерживается HTML)..."
-      className="min-h-[100px] font-mono text-sm"
+      minHeight="100px"
     />
   );
 }

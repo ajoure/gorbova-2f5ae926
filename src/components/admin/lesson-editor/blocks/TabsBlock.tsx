@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2 } from "lucide-react";
@@ -115,11 +115,11 @@ export function TabsBlock({ content, onChange, isEditing = true }: TabsBlockProp
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
-              <Textarea
+              <RichTextarea
                 value={tab.content}
-                onChange={(e) => updateTab(tab.id, "content", e.target.value)}
-                placeholder="Содержимое вкладки (HTML)..."
-                className="min-h-[120px] font-mono text-sm"
+                onChange={(html) => updateTab(tab.id, "content", html)}
+                placeholder="Содержимое вкладки..."
+                minHeight="120px"
               />
             </TabsContent>
           ))}

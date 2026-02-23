@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -124,11 +124,11 @@ export function TimelineBlock({ content, onChange, isEditing = true }: TimelineB
               placeholder="Дата / метка..."
             />
           </div>
-          <Textarea
+          <RichTextarea
             value={item.description}
-            onChange={(e) => updateItem(item.id, "description", e.target.value)}
-            placeholder="Описание (HTML)..."
-            className="min-h-[60px] font-mono text-sm"
+            onChange={(html) => updateItem(item.id, "description", html)}
+            placeholder="Описание..."
+            minHeight="60px"
           />
         </div>
       ))}
