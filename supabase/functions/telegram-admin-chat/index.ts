@@ -1860,7 +1860,7 @@ Deno.serve(async (req) => {
           '🆒','💘','🙉','🦄','😘','💊','🙊','😎','👾','🤷‍♂️',
           '🤷','🤷‍♀️','😡',
         ]);
-        const MAX_REACTIONS_PER_MESSAGE = 8;
+        // Telegram Bot API: non-premium bots can set max 1 reaction per message
 
         const { telegram_message_db_id, emoji, remove: removeReaction } = payload;
 
@@ -1938,36 +1938,48 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Build cumulative reaction list from DB (source of truth)
-        const { data: allReactions, error: rErr } = await supabase
-          .from('telegram_message_reactions')
-          .select('emoji')
-          .eq('message_id', telegram_message_db_id);
+        // Telegram Bot API: non-premium bots can set max 1 reaction per message
+        // So we send 0 or 1 reaction, not an array of multiple
+        let finalReaction: Array<{type: string; emoji: string}> = [];
 
-        if (rErr) {
-          console.error('[sync_telegram_reaction] DB read error:', rErr);
-          return new Response(JSON.stringify({ ok: false, reason: 'db_read_failed' }), {
-            status: 500,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+        if (removeReaction) {
+          // After removing, find the most recent remaining admin reaction
+          const { data: latestReaction, error: rErr } = await supabase
+            .from('telegram_message_reactions')
+            .select('emoji')
+            .eq('message_id', telegram_message_db_id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (rErr) {
+            console.error('[sync_telegram_reaction] DB read error:', rErr);
+            return new Response(JSON.stringify({ ok: false, reason: 'db_read_failed' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          if (latestReaction && TELEGRAM_REACTION_EMOJI.has(latestReaction.emoji)) {
+            finalReaction = [{ type: 'emoji', emoji: latestReaction.emoji }];
+          }
+          // else: finalReaction stays [] → clears bot reaction in Telegram
+        } else {
+          // Adding: send the clicked emoji as the single bot reaction
+          finalReaction = [{ type: 'emoji', emoji }];
         }
 
-        const uniqueEmojis = [...new Set((allReactions || []).map(r => r.emoji))]
-          .filter(e => TELEGRAM_REACTION_EMOJI.has(e))
-          .sort(); // deterministic order
-
-        const finalEmojis = uniqueEmojis.slice(0, MAX_REACTIONS_PER_MESSAGE);
+        const finalEmoji = finalReaction.length ? finalReaction[0].emoji : null;
 
         console.log(
           `[sync_telegram_reaction] tg_msg_id=${tgMsg.message_id} chat_id=${chatIdForReaction} ` +
-          `clicked=${emoji} remove=${!!removeReaction} final=${JSON.stringify(finalEmojis)}`
+          `clicked=${emoji} remove=${!!removeReaction} finalEmoji=${finalEmoji}`
         );
 
-        // If no valid reactions remain, send empty array to clear
         const syncReactionPayload = {
           chat_id: chatIdForReaction,
           message_id: tgMsg.message_id,
-          reaction: finalEmojis.map(e => ({ type: 'emoji', emoji: e })),
+          reaction: finalReaction,
         };
 
         try {
@@ -1977,7 +1989,7 @@ Deno.serve(async (req) => {
             const isInvalid = (syncResult.description || '').includes('REACTION_INVALID');
             console.error(
               `[sync_telegram_reaction] Telegram error: ${syncResult.description} ` +
-              `error_code=${syncResult.error_code} final=${JSON.stringify(finalEmojis)}`
+              `error_code=${syncResult.error_code} finalEmoji=${finalEmoji}`
             );
             return new Response(JSON.stringify({
               ok: false,
@@ -1987,8 +1999,8 @@ Deno.serve(async (req) => {
             });
           }
 
-          console.log(`[sync_telegram_reaction] OK, msg_id=${tgMsg.message_id} final=${JSON.stringify(finalEmojis)}`);
-          return new Response(JSON.stringify({ ok: true, finalEmojis }), {
+          console.log(`[sync_telegram_reaction] OK, msg_id=${tgMsg.message_id} finalEmoji=${finalEmoji}`);
+          return new Response(JSON.stringify({ ok: true, finalEmoji }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } catch (syncErr) {
