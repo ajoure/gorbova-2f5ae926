@@ -20,6 +20,24 @@ interface TrainingModuleCardProps {
   onCopyMove?: () => void;
 }
 
+/* ── Gradient color map (hex with low alpha for soft glass look) ── */
+const GRADIENT_COLOR_MAP: Record<string, { from: string; to: string }> = {
+  "from-pink-500 to-fuchsia-600": { from: "#ec489925", to: "#c026d325" },
+  "from-blue-500 to-cyan-500": { from: "#3b82f625", to: "#06b6d425" },
+  "from-green-500 to-emerald-500": { from: "#22c55e25", to: "#10b98125" },
+  "from-orange-500 to-amber-500": { from: "#f9731625", to: "#f59e0b25" },
+  "from-purple-500 to-violet-500": { from: "#a855f725", to: "#8b5cf625" },
+  "from-red-500 to-rose-500": { from: "#ef444425", to: "#f43f5e25" },
+  "from-indigo-500 to-purple-500": { from: "#6366f125", to: "#a855f725" },
+  "from-teal-500 to-cyan-500": { from: "#14b8a625", to: "#06b6d425" },
+};
+const DEFAULT_GRADIENT = { from: "#a855f718", to: "#6366f118" };
+
+function getGradientColors(gradient: string | null | undefined) {
+  if (!gradient) return DEFAULT_GRADIENT;
+  return GRADIENT_COLOR_MAP[gradient] || DEFAULT_GRADIENT;
+}
+
 export default function TrainingModuleCard({
   module,
   onEdit,
@@ -29,6 +47,7 @@ export default function TrainingModuleCard({
 }: TrainingModuleCardProps) {
   const productBadges = module.accessible_products || [];
   const hasAccess = productBadges.length > 0;
+  const colors = getGradientColors(module.color_gradient);
 
   return (
     <div
@@ -39,10 +58,15 @@ export default function TrainingModuleCard({
         "shadow-sm hover:shadow-md",
       )}
     >
-      {/* Color gradient bar */}
-      <div className={cn("h-1 bg-gradient-to-r", module.color_gradient)} />
+      {/* Soft gradient overlay — pointer-events-none, no dynamic Tailwind */}
+      <div
+        className="absolute inset-0 pointer-events-none rounded-2xl"
+        style={{
+          background: `linear-gradient(135deg, ${colors.from}, ${colors.to})`,
+        }}
+      />
 
-      <div className="relative p-3">
+      <div className="relative z-10 p-3">
         {/* Header: title + badges row */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <h3 className="font-semibold text-sm leading-tight line-clamp-2 flex-1 min-w-0">
