@@ -22,6 +22,7 @@ import {
   Trash2,
   Copy,
   FileText,
+  List,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
@@ -52,6 +53,7 @@ interface ModulesTreeContentProps {
   onDelete: (id: string) => void;
   onOpenLessons: (moduleId: string) => void;
   onCopyMove: (module: TrainingModule) => void;
+  onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
   sortMode?: SortMode;
 }
 
@@ -83,6 +85,7 @@ function ModuleTreeNode({
   onDelete,
   onOpenLessons,
   onCopyMove,
+  onOpenLessonViewers,
 }: {
   node: ModuleTreeNodeWithData<SimpleLessonRow>;
   depth: number;
@@ -92,6 +95,7 @@ function ModuleTreeNode({
   onDelete: (id: string) => void;
   onOpenLessons: (moduleId: string) => void;
   onCopyMove: (m: TrainingModule) => void;
+  onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
 }) {
   const navigate = useNavigate();
   const isOpen = expandedIds.has(node.module.id);
@@ -214,18 +218,19 @@ function ModuleTreeNode({
                 onDelete={onDelete}
                 onOpenLessons={onOpenLessons}
                 onCopyMove={onCopyMove}
+                onOpenLessonViewers={onOpenLessonViewers}
               />
             ))}
             {/* Lessons */}
             {node.items.map((lesson) => (
-              <button
+              <div
                 key={lesson.id}
-                onClick={() => navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`)}
                 className={cn(
-                  "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg",
-                  "hover:bg-muted/50 transition-colors text-left",
+                  "group/lesson flex items-center gap-2 px-3 py-1.5 rounded-lg",
+                  "hover:bg-muted/50 transition-colors cursor-pointer",
                   depth > 0 && "ml-4",
                 )}
+                onClick={() => navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`)}
               >
                 <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="text-sm truncate flex-1">{lesson.title}</span>
@@ -235,7 +240,52 @@ function ModuleTreeNode({
                 >
                   {lesson.completion_mode === "kvest" ? "Квест" : "Обычный"}
                 </Badge>
-              </button>
+                {/* Hover action buttons */}
+                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/lesson:opacity-100 transition-opacity">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`);
+                    }}
+                    title="Контент"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (lesson.completion_mode === "kvest") {
+                        navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
+                      } else if (onOpenLessonViewers) {
+                        onOpenLessonViewers(lesson);
+                      } else {
+                        onOpenLessons(lesson.module_id);
+                      }
+                    }}
+                    title="Прогресс / просмотры"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenLessons(lesson.module_id);
+                    }}
+                    title="Уроки модуля"
+                  >
+                    <List className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
             ))}
           </div>
         </CollapsibleContent>
@@ -251,6 +301,7 @@ export function ModulesTreeContent({
   onDelete,
   onOpenLessons,
   onCopyMove,
+  onOpenLessonViewers,
   sortMode = "order",
 }: ModulesTreeContentProps) {
   const moduleIds = useMemo(() => modules.map((m) => m.id), [modules]);
@@ -341,6 +392,7 @@ export function ModulesTreeContent({
           onDelete={onDelete}
           onOpenLessons={onOpenLessons}
           onCopyMove={onCopyMove}
+          onOpenLessonViewers={onOpenLessonViewers}
         />
       ))}
     </div>
