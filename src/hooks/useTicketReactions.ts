@@ -132,7 +132,7 @@ export function useToggleReaction(ticketId: string) {
       return { messageId, emoji, wasRemoved };
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] });
+      queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
 
       // Fire-and-forget: sync reaction to Telegram if mapping exists
       if (result) {
