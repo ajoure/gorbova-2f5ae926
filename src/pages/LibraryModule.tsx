@@ -42,12 +42,12 @@ const menuSectionMap: Record<string, { path: string; label: string }> = {
   'knowledge-webinars': { path: '/knowledge', label: 'База знаний' },
   'products-library': { path: '/products?tab=library', label: 'Моя библиотека' },
   'products': { path: '/products', label: 'Продукты' },
-  'trainings': { path: '/library', label: 'Тренинги' },
-  'courses': { path: '/library', label: 'Курсы' },
+  'trainings': { path: '/knowledge', label: 'Тренинги' },
+  'courses': { path: '/knowledge', label: 'Курсы' },
 };
 
 const getMenuSectionPath = (key: string | null): string => 
-  menuSectionMap[key || 'products-library']?.path || '/library';
+  menuSectionMap[key || 'products-library']?.path || '/knowledge';
 
 const getMenuSectionLabel = (key: string | null): string => 
   menuSectionMap[key || 'products-library']?.label || 'База знаний';
@@ -116,7 +116,7 @@ export default function LibraryModule() {
       <DashboardLayout>
         <div className="container mx-auto px-4 py-6 max-w-4xl text-center">
           <h1 className="text-2xl font-bold mb-4">Модуль не найден</h1>
-          <Button onClick={() => navigate("/library")}>
+          <Button onClick={() => navigate("/knowledge")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Вернуться в библиотеку
           </Button>
@@ -155,7 +155,7 @@ export default function LibraryModule() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => navigate("/library")}
+                onClick={() => navigate("/knowledge")}
                 className="shrink-0"
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
