@@ -1,35 +1,52 @@
 
 
-# Исправление формата времени в аудиоплеере
+# Исправление RLS-политики INSERT для таблицы `audit_logs`
 
 ## Проблема
 
-Функция `formatTime` в `CustomAudioPlayer.tsx` отображает время только в формате `MM:SS`. Для длинных аудио (например, 4+ часа) это даёт `289:45` вместо `04:49:45`.
+При нажатии "Создать сделку" в диалоге "Создать сделку из платежа" возникает ошибка:
+
+> `new row violates row-level security policy for table "audit_logs"`
+
+Текущая INSERT-политика требует одновременно:
+1. `actor_user_id = auth.uid()` — строгое совпадение
+2. `has_permission(auth.uid(), 'audit.view')` — наличие разрешения
+
+Это ломается в двух случаях:
+- Когда `actor_user_id` равен `null` (паттерн "system actor" — используется в нескольких местах проекта)
+- Когда `currentUser?.id` оказывается `undefined` (optional chaining)
 
 ## Решение
 
-Обновить функцию `formatTime` (строки 27-31) для поддержки формата `HH:MM:SS` при длительности ≥ 1 часа:
+Обновить INSERT-политику, убрав жёсткую привязку `actor_user_id = auth.uid()`. Достаточно проверки, что текущий пользователь — админ с правом `audit.view`.
 
-```typescript
-function formatTime(sec: number): string {
-  if (!isFinite(sec) || sec < 0) return "00:00";
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  if (h > 0) {
-    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  }
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-}
+### Миграция (SQL)
+
+```sql
+DROP POLICY IF EXISTS "Service role can insert audit logs" ON public.audit_logs;
+
+CREATE POLICY "Service role and admins can insert audit logs"
+  ON public.audit_logs FOR INSERT
+  WITH CHECK (
+    ((auth.jwt() ->> 'role') = 'service_role')
+    OR has_permission(auth.uid(), 'audit.view'::text)
+  );
 ```
+
+Это безопасно, потому что:
+- `audit.view` назначена только ролям `admin` и `super_admin`
+- Обычные пользователи по-прежнему не смогут писать в audit_logs
+- Паттерн "system actor" (`actor_user_id: null`) начнёт работать корректно
 
 ## Затронутые файлы
 
-| Файл | Действие |
+| Объект | Действие |
 |---|---|
-| `src/components/ui/CustomAudioPlayer.tsx` | Обновить `formatTime` — добавить часы |
+| RLS-политика `audit_logs` (INSERT) | Обновить — убрать проверку `actor_user_id = auth.uid()` |
 
 ## Что НЕ трогаем
 
-Всё остальное без изменений.
+- Все остальные политики `audit_logs` (SELECT, DELETE) — без изменений
+- Код `CreateDealFromPaymentDialog.tsx` — без изменений
+- Все остальные файлы — без изменений
 
