@@ -12,6 +12,7 @@ export interface SidebarModule {
   icon: string | null;
   sort_order: number;
   is_container?: boolean;
+  parent_module_id?: string | null;
   has_access?: boolean;
   accessible_tariffs?: string[];
 }
@@ -48,7 +49,8 @@ export function useSidebarModules() {
           menu_section_key,
           icon,
           sort_order,
-          is_container
+          is_container,
+          parent_module_id
         `)
         .eq("is_active", true)
         .order("sort_order");

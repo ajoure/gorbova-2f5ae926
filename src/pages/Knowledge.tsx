@@ -284,7 +284,7 @@ const Knowledge = () => {
   const { tabs, isLoading: tabsLoading } = usePageSections("knowledge");
   
   // Fetch modules grouped by section (regular modules, not containers)
-  const { modulesBySection, isLoading: modulesLoading } = useSidebarModules();
+  const { modules, modulesBySection, isLoading: modulesLoading } = useSidebarModules();
   
   // Fetch lessons from container modules (standalone lessons)
   const { lessonsBySection, restrictedTariffs: containerRestrictedTariffs, isLoading: lessonsLoading } = useContainerLessons();
@@ -352,9 +352,12 @@ const Knowledge = () => {
           
           {/* Dynamic Tab Content */}
           {tabs.map((tab) => {
-            // All modules for this section (not containers)
+           // All modules for this section (not containers and not children of containers)
+            const containerIdSet = new Set(
+              modules.filter((m: any) => m.is_container).map((m: any) => m.id)
+            );
             const allModules = (modulesBySection[tab.key] || []).filter(
-              (m: any) => !m.is_container
+              (m: any) => !m.is_container && !containerIdSet.has(m.parent_module_id)
             );
             // Only accessible modules
             const accessibleModules = allModules.filter((m: any) => m.has_access);
