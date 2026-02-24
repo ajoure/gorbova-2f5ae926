@@ -68,16 +68,18 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "ticket_message_reactions" },
         () => {
+          const key = ["ticket-reactions", stableIdsCsv];
           queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
-          query.refetch();
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "ticket_message_reactions" },
         () => {
+          const key = ["ticket-reactions", stableIdsCsv];
           queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
-          query.refetch();
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .subscribe();
@@ -85,7 +87,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, queryClient, query]);
+  }, [ticketId, stableIdsCsv, queryClient]);
 
   return query;
 }

@@ -248,8 +248,9 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
           filter: `ticket_id=eq.${ticketId}`,
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["ticket-messages", ticketId, isAdmin] });
-          query.refetch();
+          const key = ["ticket-messages", ticketId, isAdmin];
+          queryClient.invalidateQueries({ queryKey: key });
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .on(
@@ -261,8 +262,9 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
           filter: `ticket_id=eq.${ticketId}`,
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["ticket-messages", ticketId, isAdmin] });
-          query.refetch();
+          const key = ["ticket-messages", ticketId, isAdmin];
+          queryClient.invalidateQueries({ queryKey: key });
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .subscribe();
@@ -270,7 +272,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, isAdmin, queryClient, query]);
+  }, [ticketId, isAdmin, queryClient]);
 
   return query;
 }
@@ -306,16 +308,18 @@ export function useUnreadTicketsCount() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "support_tickets", filter: `user_id=eq.${user.id}` },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["unread-tickets-count", user.id] });
-          result.refetch();
+          const key = ["unread-tickets-count", user.id];
+          queryClient.invalidateQueries({ queryKey: key });
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "support_tickets", filter: `user_id=eq.${user.id}` },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["unread-tickets-count", user.id] });
-          result.refetch();
+          const key = ["unread-tickets-count", user.id];
+          queryClient.invalidateQueries({ queryKey: key });
+          queryClient.refetchQueries({ queryKey: key, exact: true });
         }
       )
       .subscribe();
@@ -323,7 +327,7 @@ export function useUnreadTicketsCount() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.id, queryClient, result]);
+  }, [user?.id, queryClient]);
 
   return result;
 }
