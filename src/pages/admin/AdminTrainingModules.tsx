@@ -63,7 +63,7 @@ import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
-import { DisplayLayoutSelector, DisplayLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
+import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
 import { cn } from "@/lib/utils";
@@ -373,7 +373,7 @@ export default function AdminTrainingModules() {
   });
   // Layout selector — localStorage only, NO DB writes
   const [displayLayout, setDisplayLayout] = useState<DisplayLayout>(() => {
-    return (localStorage.getItem('training_modules_layout') as DisplayLayout) || 'grid';
+    return normalizeLayout(localStorage.getItem('training_modules_layout'));
   });
   
   const handleDensityChange = (d: ViewDensity) => {
@@ -558,6 +558,14 @@ export default function AdminTrainingModules() {
 
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-2">
+            {activeTab === "modules" && (
+              <div className="inline-flex p-0.5 rounded-full bg-muted/40 border border-border/20">
+                <DisplayLayoutSelector
+                  value={displayLayout}
+                  onChange={handleLayoutChange}
+                />
+              </div>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-9 w-9">
@@ -577,8 +585,16 @@ export default function AdminTrainingModules() {
             </Button>
           </div>
 
-          {/* Mobile actions dropdown */}
-          <div className="md:hidden">
+          {/* Mobile actions */}
+          <div className="md:hidden flex items-center gap-1">
+            {activeTab === "modules" && (
+              <div className="inline-flex p-0.5 rounded-full bg-muted/40 border border-border/20">
+                <DisplayLayoutSelector
+                  value={displayLayout}
+                  onChange={handleLayoutChange}
+                />
+              </div>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon" variant="ghost" className="h-9 w-9">
@@ -612,20 +628,11 @@ export default function AdminTrainingModules() {
             <ProgressTabContent modules={modules} />
           ) : (
             <>
-              {/* Layout switcher — only localStorage, no DB writes */}
-              <div className="mt-2 mb-4">
-                <DisplayLayoutSelector
-                  value={displayLayout}
-                  onChange={handleLayoutChange}
-                  className=""
-                />
-              </div>
-
               {/* Modules List */}
               {loading ? (
                 <div className={cn(
-                  "grid gap-4",
-                  displayLayout === 'list' || displayLayout === 'cards-horizontal' || displayLayout === 'fullscreen'
+                  "grid gap-3",
+                  displayLayout === 'list'
                     ? "grid-cols-1"
                     : density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
@@ -654,11 +661,10 @@ export default function AdminTrainingModules() {
                 </div>
               ) : (
                 <div className={cn(
-                  "grid gap-4",
-                  displayLayout === 'list' ? "grid-cols-1" :
-                  displayLayout === 'cards-horizontal' ? "grid-cols-1" :
-                  displayLayout === 'fullscreen' ? "grid-cols-1" :
-                  density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                  "grid gap-3",
+                  displayLayout === 'list'
+                    ? "grid-cols-1"
+                    : density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
                   {modules.filter((m) => !m.parent_module_id).map((module) => (
                     <TrainingModuleCard

@@ -81,7 +81,7 @@ export function LessonViewersModal({
         .order("completed_at", { ascending: false, nullsFirst: false });
 
       if (progressError || !progressRows || progressRows.length === 0) {
-        return { viewers: [], fallback: false };
+        return { viewers: [], fallback: true };
       }
 
       const userIds = [...new Set(progressRows.map((r) => r.user_id))];

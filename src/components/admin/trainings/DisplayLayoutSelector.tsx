@@ -1,35 +1,18 @@
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { LayoutGrid, List, LayoutList, Maximize } from "lucide-react";
+import { LayoutGrid, List } from "lucide-react";
 
 const LAYOUT_OPTIONS = [
-  {
-    value: "grid",
-    label: "Сетка",
-    icon: LayoutGrid,
-    description: "Карточки 2-3 колонки",
-  },
-  {
-    value: "list",
-    label: "Список",
-    icon: List,
-    description: "Вертикальный список",
-  },
-  {
-    value: "cards-horizontal",
-    label: "Широкие",
-    icon: LayoutList,
-    description: "Горизонтальные карточки",
-  },
-  {
-    value: "fullscreen",
-    label: "Большие",
-    icon: Maximize,
-    description: "Крупные блоки",
-  },
-] as const;
+  { value: "grid" as const, icon: LayoutGrid, label: "Сетка" },
+  { value: "list" as const, icon: List, label: "Список" },
+];
 
-export type DisplayLayout = typeof LAYOUT_OPTIONS[number]["value"];
+export type DisplayLayout = "grid" | "list";
+
+/** Normalize legacy values (cards-horizontal, fullscreen) → grid */
+export function normalizeLayout(raw: string | null): DisplayLayout {
+  if (raw === "list") return "list";
+  return "grid";
+}
 
 interface DisplayLayoutSelectorProps {
   value: string;
@@ -42,38 +25,31 @@ export function DisplayLayoutSelector({
   onChange,
   className,
 }: DisplayLayoutSelectorProps) {
-  return (
-    <div className={cn("space-y-2", className)}>
-      <Label>Стиль отображения</Label>
-      <p className="text-xs text-muted-foreground mb-2">
-        Как модуль будет выглядеть для пользователей
-      </p>
-      <div className="grid grid-cols-4 gap-2">
-        {LAYOUT_OPTIONS.map((option) => {
-          const Icon = option.icon;
-          const isSelected = value === option.value;
+  const normalized = normalizeLayout(value);
 
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onChange(option.value)}
-              className={cn(
-                "flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all",
-                "hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20",
-                isSelected
-                  ? "border-primary bg-primary/5 text-primary"
-                  : "border-border text-muted-foreground"
-              )}
-            >
-              <Icon className="h-5 w-5" />
-              <span className="text-[10px] font-medium leading-tight text-center">
-                {option.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+  return (
+    <div className={cn("inline-flex items-center gap-1", className)}>
+      {LAYOUT_OPTIONS.map((option) => {
+        const Icon = option.icon;
+        const isSelected = normalized === option.value;
+
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            title={option.label}
+            className={cn(
+              "h-8 w-8 flex items-center justify-center rounded-full transition-all duration-200",
+              isSelected
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        );
+      })}
     </div>
   );
 }

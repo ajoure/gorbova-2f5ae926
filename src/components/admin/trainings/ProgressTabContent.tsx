@@ -68,8 +68,10 @@ function buildTree(
     }
     // "order" — sort_order, fallback created_at
     return [...list].sort((a, b) => {
-      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-      return a.created_at.localeCompare(b.created_at);
+      const ao = a.sort_order ?? 0;
+      const bo = b.sort_order ?? 0;
+      if (ao !== bo) return ao - bo;
+      return (a.created_at || "").localeCompare(b.created_at || "");
     });
   };
 
@@ -78,8 +80,10 @@ function buildTree(
       return [...list].sort((a, b) => a.title.localeCompare(b.title, "ru"));
     }
     return [...list].sort((a, b) => {
-      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-      return a.created_at.localeCompare(b.created_at);
+      const ao = a.sort_order ?? 0;
+      const bo = b.sort_order ?? 0;
+      if (ao !== bo) return ao - bo;
+      return (a.created_at || "").localeCompare(b.created_at || "");
     });
   };
 
