@@ -59,6 +59,7 @@ import {
   Users,
 } from "lucide-react";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
+import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersModal";
 import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
@@ -365,6 +366,8 @@ export default function AdminTrainingModules() {
     title: string;
     sectionKey: string;
   } | null>(null);
+  // Lesson viewers modal state (opened from tree hover action)
+  const [viewerModal, setViewerModal] = useState<{ lessonId: string; title: string } | null>(null);
   
   // E1/E2/E3: View settings with localStorage persistence
   const [density, setDensity] = useState<ViewDensity>(() => {
@@ -713,6 +716,9 @@ export default function AdminTrainingModules() {
                     title: m.title,
                     sectionKey: m.menu_section_key || "products",
                   })}
+                  onOpenLessonViewers={(lesson) => {
+                    setViewerModal({ lessonId: lesson.id, title: lesson.title });
+                  }}
                   sortMode={modulesSortMode}
                 />
               ) : (
@@ -839,6 +845,17 @@ export default function AdminTrainingModules() {
             sourceTitle={copyMoveTarget.title}
             currentSectionKey={copyMoveTarget.sectionKey}
             onSuccess={() => refetch()}
+          />
+        )}
+        {/* Lesson Viewers Modal (from tree hover) */}
+        {viewerModal && (
+          <LessonViewersModal
+            lessonId={viewerModal.lessonId}
+            lessonTitle={viewerModal.title}
+            open={true}
+            onOpenChange={(open) => {
+              if (!open) setViewerModal(null);
+            }}
           />
         )}
       </div>
