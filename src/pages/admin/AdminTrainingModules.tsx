@@ -321,11 +321,7 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
         onChange={(value) => setFormData(prev => ({ ...prev, menu_section_key: value }))}
       />
 
-      {/* Стиль отображения */}
-      <DisplayLayoutSelector
-        value={formData.display_layout || "grid"}
-        onChange={(value) => setFormData(prev => ({ ...prev, display_layout: value }))}
-      />
+      {/* DisplayLayoutSelector removed from form — layout managed on page level via localStorage */}
     </div>
   );
 }
@@ -375,6 +371,10 @@ export default function AdminTrainingModules() {
   const [showAdvanced, setShowAdvanced] = useState(() => {
     return localStorage.getItem('training_modules_advanced') === 'true';
   });
+  // Layout selector — localStorage only, NO DB writes
+  const [displayLayout, setDisplayLayout] = useState<DisplayLayout>(() => {
+    return (localStorage.getItem('training_modules_layout') as DisplayLayout) || 'grid';
+  });
   
   const handleDensityChange = (d: ViewDensity) => {
     setDensity(d);
@@ -384,6 +384,11 @@ export default function AdminTrainingModules() {
   const handleShowAdvancedChange = (show: boolean) => {
     setShowAdvanced(show);
     localStorage.setItem('training_modules_advanced', String(show));
+  };
+
+  const handleLayoutChange = (layout: DisplayLayout) => {
+    setDisplayLayout(layout);
+    localStorage.setItem('training_modules_layout', layout);
   };
   
   const [formData, setFormData] = useState<TrainingModuleFormData>({
@@ -553,17 +558,22 @@ export default function AdminTrainingModules() {
 
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate("/admin/kb-import")}>
-              <Upload className="mr-1.5 h-4 w-4" />
-              Импорт
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
+                <DropdownMenuItem onClick={() => navigate("/admin/kb-import")}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Импорт КБ
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="outline" size="sm" onClick={() => setIsWizardOpen(true)}>
               <Wand2 className="mr-1.5 h-4 w-4" />
               Мастер
-            </Button>
-            <Button variant="outline" size="sm" onClick={openCreateDialog}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              Добавить
             </Button>
           </div>
 
@@ -576,10 +586,6 @@ export default function AdminTrainingModules() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
-                <DropdownMenuItem onClick={openCreateDialog}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Добавить модуль
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setIsWizardOpen(true)}>
                   <Wand2 className="h-4 w-4 mr-2" />
                   Мастер добавления
@@ -606,12 +612,22 @@ export default function AdminTrainingModules() {
             <ProgressTabContent modules={modules} />
           ) : (
             <>
+              {/* Layout switcher — only localStorage, no DB writes */}
+              <div className="mt-2 mb-4">
+                <DisplayLayoutSelector
+                  value={displayLayout}
+                  onChange={handleLayoutChange}
+                  className=""
+                />
+              </div>
 
-              {/* Modules List - iOS Glass Style */}
+              {/* Modules List */}
               {loading ? (
                 <div className={cn(
-                  "grid gap-4 mt-4",
-                  density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                  "grid gap-4",
+                  displayLayout === 'list' || displayLayout === 'cards-horizontal' || displayLayout === 'fullscreen'
+                    ? "grid-cols-1"
+                    : density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
                   {[1, 2, 3].map(i => (
                     <div key={i} className="rounded-2xl backdrop-blur-xl bg-card/60 border border-border/50 p-5">
@@ -622,7 +638,7 @@ export default function AdminTrainingModules() {
                   ))}
                 </div>
               ) : modules.length === 0 ? (
-                <div className="mt-4 relative overflow-hidden rounded-2xl backdrop-blur-xl bg-card/60 dark:bg-card/40 border border-border/50 shadow-lg p-12 text-center">
+                <div className="relative overflow-hidden rounded-2xl backdrop-blur-xl bg-card/60 dark:bg-card/40 border border-border/50 shadow-lg p-12 text-center">
                   <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
                   <div className="relative">
                     <BookOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
@@ -630,15 +646,18 @@ export default function AdminTrainingModules() {
                     <p className="text-muted-foreground mb-4">
                       Создайте первый модуль базы знаний
                     </p>
-                    <Button onClick={openCreateDialog}>
-                      <Plus className="mr-2 h-4 w-4" />
+                    <Button onClick={() => setIsWizardOpen(true)}>
+                      <Wand2 className="mr-2 h-4 w-4" />
                       Создать модуль
                     </Button>
                   </div>
                 </div>
               ) : (
                 <div className={cn(
-                  "grid gap-4 mt-4",
+                  "grid gap-4",
+                  displayLayout === 'list' ? "grid-cols-1" :
+                  displayLayout === 'cards-horizontal' ? "grid-cols-1" :
+                  displayLayout === 'fullscreen' ? "grid-cols-1" :
                   density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
                   {modules.filter((m) => !m.parent_module_id).map((module) => (

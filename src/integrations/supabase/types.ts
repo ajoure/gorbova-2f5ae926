@@ -3454,6 +3454,20 @@ export type Database = {
             referencedRelation: "training_lessons"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "lesson_progress_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "lesson_progress_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "v_club_members_enriched"
+            referencedColumns: ["auth_user_id"]
+          },
         ]
       }
       lesson_progress_state: {

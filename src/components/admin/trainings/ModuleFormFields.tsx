@@ -15,7 +15,6 @@ import { Upload, Sparkles, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ContentSectionSelector } from "./ContentSectionSelector";
-import { DisplayLayoutSelector, DisplayLayout } from "./DisplayLayoutSelector";
 
 export const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -59,7 +58,6 @@ interface ModuleFormFieldsProps {
   onChange: (data: ModuleFormData) => void;
   isEditing?: boolean;
   showSectionSelector?: boolean;
-  showLayoutSelector?: boolean;
   showActiveSwitch?: boolean;
   compact?: boolean;
   moduleId?: string; // For AI cover generation
@@ -70,7 +68,6 @@ export function ModuleFormFields({
   onChange,
   isEditing = false,
   showSectionSelector = true,
-  showLayoutSelector = true,
   showActiveSwitch = true,
   compact = false,
   moduleId,
@@ -326,12 +323,6 @@ export function ModuleFormFields({
         />
       )}
 
-      {showLayoutSelector && (
-        <DisplayLayoutSelector
-          value={formData.display_layout || "grid"}
-          onChange={(value) => updateField("display_layout", value as DisplayLayout)}
-        />
-      )}
     </div>
   );
 }
