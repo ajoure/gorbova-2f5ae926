@@ -76,6 +76,8 @@ import { getEventLabel } from "@/lib/eventLabels";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
+import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
+import { SmilePlus } from "lucide-react";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -386,6 +388,14 @@ export function ContactTelegramChat({
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
   const isLoading = messagesLoading || eventsLoading || billingLoading;
+
+  // --- Telegram reactions ---
+  const telegramMessageIds = useMemo(
+    () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
+    [messages]
+  );
+  const { data: telegramReactionsMap } = useTelegramReactions(telegramMessageIds);
+  const toggleTelegramReaction = useToggleTelegramReaction();
 
   // Check if any messages have pending upload status
   const hasPendingMedia = useMemo(() => {
@@ -1016,83 +1026,140 @@ export function ContactTelegramChat({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <div
-            className={`max-w-[95%] rounded-lg p-3 ${
-              msg.direction === "outgoing"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted"
-            }`}
-          >
-            <div className="flex items-center gap-1.5 mb-1">
-              {msg.direction === "outgoing" ? (
-                msg.admin_profile?.avatar_url ? (
-                  <img src={msg.admin_profile.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
-                ) : (
-                  <Bot className="w-3 h-3 flex-shrink-0" />
-                )
-              ) : (
-                avatarUrl ? (
-                  <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
-                ) : (
-                  <User className="w-3 h-3 flex-shrink-0" />
-                )
-              )}
-              <span className="text-xs opacity-70">
-                {msg.direction === "outgoing" 
-                  ? (msg.admin_profile?.full_name || "Администратор") 
-                  : (clientName || "Клиент")}
-              </span>
-            </div>
-            
-            {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
-            {isMediaLike && (
-              <div className="mb-2">
-<ChatMediaMessage
-                  fileType={fileType}
-                  fileUrl={fileUrl}
-                  fileName={fileName}
-                  mimeType={mimeType}
-                  errorMessage={uploadError}
-                  isOutgoing={msg.direction === "outgoing"}
-                  storageBucket={bucket}
-                  storagePath={path}
-                  uploadStatus={(metaAny.upload_status ?? metaAny.uploadStatus ?? null) as string | null}
-                  onRefresh={() => refetchMessages()}
-                />
+          <div className="flex flex-col">
+            <div className="relative">
+              <div
+                className={`max-w-[95%] rounded-lg p-3 ${
+                  msg.direction === "outgoing"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  {msg.direction === "outgoing" ? (
+                    msg.admin_profile?.avatar_url ? (
+                      <img src={msg.admin_profile.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <Bot className="w-3 h-3 flex-shrink-0" />
+                    )
+                  ) : (
+                    avatarUrl ? (
+                      <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <User className="w-3 h-3 flex-shrink-0" />
+                    )
+                  )}
+                  <span className="text-xs opacity-70">
+                    {msg.direction === "outgoing" 
+                      ? (msg.admin_profile?.full_name || "Администратор") 
+                      : (clientName || "Клиент")}
+                  </span>
+                </div>
+                
+                {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
+                {isMediaLike && (
+                  <div className="mb-2">
+    <ChatMediaMessage
+                      fileType={fileType}
+                      fileUrl={fileUrl}
+                      fileName={fileName}
+                      mimeType={mimeType}
+                      errorMessage={uploadError}
+                      isOutgoing={msg.direction === "outgoing"}
+                      storageBucket={bucket}
+                      storagePath={path}
+                      uploadStatus={(metaAny.upload_status ?? metaAny.uploadStatus ?? null) as string | null}
+                      onRefresh={() => refetchMessages()}
+                    />
+                  </div>
+                )}
+                
+                {msg.message_text && (
+                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                )}
+                
+                <div className="flex items-center justify-end gap-1 mt-1">
+                  {/* Bot badge — приоритет bot_name, fallback @username, иначе null */}
+                  {(() => {
+                    const joined = msg.telegram_bots;
+                    const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
+                    const botName = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
+                    const botUsername = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
+                    const name = botName?.trim();
+                    const label = name ? name : (botUsername?.trim() ? `@${botUsername.trim()}` : null);
+                    return label ? (
+                      <span className="text-[10px] opacity-70 mr-1">{label}</span>
+                    ) : null;
+                  })()}
+                  {isEdited && (
+                    <span className="text-xs opacity-60 mr-1">ред.</span>
+                  )}
+                  <span className="text-xs opacity-60">
+                    {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+                  </span>
+                  {msg.direction === "outgoing" && (
+                    <>
+                      {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
+                      {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
+                      {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
+                    </>
+                  )}
+                </div>
               </div>
-            )}
-            
-            {msg.message_text && (
-              <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
-            )}
-            
-            <div className="flex items-center justify-end gap-1 mt-1">
-              {/* Bot badge — приоритет bot_name, fallback @username, иначе null */}
-              {(() => {
-                const joined = msg.telegram_bots;
-                const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
-                const botName = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
-                const botUsername = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
-                const name = botName?.trim();
-                const label = name ? name : (botUsername?.trim() ? `@${botUsername.trim()}` : null);
-                return label ? (
-                  <span className="text-[10px] opacity-70 mr-1">{label}</span>
-                ) : null;
-              })()}
-              {isEdited && (
-                <span className="text-xs opacity-60 mr-1">ред.</span>
-              )}
-              <span className="text-xs opacity-60">
-                {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
-              </span>
-              {msg.direction === "outgoing" && (
-                <>
-                  {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
-                  {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
-                  {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
-                </>
-              )}
+
+              {/* Emoji reaction picker — hover trigger */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    className={cn(
+                      "absolute -bottom-2 opacity-0 group-hover:opacity-100 transition-opacity",
+                      "h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent",
+                      msg.direction === "outgoing" ? "left-0" : "right-0"
+                    )}
+                  >
+                    <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-2" side="top" align="center">
+                  <div className="grid grid-cols-10 gap-1">
+                    {EMOJI_LIST.map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
+                        className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
+
+            {/* Reactions display */}
+            {(() => {
+              const reactions = telegramReactionsMap?.[msg.id] || [];
+              if (!reactions.length) return null;
+              return (
+                <div className={cn("flex flex-wrap gap-1 mt-1", msg.direction === "outgoing" && "justify-end")}>
+                  {reactions.map((r) => (
+                    <button
+                      key={r.emoji}
+                      onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji: r.emoji })}
+                      className={cn(
+                        "inline-flex items-center gap-1 h-6 px-1.5 rounded-full text-xs border transition-colors",
+                        r.userReacted
+                          ? "bg-primary/10 border-primary/30 text-primary"
+                          : "bg-muted border-border hover:bg-accent"
+                      )}
+                    >
+                      <span>{r.emoji}</span>
+                      <span className="font-medium">{r.count}</span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
