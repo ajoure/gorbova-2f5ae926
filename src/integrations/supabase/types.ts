@@ -8142,6 +8142,38 @@ export type Database = {
           },
         ]
       }
+      telegram_message_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: string
+          message_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: string
+          message_id: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: string
+          message_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_message_reactions_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_messages: {
         Row: {
           bot_id: string | null
