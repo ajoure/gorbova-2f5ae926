@@ -38,11 +38,18 @@ function buildReactionsMap(
 export function useTelegramReactions(messageIds: string[]) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const viewerId = user?.id ?? "anon";
 
-  const stableIds = useMemo(() => messageIds.filter(Boolean), [messageIds]);
+  // Stable key: deduplicate, sort, join as CSV string
+  const stableIdsCsv = useMemo(() => {
+    const unique = [...new Set(messageIds.filter(Boolean))].sort();
+    return unique.join(",");
+  }, [messageIds]);
+
+  const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
 
   const query = useQuery({
-    queryKey: ["telegram-reactions", stableIds],
+    queryKey: ["telegram-reactions", stableIdsCsv, viewerId],
     queryFn: async () => {
       if (!stableIds.length) return {} as MessageReactionsMap;
 
@@ -58,15 +65,28 @@ export function useTelegramReactions(messageIds: string[]) {
   });
 
   useEffect(() => {
-    if (!stableIds.length) return;
+    if (!stableIdsCsv) return;
 
     const channel = supabase
-      .channel("telegram-reactions-rt")
+      .channel(`telegram-reactions-rt-${viewerId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "telegram_message_reactions" },
+        { event: "INSERT", schema: "public", table: "telegram_message_reactions" },
         () => {
+          const key = ["telegram-reactions", stableIdsCsv, viewerId];
           queryClient.invalidateQueries({ queryKey: ["telegram-reactions"] });
+          queryClient.invalidateQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "telegram_message_reactions" },
+        () => {
+          const key = ["telegram-reactions", stableIdsCsv, viewerId];
+          queryClient.invalidateQueries({ queryKey: ["telegram-reactions"] });
+          queryClient.invalidateQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .subscribe();
@@ -74,7 +94,7 @@ export function useTelegramReactions(messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [stableIds.length, queryClient]);
+  }, [stableIdsCsv, viewerId, queryClient]);
 
   return query;
 }
@@ -97,6 +117,8 @@ export function useToggleTelegramReaction() {
 
       if (existingError) throw existingError;
 
+      const wasRemoved = !!existing?.id;
+
       if (existing?.id) {
         const { error } = await supabase
           .from("telegram_message_reactions")
@@ -113,9 +135,23 @@ export function useToggleTelegramReaction() {
           });
         if (error) throw error;
       }
+
+      return { messageId, emoji, wasRemoved };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["telegram-reactions"] });
+
+      // Fire-and-forget: sync reaction to Telegram
+      if (result) {
+        supabase.functions.invoke("telegram-admin-chat", {
+          body: {
+            action: "sync_telegram_reaction",
+            telegram_message_db_id: result.messageId,
+            emoji: result.emoji,
+            remove: result.wasRemoved,
+          },
+        }).catch(() => { /* fire-and-forget */ });
+      }
     },
   });
 }

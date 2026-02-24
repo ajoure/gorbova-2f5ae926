@@ -20,6 +20,15 @@ interface TelegramUpdate {
     document?: object;
     reply_to_message?: { message_id: number };
   };
+  message_reaction?: {
+    chat: { id: number; type: string };
+    message_id: number;
+    user?: { id: number; first_name?: string; last_name?: string; username?: string };
+    actor_chat?: { id: number };
+    date: number;
+    old_reaction: Array<{ type: string; emoji?: string; custom_emoji_id?: string }>;
+    new_reaction: Array<{ type: string; emoji?: string; custom_emoji_id?: string }>;
+  };
   my_chat_member?: {
     chat: { id: number; title?: string; type: string };
     from: { id: number };
@@ -1262,6 +1271,78 @@ Deno.serve(async (req) => {
             actor_type: 'system',
             meta: { chat_id: chatId, chat_type: chatType },
           });
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ==========================================
+    // Handle message_reaction (user reacted to a message)
+    // ==========================================
+    if (update.message_reaction) {
+      const reaction = update.message_reaction;
+      const chatId = reaction.chat.id;
+      const telegramMessageId = reaction.message_id;
+      const telegramUserId = reaction.user?.id || reaction.actor_chat?.id;
+
+      if (telegramUserId && reaction.chat.type === 'private') {
+        try {
+          // Find the DB message by telegram message_id + telegram_user_id
+          const { data: dbMsg } = await supabase
+            .from('telegram_messages')
+            .select('id, user_id')
+            .eq('message_id', telegramMessageId)
+            .eq('telegram_user_id', telegramUserId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (dbMsg) {
+            // Determine added and removed emojis
+            const oldEmojis = (reaction.old_reaction || [])
+              .filter(r => r.type === 'emoji' && r.emoji)
+              .map(r => r.emoji!);
+            const newEmojis = (reaction.new_reaction || [])
+              .filter(r => r.type === 'emoji' && r.emoji)
+              .map(r => r.emoji!);
+
+            const added = newEmojis.filter(e => !oldEmojis.includes(e));
+            const removed = oldEmojis.filter(e => !newEmojis.includes(e));
+
+            // Find profile user_id for this telegram user
+            const reactorUserId = dbMsg.user_id;
+
+            // Remove reactions
+            for (const emoji of removed) {
+              await supabase
+                .from('telegram_message_reactions')
+                .delete()
+                .eq('message_id', dbMsg.id)
+                .eq('user_id', reactorUserId)
+                .eq('emoji', emoji);
+            }
+
+            // Add reactions (upsert-safe via unique constraint)
+            for (const emoji of added) {
+              await supabase
+                .from('telegram_message_reactions')
+                .upsert(
+                  {
+                    message_id: dbMsg.id,
+                    user_id: reactorUserId,
+                    emoji,
+                  },
+                  { onConflict: 'message_id,user_id,emoji' }
+                );
+            }
+
+            console.log(`[REACTION] tg_user=${telegramUserId} msg=${telegramMessageId} added=${added.join(',')} removed=${removed.join(',')}`);
+          } else {
+            console.log(`[REACTION] No DB message found for tg_msg_id=${telegramMessageId} tg_user=${telegramUserId}`);
+          }
+        } catch (reactionErr) {
+          console.error('[REACTION] Error processing message_reaction:', reactionErr);
         }
       }
 
