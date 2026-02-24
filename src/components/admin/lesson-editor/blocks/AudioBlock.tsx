@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { AudioContent } from "@/hooks/useLessonBlocks";
 import { Music, ExternalLink, Upload, Loader2, AlertTriangle } from "lucide-react";
+import { CustomAudioPlayer } from "@/components/ui/CustomAudioPlayer";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, convertGoogleDriveUrl, extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./uploadToTrainingAssets";
 
@@ -144,16 +145,7 @@ export function AudioBlock({ content, onChange, isEditing = true, lessonId }: Au
             <span>Аудио недоступно. Файл мог быть удален из хранилища.</span>
           </div>
         ) : (
-          <audio
-            controls
-            controlsList="nodownload"
-            onContextMenu={(e) => e.preventDefault()}
-            className="w-full"
-            onError={() => setAudioError(true)}
-          >
-            <source src={content.url} />
-            Ваш браузер не поддерживает аудио элемент.
-          </audio>
+          <CustomAudioPlayer src={content.url} onError={() => setAudioError(true)} />
         )}
       </div>
     );
