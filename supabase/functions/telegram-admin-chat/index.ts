@@ -13,7 +13,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message" | "sync_reaction" | "bridge_ticket_notification" | "sync_telegram_reaction";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -24,8 +24,9 @@ interface ChatAction {
   message_ids?: string[]; // For get_media_urls action
   ticket_id?: string; // For bridge_ticket_message
   ticket_message_id?: string; // For bridge_ticket_message / sync_reaction
-  emoji?: string; // For sync_reaction
-  remove?: boolean; // For sync_reaction
+  emoji?: string; // For sync_reaction / sync_telegram_reaction
+  remove?: boolean; // For sync_reaction / sync_telegram_reaction
+  telegram_message_db_id?: string; // For sync_telegram_reaction (UUID from telegram_messages)
 }
 
 async function fetchAndSaveTelegramPhoto(
@@ -1843,6 +1844,108 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ ok: sendResult.ok }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // ==========================================
+      // SYNC TELEGRAM REACTION (Admin → Telegram, contact center messages)
+      // ==========================================
+      case "sync_telegram_reaction": {
+        const { telegram_message_db_id, emoji, remove: removeReaction } = payload;
+
+        if (!telegram_message_db_id || !emoji) {
+          return new Response(JSON.stringify({ ok: false, reason: "telegram_message_db_id and emoji required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Find the telegram_messages row to get message_id (Telegram int) and user_id
+        const { data: tgMsg, error: tgMsgErr } = await supabase
+          .from("telegram_messages")
+          .select("message_id, user_id, telegram_user_id, bot_id")
+          .eq("id", telegram_message_db_id)
+          .single();
+
+        if (tgMsgErr || !tgMsg?.message_id) {
+          return new Response(JSON.stringify({ ok: false, reason: "message_not_found" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // chat_id for private messages is the telegram_user_id
+        const chatIdForReaction = tgMsg.telegram_user_id;
+
+        // Get bot token - prefer the bot_id from the message, then profile, then any active
+        let syncBotToken: string | null = null;
+        if (tgMsg.bot_id) {
+          const { data: bot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("id", tgMsg.bot_id)
+            .eq("status", "active")
+            .single();
+          syncBotToken = bot?.bot_token_encrypted ?? null;
+        }
+        if (!syncBotToken) {
+          // Fallback: profile's linked bot
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("telegram_link_bot_id")
+            .eq("user_id", tgMsg.user_id)
+            .single();
+          if (prof?.telegram_link_bot_id) {
+            const { data: bot } = await supabase
+              .from("telegram_bots")
+              .select("bot_token_encrypted")
+              .eq("id", prof.telegram_link_bot_id)
+              .eq("status", "active")
+              .single();
+            syncBotToken = bot?.bot_token_encrypted ?? null;
+          }
+        }
+        if (!syncBotToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          syncBotToken = anyBot?.bot_token_encrypted ?? null;
+        }
+
+        if (!syncBotToken) {
+          return new Response(JSON.stringify({ ok: false, reason: "no_bot" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Call Telegram setMessageReaction
+        const syncReactionPayload = {
+          chat_id: chatIdForReaction,
+          message_id: tgMsg.message_id,
+          reaction: removeReaction ? [] : [{ type: "emoji", emoji }],
+        };
+
+        try {
+          const syncResult = await telegramRequest(syncBotToken, "setMessageReaction", syncReactionPayload);
+
+          if (!syncResult.ok) {
+            console.error("[sync_telegram_reaction] Telegram error:", syncResult.description);
+            return new Response(JSON.stringify({ ok: false, reason: syncResult.description || "telegram_error" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+
+          console.log("[sync_telegram_reaction] OK, msg_id:", tgMsg.message_id, "emoji:", emoji, "remove:", !!removeReaction);
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (syncErr) {
+          console.error("[sync_telegram_reaction] Error:", syncErr);
+          return new Response(JSON.stringify({ ok: false, reason: "not_supported" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
       }
 
       default:
