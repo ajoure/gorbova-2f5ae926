@@ -254,6 +254,7 @@ export function ModulesTreeContent({
   sortMode = "order",
 }: ModulesTreeContentProps) {
   const moduleIds = useMemo(() => modules.map((m) => m.id), [modules]);
+  const moduleIdsKey = useMemo(() => moduleIds.slice().sort().join(","), [moduleIds]);
 
   // Expanded state with localStorage persistence
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => loadExpandedIds(STORAGE_KEY));
@@ -265,17 +266,16 @@ export function ModulesTreeContent({
     setExpandedIds((prev) => {
       const filtered = filterExpandedIds(prev, validIds);
       if (filtered.size !== prev.size) {
-        // Save cleaned version
         const arr = Array.from(filtered).slice(0, 500);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
       }
       return filtered;
     });
-  }, [moduleIds]);
+  }, [moduleIdsKey]);
 
   // Fetch lessons only when tree is rendered (list mode)
   const { data: lessons, isLoading } = useQuery({
-    queryKey: ["modules-tree-lessons", moduleIds.slice().sort().join(",")],
+    queryKey: ["modules-tree-lessons", moduleIdsKey],
     queryFn: async () => {
       if (moduleIds.length === 0) return [];
       const { data, error } = await supabase

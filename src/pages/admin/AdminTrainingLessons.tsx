@@ -668,19 +668,28 @@ export default function AdminTrainingLessons() {
             <h1 className="text-2xl font-bold">{module.title}</h1>
             <p className="text-muted-foreground">Управление уроками модуля</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate("/admin/training-modules")}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
+          <div className="flex gap-1.5 flex-wrap">
+            <button
+              onClick={() => navigate("/admin/training-modules")}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Назад</span>
-            </Button>
-            <Button variant="outline" onClick={() => setIsWizardOpen(true)}>
-              <Layers className="mr-2 h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setIsWizardOpen(true)}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
+            >
+              <Layers className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Добавить модуль</span>
-            </Button>
-            <Button onClick={openCreateDialog}>
-              <Plus className="mr-2 h-4 w-4" />
+            </button>
+            <button
+              onClick={openCreateDialog}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Добавить урок</span>
-            </Button>
+            </button>
           </div>
         </div>
 

@@ -67,8 +67,9 @@ import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/compone
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
 import { ModulesTreeContent } from "@/components/admin/trainings/ModulesTreeContent";
+import type { SortMode } from "@/components/admin/trainings/moduleTreeUtils";
 import { cn } from "@/lib/utils";
-import { Upload, Image as ImageIcon } from "lucide-react";
+import { Upload, Image as ImageIcon, ArrowDownAZ, ArrowDown01 } from "lucide-react";
 import { toast } from "sonner";
 
 const gradientOptions = [
@@ -376,6 +377,11 @@ export default function AdminTrainingModules() {
   const [displayLayout, setDisplayLayout] = useState<DisplayLayout>(() => {
     return normalizeLayout(localStorage.getItem('training_modules_layout'));
   });
+  // Sort mode for list view
+  const [modulesSortMode, setModulesSortMode] = useState<SortMode>(() => {
+    const saved = localStorage.getItem("admin_training_modules.sortMode");
+    return (saved === "alpha" ? "alpha" : "order") as SortMode;
+  });
   
   const handleDensityChange = (d: ViewDensity) => {
     setDensity(d);
@@ -391,6 +397,14 @@ export default function AdminTrainingModules() {
     setDisplayLayout(layout);
     localStorage.setItem('training_modules_layout', layout);
   };
+
+  const handleModulesSortToggle = useCallback(() => {
+    setModulesSortMode((prev) => {
+      const next = prev === "order" ? "alpha" : "order";
+      localStorage.setItem("admin_training_modules.sortMode", next);
+      return next as SortMode;
+    });
+  }, []);
   
   const [formData, setFormData] = useState<TrainingModuleFormData>({
     title: "",
@@ -569,12 +583,28 @@ export default function AdminTrainingModules() {
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-2">
             {activeTab === "modules" && (
-              <div className="inline-flex p-0.5 rounded-full bg-muted/40 border border-border/20">
-                <DisplayLayoutSelector
-                  value={displayLayout}
-                  onChange={handleLayoutChange}
-                />
-              </div>
+              <>
+                {displayLayout === "list" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleModulesSortToggle}
+                    className="gap-1.5 text-xs h-8 rounded-full"
+                  >
+                    {modulesSortMode === "alpha" ? (
+                      <><ArrowDownAZ className="h-3.5 w-3.5" /> А-Я</>
+                    ) : (
+                      <><ArrowDown01 className="h-3.5 w-3.5" /> №</>
+                    )}
+                  </Button>
+                )}
+                <div className="inline-flex p-0.5 rounded-full bg-muted/40 border border-border/20">
+                  <DisplayLayoutSelector
+                    value={displayLayout}
+                    onChange={handleLayoutChange}
+                  />
+                </div>
+              </>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -589,10 +619,13 @@ export default function AdminTrainingModules() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="outline" size="sm" onClick={() => setIsWizardOpen(true)}>
-              <Wand2 className="mr-1.5 h-4 w-4" />
+            <button
+              onClick={() => setIsWizardOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
               Мастер
-            </Button>
+            </button>
           </div>
 
           {/* Mobile actions */}
@@ -680,6 +713,7 @@ export default function AdminTrainingModules() {
                     title: m.title,
                     sectionKey: m.menu_section_key || "products",
                   })}
+                  sortMode={modulesSortMode}
                 />
               ) : (
                 <div className={cn(
