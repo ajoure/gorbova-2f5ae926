@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -11,7 +11,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink } from "lucide-react";
+import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminLessonBlockEditor() {
@@ -123,62 +123,61 @@ export default function AdminLessonBlockEditor() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-              <span>{module.title}</span>
-              <span>→</span>
-              <span>{lesson.title}</span>
+            {/* Breadcrumbs */}
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground mb-1 flex-wrap">
+              <Link to="/admin/training-modules" className="hover:text-foreground transition-colors">
+                Тренинги
+              </Link>
+              <ChevronRight className="h-3.5 w-3.5" />
+              <Link to={`/admin/training-modules/${moduleId}/lessons`} className="hover:text-foreground transition-colors">
+                {module.title}
+              </Link>
+              <ChevronRight className="h-3.5 w-3.5" />
+              <span className="text-foreground">{lesson.title}</span>
             </div>
             <h1 className="text-2xl font-bold">Редактор контента</h1>
-            <p className="text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               Добавляйте и редактируйте блоки урока
             </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button 
-              variant="outline" 
+          <div className="flex gap-1.5 flex-wrap">
+            <button
               onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
-              <ArrowLeft className="mr-2 h-4 w-4" />
+              <ArrowLeft className="h-3.5 w-3.5" />
               Назад
-            </Button>
-            <Button 
-              variant={previewMode ? "default" : "outline"}
+            </button>
+            <button
               onClick={handleTogglePreview}
+              className={`flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium transition-colors ${
+                previewMode
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "border border-border bg-background hover:bg-muted"
+              }`}
             >
               {previewMode ? (
-                <>
-                  <Edit className="mr-2 h-4 w-4" />
-                  Редактирование
-                </>
+                <><Edit className="h-3.5 w-3.5" /> Редактирование</>
               ) : (
-                <>
-                  <Eye className="mr-2 h-4 w-4" />
-                  Просмотр
-                </>
+                <><Eye className="h-3.5 w-3.5" /> Просмотр</>
               )}
-            </Button>
-            <Button 
-              variant="outline"
+            </button>
+            <button
               onClick={() => window.open(`/library/${module.slug}/${lesson.slug}`, '_blank')}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
-              <ExternalLink className="mr-2 h-4 w-4" />
+              <ExternalLink className="h-3.5 w-3.5" />
               На сайте
-            </Button>
-            <Button 
-              variant="outline"
+            </button>
+            <button
               onClick={async () => {
                 try {
-                  // Reset via canonical Edge Function (service role)
                   const result = await resetViaEdge(lessonId!, 'lesson_all');
-                  
                   if (!result.ok) {
                     toast.error(`Ошибка: ${result.error}`);
                     return;
                   }
-                  
-                  // Force refetch blocks to update UI
                   await refetch();
-                  
                   console.log('[AdminReset] Done:', result);
                   toast.success(`Прогресс сброшен: удалено ${result.affected?.lesson_progress_state || 0} + ${result.affected?.user_lesson_progress || 0} записей`);
                 } catch (error) {
@@ -187,10 +186,11 @@ export default function AdminLessonBlockEditor() {
                 }
               }}
               title="Сбросить свой прогресс прохождения урока"
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Сбросить прогресс
-            </Button>
+              <RotateCcw className="h-3.5 w-3.5" />
+              Сбросить
+            </button>
           </div>
         </div>
 

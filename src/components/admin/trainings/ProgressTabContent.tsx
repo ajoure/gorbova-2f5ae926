@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,7 +10,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Users, ChevronRight, ChevronDown, BookOpen, Eye, ArrowDownAZ, ArrowDown01, FolderOpen } from "lucide-react";
+import { Users, ChevronRight, ChevronDown, BookOpen, Eye, ArrowDownAZ, ArrowDown01, FolderOpen, Folder, FileText } from "lucide-react";
 import { LessonViewersModal } from "./LessonViewersModal";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
@@ -26,6 +25,24 @@ import {
 } from "./moduleTreeUtils";
 
 const STORAGE_KEY = "admin_training_progress.expanded";
+
+/* ── Gradient color map (same as ModulesTreeContent for unified style) ── */
+const GRADIENT_COLOR_MAP: Record<string, { from: string; to: string }> = {
+  "from-pink-500 to-fuchsia-600": { from: "#ec489930", to: "#c026d330" },
+  "from-blue-500 to-cyan-500": { from: "#3b82f630", to: "#06b6d430" },
+  "from-green-500 to-emerald-500": { from: "#22c55e30", to: "#10b98130" },
+  "from-orange-500 to-amber-500": { from: "#f9731630", to: "#f59e0b30" },
+  "from-purple-500 to-violet-500": { from: "#a855f730", to: "#8b5cf630" },
+  "from-red-500 to-rose-500": { from: "#ef444430", to: "#f43f5e30" },
+  "from-indigo-500 to-purple-500": { from: "#6366f130", to: "#a855f730" },
+  "from-teal-500 to-cyan-500": { from: "#14b8a630", to: "#06b6d430" },
+};
+const DEFAULT_GRADIENT = { from: "#a855f720", to: "#6366f120" };
+
+function getGradientColors(gradient: string | null | undefined) {
+  if (!gradient) return DEFAULT_GRADIENT;
+  return GRADIENT_COLOR_MAP[gradient] || DEFAULT_GRADIENT;
+}
 
 interface ProgressTabContentProps {
   modules: TrainingModule[];
@@ -42,7 +59,7 @@ interface LessonWithProgress {
   completedCount: number;
 }
 
-// Recursive component for rendering module tree
+// Recursive component for rendering module tree — unified glass style
 function ModuleNode({
   node,
   depth,
@@ -58,14 +75,15 @@ function ModuleNode({
 }) {
   const hasContent = node.children.length > 0 || node.items.length > 0;
   const isOpen = expandedIds.has(node.module.id);
+  const colors = getGradientColors(node.module.color_gradient);
 
   const totalStudents = node.items.reduce((s, l) => s + l.studentCount, 0);
   const totalCompleted = node.items.reduce((s, l) => s + l.completedCount, 0);
 
   if (!hasContent) {
     return (
-      <div className={cn("flex items-center gap-2 py-2 text-sm text-muted-foreground", depth > 0 && "ml-4")}>
-        <FolderOpen className="h-4 w-4" />
+      <div className={cn("flex items-center gap-2 py-2 px-3 text-sm text-muted-foreground rounded-xl", depth > 0 && "ml-4")}>
+        <Folder className="h-4 w-4 text-primary/50" />
         <span>{node.module.title}</span>
         <span className="text-xs">(пусто)</span>
       </div>
@@ -73,93 +91,103 @@ function ModuleNode({
   }
 
   return (
-    <Collapsible open={isOpen} onOpenChange={() => onToggle(node.module.id)}>
-      <CollapsibleTrigger asChild>
-        <button
+    <div className={cn(depth > 0 && "ml-4")}>
+      <Collapsible open={isOpen} onOpenChange={() => onToggle(node.module.id)}>
+        {/* Glass-style module card — unified with ModulesTreeContent */}
+        <div
           className={cn(
-            "w-full flex items-center gap-2 py-2 px-2 rounded-lg hover:bg-muted/50 transition-colors text-left",
-            depth > 0 && "ml-4"
+            "group relative overflow-hidden rounded-xl transition-all duration-200",
+            "backdrop-blur-xl bg-card/60 dark:bg-card/40",
+            "border border-border/40 hover:border-border/70",
+            "shadow-sm hover:shadow-md mb-1.5",
           )}
         >
-          {isOpen ? (
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
-          <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
-          <span className="font-medium text-sm flex-1 truncate">{node.module.title}</span>
-          <div className="flex items-center gap-2 shrink-0">
-            {totalStudents > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-normal">
-                <Users className="h-3 w-3 mr-0.5" />
-                {totalStudents}
-              </Badge>
-            )}
-            {totalCompleted > 0 && (
-              <Badge variant="default" className="text-[10px] font-normal">
-                ✓ {totalCompleted}
-              </Badge>
-            )}
-          </div>
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className={cn("space-y-1", depth === 0 ? "ml-2" : "ml-6")}>
-          {/* Submodules */}
-          {node.children.map((child) => (
-            <ModuleNode
-              key={child.module.id}
-              node={child}
-              depth={depth + 1}
-              onLessonClick={onLessonClick}
-              expandedIds={expandedIds}
-              onToggle={onToggle}
-            />
-          ))}
-          {/* Lessons */}
-          {node.items.map((lesson) => (
-            <Card
-              key={lesson.id}
-              className="group hover:shadow-md transition-all cursor-pointer"
-              onClick={() => onLessonClick(lesson)}
-            >
-              <CardContent className="p-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    {lesson.completion_mode === "kvest" ? (
-                      <BookOpen className="h-4 w-4 text-primary" />
-                    ) : (
-                      <Eye className="h-4 w-4 text-primary" />
-                    )}
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm">{lesson.title}</h4>
-                    <Badge
-                      variant={lesson.completion_mode === "kvest" ? "default" : "secondary"}
-                      className="text-[10px] px-1.5 py-0 mt-0.5"
-                    >
-                      {lesson.completion_mode === "kvest" ? "Квест" : "Обычный"}
-                    </Badge>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant="secondary" className="font-normal text-xs">
-                      <Users className="h-3 w-3 mr-0.5" />
-                      {lesson.studentCount}
-                    </Badge>
-                    <Badge variant="default" className="font-normal text-xs">
-                      ✓ {lesson.completedCount}
-                    </Badge>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {/* Soft gradient overlay */}
+          <div
+            className="absolute inset-0 pointer-events-none rounded-xl"
+            style={{
+              background: `linear-gradient(135deg, ${colors.from}, ${colors.to})`,
+              opacity: 0.35,
+            }}
+          />
+
+          <CollapsibleTrigger asChild>
+            <button className="relative z-10 w-full flex items-center gap-2 px-3 py-2 text-left">
+              {isOpen ? (
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              {isOpen ? (
+                <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0 text-primary/70" />
+              )}
+              <span className="font-medium text-sm flex-1 truncate">{node.module.title}</span>
+              <div className="flex items-center gap-1 shrink-0">
+                {totalStudents > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 gap-0.5 font-normal">
+                    <Users className="h-3 w-3" />
+                    {totalStudents}
+                  </Badge>
+                )}
+                {totalCompleted > 0 && (
+                  <Badge variant="default" className="text-[10px] px-1.5 py-0 gap-0.5 font-normal">
+                    ✓ {totalCompleted}
+                  </Badge>
+                )}
+              </div>
+            </button>
+          </CollapsibleTrigger>
         </div>
-      </CollapsibleContent>
-    </Collapsible>
+
+        <CollapsibleContent>
+          <div className="space-y-0.5 ml-2">
+            {/* Submodules */}
+            {node.children.map((child) => (
+              <ModuleNode
+                key={child.module.id}
+                node={child}
+                depth={depth + 1}
+                onLessonClick={onLessonClick}
+                expandedIds={expandedIds}
+                onToggle={onToggle}
+              />
+            ))}
+            {/* Lessons — compact rows, unified with ModulesTreeContent */}
+            {node.items.map((lesson) => (
+              <button
+                key={lesson.id}
+                onClick={() => onLessonClick(lesson)}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg",
+                  "hover:bg-muted/50 transition-colors text-left",
+                  depth > 0 && "ml-4",
+                )}
+              >
+                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="text-sm truncate flex-1">{lesson.title}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 gap-0.5 font-normal">
+                    <Users className="h-3 w-3" />
+                    {lesson.studentCount}
+                  </Badge>
+                  <Badge variant="default" className="text-[10px] px-1.5 py-0 gap-0.5 font-normal">
+                    ✓ {lesson.completedCount}
+                  </Badge>
+                  <Badge
+                    variant={lesson.completion_mode === "kvest" ? "default" : "secondary"}
+                    className="text-[10px] px-1.5 py-0 shrink-0"
+                  >
+                    {lesson.completion_mode === "kvest" ? "Квест" : "Обычный"}
+                  </Badge>
+                </div>
+              </button>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
   );
 }
 
@@ -174,9 +202,10 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => loadExpandedIds(STORAGE_KEY));
   const didAutoOpenRef = useRef(false);
 
-  const moduleIds = modules.map((m) => m.id);
+  const moduleIds = useMemo(() => modules.map((m) => m.id), [modules]);
+  const moduleIdsKey = useMemo(() => moduleIds.slice().sort().join(","), [moduleIds]);
 
-  // Filter stale IDs
+  // Filter stale IDs — stable dependency via moduleIdsKey
   useEffect(() => {
     const validIds = new Set(moduleIds);
     setExpandedIds((prev) => {
@@ -187,10 +216,10 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
       }
       return filtered;
     });
-  }, [moduleIds.join(",")]);
+  }, [moduleIdsKey]);
 
   const { data: allLessons, isLoading } = useQuery({
-    queryKey: ["all-lessons-progress", moduleIds],
+    queryKey: ["all-lessons-progress", moduleIdsKey],
     queryFn: async () => {
       if (moduleIds.length === 0) return [];
 
@@ -297,9 +326,9 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-4 mt-4">
+      <div className="space-y-2 mt-4">
         {[1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+          <Skeleton key={i} className="h-12 w-full rounded-xl" />
         ))}
       </div>
     );
@@ -344,7 +373,7 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
       </div>
 
       {/* Module tree */}
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {tree.map((node) => (
           <ModuleNode
             key={node.module.id}
