@@ -1138,6 +1138,9 @@ export function ContactTelegramChat({
                       </button>
                     ))}
                   </div>
+                  <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
+                    В Telegram отображается только 1 реакция от бота (лимит Telegram API)
+                  </p>
                 </PopoverContent>
               </Popover>
             </div>
