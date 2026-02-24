@@ -16,6 +16,7 @@ export interface MessageReactions {
 export function useTicketReactions(ticketId: string, messageIds: string[]) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const viewerId = user?.id ?? "anon";
 
   // Stable key: deduplicate, sort, join as CSV string
   const stableIdsCsv = useMemo(() => {
@@ -26,7 +27,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
   const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
 
   const query = useQuery({
-    queryKey: ["ticket-reactions", stableIdsCsv],
+    queryKey: ["ticket-reactions", stableIdsCsv, viewerId],
     queryFn: async () => {
       if (!stableIds.length) return {} as MessageReactions;
 
@@ -55,7 +56,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
       }
       return result;
     },
-    enabled: stableIds.length > 0,
+    enabled: stableIds.length > 0 && !!user?.id,
   });
 
   // Realtime subscription scoped to ticketId
@@ -68,18 +69,20 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "ticket_message_reactions" },
         () => {
-          const key = ["ticket-reactions", stableIdsCsv];
+          const key = ["ticket-reactions", stableIdsCsv, viewerId];
           queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.invalidateQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "ticket_message_reactions" },
         () => {
-          const key = ["ticket-reactions", stableIdsCsv];
+          const key = ["ticket-reactions", stableIdsCsv, viewerId];
           queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.invalidateQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .subscribe();
@@ -87,7 +90,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, stableIdsCsv, queryClient]);
+  }, [ticketId, stableIdsCsv, viewerId, queryClient]);
 
   return query;
 }
