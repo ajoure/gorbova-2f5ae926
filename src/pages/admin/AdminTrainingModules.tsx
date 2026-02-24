@@ -66,6 +66,7 @@ import { ContentSectionSelector } from "@/components/admin/trainings/ContentSect
 import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
+import { ModulesTreeContent } from "@/components/admin/trainings/ModulesTreeContent";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -508,8 +509,17 @@ export default function AdminTrainingModules() {
     }
   };
 
-  // Active tab state
-  const [activeTab, setActiveTab] = useState<"modules" | "progress" | "settings">("modules");
+  // Active tab state — scoped localStorage key
+  const [activeTab, setActiveTab] = useState<"modules" | "progress" | "settings">(() => {
+    const saved = localStorage.getItem("admin_training_modules.activeTab");
+    if (saved === "modules" || saved === "progress" || saved === "settings") return saved as any;
+    return "modules";
+  });
+
+  const handleTabChange = useCallback((tab: "modules" | "progress" | "settings") => {
+    setActiveTab(tab);
+    localStorage.setItem("admin_training_modules.activeTab", tab);
+  }, []);
 
   return (
     <AdminLayout>
@@ -519,7 +529,7 @@ export default function AdminTrainingModules() {
           {/* Tabs - horizontal scroll, no wrap */}
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none whitespace-nowrap">
             <button
-              onClick={() => setActiveTab("modules")}
+              onClick={() => handleTabChange("modules")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
                 activeTab === "modules"
@@ -531,7 +541,7 @@ export default function AdminTrainingModules() {
               <span>Модули</span>
             </button>
             <button
-              onClick={() => setActiveTab("progress")}
+              onClick={() => handleTabChange("progress")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
                 activeTab === "progress"
@@ -543,7 +553,7 @@ export default function AdminTrainingModules() {
               <span>Прогресс</span>
             </button>
             <button
-              onClick={() => setActiveTab("settings")}
+              onClick={() => handleTabChange("settings")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
                 activeTab === "settings"
@@ -659,12 +669,22 @@ export default function AdminTrainingModules() {
                     </Button>
                   </div>
                 </div>
+              ) : displayLayout === "list" ? (
+                <ModulesTreeContent
+                  modules={modules}
+                  onEdit={(m) => openEditDialog(m)}
+                  onDelete={(id) => setDeleteConfirmId(id)}
+                  onOpenLessons={(moduleId) => navigate(`/admin/training-modules/${moduleId}/lessons`)}
+                  onCopyMove={(m) => setCopyMoveTarget({
+                    id: m.id,
+                    title: m.title,
+                    sectionKey: m.menu_section_key || "products",
+                  })}
+                />
               ) : (
                 <div className={cn(
                   "grid gap-3",
-                  displayLayout === 'list'
-                    ? "grid-cols-1"
-                    : density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                  density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 )}>
                   {modules.filter((m) => !m.parent_module_id).map((module) => (
                     <TrainingModuleCard

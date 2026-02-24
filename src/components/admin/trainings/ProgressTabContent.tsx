@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,6 +15,17 @@ import { Users, ChevronRight, ChevronDown, BookOpen, Eye, ArrowDownAZ, ArrowDown
 import { LessonViewersModal } from "./LessonViewersModal";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
+import {
+  buildModuleTree,
+  sortItems,
+  loadExpandedIds,
+  filterExpandedIds,
+  toggleExpandedId,
+  type ModuleTreeNodeWithData,
+  type SortMode,
+} from "./moduleTreeUtils";
+
+const STORAGE_KEY = "admin_training_progress.expanded";
 
 interface ProgressTabContentProps {
   modules: TrainingModule[];
@@ -31,89 +42,25 @@ interface LessonWithProgress {
   completedCount: number;
 }
 
-type SortMode = "order" | "alpha";
-
-// Recursive tree node for modules
-interface ModuleTreeNode {
-  module: TrainingModule;
-  children: ModuleTreeNode[];
-  lessons: LessonWithProgress[];
-}
-
-function buildTree(
-  modules: TrainingModule[],
-  lessons: LessonWithProgress[],
-  sortMode: SortMode
-): ModuleTreeNode[] {
-  const lessonsByModule = new Map<string, LessonWithProgress[]>();
-  for (const lesson of lessons) {
-    const arr = lessonsByModule.get(lesson.module_id) || [];
-    arr.push(lesson);
-    lessonsByModule.set(lesson.module_id, arr);
-  }
-
-  const moduleMap = new Map(modules.map((m) => [m.id, m]));
-  const childrenMap = new Map<string | null, TrainingModule[]>();
-
-  for (const m of modules) {
-    const parentKey = m.parent_module_id || null;
-    const arr = childrenMap.get(parentKey) || [];
-    arr.push(m);
-    childrenMap.set(parentKey, arr);
-  }
-
-  const sortModules = (list: TrainingModule[]) => {
-    if (sortMode === "alpha") {
-      return [...list].sort((a, b) => a.title.localeCompare(b.title, "ru"));
-    }
-    // "order" — sort_order, fallback created_at
-    return [...list].sort((a, b) => {
-      const ao = a.sort_order ?? 0;
-      const bo = b.sort_order ?? 0;
-      if (ao !== bo) return ao - bo;
-      return (a.created_at || "").localeCompare(b.created_at || "");
-    });
-  };
-
-  const sortLessons = (list: LessonWithProgress[]) => {
-    if (sortMode === "alpha") {
-      return [...list].sort((a, b) => a.title.localeCompare(b.title, "ru"));
-    }
-    return [...list].sort((a, b) => {
-      const ao = a.sort_order ?? 0;
-      const bo = b.sort_order ?? 0;
-      if (ao !== bo) return ao - bo;
-      return (a.created_at || "").localeCompare(b.created_at || "");
-    });
-  };
-
-  const buildNode = (parentId: string | null): ModuleTreeNode[] => {
-    const children = childrenMap.get(parentId) || [];
-    return sortModules(children).map((m) => ({
-      module: m,
-      children: buildNode(m.id),
-      lessons: sortLessons(lessonsByModule.get(m.id) || []),
-    }));
-  };
-
-  return buildNode(null);
-}
-
 // Recursive component for rendering module tree
 function ModuleNode({
   node,
   depth,
   onLessonClick,
+  expandedIds,
+  onToggle,
 }: {
-  node: ModuleTreeNode;
+  node: ModuleTreeNodeWithData<LessonWithProgress>;
   depth: number;
   onLessonClick: (lesson: LessonWithProgress) => void;
+  expandedIds: Set<string>;
+  onToggle: (id: string) => void;
 }) {
-  const hasContent = node.children.length > 0 || node.lessons.length > 0;
-  const [isOpen, setIsOpen] = useState(depth === 0); // Root modules open by default
+  const hasContent = node.children.length > 0 || node.items.length > 0;
+  const isOpen = expandedIds.has(node.module.id);
 
-  const totalStudents = node.lessons.reduce((s, l) => s + l.studentCount, 0);
-  const totalCompleted = node.lessons.reduce((s, l) => s + l.completedCount, 0);
+  const totalStudents = node.items.reduce((s, l) => s + l.studentCount, 0);
+  const totalCompleted = node.items.reduce((s, l) => s + l.completedCount, 0);
 
   if (!hasContent) {
     return (
@@ -126,7 +73,7 @@ function ModuleNode({
   }
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+    <Collapsible open={isOpen} onOpenChange={() => onToggle(node.module.id)}>
       <CollapsibleTrigger asChild>
         <button
           className={cn(
@@ -165,10 +112,12 @@ function ModuleNode({
               node={child}
               depth={depth + 1}
               onLessonClick={onLessonClick}
+              expandedIds={expandedIds}
+              onToggle={onToggle}
             />
           ))}
           {/* Lessons */}
-          {node.lessons.map((lesson) => (
+          {node.items.map((lesson) => (
             <Card
               key={lesson.id}
               className="group hover:shadow-md transition-all cursor-pointer"
@@ -221,7 +170,24 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
     return (localStorage.getItem("training_progress_sort_mode") as SortMode) || "order";
   });
 
+  // Expanded state with localStorage persistence
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => loadExpandedIds(STORAGE_KEY));
+  const didAutoOpenRef = useRef(false);
+
   const moduleIds = modules.map((m) => m.id);
+
+  // Filter stale IDs
+  useEffect(() => {
+    const validIds = new Set(moduleIds);
+    setExpandedIds((prev) => {
+      const filtered = filterExpandedIds(prev, validIds);
+      if (filtered.size !== prev.size) {
+        const arr = Array.from(filtered).slice(0, 500);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+      }
+      return filtered;
+    });
+  }, [moduleIds.join(",")]);
 
   const { data: allLessons, isLoading } = useQuery({
     queryKey: ["all-lessons-progress", moduleIds],
@@ -293,8 +259,27 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
 
   const tree = useMemo(() => {
     if (!allLessons) return [];
-    return buildTree(modules, allLessons, sortMode);
+    return buildModuleTree<LessonWithProgress>(
+      modules,
+      allLessons,
+      sortMode,
+      sortItems as any,
+    );
   }, [modules, allLessons, sortMode]);
+
+  // Auto-open single root (once per component mount)
+  useEffect(() => {
+    if (!didAutoOpenRef.current && expandedIds.size === 0 && tree.length === 1) {
+      didAutoOpenRef.current = true;
+      const rootId = tree[0].module.id;
+      setExpandedIds(new Set([rootId]));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([rootId]));
+    }
+  }, [tree]);
+
+  const handleToggle = useCallback((id: string) => {
+    setExpandedIds((prev) => toggleExpandedId(prev, id, STORAGE_KEY));
+  }, []);
 
   const handleSortToggle = () => {
     const next = sortMode === "order" ? "alpha" : "order";
@@ -366,6 +351,8 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
             node={node}
             depth={0}
             onLessonClick={handleLessonClick}
+            expandedIds={expandedIds}
+            onToggle={handleToggle}
           />
         ))}
       </div>
