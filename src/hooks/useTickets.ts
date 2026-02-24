@@ -250,7 +250,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
         () => {
           const key = ["ticket-messages", ticketId, isAdmin];
           queryClient.invalidateQueries({ queryKey: key });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .on(
@@ -264,7 +264,7 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
         () => {
           const key = ["ticket-messages", ticketId, isAdmin];
           queryClient.invalidateQueries({ queryKey: key });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .subscribe();
@@ -310,7 +310,7 @@ export function useUnreadTicketsCount() {
         () => {
           const key = ["unread-tickets-count", user.id];
           queryClient.invalidateQueries({ queryKey: key });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .on(
@@ -319,7 +319,7 @@ export function useUnreadTicketsCount() {
         () => {
           const key = ["unread-tickets-count", user.id];
           queryClient.invalidateQueries({ queryKey: key });
-          queryClient.refetchQueries({ queryKey: key, exact: true });
+          queryClient.refetchQueries({ queryKey: key, exact: true, type: "active" });
         }
       )
       .subscribe();
