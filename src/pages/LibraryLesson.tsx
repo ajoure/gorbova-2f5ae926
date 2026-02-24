@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
+import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -32,6 +33,7 @@ import {
   ListVideo,
   Play,
   CalendarClock,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -54,12 +56,12 @@ const menuSectionMap: Record<string, { path: string; label: string }> = {
   'knowledge-webinars': { path: '/knowledge', label: 'База знаний' },
   'products-library': { path: '/products?tab=library', label: 'Моя библиотека' },
   'products': { path: '/products', label: 'Продукты' },
-  'trainings': { path: '/library', label: 'Тренинги' },
-  'courses': { path: '/library', label: 'Курсы' },
+  'trainings': { path: '/knowledge', label: 'Тренинги' },
+  'courses': { path: '/knowledge', label: 'Курсы' },
 };
 
 const getMenuSectionPath = (key: string | null): string => 
-  menuSectionMap[key || 'products-library']?.path || '/library';
+  menuSectionMap[key || 'products-library']?.path || '/knowledge';
 
 const getMenuSectionLabel = (key: string | null): string => 
   menuSectionMap[key || 'products-library']?.label || 'База знаний';
@@ -159,6 +161,11 @@ export default function LibraryLesson() {
 
   const { lessons, loading: lessonsLoading, markCompleted, markIncomplete } = useTrainingLessons(module?.id);
 
+  // Access check via useTrainingModules
+  const { modules: allModules, loading: modulesLoading } = useTrainingModules();
+  const moduleWithAccess = allModules.find(m => m.slug === moduleSlug);
+  const hasAccess = moduleWithAccess?.has_access ?? true;
+
   // Find current lesson
   const currentLesson = lessons.find(l => l.slug === lessonSlug);
   const currentIndex = lessons.findIndex(l => l.slug === lessonSlug);
@@ -235,6 +242,35 @@ export default function LibraryLesson() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Назад
           </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // P4b: Access check — show lock if no access, "empty" if content not added
+  const showAccessDenied = !blocksLoading && blocks.length === 0 && !hasAccess && !modulesLoading && !isAdminMode;
+  const showEmptyContent = !blocksLoading && blocks.length === 0 && hasAccess && !currentLesson.video_url && !currentLesson.audio_url && !currentLesson.content;
+
+  if (showAccessDenied) {
+    return (
+      <DashboardLayout>
+        <div className="container mx-auto px-4 py-12 text-center max-w-md">
+          <div className="rounded-full bg-primary/10 p-6 w-24 h-24 mx-auto mb-6 flex items-center justify-center">
+            <Lock className="h-12 w-12 text-primary" />
+          </div>
+          <h1 className="text-2xl font-bold mb-3">Нет доступа к уроку</h1>
+          <p className="text-muted-foreground mb-6">
+            Контент доступен участникам клуба. Оформите подписку, чтобы получить доступ к этим материалам.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Назад
+            </Button>
+            <Button onClick={() => window.location.href = 'https://club.gorbova.by'}>
+              Узнать о Клубе
+            </Button>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -406,6 +442,19 @@ export default function LibraryLesson() {
                         className="prose prose-sm max-w-none dark:prose-invert"
                         dangerouslySetInnerHTML={{ __html: currentLesson.content }}
                       />
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Empty content fallback */}
+                {showEmptyContent && (
+                  <Card className="mb-6 text-center py-12">
+                    <CardContent>
+                      <BookOpen className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">Контент ещё не добавлен</h3>
+                      <p className="text-muted-foreground text-sm">
+                        Материалы скоро появятся
+                      </p>
                     </CardContent>
                   </Card>
                 )}

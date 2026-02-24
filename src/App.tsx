@@ -50,7 +50,7 @@ const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"))
 const Learning = lazy(() => import("./pages/Learning"));
 const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
-const Library = lazy(() => import("./pages/Library"));
+
 const LibraryModule = lazy(() => import("./pages/LibraryModule"));
 const LibraryLesson = lazy(() => import("./pages/LibraryLesson"));
 const Support = lazy(() => import("./pages/Support"));
@@ -187,7 +187,7 @@ const App = () => {
               <Route path="/support" element={<ProtectedRoute><LazyRoute><Support /></LazyRoute></ProtectedRoute>} />
               <Route path="/support/:ticketId" element={<ProtectedRoute><LazyRoute><SupportTicket /></LazyRoute></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><LazyRoute><Documentation /></LazyRoute></ProtectedRoute>} />
-              <Route path="/library" element={<ProtectedRoute><LazyRoute><Library /></LazyRoute></ProtectedRoute>} />
+              <Route path="/library" element={<Navigate to="/knowledge" replace />} />
               <Route path="/library/buh-business" element={<ProtectedRoute><LazyRoute><BusinessTrainingContent /></LazyRoute></ProtectedRoute>} />
               <Route path="/library/:moduleSlug" element={<ProtectedRoute><LazyRoute><LibraryModule /></LazyRoute></ProtectedRoute>} />
               <Route path="/library/:moduleSlug/:lessonSlug" element={<ProtectedRoute><LazyRoute><LibraryLesson /></LazyRoute></ProtectedRoute>} />
