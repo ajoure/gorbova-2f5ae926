@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
         const webhookUrl = `${supabaseUrl}/functions/v1/telegram-webhook?bot_id=${bot_id}`;
         const result = await telegramRequest(botToken, 'setWebhook', {
           url: webhookUrl,
-          allowed_updates: ['message', 'my_chat_member', 'callback_query'],
+          allowed_updates: ['message', 'message_reaction', 'message_reaction_count', 'my_chat_member', 'callback_query'],
         });
 
         // Log admin action
@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
         // Idempotent: check current webhook info first
         const webhookInfo = await telegramRequest(botToken, 'getWebhookInfo', {});
         const currentUpdates: string[] = webhookInfo.result?.allowed_updates || [];
-        const requiredUpdates = ['message', 'chat_member', 'my_chat_member', 'chat_join_request', 'callback_query'];
+        const requiredUpdates = ['message', 'message_reaction', 'message_reaction_count', 'chat_member', 'my_chat_member', 'chat_join_request', 'callback_query'];
         const missingUpdates = requiredUpdates.filter(u => !currentUpdates.includes(u));
 
         if (missingUpdates.length === 0) {

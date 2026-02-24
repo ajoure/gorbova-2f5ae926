@@ -1310,8 +1310,21 @@ Deno.serve(async (req) => {
             const added = newEmojis.filter(e => !oldEmojis.includes(e));
             const removed = oldEmojis.filter(e => !newEmojis.includes(e));
 
-            // Find profile user_id for this telegram user
-            const reactorUserId = dbMsg.user_id;
+            // Find profile user_id for the actual reactor (not message author)
+            const { data: reactorProfile } = await supabase
+              .from('profiles')
+              .select('user_id')
+              .eq('telegram_user_id', telegramUserId)
+              .maybeSingle();
+
+            if (!reactorProfile) {
+              console.log(`[REACTION] unmapped_reactor: tg_user=${telegramUserId}, skipping`);
+              return new Response(JSON.stringify({ ok: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const reactorUserId = reactorProfile.user_id;
 
             // Remove reactions
             for (const emoji of removed) {

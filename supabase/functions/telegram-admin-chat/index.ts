@@ -1850,11 +1850,31 @@ Deno.serve(async (req) => {
       // SYNC TELEGRAM REACTION (Admin → Telegram, contact center messages)
       // ==========================================
       case "sync_telegram_reaction": {
+        const TELEGRAM_REACTION_EMOJI = new Set([
+          '👍','👎','❤️','🔥','🥰','👏','😁','🤔','🤯','😱',
+          '🤬','😢','🎉','🤩','🤮','💩','🙏','👌','🕊','🤡',
+          '🥱','🥴','😍','🐳','❤️‍🔥','🌚','🌭','💯','🤣','⚡',
+          '🍌','🏆','💔','🤨','😐','🍓','🍾','💋','🖕','😈',
+          '😴','😭','🤓','👻','👨‍💻','👀','🎃','🙈','😇','😨',
+          '🤝','✍️','🤗','🫡','🎅','🎄','☃️','💅','🤪','🗿',
+          '🆒','💘','🙉','🦄','😘','💊','🙊','😎','👾','🤷‍♂️',
+          '🤷','🤷‍♀️','😡',
+        ]);
+        const MAX_REACTIONS_PER_MESSAGE = 8;
+
         const { telegram_message_db_id, emoji, remove: removeReaction } = payload;
 
         if (!telegram_message_db_id || !emoji) {
           return new Response(JSON.stringify({ ok: false, reason: "telegram_message_db_id and emoji required" }), {
             status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Validate emoji against Telegram whitelist
+        if (!TELEGRAM_REACTION_EMOJI.has(emoji)) {
+          console.log(`[sync_telegram_reaction] emoji_not_supported: ${emoji}`);
+          return new Response(JSON.stringify({ ok: false, reason: "emoji_not_supported" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -1887,7 +1907,6 @@ Deno.serve(async (req) => {
           syncBotToken = bot?.bot_token_encrypted ?? null;
         }
         if (!syncBotToken) {
-          // Fallback: profile's linked bot
           const { data: prof } = await supabase
             .from("profiles")
             .select("telegram_link_bot_id")
@@ -1919,30 +1938,62 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Call Telegram setMessageReaction
+        // Build cumulative reaction list from DB (source of truth)
+        const { data: allReactions, error: rErr } = await supabase
+          .from('telegram_message_reactions')
+          .select('emoji')
+          .eq('message_id', telegram_message_db_id);
+
+        if (rErr) {
+          console.error('[sync_telegram_reaction] DB read error:', rErr);
+          return new Response(JSON.stringify({ ok: false, reason: 'db_read_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const uniqueEmojis = [...new Set((allReactions || []).map(r => r.emoji))]
+          .filter(e => TELEGRAM_REACTION_EMOJI.has(e))
+          .sort(); // deterministic order
+
+        const finalEmojis = uniqueEmojis.slice(0, MAX_REACTIONS_PER_MESSAGE);
+
+        console.log(
+          `[sync_telegram_reaction] tg_msg_id=${tgMsg.message_id} chat_id=${chatIdForReaction} ` +
+          `clicked=${emoji} remove=${!!removeReaction} final=${JSON.stringify(finalEmojis)}`
+        );
+
+        // If no valid reactions remain, send empty array to clear
         const syncReactionPayload = {
           chat_id: chatIdForReaction,
           message_id: tgMsg.message_id,
-          reaction: removeReaction ? [] : [{ type: "emoji", emoji }],
+          reaction: finalEmojis.map(e => ({ type: 'emoji', emoji: e })),
         };
 
         try {
           const syncResult = await telegramRequest(syncBotToken, "setMessageReaction", syncReactionPayload);
 
           if (!syncResult.ok) {
-            console.error("[sync_telegram_reaction] Telegram error:", syncResult.description);
-            return new Response(JSON.stringify({ ok: false, reason: syncResult.description || "telegram_error" }), {
+            const isInvalid = (syncResult.description || '').includes('REACTION_INVALID');
+            console.error(
+              `[sync_telegram_reaction] Telegram error: ${syncResult.description} ` +
+              `error_code=${syncResult.error_code} final=${JSON.stringify(finalEmojis)}`
+            );
+            return new Response(JSON.stringify({
+              ok: false,
+              reason: isInvalid ? 'reaction_invalid' : (syncResult.description || 'telegram_error'),
+            }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
           }
 
-          console.log("[sync_telegram_reaction] OK, msg_id:", tgMsg.message_id, "emoji:", emoji, "remove:", !!removeReaction);
-          return new Response(JSON.stringify({ ok: true }), {
+          console.log(`[sync_telegram_reaction] OK, msg_id=${tgMsg.message_id} final=${JSON.stringify(finalEmojis)}`);
+          return new Response(JSON.stringify({ ok: true, finalEmojis }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } catch (syncErr) {
           console.error("[sync_telegram_reaction] Error:", syncErr);
-          return new Response(JSON.stringify({ ok: false, reason: "not_supported" }), {
+          return new Response(JSON.stringify({ ok: false, reason: "sync_error" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
