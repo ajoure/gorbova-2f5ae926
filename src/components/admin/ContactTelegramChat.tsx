@@ -981,6 +981,8 @@ export function ContactTelegramChat({
       );
     }
 
+    const msgReactions = telegramReactionsMap?.[msg.id] || [];
+
     return (
       <div
         key={msg.id}
@@ -1137,29 +1139,25 @@ export function ContactTelegramChat({
             </div>
 
             {/* Reactions display */}
-            {(() => {
-              const reactions = telegramReactionsMap?.[msg.id] || [];
-              if (!reactions.length) return null;
-              return (
-                <div className={cn("flex flex-wrap gap-1 mt-1", msg.direction === "outgoing" && "justify-end")}>
-                  {reactions.map((r) => (
-                    <button
-                      key={r.emoji}
-                      onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji: r.emoji })}
-                      className={cn(
-                        "inline-flex items-center gap-1 h-6 px-1.5 rounded-full text-xs border transition-colors",
-                        r.userReacted
-                          ? "bg-primary/10 border-primary/30 text-primary"
-                          : "bg-muted border-border hover:bg-accent"
-                      )}
-                    >
-                      <span>{r.emoji}</span>
-                      <span className="font-medium">{r.count}</span>
-                    </button>
-                  ))}
-                </div>
-              );
-            })()}
+            {msgReactions.length > 0 && (
+              <div className={cn("flex flex-wrap gap-1 mt-1", msg.direction === "outgoing" && "justify-end")}>
+                {msgReactions.map((r) => (
+                  <button
+                    key={r.emoji}
+                    onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji: r.emoji })}
+                    className={cn(
+                      "inline-flex items-center gap-1 h-6 px-1.5 rounded-full text-xs border transition-colors",
+                      r.userReacted
+                        ? "bg-primary/10 border-primary/30 text-primary"
+                        : "bg-muted border-border hover:bg-accent"
+                    )}
+                  >
+                    <span>{r.emoji}</span>
+                    <span className="font-medium">{r.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

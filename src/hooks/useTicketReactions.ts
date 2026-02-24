@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -17,15 +17,23 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  // Stable key: deduplicate, sort, join as CSV string
+  const stableIdsCsv = useMemo(() => {
+    const unique = [...new Set(messageIds.filter(Boolean))].sort();
+    return unique.join(",");
+  }, [messageIds]);
+
+  const stableIds = useMemo(() => (stableIdsCsv ? stableIdsCsv.split(",") : []), [stableIdsCsv]);
+
   const query = useQuery({
-    queryKey: ["ticket-reactions", ticketId, messageIds],
+    queryKey: ["ticket-reactions", stableIdsCsv],
     queryFn: async () => {
-      if (!messageIds.length) return {} as MessageReactions;
+      if (!stableIds.length) return {} as MessageReactions;
 
       const { data, error } = await supabase
         .from("ticket_message_reactions")
         .select("message_id, emoji, user_id")
-        .in("message_id", messageIds);
+        .in("message_id", stableIds);
 
       if (error) throw error;
 
@@ -47,7 +55,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
       }
       return result;
     },
-    enabled: messageIds.length > 0,
+    enabled: stableIds.length > 0,
   });
 
   // Realtime subscription scoped to ticketId
@@ -58,9 +66,18 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
       .channel(`ticket-reactions-rt-${ticketId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "ticket_message_reactions" },
+        { event: "INSERT", schema: "public", table: "ticket_message_reactions" },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] });
+          queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
+          query.refetch();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "ticket_message_reactions" },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
+          query.refetch();
         }
       )
       .subscribe();
@@ -68,7 +85,7 @@ export function useTicketReactions(ticketId: string, messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ticketId, queryClient]);
+  }, [ticketId, queryClient, query]);
 
   return query;
 }
