@@ -53,18 +53,27 @@ export interface ModuleTreeSelectorProps {
 // ────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────
-function buildTree(
-  nodes: FlatModule[],
-  parentId: string | null = null,
-  depth = 0
-): ModuleTreeNode[] {
+function buildTree(nodes: FlatModule[]): ModuleTreeNode[] {
+  const allIds = new Set(nodes.map((n) => n.id));
+
+  const buildChildren = (parentId: string, depth: number): ModuleTreeNode[] =>
+    nodes
+      .filter((n) => n.parent_module_id === parentId)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map((n) => ({
+        ...n,
+        depth,
+        children: buildChildren(n.id, depth + 1),
+      }));
+
+  // Root = parent is null OR parent is outside the fetched set (orphan-aware)
   return nodes
-    .filter((n) => n.parent_module_id === parentId)
+    .filter((n) => !n.parent_module_id || !allIds.has(n.parent_module_id))
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     .map((n) => ({
       ...n,
-      depth,
-      children: buildTree(nodes, n.id, depth + 1),
+      depth: 0,
+      children: buildChildren(n.id, 1),
     }));
 }
 
