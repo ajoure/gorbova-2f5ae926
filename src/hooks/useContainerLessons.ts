@@ -37,11 +37,22 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         .eq("is_container", true);
 
       if (containerError) throw containerError;
-      if (!containers?.length) return { containers: [], lessons: [], accessByContainer: {}, tariffNames: {} };
+      if (!containers?.length) return { containers: [], childModules: [], lessons: [], accessByContainer: {}, tariffNames: {} };
 
       const containerIds = containers.map((c) => c.id);
 
-      // 2. Get lessons from container modules
+      // 1b. Get child modules of containers (non-container children only)
+      const { data: childModules } = await supabase
+        .from("training_modules")
+        .select("id, slug, menu_section_key, parent_module_id")
+        .in("parent_module_id", containerIds)
+        .eq("is_active", true)
+        .eq("is_container", false);
+
+      const childModuleIds = childModules?.map((c) => c.id) || [];
+      const allModuleIds = [...containerIds, ...childModuleIds];
+
+      // 2. Get lessons from container modules AND their children
       const { data: lessons, error: lessonError } = await supabase
         .from("training_lessons")
         .select(`
@@ -56,7 +67,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           sort_order,
           module_id
         `)
-        .in("module_id", containerIds)
+        .in("module_id", allModuleIds)
         .eq("is_active", true)
         .order("sort_order", { ascending: false })
         .order("published_at", { ascending: false, nullsFirst: false })
@@ -64,11 +75,11 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
 
       if (lessonError) throw lessonError;
 
-      // 3. Get module_access for container modules with tariff names
+      // 3. Get module_access for containers AND children with tariff names
       const { data: containerAccess } = await supabase
         .from("module_access")
         .select("module_id, tariff_id, tariffs(name)")
-        .in("module_id", containerIds);
+        .in("module_id", allModuleIds);
 
       const accessByContainer: Record<string, string[]> = {};
       const tariffNames: Record<string, string> = {};
@@ -96,7 +107,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         userTariffIds = subs?.map((s) => s.tariff_id).filter(Boolean) || [];
       }
 
-      return { containers, lessons: lessons || [], accessByContainer, tariffNames, userTariffIds };
+      return { containers, childModules: childModules || [], lessons: lessons || [], accessByContainer, tariffNames, userTariffIds };
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -110,6 +121,17 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     const containerMap = new Map<string, { slug: string; sectionKey: string }>();
     for (const c of data.containers) {
       containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key });
+    }
+
+    // Map child modules: use own menu_section_key, fallback to parent's
+    if (data.childModules) {
+      for (const child of data.childModules) {
+        const parent = containerMap.get(child.parent_module_id);
+        containerMap.set(child.id, {
+          slug: child.slug || parent?.slug || '',
+          sectionKey: child.menu_section_key || parent?.sectionKey || '',
+        });
+      }
     }
 
     const accessByContainer = data.accessByContainer || {};
@@ -137,14 +159,22 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       }
 
       // Access check: admin OR no restrictions OR user has required tariff
-      const containerTariffs = accessByContainer[lesson.module_id] || [];
+      // Fallback: if child has no access entries, use parent container's access
+      let moduleTariffs = accessByContainer[lesson.module_id] || [];
+      if (moduleTariffs.length === 0) {
+        // Check if this is a child module — fallback to parent container access
+        const childMod = data.childModules?.find(c => c.id === lesson.module_id);
+        if (childMod) {
+          moduleTariffs = accessByContainer[childMod.parent_module_id] || [];
+        }
+      }
       const hasAccess = isAdminUser || 
-        containerTariffs.length === 0 || 
-        containerTariffs.some((tid: string) => userTariffIds.includes(tid));
+        moduleTariffs.length === 0 || 
+        moduleTariffs.some((tid: string) => userTariffIds.includes(tid));
 
       // Collect restricted tariff names for banner
-      if (!hasAccess && containerTariffs.length > 0) {
-        containerTariffs.forEach((tid: string) => {
+      if (!hasAccess && moduleTariffs.length > 0) {
+        moduleTariffs.forEach((tid: string) => {
           if (tariffNames[tid]) {
             restrictedTariffIds.add(tariffNames[tid]);
           }
