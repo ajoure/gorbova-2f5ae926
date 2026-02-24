@@ -1,48 +1,67 @@
 
-# Удаление тестовой записи и фильтрация webhook_replay из статистики
+# Кастомный аудиоплеер для студентов
 
 ## Проблема
 
-1. В `payment_reconcile_queue` есть тестовая запись от webhook replay (`source = 'webhook_replay'`, `bepaid_uid = 'test-replay-dod-1771853656930'`, amount=1 BYN, status=pending). Она создаёт "единичку" на бейдже платежей и попадает в выписку.
-2. Хук `useUnmappedProductsCount` не фильтрует записи с `source = 'webhook_replay'`, поэтому тестовые replay-записи считаются как "немаппированные продукты".
+Студентка Юлия Соваськова сообщает о двух проблемах с аудио в курсе "Бухгалтерия как бизнес":
+
+1. При паузе или блокировке телефона аудио сбрасывается на начало
+2. Ползунок стандартного плеера слишком маленький на мобильном
+
+Сейчас в студенческом виде (`AudioBlock`, строки 147-156) используется стандартный браузерный `<audio controls>`, который не сохраняет позицию и имеет мелкие элементы управления на мобильных.
 
 ## Решение
 
-### 1. Удалить тестовую запись из БД
+Создать кастомный компонент `CustomAudioPlayer` с:
+- Крупным ползунком прогресса (высота 12px вместо стандартных 4px, увеличенная зона касания)
+- Сохранением позиции воспроизведения в `localStorage` (ключ = URL аудио)
+- Восстановлением позиции при возврате на страницу или после блокировки телефона
+- Кнопкой play/pause, отображением текущего времени и длительности
+- Скоростью воспроизведения (1x, 1.25x, 1.5x, 2x)
 
-Удалить конкретную запись (UUID `98dfe8e8-df33-4cf2-93c3-80a145eff959`) из `payment_reconcile_queue`.
+### Логика сохранения позиции
 
-### 2. Исключить webhook_replay из счётчика немаппированных
-
-**Файл: `src/hooks/useUnmappedProductsCount.tsx`**
-
-Добавить фильтр `.not('source', 'eq', 'webhook_replay')` в запрос к `payment_reconcile_queue`, чтобы тестовые replay-записи не влияли на бейдж.
-
-```
-// Было:
-.in("status", ["pending", "processing"]);
-
-// Станет:
-.in("status", ["pending", "processing"])
-.not('source', 'eq', 'webhook_replay');
-```
-
-### 3. Исключить webhook_replay из выписки BePaid
-
-**Файл: `src/hooks/useBepaidStatement.ts`** (или где формируется запрос для выписки)
-
-Добавить аналогичный фильтр, чтобы replay-записи не попадали в таблицу выписки и статистику.
+- Каждые 2 секунды при воспроизведении записывать `currentTime` в `localStorage`
+- Ключ: `audio-pos-{md5(url)}` (или просто хэш URL)
+- При монтировании компонента -- восстановить позицию из `localStorage`
+- При достижении конца трека -- удалить запись из `localStorage`
 
 ## Затронутые файлы
 
 | Файл | Действие |
 |---|---|
-| БД (data delete) | Удалить 1 запись из `payment_reconcile_queue` |
-| `src/hooks/useUnmappedProductsCount.tsx` | Добавить фильтр `.not('source', 'eq', 'webhook_replay')` |
-| `src/hooks/useBepaidStatement.ts` | Добавить фильтр исключения webhook_replay (если данные оттуда) |
+| `src/components/ui/CustomAudioPlayer.tsx` | Новый компонент -- кастомный аудиоплеер |
+| `src/components/admin/lesson-editor/blocks/AudioBlock.tsx` | Заменить `<audio controls>` в студенческом виде (строки 147-156) на `<CustomAudioPlayer>` |
+
+## Техническая реализация
+
+### Новый файл: `src/components/ui/CustomAudioPlayer.tsx`
+
+Компонент принимает `src: string` и рендерит:
+- Скрытый `<audio>` элемент (ref)
+- Кнопка Play/Pause (крупная, 44x44px -- удобно для касания)
+- Slider прогресса (используем существующий `@radix-ui/react-slider` из проекта, увеличенный стилями)
+- Текст времени: `01:23 / 05:47`
+- Кнопка скорости: `1x` -> `1.25x` -> `1.5x` -> `2x`
+- Сохранение/восстановление позиции через `localStorage`
+
+### Изменение в `AudioBlock.tsx` (студенческий вид)
+
+```tsx
+// Было (строки 147-156):
+<audio controls controlsList="nodownload" ...>
+  <source src={content.url} />
+</audio>
+
+// Станет:
+<CustomAudioPlayer src={content.url} onError={() => setAudioError(true)} />
+```
+
+Редакторский превью-плеер (строки 268-274) остаётся без изменений -- там стандартный `<audio>` достаточен.
 
 ## Что НЕ трогаем
 
-- Edge function `admin-bepaid-webhook-replay` -- без изменений
-- Таблица `webhook_events` -- без изменений
-- Остальные хуки и компоненты платежей -- без изменений
+- Редакторский вид AudioBlock (превью в админке) -- без изменений
+- Компонент `Slider` (`src/components/ui/slider.tsx`) -- без изменений, используем as-is
+- Видеоплеер в `QuestLesson.tsx` -- без изменений
+- VoiceRecorder / TicketChat аудио -- без изменений
