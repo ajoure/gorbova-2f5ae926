@@ -185,10 +185,93 @@ export function ContentSectionSelector({
 
       if (error) throw error;
 
+      // Auto-create child module for Knowledge Base container tabs
+      if (parent.key === "knowledge" && key !== "knowledge-laws") {
+        try {
+          // Find the Knowledge Base container module
+          const { data: containerModule } = await supabase
+            .from("training_modules")
+            .select("id")
+            .eq("slug", "container-knowledge-videos")
+            .eq("is_container", true)
+            .maybeSingle();
+
+          if (containerModule) {
+            // Guard: check if module already exists for this tab
+            const { data: existingModule } = await supabase
+              .from("training_modules")
+              .select("id")
+              .eq("parent_module_id", containerModule.id)
+              .eq("menu_section_key", key)
+              .maybeSingle();
+
+            if (!existingModule) {
+              // Safe slug: check for collisions
+              let moduleSlug = key;
+              const { data: slugExists } = await supabase
+                .from("training_modules")
+                .select("id")
+                .eq("slug", moduleSlug)
+                .maybeSingle();
+              if (slugExists) {
+                moduleSlug = `${key}-${Date.now()}`;
+              }
+
+              // Get max sort_order among siblings
+              const { data: siblings } = await supabase
+                .from("training_modules")
+                .select("sort_order")
+                .eq("parent_module_id", containerModule.id);
+
+              const maxOrder = Math.max(0, ...(siblings?.map(s => s.sort_order ?? 0) || [0]));
+
+              // Create child module
+              const { data: newModule } = await supabase
+                .from("training_modules")
+                .insert({
+                  title: newSectionLabel.trim(),
+                  slug: moduleSlug,
+                  parent_module_id: containerModule.id,
+                  menu_section_key: key,
+                  icon: "Video",
+                  color_gradient: "from-purple-500 to-violet-500",
+                  sort_order: maxOrder + 1,
+                  is_active: true,
+                  is_container: false,
+                })
+                .select("id")
+                .single();
+
+              // Copy access from container
+              if (newModule) {
+                const { data: containerAccess } = await supabase
+                  .from("module_access")
+                  .select("tariff_id")
+                  .eq("module_id", containerModule.id);
+
+                if (containerAccess?.length) {
+                  await supabase.from("module_access").insert(
+                    containerAccess.map(a => ({
+                      module_id: newModule.id,
+                      tariff_id: a.tariff_id,
+                    }))
+                  );
+                }
+              }
+            }
+          }
+        } catch (autoErr) {
+          console.error("Auto-create module for knowledge tab failed:", autoErr);
+          // Non-blocking: tab was created, module creation is secondary
+        }
+      }
+
       // Invalidate queries
       queryClient.invalidateQueries({ queryKey: ["all-page-sections"] });
       queryClient.invalidateQueries({ queryKey: ["page-sections-tabs"] });
       queryClient.invalidateQueries({ queryKey: ["user-menu-sections"] });
+      queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
+      queryClient.invalidateQueries({ queryKey: ["container-lessons"] });
 
       toast.success(`Секция "${newSectionLabel}" создана`);
 
