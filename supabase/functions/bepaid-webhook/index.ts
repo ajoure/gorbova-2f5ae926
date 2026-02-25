@@ -2333,6 +2333,325 @@ Deno.serve(async (req) => {
     // End of PATCH-LINK handler
     // =====================================================================
 
+    // =====================================================================
+    // PATCH-LINK-LEGACY: Handle tracking_id format link:{UUID} (kind='link')
+    // For one-time payments created via create-payment-checkout with old format.
+    // Unlike link_order handler, does NOT require isSubscriptionWebhook.
+    // Supports transactionStatus: successful, settled, authorized → succeeded
+    // =====================================================================
+    if (tracking.kind === 'link' && parsedOrderId && transactionUid) {
+      const isLinkSuccessful = transactionStatus === 'successful' || transactionStatus === 'settled' || transactionStatus === 'authorized';
+      console.log('[WEBHOOK-LINK] Processing link:{uuid} webhook:', { parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful });
+
+      // 1. IDEMPOTENCY: Check payments_v2 by provider_payment_id
+      const { data: existingLinkPayment } = await supabase
+        .from('payments_v2')
+        .select('id')
+        .eq('provider_payment_id', transactionUid)
+        .eq('provider', 'bepaid')
+        .maybeSingle();
+
+      if (existingLinkPayment) {
+        console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'already_processed', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // 2. Find order in orders_v2
+      const { data: linkOrderV2 } = await supabase
+        .from('orders_v2')
+        .select('*')
+        .eq('id', parsedOrderId)
+        .maybeSingle();
+
+      if (!linkOrderV2) {
+        console.warn('[WEBHOOK-LINK] Order not found in orders_v2:', parsedOrderId);
+        try {
+          await supabase.from('payment_reconcile_queue')
+            .update({ status: 'pending_needs_mapping', last_error: 'link_order_not_found_in_orders_v2', processed_at: null })
+            .eq('bepaid_uid', transactionUid);
+        } catch (_) {}
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_label: 'bepaid-webhook',
+          action: 'payment_link.unmatched',
+          meta: { order_id: parsedOrderId, transaction_uid: transactionUid, tracking_id: rawTrackingId },
+        });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'link_order_not_found', http_status: 202,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'pending_needs_mapping', reason: 'order_not_found' }), {
+          status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // IDEMPOTENCY: order already paid
+      if (linkOrderV2.status === 'paid') {
+        console.log('[WEBHOOK-LINK] Order already paid (idempotency):', parsedOrderId);
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'already_processed', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: true, status: 'already_processed', reason: 'order_already_paid' }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Handle non-successful statuses
+      if (!isLinkSuccessful) {
+        console.log('[WEBHOOK-LINK] Non-successful status:', transactionStatus);
+        if (transactionStatus === 'failed' || transactionStatus === 'expired') {
+          await supabase.from('orders_v2').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', linkOrderV2.id);
+        }
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'skipped_not_successful', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: true, status: 'skipped', reason: 'not_successful' }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // STOP-GUARD: user_id must exist
+      if (!linkOrderV2.user_id) {
+        console.error('[WEBHOOK-LINK] STOP-GUARD: user_id is NULL:', parsedOrderId);
+        try {
+          await supabase.from('payment_reconcile_queue')
+            .update({ status: 'pending_needs_mapping', last_error: 'link_order_user_id_null', processed_at: null })
+            .eq('bepaid_uid', transactionUid);
+        } catch (_) {}
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_label: 'bepaid-webhook',
+          action: 'payment_link.stop_guard',
+          meta: { reason: 'user_id_null', order_id: parsedOrderId, transaction_uid: transactionUid },
+        });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'stop_guard_user_id_null', http_status: 202,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'pending_needs_mapping', reason: 'user_id_null' }), {
+          status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // STOP-GUARD: profile must exist
+      const { data: linkProfile } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, telegram_username')
+        .eq('user_id', linkOrderV2.user_id)
+        .maybeSingle();
+
+      if (!linkProfile) {
+        console.error('[WEBHOOK-LINK] STOP-GUARD: profile not found:', linkOrderV2.user_id);
+        try {
+          await supabase.from('payment_reconcile_queue')
+            .update({ status: 'pending_needs_mapping', last_error: 'link_profile_not_found', processed_at: null })
+            .eq('bepaid_uid', transactionUid);
+        } catch (_) {}
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_label: 'bepaid-webhook',
+          action: 'payment_link.stop_guard',
+          meta: { reason: 'profile_not_found', user_id: linkOrderV2.user_id, order_id: parsedOrderId, transaction_uid: transactionUid },
+        });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'stop_guard_profile_not_found', http_status: 202,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'pending_needs_mapping', reason: 'profile_not_found' }), {
+          status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // 3. Amount
+      const linkPaymentAmount = transaction?.amount ? transaction.amount / 100 : Number(linkOrderV2.final_price) || 0;
+      if (linkPaymentAmount <= 0) {
+        console.error('[WEBHOOK-LINK] Amount=0:', { tx_amount: transaction?.amount, order_final_price: linkOrderV2.final_price });
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'failed_amount_zero', http_status: 500,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'failed_amount_zero' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // 4. Create payments_v2
+      const linkPaymentPayload = {
+        order_id: linkOrderV2.id,
+        user_id: linkOrderV2.user_id,
+        profile_id: linkProfile.id,
+        amount: linkPaymentAmount,
+        currency: transaction?.currency || 'BYN',
+        status: 'succeeded',
+        provider: 'bepaid',
+        provider_payment_id: transactionUid,
+        card_brand: transaction?.credit_card?.brand || null,
+        card_last4: transaction?.credit_card?.last_4 || null,
+        paid_at: transaction?.paid_at || new Date().toISOString(),
+        is_recurring: false,
+        origin: 'payment_link',
+        provider_response: { transaction_uid: transactionUid, status: transactionStatus, amount: transaction?.amount, currency: transaction?.currency, paid_at: transaction?.paid_at },
+        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId },
+        receipt_url: transaction?.receipt_url || null,
+      };
+
+      const { error: linkPayUpsertErr } = await supabase
+        .from('payments_v2')
+        .upsert(linkPaymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
+
+      if (linkPayUpsertErr) {
+        console.error('[WEBHOOK-LINK] payments_v2 upsert FAILED:', linkPayUpsertErr.message);
+        const { error: linkPayInsertErr } = await supabase.from('payments_v2').insert(linkPaymentPayload);
+        if (linkPayInsertErr) {
+          console.error('[WEBHOOK-LINK] payments_v2 fallback insert FAILED:', linkPayInsertErr.message);
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_label: 'bepaid-webhook',
+            action: 'bepaid.webhook.payments_v2_write_failed',
+            meta: { order_id: linkOrderV2.id, transaction_uid: transactionUid, error: linkPayInsertErr.message },
+          });
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+            tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+            outcome: 'failed_payments_v2_write', http_status: 500,
+            processing_ms: Date.now() - startTime, error_message: linkPayInsertErr.message,
+          });
+          return new Response(JSON.stringify({ ok: false, status: 'failed_payments_v2_write' }), {
+            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      console.log('[WEBHOOK-LINK] payments_v2 written OK');
+
+      // 5. Update orders_v2 → paid
+      const linkOrderMeta = (linkOrderV2.meta && typeof linkOrderV2.meta === 'object') ? linkOrderV2.meta : {};
+      await supabase.from('orders_v2').update({
+        status: 'paid',
+        paid_amount: linkPaymentAmount,
+        meta: { ...linkOrderMeta, bepaid_transaction_uid: transactionUid },
+        updated_at: new Date().toISOString(),
+      }).eq('id', linkOrderV2.id);
+      console.log('[WEBHOOK-LINK] Order updated to paid:', linkOrderV2.id);
+
+      // 6. Upsert card_profile_links (stamp) with conflict guard
+      const linkCardStamp = transaction?.credit_card?.stamp || null;
+      const linkCardLast4 = transaction?.credit_card?.last_4 || null;
+      const linkCardBrand = (transaction?.credit_card?.brand || '').toLowerCase().trim() || null;
+      if (linkCardStamp && linkProfile.id) {
+        const { data: existingStampLink } = await supabase
+          .from('card_profile_links')
+          .select('profile_id')
+          .eq('provider', 'bepaid')
+          .eq('provider_token', linkCardStamp)
+          .maybeSingle();
+
+        if (existingStampLink && existingStampLink.profile_id !== linkProfile.id) {
+          console.warn('[WEBHOOK-LINK] Stamp conflict:', { existing: existingStampLink.profile_id, current: linkProfile.id });
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_label: 'bepaid-webhook',
+            action: 'card_stamp.conflict',
+            meta: { stamp: linkCardStamp, existing_profile_id: existingStampLink.profile_id, new_profile_id: linkProfile.id, transaction_uid: transactionUid },
+          });
+        } else {
+          await supabase.from('card_profile_links').upsert({
+            provider: 'bepaid', provider_token: linkCardStamp,
+            card_last4: linkCardLast4 || '', card_brand: linkCardBrand || '',
+            profile_id: linkProfile.id, source: 'webhook_link', linked_at: new Date().toISOString(),
+          }, { onConflict: 'provider,provider_token' });
+        }
+      }
+
+      // 7. Grant access
+      try {
+        const grantResp = await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+            body: JSON.stringify({ orderId: linkOrderV2.id }),
+          }
+        );
+        const grantResult = await grantResp.json();
+        console.log('[WEBHOOK-LINK] grant-access result:', grantResp.status, grantResult);
+        if (!grantResp.ok) {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_label: 'bepaid-webhook',
+            action: 'bepaid.webhook.grant_access_failed',
+            meta: { order_id: linkOrderV2.id, http_status: grantResp.status, error: grantResult?.error || grantResult, severity: 'CRITICAL' },
+          });
+        }
+      } catch (grantErr) {
+        console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
+      }
+
+      // 8. Admin notification
+      try {
+        await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+            body: JSON.stringify({
+              message: `💳 Оплата по ссылке\n\n👤 <b>Клиент:</b> ${linkProfile.full_name || 'Не указано'}\n📧 Email: ${maskEmail(linkProfile.email || linkOrderV2.customer_email)}\n\n💵 Сумма: ${linkPaymentAmount.toFixed(2)} BYN\n🆔 Заказ: ${linkOrderV2.order_number || 'N/A'}`,
+              source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
+            }),
+          }
+        );
+      } catch (notifyErr) {
+        console.error('[WEBHOOK-LINK] Notification error (non-fatal):', notifyErr);
+      }
+
+      // 9. Update payment_reconcile_queue → materialized
+      try {
+        await supabase.from('payment_reconcile_queue')
+          .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
+          .eq('bepaid_uid', transactionUid);
+      } catch (_) {}
+
+      // 10. Audit log
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'payment_link.materialized',
+        meta: {
+          order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
+          transaction_uid: transactionUid, profile_id: linkProfile.id,
+          amount: linkPaymentAmount, currency: transaction?.currency || 'BYN',
+          tracking_id: rawTrackingId,
+        },
+      });
+
+      await recordWebhookEvent(supabase, {
+        provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+        tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+        outcome: 'processed', http_status: 200,
+        processing_ms: Date.now() - startTime,
+      });
+      return new Response(JSON.stringify({ ok: true, status: 'processed', order_id: linkOrderV2.id }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // =====================================================================
+    // End of PATCH-LINK-LEGACY handler
+    // =====================================================================
+
     // ---------------------------------------------------------------------
     // V2 direct-charge support
     // In direct-charge we send tracking_id = payments_v2.id (UUID).
