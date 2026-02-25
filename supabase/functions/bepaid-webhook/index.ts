@@ -1824,27 +1824,105 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 1. IDEMPOTENCY CHECK by transaction UID
+      // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingPayment } = await supabase
         .from('payments_v2')
-        .select('id')
+        .select('id, order_id, origin')
         .eq('provider_payment_id', transactionUid)
         .eq('provider', 'bepaid')
         .maybeSingle();
 
       if (existingPayment) {
-        console.log('[WEBHOOK-LINK-ORDER] Already processed (idempotency):', transactionUid);
+        // True idempotency only if same order
+        if (existingPayment.order_id === parsedOrderId) {
+          console.log('[WEBHOOK-LINK-ORDER] Already processed (idempotency):', transactionUid);
+
+          // Best-effort: mark queue materialized (avoid stuck pending if previous run partially succeeded)
+          try {
+            await supabase
+              .from('payment_reconcile_queue')
+              .update({
+                status: 'materialized',
+                processed_at: new Date().toISOString(),
+                last_error: null,
+              })
+              .eq('bepaid_uid', transactionUid);
+          } catch (_) {}
+
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid',
+            event_type: 'payment_link',
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            parsed_kind: 'link_order',
+            parsed_order_id: parsedOrderId,
+            outcome: 'already_processed',
+            http_status: 200,
+            processing_ms: Date.now() - startTime,
+          });
+
+          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // CONFLICT: provider_payment_id exists but linked to different order_id
+        console.warn('[WEBHOOK-LINK-ORDER] CONFLICT provider_payment_id linked to other order:', {
+          transactionUid,
+          existing_order_id: existingPayment.order_id,
+          tracking_order_id: parsedOrderId,
+          origin: (existingPayment as any).origin,
+        });
+
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: 'payment_link.conflict_provider_payment_id',
+          meta: {
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            parsed_kind: 'link_order',
+            existing_payment_id: existingPayment.id,
+            existing_order_id: existingPayment.order_id,
+            tracking_order_id: parsedOrderId,
+            origin: (existingPayment as any).origin || null,
+          },
+        });
+
+        try {
+          await supabase
+            .from('payment_reconcile_queue')
+            .update({
+              status: 'pending_needs_mapping',
+              last_error: `conflict: provider_payment_id linked to order ${existingPayment.order_id}, tracking wants ${parsedOrderId}`,
+              processed_at: null,
+            })
+            .eq('bepaid_uid', transactionUid);
+        } catch (_) {}
+
         await recordWebhookEvent(supabase, {
-          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
-          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
-          outcome: 'already_processed', http_status: 200,
+          provider: 'bepaid',
+          event_type: 'payment_link',
+          transaction_uid: transactionUid,
+          tracking_id: rawTrackingId,
+          parsed_kind: 'link_order',
+          parsed_order_id: parsedOrderId,
+          outcome: 'conflict_provider_payment_id',
+          http_status: 202,
           processing_ms: Date.now() - startTime,
         });
-        return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            status: 'conflict',
+            reason: 'provider_payment_id_linked_to_different_order',
+            existing_order_id: existingPayment.order_id,
+            tracking_order_id: parsedOrderId,
+          }),
+          { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
 
       // Only process active/successful subscriptions
@@ -2343,25 +2421,105 @@ Deno.serve(async (req) => {
       const isLinkSuccessful = transactionStatus === 'successful' || transactionStatus === 'settled' || transactionStatus === 'authorized';
       console.log('[WEBHOOK-LINK] Processing link:{uuid} webhook:', { parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful });
 
-      // 1. IDEMPOTENCY: Check payments_v2 by provider_payment_id
+      // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingLinkPayment } = await supabase
         .from('payments_v2')
-        .select('id')
+        .select('id, order_id, origin')
         .eq('provider_payment_id', transactionUid)
         .eq('provider', 'bepaid')
         .maybeSingle();
 
       if (existingLinkPayment) {
-        console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
+        // True idempotency only if same order
+        if (existingLinkPayment.order_id === parsedOrderId) {
+          console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
+
+          // Best-effort: mark queue materialized
+          try {
+            await supabase
+              .from('payment_reconcile_queue')
+              .update({
+                status: 'materialized',
+                processed_at: new Date().toISOString(),
+                last_error: null,
+              })
+              .eq('bepaid_uid', transactionUid);
+          } catch (_) {}
+
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid',
+            event_type: 'payment_link',
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            parsed_kind: 'link',
+            parsed_order_id: parsedOrderId,
+            outcome: 'already_processed',
+            http_status: 200,
+            processing_ms: Date.now() - startTime,
+          });
+
+          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // CONFLICT: provider_payment_id exists but linked to different order_id
+        console.warn('[WEBHOOK-LINK] CONFLICT provider_payment_id linked to other order:', {
+          transactionUid,
+          existing_order_id: existingLinkPayment.order_id,
+          tracking_order_id: parsedOrderId,
+          origin: (existingLinkPayment as any).origin,
+        });
+
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: 'payment_link.conflict_provider_payment_id',
+          meta: {
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            parsed_kind: 'link',
+            existing_payment_id: existingLinkPayment.id,
+            existing_order_id: existingLinkPayment.order_id,
+            tracking_order_id: parsedOrderId,
+            origin: (existingLinkPayment as any).origin || null,
+          },
+        });
+
+        try {
+          await supabase
+            .from('payment_reconcile_queue')
+            .update({
+              status: 'pending_needs_mapping',
+              last_error: `conflict: provider_payment_id linked to order ${existingLinkPayment.order_id}, tracking wants ${parsedOrderId}`,
+              processed_at: null,
+            })
+            .eq('bepaid_uid', transactionUid);
+        } catch (_) {}
+
         await recordWebhookEvent(supabase, {
-          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
-          outcome: 'already_processed', http_status: 200,
+          provider: 'bepaid',
+          event_type: 'payment_link',
+          transaction_uid: transactionUid,
+          tracking_id: rawTrackingId,
+          parsed_kind: 'link',
+          parsed_order_id: parsedOrderId,
+          outcome: 'conflict_provider_payment_id',
+          http_status: 202,
           processing_ms: Date.now() - startTime,
         });
-        return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            status: 'conflict',
+            reason: 'provider_payment_id_linked_to_different_order',
+            existing_order_id: existingLinkPayment.order_id,
+            tracking_order_id: parsedOrderId,
+          }),
+          { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
 
       // 2. Find order in orders_v2
