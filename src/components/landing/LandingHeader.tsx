@@ -124,7 +124,7 @@ export function LandingHeader() {
           : "opacity-0 -translate-y-4"
       }`}
       style={{
-        top: isImpersonating ? "44px" : "0",
+        top: isImpersonating ? "var(--impersonation-bar-height, 0px)" : "0",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",

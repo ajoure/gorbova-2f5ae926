@@ -120,14 +120,13 @@ All colors MUST be HSL.
   }
 }
 
-/* Impersonation bar offset - when impersonation bar is visible, add padding to top */
-.impersonation-offset:has(+ .fixed[class*="z-[100]"]) {
-  padding-top: 44px;
+/* Impersonation bar: единый источник высоты через CSS-переменную */
+body.impersonation-active {
+  --impersonation-bar-height: calc(env(safe-area-inset-top, 0px) + 2.75rem);
 }
 
-/* Alternative approach using body class for wider browser support */
-body:has(.impersonation-active) .impersonation-offset {
-  padding-top: 44px;
+body.impersonation-active .impersonation-offset {
+  padding-top: var(--impersonation-bar-height, 0px);
 }
 
 /* Mobile utilities */
