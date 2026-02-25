@@ -116,7 +116,11 @@ export function ImpersonationBar() {
   }, [location]);
 
   const handleReturnToAdmin = async () => {
-    if (isReturning) return;
+    console.log('[ImpersonationBar] handleReturnToAdmin called');
+    if (isReturning) {
+      console.log('[ImpersonationBar] Already returning, skipping');
+      return;
+    }
     setIsReturning(true);
     
     try {
@@ -133,7 +137,7 @@ export function ImpersonationBar() {
       localStorage.removeItem(ADMIN_RETURN_URL_KEY);
       localStorage.removeItem(IMPERSONATION_START_KEY);
       localStorage.removeItem("admin_token");
-      localStorage.removeItem("admin_session"); // Also clear alternative key used in ContactDetailSheet
+      localStorage.removeItem("admin_session");
       
       setIsImpersonating(false);
       setImpersonatedEmail(null);
@@ -155,7 +159,7 @@ export function ImpersonationBar() {
             }
           }
         } catch (e) {
-          console.error("Error restoring admin session:", e);
+          console.error("[ImpersonationBar] Error restoring admin session:", e);
         }
       }
       
@@ -163,7 +167,7 @@ export function ImpersonationBar() {
       toast.info("Сессия истекла, войдите снова");
       navigate("/auth");
     } catch (error) {
-      console.error("Error returning from impersonation:", error);
+      console.error("[ImpersonationBar] Error returning from impersonation:", error);
       toast.error("Ошибка выхода из режима просмотра");
       setIsReturning(false);
     }
@@ -187,9 +191,12 @@ export function ImpersonationBar() {
 
   return (
     <>
-      {/* Spacer to push content down */}
-      <div className="h-11" />
-      <div className="fixed top-0 left-0 right-0 z-[100] bg-amber-500 text-amber-950 py-2 px-4 shadow-md">
+      {/* Spacer to push content down — accounts for iOS safe-area */}
+      <div style={{ height: 'calc(env(safe-area-inset-top, 0px) + 2.75rem)' }} />
+      <div
+        className="fixed top-0 left-0 right-0 z-[110] bg-amber-500 text-amber-950 pb-2 px-4 shadow-md"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}
+      >
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <User className="w-4 h-4" />
