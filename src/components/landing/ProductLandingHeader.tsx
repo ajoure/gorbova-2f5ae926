@@ -57,6 +57,7 @@ export function ProductLandingHeader({
       } ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
       style={{
         top: "var(--impersonation-bar-height, 0px)",
+        paddingTop: "env(safe-area-inset-top, 0px)",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",
@@ -112,13 +113,29 @@ export function ProductLandingHeader({
           )}
         </div>
 
-        {/* Mobile Menu Button */}
-        <button
-          className="md:hidden p-2 text-foreground"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
+        {/* Mobile: Auth + Menu */}
+        <div className="md:hidden flex items-center gap-2">
+          {!loading && (
+            user ? (
+              <Button size="sm" variant="outline" onClick={() => navigate("/dashboard")}>
+                Кабинет
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => {
+                const returnUrl = window.location.pathname + window.location.search;
+                navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
+              }}>
+                Войти
+              </Button>
+            )
+          )}
+          <button
+            className="h-11 w-11 flex items-center justify-center text-foreground"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Menu */}
