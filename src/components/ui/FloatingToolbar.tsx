@@ -6,6 +6,8 @@ import {
   Strikethrough,
   Palette,
   Type,
+  Link,
+  Unlink,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -62,7 +64,10 @@ export function FloatingToolbar() {
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [showColors, setShowColors] = useState(false);
   const [showSizes, setShowSizes] = useState(false);
+  const [showLinkInput, setShowLinkInput] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const savedRange = useRef<Range | null>(null);
   const hideTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const exec = useCallback((command: string, val?: string) => {
@@ -105,7 +110,7 @@ export function FloatingToolbar() {
       return;
     }
 
-    const toolbarWidth = 320;
+    const toolbarWidth = 380;
     const toolbarHeight = 40;
 
     let top = rect.top - toolbarHeight - 8;
@@ -151,6 +156,7 @@ export function FloatingToolbar() {
         updatePosition();
         setShowColors(false);
         setShowSizes(false);
+        setShowLinkInput(false);
       });
     };
     window.addEventListener("scroll", onScroll, true);
@@ -166,6 +172,7 @@ export function FloatingToolbar() {
       if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
         setShowColors(false);
         setShowSizes(false);
+        setShowLinkInput(false);
       }
     };
     if (visible) {
@@ -198,6 +205,87 @@ export function FloatingToolbar() {
       <ToolbarBtn onClick={() => exec("strikeThrough")} title="Зачёркнутый">
         <Strikethrough className="h-3.5 w-3.5" />
       </ToolbarBtn>
+
+      {/* Link */}
+      <div className="relative">
+        <ToolbarBtn
+          onClick={() => {
+            // Save selection before focus moves to input
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+              savedRange.current = sel.getRangeAt(0).cloneRange();
+            }
+            setShowLinkInput(!showLinkInput);
+            setShowColors(false);
+            setShowSizes(false);
+          }}
+          title="Ссылка"
+        >
+          <Link className="h-3.5 w-3.5" />
+        </ToolbarBtn>
+        {showLinkInput && (
+          <div className="absolute top-full left-0 mt-1 p-2 rounded-lg border bg-popover shadow-lg z-10 w-56">
+            <input
+              type="url"
+              placeholder="https://..."
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && linkUrl.trim()) {
+                  e.preventDefault();
+                  // Restore selection
+                  const sel = window.getSelection();
+                  if (sel && savedRange.current) {
+                    sel.removeAllRanges();
+                    sel.addRange(savedRange.current);
+                  }
+                  exec("createLink", linkUrl.trim());
+                  setLinkUrl("");
+                  setShowLinkInput(false);
+                }
+              }}
+              className="w-full px-2 py-1 text-xs rounded-md border border-input bg-background mb-1.5"
+            />
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (!linkUrl.trim()) return;
+                  const sel = window.getSelection();
+                  if (sel && savedRange.current) {
+                    sel.removeAllRanges();
+                    sel.addRange(savedRange.current);
+                  }
+                  exec("createLink", linkUrl.trim());
+                  setLinkUrl("");
+                  setShowLinkInput(false);
+                }}
+                className="flex-1 px-2 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Вставить
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const sel = window.getSelection();
+                  if (sel && savedRange.current) {
+                    sel.removeAllRanges();
+                    sel.addRange(savedRange.current);
+                  }
+                  exec("unlink");
+                  setShowLinkInput(false);
+                }}
+                className="px-2 py-1 text-xs rounded-md hover:bg-accent transition-colors"
+                title="Убрать ссылку"
+              >
+                <Unlink className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="w-px h-5 bg-border mx-0.5" />
 
