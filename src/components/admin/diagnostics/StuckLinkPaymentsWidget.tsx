@@ -56,7 +56,7 @@ export function StuckLinkPaymentsWidget() {
         .from("payment_reconcile_queue")
         .select("tracking_id, status, bepaid_uid, status_normalized, created_at")
         .like("tracking_id", "link:%")
-        .eq("status_normalized", "succeeded")
+        .in("status_normalized", ["successful", "succeeded"])
         .in("status", ["pending", "error", "pending_needs_mapping"])
         .order("created_at", { ascending: false })
         .limit(20);
@@ -64,33 +64,45 @@ export function StuckLinkPaymentsWidget() {
       if (error) throw error;
       if (!queueData || queueData.length === 0) return [];
 
-      const results: UnmaterializedOrder[] = [];
-      for (const q of queueData) {
-        const tid = (q as any).tracking_id || "";
+      // 1) Extract orderIds in one pass
+      const rows = (queueData as any[]).map((q) => {
+        const tid = (q.tracking_id || "") as string;
         let orderId: string | null = null;
-        if (tid.startsWith("link:order:")) {
-          orderId = tid.replace("link:order:", "");
-        } else if (tid.startsWith("link:")) {
-          orderId = tid.replace("link:", "");
-        }
+        if (tid.startsWith("link:order:")) orderId = tid.slice("link:order:".length);
+        else if (tid.startsWith("link:")) orderId = tid.slice("link:".length);
+        return { q, tid, orderId };
+      });
 
-        if (orderId) {
-          const { data: order } = await supabase
-            .from("orders_v2")
-            .select("id, status")
-            .eq("id", orderId)
-            .maybeSingle();
+      const orderIds = Array.from(
+        new Set(rows.map((r) => r.orderId).filter(Boolean))
+      ) as string[];
 
-          if (order && order.status !== "paid") {
-            results.push({
-              order_id: order.id,
-              order_status: order.status,
-              tracking_id: tid,
-              bepaid_uid: (q as any).bepaid_uid || "",
-              created_at: (q as any).created_at || "",
-            });
-          }
-        }
+      if (orderIds.length === 0) return [];
+
+      // 2) Batch fetch order statuses (1 query instead of N)
+      const { data: orders, error: ordersErr } = await supabase
+        .from("orders_v2")
+        .select("id, status")
+        .in("id", orderIds);
+
+      if (ordersErr) throw ordersErr;
+
+      const statusById = new Map<string, string>();
+      for (const o of (orders as any[]) || []) statusById.set(o.id, o.status);
+
+      // 3) Build result without extra queries
+      const results: UnmaterializedOrder[] = [];
+      for (const r of rows) {
+        if (!r.orderId) continue;
+        const st = statusById.get(r.orderId);
+        if (!st || st === "paid") continue;
+        results.push({
+          order_id: r.orderId,
+          order_status: st,
+          tracking_id: r.tid,
+          bepaid_uid: (r.q as any).bepaid_uid || "",
+          created_at: (r.q as any).created_at || "",
+        });
       }
 
       return results;
