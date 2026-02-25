@@ -132,7 +132,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       return { success: false, error: 'Failed to create order' };
     }
 
-    const trackingId = `link:${order.id}`;
+    const trackingId = `link:order:${order.id}`;
     const returnUrl = `${effectiveOrigin}/purchases?order=${order.id}&status=success`;
 
     const checkoutPayload = {
