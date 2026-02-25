@@ -27,18 +27,6 @@ export function ProductLandingHeader({
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-  const [isImpersonating, setIsImpersonating] = useState(false);
-
-  // Detect impersonation mode
-  useEffect(() => {
-    const checkImpersonation = () => {
-      setIsImpersonating(document.body.classList.contains("impersonation-active"));
-    };
-    checkImpersonation();
-    const observer = new MutationObserver(checkImpersonation);
-    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsVisible(true), 100);
@@ -68,7 +56,7 @@ export function ProductLandingHeader({
         isScrolled ? "py-3 border-b border-border/50" : "py-4"
       } ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
       style={{
-        top: isImpersonating ? "var(--impersonation-bar-height, 0px)" : "0",
+        top: "var(--impersonation-bar-height, 0px)",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",

@@ -192,7 +192,7 @@ export function ImpersonationBar() {
 
   return (
     <>
-      {/* Spacer removed: offset now handled via CSS var(--impersonation-bar-height) on .impersonation-offset */}
+      
       <div
         className="fixed top-0 left-0 right-0 z-[110] bg-amber-500 text-amber-950 pb-2 px-4 shadow-md"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}
