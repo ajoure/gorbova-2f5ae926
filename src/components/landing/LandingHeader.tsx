@@ -109,6 +109,7 @@ export function LandingHeader() {
       }`}
       style={{
         top: "var(--impersonation-bar-height, 0px)",
+        paddingTop: "env(safe-area-inset-top, 0px)",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",
@@ -173,13 +174,26 @@ export function LandingHeader() {
           )}
         </div>
 
-        {/* Mobile Menu Button */}
-        <button
-          className="md:hidden p-2 text-foreground"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
+        {/* Mobile: Auth + Menu */}
+        <div className="md:hidden flex items-center gap-2">
+          {!loading && (
+            user ? (
+              <Button size="sm" variant="outline" onClick={handleDashboardClick}>
+                Кабинет
+              </Button>
+            ) : (
+              <Button size="sm" onClick={handleLoginClick}>
+                Войти
+              </Button>
+            )
+          )}
+          <button
+            className="h-11 w-11 flex items-center justify-center text-foreground"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Menu */}
