@@ -9626,6 +9626,7 @@ export type Database = {
           updated_count: number
         }[]
       }
+      backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
         Args: {
           p_card_brand: string

@@ -167,6 +167,13 @@ async function sendToGetCourse(
 }
 
 // AmoCRM integration helpers
+
+interface AmoCRMCreds {
+  token: string;
+  subdomain: string;
+  source: 'integration_instances' | 'env';
+}
+
 function normalizeAmoCRMSubdomain(raw: string): string {
   const trimmed = raw.trim();
   const match = trimmed.match(/([a-z0-9-]+)\.amocrm\.(ru|com)/i);
@@ -180,27 +187,63 @@ function normalizeAmoCRMSubdomain(raw: string): string {
   return host.split('.')[0].toLowerCase();
 }
 
+/**
+ * Get amoCRM credentials from integration_instances (priority) or env (fallback).
+ * Returns null if neither is configured.
+ */
+async function getAmoCRMCreds(supabase: any): Promise<AmoCRMCreds | null> {
+  // Priority 1: integration_instances
+  try {
+    const { data: instance } = await supabase
+      .from('integration_instances')
+      .select('config, status')
+      .eq('provider', 'amocrm')
+      .in('status', ['active', 'connected'])
+      .maybeSingle();
+
+    if (instance?.config) {
+      const config = instance.config as Record<string, unknown>;
+      const token = (config.long_term_token || config.access_token) as string | undefined;
+      const subdomainRaw = config.subdomain as string | undefined;
+      const subdomain = subdomainRaw ? normalizeAmoCRMSubdomain(subdomainRaw) : null;
+
+      if (token && subdomain) {
+        console.log('[AmoCRM-Creds] Loaded from integration_instances, subdomain=' + subdomain);
+        return { token, subdomain, source: 'integration_instances' };
+      }
+    }
+  } catch (err) {
+    console.error('[AmoCRM-Creds] Error reading integration_instances:', err);
+  }
+
+  // Priority 2: env fallback
+  const envToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
+  const envSubdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN');
+  const envSubdomain = envSubdomainRaw ? normalizeAmoCRMSubdomain(envSubdomainRaw) : null;
+
+  if (envToken && envSubdomain) {
+    console.log('[AmoCRM-Creds] Loaded from env (fallback), subdomain=' + envSubdomain);
+    return { token: envToken, subdomain: envSubdomain, source: 'env' };
+  }
+
+  console.warn('[AmoCRM-Creds] No credentials found in integration_instances or env');
+  return null;
+}
+
 async function createAmoCRMContact(
+  supabase: any,
+  creds: AmoCRMCreds,
   name: string,
   email: string,
   phone?: string
 ): Promise<number | null> {
-  const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  const subdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN');
-  const subdomain = subdomainRaw ? normalizeAmoCRMSubdomain(subdomainRaw) : null;
-
-  if (!accessToken || !subdomain) {
-    console.log('AmoCRM not configured, skipping contact creation');
-    return null;
-  }
-
   try {
     // First search for existing contact
     const searchResponse = await fetch(
-      `https://${subdomain}.amocrm.ru/api/v4/contacts?query=${encodeURIComponent(email)}`,
+      `https://${creds.subdomain}.amocrm.ru/api/v4/contacts?query=${encodeURIComponent(email)}`,
       {
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${creds.token}`,
           'Content-Type': 'application/json',
         },
       }
@@ -209,13 +252,19 @@ async function createAmoCRMContact(
     if (searchResponse.ok) {
       const searchData = await searchResponse.json();
       if (searchData._embedded?.contacts?.length > 0) {
-        console.log('AmoCRM contact already exists:', searchData._embedded.contacts[0].id);
-        return searchData._embedded.contacts[0].id;
+        const existingId = searchData._embedded.contacts[0].id;
+        console.log('AmoCRM contact already exists:', existingId);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_label: 'bepaid-webhook',
+          action: 'amocrm.contact.found_existing',
+          meta: { contact_id: existingId, email, creds_source: creds.source },
+        });
+        return existingId;
       }
     }
 
     // Create new contact
-    const contact = {
+    const contact: any = {
       name: name || email.split('@')[0],
       custom_fields_values: [
         { field_id: 413855, values: [{ value: email }] }, // Email field
@@ -230,11 +279,11 @@ async function createAmoCRMContact(
     }
 
     const createResponse = await fetch(
-      `https://${subdomain}.amocrm.ru/api/v4/contacts`,
+      `https://${creds.subdomain}.amocrm.ru/api/v4/contacts`,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${creds.token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify([contact]),
@@ -245,32 +294,41 @@ async function createAmoCRMContact(
       const data = await createResponse.json();
       const contactId = data._embedded?.contacts?.[0]?.id;
       console.log('AmoCRM contact created:', contactId);
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'amocrm.contact.upsert.ok',
+        meta: { contact_id: contactId, email, creds_source: creds.source },
+      });
       return contactId;
     } else {
-      console.error('Failed to create AmoCRM contact:', await createResponse.text());
+      const errText = await createResponse.text();
+      console.error('Failed to create AmoCRM contact:', createResponse.status, errText.substring(0, 200));
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'amocrm.contact.upsert.error',
+        meta: { http_status: createResponse.status, error_short: errText.substring(0, 120), email, creds_source: creds.source },
+      });
     }
   } catch (error) {
     console.error('AmoCRM contact creation error:', error);
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system', actor_label: 'bepaid-webhook',
+      action: 'amocrm.contact.upsert.error',
+      meta: { error_short: String(error).substring(0, 120), email, creds_source: creds.source },
+    });
   }
 
   return null;
 }
 
 async function createAmoCRMDeal(
+  supabase: any,
+  creds: AmoCRMCreds,
   name: string,
   price: number,
   contactId?: number | null,
   meta?: Record<string, any>
 ): Promise<number | null> {
-  const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  const subdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN');
-  const subdomain = subdomainRaw ? normalizeAmoCRMSubdomain(subdomainRaw) : null;
-
-  if (!accessToken || !subdomain) {
-    console.log('AmoCRM not configured, skipping deal creation');
-    return null;
-  }
-
   try {
     const deal: any = {
       name,
@@ -284,11 +342,11 @@ async function createAmoCRMDeal(
     }
 
     const response = await fetch(
-      `https://${subdomain}.amocrm.ru/api/v4/leads`,
+      `https://${creds.subdomain}.amocrm.ru/api/v4/leads`,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${creds.token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify([deal]),
@@ -299,12 +357,28 @@ async function createAmoCRMDeal(
       const data = await response.json();
       const dealId = data._embedded?.leads?.[0]?.id;
       console.log('AmoCRM deal created:', dealId);
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'amocrm.deal.upsert.ok',
+        meta: { deal_id: dealId, contact_id: contactId, price, creds_source: creds.source },
+      });
       return dealId;
     } else {
-      console.error('Failed to create AmoCRM deal:', await response.text());
+      const errText = await response.text();
+      console.error('Failed to create AmoCRM deal:', response.status, errText.substring(0, 200));
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'amocrm.deal.upsert.error',
+        meta: { http_status: response.status, error_short: errText.substring(0, 120), contact_id: contactId, creds_source: creds.source },
+      });
     }
   } catch (error) {
     console.error('AmoCRM deal creation error:', error);
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system', actor_label: 'bepaid-webhook',
+      action: 'amocrm.deal.upsert.error',
+      meta: { error_short: String(error).substring(0, 120), contact_id: contactId, creds_source: creds.source },
+    });
   }
 
   return null;
@@ -3456,6 +3530,271 @@ ${userName}, к сожалению, не удалось провести опл�
       });
     }
 
+    // =====================================================================
+    // PATCH P-LEGACY-BEPAID.1: Handle successful payments WITHOUT tracking_id
+    // Matches by card.stamp / email → materialize in payments_v2 + amoCRM
+    // =====================================================================
+    if (!orderId && !subscriptionId && transactionStatus === 'successful' && transactionUid) {
+      console.log('[WEBHOOK-LEGACY] No tracking_id/subscriptionId, attempting legacy matching for uid=' + transactionUid);
+
+      // 1. Extract anchors
+      const cardStamp = transaction?.credit_card?.stamp || null;
+      const cardLast4 = transaction?.credit_card?.last_4 || null;
+      const cardBrand = (transaction?.credit_card?.brand || '').toLowerCase().trim() || null;
+      const cardHolder = transaction?.credit_card?.holder || null;
+      const customerEmail = (transaction?.customer?.email || body?.customer?.email || '')?.toLowerCase().trim() || null;
+      const customerPhone = transaction?.customer?.phone || body?.customer?.phone || null;
+      const receiptText = transaction?.receipt_text || transaction?.description || body?.description || null;
+
+      // 1b. Try to extract subscription UID from nested paths
+      const extractedSubUid = transaction?.subscription?.uid || transaction?.subscription?.id
+        || body?.subscription?.uid || body?.subscription?.id
+        || transaction?.additional_data?.subscription_id || null;
+
+      // 2. Amount: always /100 (bePaid sends in kopecks)
+      const legacyAmount = transaction?.amount ? transaction.amount / 100 : 0;
+      const legacyCurrency = transaction?.currency || 'BYN';
+
+      // 3. Match profile
+      let profileId: string | null = null;
+      let matchMethod = 'none';
+
+      // 3a. By card.stamp → card_profile_links
+      if (!profileId && cardStamp) {
+        const { data: stampLink } = await supabase
+          .from('card_profile_links')
+          .select('profile_id')
+          .eq('provider', 'bepaid')
+          .eq('provider_token', cardStamp)
+          .limit(1)
+          .maybeSingle();
+        if (stampLink?.profile_id) { profileId = stampLink.profile_id; matchMethod = 'card_stamp'; }
+      }
+
+      // 3b. By card_last4 + card_brand → card_profile_links (fallback)
+      if (!profileId && cardLast4 && cardBrand) {
+        const { data: cardLink } = await supabase
+          .from('card_profile_links')
+          .select('profile_id')
+          .eq('card_last4', cardLast4)
+          .eq('card_brand', cardBrand)
+          .eq('provider', 'bepaid')
+          .limit(1)
+          .maybeSingle();
+        if (cardLink?.profile_id) { profileId = cardLink.profile_id; matchMethod = 'card_last4_brand'; }
+      }
+
+      // 3c. By email → profiles
+      if (!profileId && customerEmail && customerEmail.includes('@')) {
+        const { data: emailProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', customerEmail)
+          .limit(1)
+          .maybeSingle();
+        if (emailProfile?.id) { profileId = emailProfile.id; matchMethod = 'email'; }
+      }
+
+      // 3d. Try extracted subscription UID → provider_subscriptions → subscription_v2 → user
+      if (!profileId && extractedSubUid) {
+        const { data: provSub } = await supabase
+          .from('provider_subscriptions')
+          .select('subscription_v2_id, subscriptions_v2(user_id)')
+          .eq('provider_subscription_id', String(extractedSubUid))
+          .maybeSingle();
+        if (provSub?.subscriptions_v2?.user_id) {
+          const { data: subProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('user_id', provSub.subscriptions_v2.user_id)
+            .maybeSingle();
+          if (subProfile?.id) { profileId = subProfile.id; matchMethod = 'subscription_uid'; }
+        }
+      }
+
+      console.log(`[WEBHOOK-LEGACY] Match result: profile_id=${profileId}, method=${matchMethod}, stamp=${cardStamp ? 'yes' : 'no'}, email=${customerEmail}`);
+
+      if (profileId) {
+        // ===== MATCHED: materialize =====
+
+        // 4a. Upsert card_profile_links (only if stamp is present)
+        if (cardStamp && cardLast4) {
+          try {
+            await supabase.from('card_profile_links').upsert({
+              provider: 'bepaid',
+              provider_token: cardStamp,
+              card_last4: cardLast4,
+              card_brand: cardBrand || null,
+              card_holder: cardHolder || null,
+              profile_id: profileId,
+              source: 'webhook_legacy',
+              linked_at: new Date().toISOString(),
+            }, { onConflict: 'provider,provider_token' });
+          } catch (linkErr) {
+            console.error('[WEBHOOK-LEGACY] card_profile_links upsert error:', linkErr);
+          }
+        }
+
+        // 4b. Idempotency check: payments_v2 by provider_payment_id
+        const { data: existingPmt } = await supabase
+          .from('payments_v2')
+          .select('id')
+          .eq('provider_payment_id', transactionUid)
+          .eq('provider', 'bepaid')
+          .maybeSingle();
+
+        let paymentCreated = false;
+        if (!existingPmt) {
+          // Get user_id from profile
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('user_id')
+            .eq('id', profileId)
+            .maybeSingle();
+
+          const paymentPayload = {
+            provider: 'bepaid',
+            provider_payment_id: transactionUid,
+            profile_id: profileId,
+            user_id: profileData?.user_id || null,
+            amount: legacyAmount,
+            currency: legacyCurrency,
+            status: 'succeeded' as const,
+            origin: 'legacy_subscription',
+            is_recurring: true,
+            card_last4: cardLast4,
+            card_brand: cardBrand,
+            card_holder: cardHolder,
+            paid_at: transaction?.paid_at || new Date().toISOString(),
+            receipt_url: transaction?.receipt_url || null,
+            product_name_raw: receiptText || null,
+            provider_response: {
+              transaction_uid: transactionUid,
+              status: transactionStatus,
+              amount: transaction?.amount,
+              currency: legacyCurrency,
+              paid_at: transaction?.paid_at,
+            },
+            meta: {
+              legacy: true,
+              match_method: matchMethod,
+              card_stamp: cardStamp,
+              customer_email: customerEmail,
+              customer_phone: customerPhone,
+              receipt: receiptText,
+              extracted_sub_uid: extractedSubUid,
+            },
+          };
+
+          const { error: payErr } = await supabase.from('payments_v2')
+            .upsert(paymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
+
+          if (payErr) {
+            console.error('[WEBHOOK-LEGACY] payments_v2 upsert error:', payErr.message);
+            // Fallback: plain insert
+            const { error: payInsertErr } = await supabase.from('payments_v2').insert(paymentPayload);
+            if (payInsertErr) {
+              console.error('[WEBHOOK-LEGACY] payments_v2 insert also failed:', payInsertErr.message);
+            } else {
+              paymentCreated = true;
+            }
+          } else {
+            paymentCreated = true;
+          }
+        } else {
+          console.log('[WEBHOOK-LEGACY] payments_v2 already exists for uid=' + transactionUid);
+        }
+
+        // 4c. amoCRM contact + deal
+        let amoContactId: number | null = null;
+        let amoDealId: number | null = null;
+        const amoCreds = await getAmoCRMCreds(supabase);
+        if (amoCreds && customerEmail) {
+          const contactName = cardHolder || customerEmail.split('@')[0] || 'Клиент';
+          amoContactId = await createAmoCRMContact(supabase, amoCreds, contactName, customerEmail, customerPhone || undefined);
+          amoDealId = await createAmoCRMDeal(supabase, amoCreds,
+            `Продление: ${receiptText || 'Подписка'}`,
+            legacyAmount,
+            amoContactId,
+            { transaction_uid: transactionUid, legacy: true },
+          );
+        }
+
+        // 4d. Update queue status
+        await supabase.from('payment_reconcile_queue')
+          .update({ status: 'materialized', processed_at: new Date().toISOString() })
+          .eq('bepaid_uid', transactionUid);
+
+        // 4e. Audit log
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_label: 'bepaid-webhook',
+          action: 'legacy_payment.materialized',
+          meta: {
+            transaction_uid: transactionUid, profile_id: profileId,
+            match_method: matchMethod, amount: legacyAmount,
+            card_last4: cardLast4, email: customerEmail,
+            payment_created: paymentCreated,
+            amocrm_contact_id: amoContactId, amocrm_deal_id: amoDealId,
+          },
+        });
+
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: body?.event || body?.type || 'legacy_payment',
+          transaction_uid: transactionUid, subscription_id: extractedSubUid ? String(extractedSubUid) : null,
+          tracking_id: rawTrackingId, parsed_kind: 'legacy', parsed_order_id: null,
+          outcome: 'legacy_matched', http_status: 200,
+          processing_ms: Date.now() - startTime,
+        });
+
+        console.log(`[WEBHOOK-LEGACY] SUCCESS: materialized uid=${transactionUid}, profile=${profileId}, method=${matchMethod}, amo_contact=${amoContactId}, amo_deal=${amoDealId}`);
+
+        return new Response(JSON.stringify({
+          ok: true, mode: 'legacy_matched', match_method: matchMethod,
+          profile_id: profileId, payment_created: paymentCreated,
+          amocrm_contact_id: amoContactId, amocrm_deal_id: amoDealId,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // ===== NOT MATCHED: leave in queue for manual mapping =====
+      await supabase.from('payment_reconcile_queue')
+        .update({ status: 'pending_needs_mapping' })
+        .eq('bepaid_uid', transactionUid);
+
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_label: 'bepaid-webhook',
+        action: 'legacy_payment.unmatched',
+        meta: {
+          transaction_uid: transactionUid, card_stamp: cardStamp,
+          card_last4: cardLast4, email: customerEmail, receipt: receiptText,
+          extracted_sub_uid: extractedSubUid,
+        },
+      });
+
+      await recordWebhookEvent(supabase, {
+        provider: 'bepaid', event_type: body?.event || body?.type || 'legacy_payment',
+        transaction_uid: transactionUid, subscription_id: extractedSubUid ? String(extractedSubUid) : null,
+        tracking_id: rawTrackingId, parsed_kind: 'legacy', parsed_order_id: null,
+        outcome: 'legacy_unmatched', http_status: 202,
+        processing_ms: Date.now() - startTime,
+      });
+
+      console.log(`[WEBHOOK-LEGACY] UNMATCHED: uid=${transactionUid}, stamp=${cardStamp ? 'yes' : 'no'}, email=${customerEmail}`);
+
+      return new Response(JSON.stringify({
+        ok: true, mode: 'legacy_unmatched', needs_mapping: true,
+        transaction_uid: transactionUid,
+      }), {
+        status: 202,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // =====================================================================
+    // END PATCH P-LEGACY-BEPAID.1
+    // =====================================================================
+
     // ---------------------------------------------------------------------
     // Legacy flow (orders table)
     // ---------------------------------------------------------------------
@@ -4018,28 +4357,38 @@ ${userName}, к сожалению, не удалось провести опл�
       }
 
       // Create contact and deal in AmoCRM
-      const customerName = meta.customer_first_name 
-        ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()
-        : order.customer_email?.split('@')[0] || 'Клиент';
-      
-      const productName = product?.name || productV2?.name || meta.product_name || 'Подписка';
-      
-      const amoCRMContactId = await createAmoCRMContact(
-        customerName,
-        order.customer_email || '',
-        meta.customer_phone
-      );
+      const amoCreds = await getAmoCRMCreds(supabase);
+      let amoCRMContactId: number | null = null;
+      let amoCRMDealId: number | null = null;
 
-      const amoCRMDealId = await createAmoCRMDeal(
-        `Оплата: ${productName}`,
-        order.amount, // Amount is already in BYN, not kopecks
-        amoCRMContactId,
-        {
-          order_id: internalOrderId,
-          product: productName,
-          subscription_tier: product?.tier || tariffData?.code,
-        }
-      );
+      if (amoCreds) {
+        const customerName = meta.customer_first_name 
+          ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()
+          : order.customer_email?.split('@')[0] || 'Клиент';
+        
+        const productName = product?.name || productV2?.name || meta.product_name || 'Подписка';
+        
+        amoCRMContactId = await createAmoCRMContact(
+          supabase, amoCreds,
+          customerName,
+          order.customer_email || '',
+          meta.customer_phone
+        );
+
+        amoCRMDealId = await createAmoCRMDeal(
+          supabase, amoCreds,
+          `Оплата: ${productName}`,
+          order.amount, // Amount is already in BYN, not kopecks
+          amoCRMContactId,
+          {
+            order_id: internalOrderId,
+            product: productName,
+            subscription_tier: product?.tier || tariffData?.code,
+          }
+        );
+      } else {
+        console.warn('[WEBHOOK] AmoCRM not configured, skipping contact+deal creation');
+      }
 
       // Send to GetCourse
       let gcSyncResult: { success: boolean; error?: string; gcOrderId?: string; gcDealNumber?: number } = { success: false };
