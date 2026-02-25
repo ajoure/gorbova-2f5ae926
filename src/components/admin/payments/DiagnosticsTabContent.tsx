@@ -12,6 +12,7 @@ import { GeoComparisonChart } from "@/components/admin/diagnostics/GeoComparison
 import { ApprovalRateTrendChart } from "@/components/admin/diagnostics/ApprovalRateTrendChart";
 import { BankBreakdownTable } from "@/components/admin/diagnostics/BankBreakdownTable";
 import { CardVerificationControl } from "@/components/admin/cards/CardVerificationControl";
+import { StuckLinkPaymentsWidget } from "@/components/admin/diagnostics/StuckLinkPaymentsWidget";
 import { SubscriptionBillingReport } from "@/components/admin/diagnostics/SubscriptionBillingReport";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -143,7 +144,10 @@ export function DiagnosticsTabContent() {
 
       {/* Card Verification Control - only for superAdmin */}
       {isSuperAdmin() && (
-        <CardVerificationControl />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <CardVerificationControl />
+          <StuckLinkPaymentsWidget />
+        </div>
       )}
 
       {/* Tabs for different views */}

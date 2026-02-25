@@ -292,6 +292,21 @@ export function SubscriptionDetailSheet({
               </Button>
             )}
 
+          {/* Renew subscription — visible when expiring soon or expired */}
+            {(isExpired || isCanceled || (subscription.access_end_at && 
+              new Date(subscription.access_end_at).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000)) && (
+              <Button
+                variant="default"
+                className="w-full gap-2"
+                onClick={() => {
+                  window.location.href = '/#pricing';
+                }}
+              >
+                <RotateCcw className="h-4 w-4" />
+                Продлить подписку
+              </Button>
+            )}
+
             {/* Cancel or Resume */}
             {isActive && !isCanceled && (
               <Button

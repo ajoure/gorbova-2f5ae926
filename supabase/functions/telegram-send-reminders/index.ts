@@ -17,6 +17,85 @@ async function telegramRequest(botToken: string, method: string, params?: Record
   return response.json();
 }
 
+// Escape markdown v1 special chars
+function escapeMd(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
+/**
+ * Try to generate a checkout link for the user via the shared helper.
+ * Returns { redirect_url, order_id } or null if generation failed (STOP-guard).
+ */
+async function tryGenerateCheckoutLink(
+  supabase: any,
+  userId: string,
+  clubId: string,
+): Promise<{ redirect_url: string; order_id: string } | null> {
+  try {
+    // Reverse lookup: club_id → product_id via products_v2.telegram_club_id
+    const { data: product } = await supabase
+      .from('products_v2')
+      .select('id, name')
+      .eq('telegram_club_id', clubId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (!product) {
+      console.log(`[tg-reminders] No product mapped to club ${clubId}`);
+      return null;
+    }
+
+    // Find user's active/recent subscription to get tariff
+    const { data: sub } = await supabase
+      .from('subscriptions_v2')
+      .select('tariff_id, tariffs(id, name, price, billing_type)')
+      .eq('user_id', userId)
+      .eq('product_id', product.id)
+      .in('status', ['active', 'trial', 'past_due', 'canceled'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sub?.tariff_id || !sub?.tariffs) {
+      console.log(`[tg-reminders] No subscription/tariff found for user ${userId}, product ${product.id}`);
+      return null;
+    }
+
+    const tariff = sub.tariffs as any;
+    const amount = tariff.price ? Math.round(tariff.price * 100) : 0;
+
+    if (!amount || amount < 100) {
+      console.log(`[tg-reminders] STOP-GUARD: amount too small (${amount}) for checkout`);
+      return null;
+    }
+
+    const paymentType = tariff.billing_type === 'provider_managed' ? 'subscription' : 'one_time';
+
+    const result = await createPaymentCheckout({
+      supabase,
+      user_id: userId,
+      product_id: product.id,
+      tariff_id: tariff.id,
+      amount,
+      payment_type: paymentType as 'one_time' | 'subscription',
+      description: 'Продление подписки (авто-напоминание)',
+      origin: 'https://club.gorbova.by',
+      actor_type: 'system',
+    });
+
+    if (result.success) {
+      console.log(`[tg-reminders] Checkout link generated: order_id=${result.order_id}`);
+      return { redirect_url: result.redirect_url, order_id: result.order_id };
+    } else {
+      console.error(`[tg-reminders] Checkout generation failed:`, result.error);
+      return null;
+    }
+  } catch (err) {
+    console.error(`[tg-reminders] Checkout generation error:`, err);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -155,26 +234,72 @@ Deno.serve(async (req) => {
         year: 'numeric'
       });
 
-      // Send reminder message
-      const message = `⏰ Небольшое напоминание
+      // Try to generate a direct checkout link via shared helper
+      const checkout = await tryGenerateCheckoutLink(supabase, access.user_id, access.club_id);
 
-Ваша подписка в ${club.club_name || 'клубе'} заканчивается ${formattedDate}.
+      // Build message text
+      const clubName = club.club_name || 'клубе';
+      const message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
 
-Чтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
-
-      // Use SITE_URL env var or construct from product landing page with pricing anchor
-      const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-      const keyboard = {
-        inline_keyboard: [[
-          { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
-        ]]
-      };
+      // Build inline keyboard — always a button, never a raw URL in text
+      let keyboard;
+      if (checkout) {
+        keyboard = {
+          inline_keyboard: [[
+            { text: '💳 Оплатить и продлить', url: checkout.redirect_url }
+          ]]
+        };
+      } else {
+        // Fallback: link to pricing page if checkout generation failed
+        const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
+        keyboard = {
+          inline_keyboard: [[
+            { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
+          ]]
+        };
+      }
 
       const sendResult = await telegramRequest(botToken, 'sendMessage', {
         chat_id: profile.telegram_user_id,
         text: message,
         reply_markup: keyboard,
       });
+
+      // If button send failed, try fallback with plain text link
+      if (!sendResult.ok && checkout) {
+        console.warn(`[tg-reminders] Inline button send failed, trying fallback text for user ${access.user_id}: ${sendResult.description}`);
+        const fallbackMessage = `${message}\n\nСсылка для оплаты: ${checkout.redirect_url}`;
+        const fallbackResult = await telegramRequest(botToken, 'sendMessage', {
+          chat_id: profile.telegram_user_id,
+          text: fallbackMessage,
+        });
+
+        // Log fallback attempt
+        await supabase.from('telegram_logs').insert({
+          user_id: access.user_id,
+          club_id: access.club_id,
+          action: 'reminder_sent',
+          target: 'user',
+          status: fallbackResult.ok ? 'success' : 'error',
+          error_message: fallbackResult.ok ? null : fallbackResult.description,
+          meta: {
+            expires_at: access.active_until,
+            days_until_expiry: 3,
+            checkout_order_id: checkout.order_id,
+            delivery_method: 'fallback_text',
+            button_error: sendResult.description,
+          }
+        });
+
+        results.push({
+          user_id: access.user_id,
+          club_id: access.club_id,
+          sent: fallbackResult.ok,
+          delivery: 'fallback_text',
+          error: fallbackResult.ok ? null : fallbackResult.description,
+        });
+        continue;
+      }
 
       // Log the reminder
       await supabase
@@ -188,7 +313,9 @@ Deno.serve(async (req) => {
           error_message: sendResult.ok ? null : sendResult.description,
           meta: {
             expires_at: access.active_until,
-            days_until_expiry: 3
+            days_until_expiry: 3,
+            checkout_order_id: checkout?.order_id || null,
+            delivery_method: checkout ? 'inline_button' : 'fallback_pricing',
           }
         });
 
@@ -196,6 +323,7 @@ Deno.serve(async (req) => {
         user_id: access.user_id,
         club_id: access.club_id,
         sent: sendResult.ok,
+        delivery: checkout ? 'inline_button' : 'fallback_pricing',
         error: sendResult.ok ? null : sendResult.description
       });
     }
