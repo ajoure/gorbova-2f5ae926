@@ -2054,16 +2054,33 @@ Deno.serve(async (req) => {
       }
 
       const existingMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
+      // F12 P1: fill-only provider_payment_id on order
+      const orderUpdatePayload: Record<string, any> = {
+        status: 'paid',
+        paid_amount: paymentAmount,
+        meta: { ...existingMeta, bepaid_subscription_id: subscriptionId },
+        updated_at: new Date().toISOString(),
+      };
+      // Fill-only: set provider_payment_id only if NULL
+      if (!linkOrder.provider_payment_id && transactionUid) {
+        orderUpdatePayload.provider_payment_id = transactionUid;
+      }
       await supabase
         .from('orders_v2')
-        .update({
-          status: 'paid',
-          paid_amount: paymentAmount,
-          meta: { ...existingMeta, bepaid_subscription_id: subscriptionId },
-          updated_at: new Date().toISOString(),
-        })
+        .update(orderUpdatePayload)
         .eq('id', linkOrder.id);
-      console.log('[WEBHOOK-LINK-ORDER] Order updated to paid:', linkOrder.id, 'amount:', paymentAmount);
+      console.log('[WEBHOOK-LINK-ORDER] Order updated to paid:', linkOrder.id, 'amount:', paymentAmount, 'ppid_filled:', !linkOrder.provider_payment_id && !!transactionUid);
+
+      // F12 P7: Audit log for fill operation
+      if (!linkOrder.provider_payment_id && transactionUid) {
+        await supabase.from('audit_logs').insert({
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'F12_ord_link',
+          action: 'order.fill_provider_payment_id',
+          meta: { order_id: linkOrder.id, provider_payment_id: transactionUid, source: 'link_order_webhook' },
+        });
+      }
 
       // 4. PATCH P2: payments_v2 UPSERT (idempotent by provider+provider_payment_id)
       const { data: profile } = await supabase
@@ -2979,7 +2996,8 @@ Deno.serve(async (req) => {
 
       // Keep provider response for debugging
       const basePaymentUpdate: Record<string, any> = {
-        provider_payment_id: transactionUid || paymentV2.provider_payment_id || null,
+        // F12 P4: fill-only — prioritize existing value, never overwrite
+        provider_payment_id: paymentV2.provider_payment_id || transactionUid || null,
         provider_response: body,
         error_message: transaction?.message || null,
         card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
@@ -3138,18 +3156,35 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (orderV2 && orderV2.status !== 'paid') {
+          // F12 P2: fill-only provider_payment_id on order (main branch)
+          const mainOrderUpdate: Record<string, any> = {
+            status: 'paid',
+            paid_amount: paymentV2.amount,
+            meta: {
+              ...(orderV2.meta || {}),
+              bepaid_uid: transactionUid,
+              payment_id: paymentV2.id,
+            },
+          };
+          // Fill-only: set provider_payment_id only if NULL
+          if (!orderV2.provider_payment_id && transactionUid) {
+            mainOrderUpdate.provider_payment_id = transactionUid;
+          }
           await supabase
             .from('orders_v2')
-            .update({
-              status: 'paid',
-              paid_amount: paymentV2.amount,
-              meta: {
-                ...(orderV2.meta || {}),
-                bepaid_uid: transactionUid,
-                payment_id: paymentV2.id,
-              },
-            })
+            .update(mainOrderUpdate)
             .eq('id', orderV2.id);
+
+          // F12 P7: Audit log for fill operation (main branch)
+          if (!orderV2.provider_payment_id && transactionUid) {
+            await supabase.from('audit_logs').insert({
+              actor_user_id: null,
+              actor_type: 'system',
+              actor_label: 'F12_ord_link',
+              action: 'order.fill_provider_payment_id',
+              meta: { order_id: orderV2.id, provider_payment_id: transactionUid, source: 'main_branch_webhook' },
+            });
+          }
 
           // Fetch product + tariff for access calculation
           const { data: productV2 } = await supabase

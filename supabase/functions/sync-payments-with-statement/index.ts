@@ -888,6 +888,37 @@ Deno.serve(async (req) => {
                 });
               } else {
                 stats.applied++;
+
+                // F12 P3: Auto-link to order by provider_payment_id (fill-only)
+                if (change.uid) {
+                  const { data: matchedOrder } = await supabaseAdmin
+                    .from('orders_v2')
+                    .select('id')
+                    .eq('provider_payment_id', change.uid)
+                    .maybeSingle();
+
+                  if (matchedOrder) {
+                    // Fill order_id only if NULL (fill-only guard via .is())
+                    const { error: linkErr } = await supabaseAdmin
+                      .from('payments_v2')
+                      .update({ order_id: matchedOrder.id })
+                      .eq('provider_payment_id', change.uid)
+                      .eq('provider', 'bepaid')
+                      .is('order_id', null);
+
+                    if (!linkErr) {
+                      console.log(`[sync-statement] F12 auto-linked payment ${change.uid} to order ${matchedOrder.id}`);
+                      // F12 P7: Audit log
+                      await supabaseAdmin.from('audit_logs').insert({
+                        actor_user_id: null,
+                        actor_type: 'system',
+                        actor_label: 'F12_ord_link',
+                        action: 'payment.fill_order_link',
+                        meta: { provider_payment_id: change.uid, order_id: matchedOrder.id, source: 'statement_sync' },
+                      });
+                    }
+                  }
+                }
               }
             }
           }
@@ -897,6 +928,7 @@ Deno.serve(async (req) => {
             const pmt = change.payment_data;
             
             // Build update object
+            // F12 P6: fill-only guard — do NOT overwrite order_id/profile_id if already set
             const updates: any = {
               amount: Math.abs(stmt.amount),
               status: normalizeStatus(stmt.status),
@@ -913,6 +945,10 @@ Deno.serve(async (req) => {
                 statement_synced_by: user.id,
               },
             };
+            // F12 P6: Explicitly remove order_id/profile_id from updates to prevent overwrite
+            // These fields are never set by statement sync updates — this guard is defensive
+            delete updates.order_id;
+            delete updates.profile_id;
             
             const { error: updateError } = await supabaseAdmin
               .from('payments_v2')
