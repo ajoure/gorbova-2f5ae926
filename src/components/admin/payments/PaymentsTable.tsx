@@ -551,9 +551,6 @@ export default function PaymentsTable({
                   </div>
                 </TooltipContent>
               </Tooltip>
-              <Badge variant="outline" className="text-green-600 border-green-600 text-[10px] px-1.5 py-0">
-                Attempt
-              </Badge>
             </div>
           );
         }
@@ -569,11 +566,11 @@ export default function PaymentsTable({
             </Button>
             {payment.origin === 'statement_sync' ? (
               <Badge variant="outline" className="text-blue-600 border-blue-600 text-[10px] px-1.5 py-0">
-                Statement
+                Из выписки
               </Badge>
             ) : (
               <Badge variant="outline" className="text-gray-500 border-gray-500 text-[10px] px-1.5 py-0">
-                Legacy
+                Без сделки
               </Badge>
             )}
           </div>
