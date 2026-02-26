@@ -10074,6 +10074,22 @@ export type Database = {
         }
         Returns: string
       }
+      receipt_backfill_candidates: {
+        Args: {
+          p_cursor_created_at?: string
+          p_cursor_id?: string
+          p_cutoff?: string
+          p_limit?: number
+          p_origin?: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          meta: Json
+          provider_payment_id: string
+          receipt_url: string
+        }[]
+      }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       resolve_user_id: {
         Args: { input_id: string }
