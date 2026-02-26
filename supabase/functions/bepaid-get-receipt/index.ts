@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { fetchReceiptUrl } from '../_shared/bepaid-receipt-fetch.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,12 +150,11 @@ Deno.serve(async (req) => {
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    const auth = createBepaidAuthHeader(credsResult);
 
-    // Fetch transaction from bePaid to get receipt URL
+    // F5.2: Use unified receipt fetch helper with fallback strategy
     console.log(`[bepaid-get-receipt] Fetching transaction ${providerUid} from bePaid`);
 
-    // PATCH-P0.9.1: audit marker before bePaid request
+    // Audit marker before bePaid request
     await supabaseAdmin.from('audit_logs').insert({
       action: 'bepaid.request.attempt',
       actor_type: 'system',
@@ -162,48 +162,26 @@ Deno.serve(async (req) => {
       actor_label: 'bepaid-get-receipt',
       meta: {
         fn: 'bepaid-get-receipt',
-        endpoint: `/transactions/${providerUid}`,
+        provider_uid: providerUid,
         shop_id_last4: String(credsResult.shop_id).slice(-4),
         test_mode: !!credsResult.test_mode,
       }
     });
-    
-    const response = await fetch(`https://gateway.bepaid.by/transactions/${providerUid}`, {
-      method: "GET",
-      headers: {
-        Authorization: auth,
-        Accept: "application/json",
-      },
-    });
 
-    if (!response.ok) {
-      console.error(`[bepaid-get-receipt] bePaid API error: ${response.status}`);
+    const fetchResult = await fetchReceiptUrl(providerUid, credsResult);
+
+    if (!fetchResult.ok) {
+      console.error(`[bepaid-get-receipt] Fetch failed: ${fetchResult.error}`);
       return new Response(
-        JSON.stringify({ status: 'error', error_code: 'API_ERROR', message: `bePaid API error: ${response.status}` } as ReceiptResult),
+        JSON.stringify({ status: 'error', error_code: 'API_ERROR', message: fetchResult.error || 'All endpoints failed' } as ReceiptResult),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const data = await response.json();
-    const transaction = data.transaction;
-
-    if (!transaction) {
-      return new Response(
-        JSON.stringify({ status: 'error', error_code: 'API_ERROR', message: "Transaction not found in bePaid response" } as ReceiptResult),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Look for receipt URL in various places
-    const receiptUrl = transaction.receipt_url 
-      || transaction.receipt?.url 
-      || transaction.bill?.receipt_url
-      || transaction.authorization?.receipt_url
-      || null;
+    const receiptUrl = fetchResult.receipt_url;
 
     if (!receiptUrl) {
-      // No receipt available from provider
-      console.log(`[bepaid-get-receipt] No receipt URL in transaction ${providerUid}`);
+      console.log(`[bepaid-get-receipt] No receipt URL in transaction ${providerUid} (endpoint: ${fetchResult.endpoint_used})`);
       return new Response(
         JSON.stringify({ status: 'unavailable', error_code: 'PROVIDER_NO_RECEIPT', message: "Receipt not available from provider" } as ReceiptResult),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
