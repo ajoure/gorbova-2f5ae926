@@ -2089,8 +2089,18 @@ Deno.serve(async (req) => {
         .eq('user_id', linkOrder.user_id)
         .maybeSingle();
 
+      // F12.1 P5: Check if payment already exists with order_id set — fill-only guard
+      const { data: existingPayForP5 } = await supabase
+        .from('payments_v2')
+        .select('id, order_id')
+        .eq('provider', 'bepaid')
+        .eq('provider_payment_id', transactionUid)
+        .maybeSingle();
+
+      const p5OrderId = (existingPayForP5?.order_id) ? existingPayForP5.order_id : linkOrder.id;
+
       const paymentPayload = {
-          order_id: linkOrder.id,
+          order_id: p5OrderId,
           user_id: linkOrder.user_id,
           profile_id: profile?.id || linkOrder.profile_id || null,
           amount: paymentAmount,
@@ -2670,8 +2680,18 @@ Deno.serve(async (req) => {
       }
 
       // 4. Create payments_v2
+      // F12.1 P5: fill-only guard — don't overwrite existing order_id
+      const { data: existingLinkPayForP5 } = await supabase
+        .from('payments_v2')
+        .select('id, order_id')
+        .eq('provider', 'bepaid')
+        .eq('provider_payment_id', transactionUid)
+        .maybeSingle();
+
+      const linkP5OrderId = (existingLinkPayForP5?.order_id) ? existingLinkPayForP5.order_id : linkOrderV2.id;
+
       const linkPaymentPayload = {
-        order_id: linkOrderV2.id,
+        order_id: linkP5OrderId,
         user_id: linkOrderV2.user_id,
         profile_id: linkProfile.id,
         amount: linkPaymentAmount,
