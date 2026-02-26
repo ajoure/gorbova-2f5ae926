@@ -123,6 +123,42 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     action: 'Напомнить клиентам привязать карту',
     urlPath: '/admin/payments/auto-renewals?filter=no_card',
   },
+  'INV-18': {
+    title: 'Webhook orphans (24ч)',
+    explain: 'Необработанные webhook orphans за последние 24 часа',
+    action: 'Проверить обработку webhook-ов',
+    urlPath: '/admin/payments',
+  },
+  'INV-19A': {
+    title: 'BePaid sbs_* без provider_subscriptions',
+    explain: 'BePaid subscription ID найдены в платежах, но отсутствуют в provider_subscriptions',
+    action: 'Запустить admin-bepaid-backfill',
+    urlPath: '/admin/payments',
+  },
+  'INV-19B': {
+    title: 'Авторекурринг без provider_subscriptions',
+    explain: 'Активные auto_renew подписки с bePaid payment_method, но без записи provider_subscriptions',
+    action: 'Запустить admin-bepaid-backfill',
+    urlPath: '/admin/subscriptions-v2',
+  },
+  'INV-20': {
+    title: 'Оплаченные заказы без платежей',
+    explain: 'Paid заказы без соответствующей записи в payments_v2',
+    action: 'Запустить admin-repair-missing-payments',
+    urlPath: '/admin/payments',
+  },
+  'INV-21': {
+    title: 'BePaid без сделки (7д)',
+    explain: 'Доля успешных bePaid-платежей без привязки к заказу превысила 5% за последние 7 дней',
+    action: 'Проверить привязку orders_v2 ⇄ payments_v2 и webhook tracking',
+    urlPath: '/admin/payments?origin=bepaid&hasDeal=no',
+  },
+  'INV-22': {
+    title: 'Десинхрон подписок',
+    explain: 'subscriptions_v2 активна, но provider_subscriptions в терминальном состоянии или без дат списания',
+    action: 'Проверить provider_subscriptions.state/charge dates и корректность reconciliation',
+    urlPath: '/admin/subscriptions-v2',
+  },
 };
 
 // PATCH-6: Форматирование примеров для Telegram
