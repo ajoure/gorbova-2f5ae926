@@ -315,8 +315,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const meta = (p.meta || {}) as any;
         const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
         
-        // Extract bepaid_description from provider_response (FIX-1: correct JSON path)
+        // Extract bepaid_description: prefer meta (F7 backfill), then provider_response fallback
         const bepaid_description = 
+          meta?.bepaid_description ??
           providerResponse?.transaction?.description ??
           providerResponse?.transaction?.additional_data?.description ??
           null;
