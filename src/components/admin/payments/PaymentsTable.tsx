@@ -532,35 +532,51 @@ export default function PaymentsTable({
         if (payment.order_id) {
           // Show "Связана" text with calm neutral chip, click opens modal
           return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs cursor-pointer hover:bg-accent border-muted bg-muted/30 text-foreground"
-                  onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}
-                >
-                  <Handshake className="h-3 w-3 text-muted-foreground" />
-                  <span>Связана</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <div className="text-xs">
-                  <div className="font-medium">Сделка: {payment.order_number || payment.order_id}</div>
-                  <div className="text-muted-foreground">Нажмите для просмотра</div>
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs cursor-pointer hover:bg-accent border-muted bg-muted/30 text-foreground"
+                    onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}
+                  >
+                    <Handshake className="h-3 w-3 text-muted-foreground" />
+                    <span>Связана</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="text-xs">
+                    <div className="font-medium">Сделка: {payment.order_number || payment.order_id}</div>
+                    <div className="text-muted-foreground">Нажмите для просмотра</div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+              <Badge variant="outline" className="text-green-600 border-green-600 text-[10px] px-1.5 py-0">
+                Attempt
+              </Badge>
+            </div>
           );
         }
         return (
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-6 w-6 p-0" 
-            onClick={() => openLinkDeal(payment)}
-          >
-            <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 w-6 p-0" 
+              onClick={() => openLinkDeal(payment)}
+            >
+              <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+            </Button>
+            {payment.origin === 'statement_sync' ? (
+              <Badge variant="outline" className="text-blue-600 border-blue-600 text-[10px] px-1.5 py-0">
+                Statement
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-gray-500 border-gray-500 text-[10px] px-1.5 py-0">
+                Legacy
+              </Badge>
+            )}
+          </div>
         );
         
       case 'product':
