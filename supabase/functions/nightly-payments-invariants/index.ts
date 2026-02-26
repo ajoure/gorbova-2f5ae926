@@ -289,32 +289,16 @@ Deno.serve(async (req) => {
     // -------------------------
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const { data: inv21Total } = await supabase
+    // Query 1: denom — all bepaid succeeded in 7d
+    const { count: inv21Den } = await supabase
       .from("payments_v2")
       .select("id", { count: "exact", head: true })
       .eq("origin", "bepaid")
       .eq("status", "succeeded")
       .gte("created_at", sevenDaysAgo);
 
-    const { data: inv21Orphan, count: inv21OrphanCount } = await supabase
-      .from("payments_v2")
-      .select("id", { count: "exact", head: true })
-      .eq("origin", "bepaid")
-      .eq("status", "succeeded")
-      .is("order_id", null)
-      .gte("created_at", sevenDaysAgo);
-
-    const inv21Denom = (inv21Total as any)?.length ?? 0;
-    // Supabase head:true with count:'exact' returns count in response header, but via JS SDK we need count
-    // Re-query with count
-    const { count: inv21DenomCount } = await supabase
-      .from("payments_v2")
-      .select("id", { count: "exact", head: true })
-      .eq("origin", "bepaid")
-      .eq("status", "succeeded")
-      .gte("created_at", sevenDaysAgo);
-
-    const { count: inv21NumCount } = await supabase
+    // Query 2: num — bepaid succeeded without order_id in 7d
+    const { count: inv21Num } = await supabase
       .from("payments_v2")
       .select("id", { count: "exact", head: true })
       .eq("origin", "bepaid")
@@ -322,13 +306,14 @@ Deno.serve(async (req) => {
       .is("order_id", null)
       .gte("created_at", sevenDaysAgo);
 
-    const inv21Num = inv21NumCount ?? 0;
-    const inv21Den = inv21DenomCount ?? 0;
-    const inv21Ratio = inv21Den > 0 ? inv21Num / inv21Den : 0;
+    const inv21NumVal = inv21Num ?? 0;
+    const inv21DenVal = inv21Den ?? 0;
+    const inv21Ratio = inv21DenVal > 0 ? inv21NumVal / inv21DenVal : 0;
     const inv21Passed = inv21Ratio <= 0.05;
 
+    // Query 3: samples (up to 5) — only if there are orphans
     let inv21Samples: any[] = [];
-    if (inv21Num > 0) {
+    if (inv21NumVal > 0) {
       const { data: inv21SampleRows } = await supabase
         .from("payments_v2")
         .select("id, provider_payment_id, created_at, amount, currency")
@@ -350,11 +335,11 @@ Deno.serve(async (req) => {
     invariants.push({
       name: "INV-21: BePaid succeeded without order_id ratio (7d)",
       passed: inv21Passed,
-      count: inv21Num,
+      count: inv21NumVal,
       ratio: Math.round(inv21Ratio * 10000) / 100,
-      denominator: inv21Den,
+      denominator: inv21DenVal,
       samples: inv21Samples,
-      description: `${inv21Num}/${inv21Den} (${(inv21Ratio * 100).toFixed(1)}%) успешных bePaid-платежей без order_id за 7д. Порог: 5%.`,
+      description: `${inv21NumVal}/${inv21DenVal} (${(inv21Ratio * 100).toFixed(1)}%) успешных bePaid-платежей без order_id за 7д. Порог: 5%.`,
     });
 
     if (!inv21Passed) {
@@ -366,7 +351,7 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${supabaseServiceKey}`,
           },
           body: JSON.stringify({
-            message: `🚨 INV-21: ${(inv21Ratio * 100).toFixed(1)}% успешных bePaid-платежей без order_id (${inv21Num}/${inv21Den}) за 7д — превышен порог 5%!`,
+            message: `🚨 INV-21: ${(inv21Ratio * 100).toFixed(1)}% успешных bePaid-платежей без order_id (${inv21NumVal}/${inv21DenVal}) за 7д — превышен порог 5%!`,
             source: "nightly-payments-invariants",
           }),
         });
@@ -374,50 +359,25 @@ Deno.serve(async (req) => {
     }
 
     // -------------------------
-    // INV-22: Active subscription desync with provider
+    // INV-22: Active subscription desync with provider (server-side JOIN via RPC)
     // -------------------------
-    const { data: inv22Rows } = await supabase
-      .from("provider_subscriptions")
-      .select("id, subscription_v2_id, user_id, state, next_charge_at, last_charge_at")
-      .eq("provider", "bepaid")
-      .limit(1000);
+    const { data: inv22Result, error: inv22Error } = await supabase.rpc(
+      "inv22_subscription_desync",
+      { p_limit: 10 }
+    );
 
-    const { data: inv22ActiveSubs } = await supabase
-      .from("subscriptions_v2")
-      .select("id, user_id, product_id, status, access_end_at")
-      .eq("status", "active")
-      .limit(1000);
-
-    const activeSubIds = new Set((inv22ActiveSubs || []).map((s: any) => s.id));
-    const activeSubMap = new Map((inv22ActiveSubs || []).map((s: any) => [s.id, s]));
-
-    const inv22Desync: any[] = [];
-    for (const ps of inv22Rows || []) {
-      if (!ps.subscription_v2_id || !activeSubIds.has(ps.subscription_v2_id)) continue;
-      const sub = activeSubMap.get(ps.subscription_v2_id);
-      const isTerminal = ps.state === "expired" || ps.state === "redirecting";
-      const isEmptyDates = ps.state === "active" && !ps.next_charge_at && !ps.last_charge_at;
-      if (isTerminal || isEmptyDates) {
-        inv22Desync.push({
-          subscription_id: ps.subscription_v2_id,
-          user_id: ps.user_id,
-          product_id: sub?.product_id,
-          ps_state: ps.state,
-          next_charge_at: ps.next_charge_at,
-          last_charge_at: ps.last_charge_at,
-          access_end_at: sub?.access_end_at,
-        });
-      }
-    }
-
-    const inv22Count = inv22Desync.length;
+    const inv22Count = inv22Error ? -1 : (inv22Result?.count ?? 0);
+    const inv22Samples = inv22Error ? [] : (inv22Result?.samples ?? []);
     const inv22Critical = inv22Count > 5;
+
     invariants.push({
       name: "INV-22: Active subscription desync with provider",
       passed: inv22Count === 0,
       count: inv22Count,
-      samples: inv22Desync.slice(0, 10),
-      description: `${inv22Count} активных подписок десинхронизированы с provider_subscriptions (terminal state или пустые даты списания). ${inv22Critical ? "CRITICAL" : inv22Count > 0 ? "WARNING" : "OK"}.`,
+      samples: inv22Samples,
+      description: inv22Error
+        ? `Ошибка RPC inv22_subscription_desync: ${inv22Error.message}`
+        : `${inv22Count} активных подписок десинхронизированы с provider_subscriptions (terminal state или пустые даты списания). ${inv22Critical ? "CRITICAL" : inv22Count > 0 ? "WARNING" : "OK"}.`,
     });
 
     if (inv22Count > 0) {
@@ -429,7 +389,7 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${supabaseServiceKey}`,
           },
           body: JSON.stringify({
-            message: `${inv22Critical ? "🚨" : "⚠️"} INV-22${inv22Critical ? " CRITICAL" : ""}: ${inv22Count} активных подписок десинхронизированы с provider_subscriptions!\n\nПримеры: ${inv22Desync.slice(0, 3).map((d: any) => `sub=${String(d.subscription_id).slice(0,8)}… ps_state=${d.ps_state}`).join(", ")}`,
+            message: `${inv22Critical ? "🚨" : "⚠️"} INV-22${inv22Critical ? " CRITICAL" : ""}: ${inv22Count} активных подписок десинхронизированы с provider_subscriptions!\n\nПримеры: ${inv22Samples.slice(0, 3).map((d: any) => `sub=${String(d.subscription_id).slice(0,8)}… ps_state=${d.ps_state}`).join(", ")}`,
             source: "nightly-payments-invariants",
           }),
         });

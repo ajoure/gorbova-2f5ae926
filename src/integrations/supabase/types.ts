@@ -10050,6 +10050,7 @@ export type Database = {
           suppressed_count: number
         }[]
       }
+      inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
       manage_news_cron: {
