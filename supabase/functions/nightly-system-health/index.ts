@@ -6,7 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
  * 
  * Features:
  * - Validates x-cron-secret header
- * - Guard: runs only at 03:00 Europe/London
+ * - Guard: runs only at 03:00 Europe/Minsk
  * - Creates run record in system_health_runs
  * - Invokes nightly-payments-invariants
  * - Sends Telegram alert to owner on FAIL
@@ -217,7 +217,7 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const source = body.source || 'manual';
-    const targetTz = body.target_tz || 'Europe/London';
+    const targetTz = body.target_tz || 'Europe/Minsk';
     const targetHour = body.target_hour ?? 3;
     const notifyOwner = body.notify_owner !== false;
 
