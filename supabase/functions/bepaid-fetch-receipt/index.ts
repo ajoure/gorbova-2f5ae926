@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError, type BepaidCreds } from '../_shared/bepaid-credentials.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { fetchReceiptUrl } from '../_shared/bepaid-receipt-fetch.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,56 +19,7 @@ interface FetchReceiptResult {
   payment_id?: string;
 }
 
-// PATCH-P0.9: Removed custom getBepaidCredentials() with env fallback
-
-async function fetchReceiptFromBepaid(
-  transactionUid: string,
-  creds: BepaidCreds
-): Promise<{ receipt_url?: string; fee?: number; error?: string }> {
-  const authHeader = createBepaidAuthHeader(creds);
-
-  try {
-    const response = await fetch(`https://api.bepaid.by/beyag/transactions/${transactionUid}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`bePaid API error: ${response.status} - ${errorText}`);
-      return { error: `API error: ${response.status}` };
-    }
-
-    const data = await response.json();
-    const transaction = data?.transaction;
-
-    if (!transaction) {
-      return { error: 'No transaction in response' };
-    }
-
-    // Extract receipt_url - it may be in different places
-    const receiptUrl = transaction.receipt_url || 
-                       transaction.payment?.receipt_url ||
-                       transaction.authorization?.receipt_url;
-
-    // Extract fee if available
-    const fee = transaction.fee?.amount || 
-                transaction.payment?.fee?.amount ||
-                null;
-
-    return { 
-      receipt_url: receiptUrl || null,
-      fee: fee ? Number(fee) / 100 : undefined // Convert from cents
-    };
-  } catch (error) {
-    console.error('Error fetching from bePaid:', error);
-    return { error: String(error) };
-  }
-}
+// F5.2: Using unified shared helper fetchReceiptUrl from _shared/bepaid-receipt-fetch.ts
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -153,11 +105,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch receipt from bePaid
+    // Fetch receipt from bePaid (F5.2: unified helper)
     console.log(`Fetching receipt for transaction: ${transactionUid}`);
-    const result = await fetchReceiptFromBepaid(transactionUid, credentials);
+    const result = await fetchReceiptUrl(transactionUid, credentials);
 
-    if (result.error) {
+    if (!result.ok) {
       console.error(`Failed to fetch receipt: ${result.error}`);
       return new Response(JSON.stringify({ 
         success: false, 

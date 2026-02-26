@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError, type BepaidCreds } from '../_shared/bepaid-credentials.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { fetchReceiptUrl } from '../_shared/bepaid-receipt-fetch.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,40 +19,7 @@ interface CronResult {
   }>;
 }
 
-// PATCH-P0.9: Removed custom getBepaidCredentials() with env fallback
-
-async function fetchReceiptFromBepaid(
-  transactionUid: string,
-  creds: BepaidCreds
-): Promise<{ receipt_url?: string; error?: string }> {
-  const authHeader = createBepaidAuthHeader(creds);
-
-  try {
-    const response = await fetch(`https://api.bepaid.by/beyag/transactions/${transactionUid}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      return { error: `API error: ${response.status}` };
-    }
-
-    const data = await response.json();
-    const transaction = data?.transaction;
-
-    const receiptUrl = transaction?.receipt_url || 
-                       transaction?.payment?.receipt_url ||
-                       transaction?.authorization?.receipt_url;
-
-    return { receipt_url: receiptUrl || undefined };
-  } catch (error) {
-    return { error: String(error) };
-  }
-}
+// F5.2: Using unified shared helper fetchReceiptUrl from _shared/bepaid-receipt-fetch.ts
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -129,15 +97,15 @@ Deno.serve(async (req) => {
       result.processed++;
 
       try {
-        const fetchResult = await fetchReceiptFromBepaid(payment.provider_payment_id, credentials);
+        const fetchResult = await fetchReceiptUrl(payment.provider_payment_id, credentials);
 
-        if (fetchResult.error) {
+        if (!fetchResult.ok) {
           console.warn(`Failed to fetch receipt for ${payment.id}: ${fetchResult.error}`);
           result.errors++;
           result.details.push({
             payment_id: payment.id,
             success: false,
-            error: fetchResult.error,
+            error: fetchResult.error || 'Unknown error',
           });
           continue;
         }
