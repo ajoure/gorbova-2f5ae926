@@ -68,6 +68,7 @@ export type PaymentFilters = {
   isGhost: string;
   hasConflict: string;
   source: string;
+  origin: string;
 };
 
 const defaultFilters: PaymentFilters = {
@@ -83,6 +84,7 @@ const defaultFilters: PaymentFilters = {
   isGhost: "all",
   hasConflict: "all",
   source: "all",
+  origin: "all",
 };
 
 const COLUMNS_STORAGE_KEY = 'admin_payments_columns_v1';
@@ -284,6 +286,13 @@ export function PaymentsTabContent() {
 
       // Source filter
       if (filters.source !== "all" && p.source !== filters.source) return false;
+
+      // F1+F4: Origin filter (p.origin — bepaid/statement_sync/other)
+      if (filters.origin !== "all") {
+        if (filters.origin === "statement_sync" && p.origin !== "statement_sync") return false;
+        if (filters.origin === "bepaid" && p.origin !== "bepaid") return false;
+        if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
+      }
 
       return true;
     });
@@ -562,6 +571,35 @@ export function PaymentsTabContent() {
         )}
       </div>
       
+      {/* F1+F4: Quick presets */}
+      <div className="flex flex-wrap items-center gap-1.5 px-1">
+        <span className="text-xs text-muted-foreground mr-1">Быстрые:</span>
+        <Button
+          variant={filters.hasDeal === "no" && filters.origin === "all" ? "secondary" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilters(prev => ({ ...prev, hasDeal: "no", origin: "all" }))}
+        >
+          Без сделки
+        </Button>
+        <Button
+          variant={filters.hasDeal === "no" && filters.origin === "statement_sync" ? "secondary" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilters(prev => ({ ...prev, hasDeal: "no", origin: "statement_sync" }))}
+        >
+          Из выписки без сделки
+        </Button>
+        <Button
+          variant={filters.hasDeal === "no" && filters.origin === "bepaid" ? "secondary" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilters(prev => ({ ...prev, hasDeal: "no", origin: "bepaid" }))}
+        >
+          bePaid без сделки
+        </Button>
+      </div>
+
       {/* Filters panel */}
       {showFilters && (
         <div className="px-1">
