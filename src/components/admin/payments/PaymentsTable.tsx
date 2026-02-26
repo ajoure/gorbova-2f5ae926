@@ -570,7 +570,7 @@ export default function PaymentsTable({
               </Badge>
             ) : (
               <Badge variant="outline" className="text-gray-500 border-gray-500 text-[10px] px-1.5 py-0">
-                Без сделки
+                Без сделки (ручная привязка)
               </Badge>
             )}
           </div>

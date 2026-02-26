@@ -96,6 +96,19 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
       </div>
       
       <div className="space-y-1">
+        <Label className="text-xs">Происхождение</Label>
+        <Select value={filters.origin} onValueChange={(v) => updateFilter("origin", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="bepaid">bePaid (webhook)</SelectItem>
+            <SelectItem value="statement_sync">Выписка</SelectItem>
+            <SelectItem value="other">Прочее</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-1">
         <Label className="text-xs">Флаги</Label>
         <Select value={filters.isExternal} onValueChange={(v) => updateFilter("isExternal", v)}>
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
