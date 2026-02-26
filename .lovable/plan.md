@@ -57,7 +57,10 @@
 - **provider_subscriptions**: провайдерская подписка (sbs_*, state, next_charge_at, last_charge_at).
 - **entitlements / telegram_access**: доступы (производные от order/subscription логики).
 - **tariffs** (+ tariff_prices/features/offers, lesson_price_rules): каноника по тарифам/ценам.
-- **products_v2**: каноника продуктов (НЕ таблица `products` — та legacy/пустая).
+- **products_v2**: каноника продуктов (VERIFIED SQL). НЕ таблица `products` — та legacy/пустая для тех же ID.
+  SQL-пруф: `SELECT to_regclass('public.products'), to_regclass('public.products_v2');` → обе существуют.
+  `SELECT id, name FROM products_v2 WHERE id IN ('11c9f1b8-0355-4753-bd74-40b42aa53616','85046734-2282-4ded-b0d3-8c66c8f5bc2b');` → Gorbova Club, Бухгалтерия как бизнес.
+  `SELECT id, name FROM products WHERE id IN ('11c9f1b8-0355-4753-bd74-40b42aa53616','85046734-2282-4ded-b0d3-8c66c8f5bc2b');` → 0 строк.
 
 ### Каталог продуктов (VERIFIED)
 Каноническая таблица = `products_v2`. Подписки ссылаются на product_id из products_v2:
@@ -66,9 +69,14 @@
 - `9d0d6de8-...` → **Платная консультация** (3 подписки)
 - `de36a695-...` → **Подоходный налог ИП** (1 подписка)
 
-### payment_status enum (VERIFIED)
-Допустимые значения: `pending | processing | succeeded | failed | refunded | canceled`
-Статусов `awaiting` и `redirecting` **НЕ существует** в enum.
+### payment_status enum (VERIFIED — двойной SQL-пруф)
+**Enum определение (pg_enum):** `pending | processing | succeeded | failed | refunded | canceled` (6 значений)
+**Наблюдаемые в данных (SELECT DISTINCT):** `processing | succeeded | failed | refunded | canceled` (5 значений; `pending` в enum есть, но в payments_v2 пока не встречается)
+Статусов `awaiting` и `redirecting` **НЕ существует** — подтверждено и через pg_enum, и через данные.
+
+SQL-пруфы:
+- `SELECT enumlabel FROM pg_enum WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'payment_status');`
+- `SELECT DISTINCT status FROM payments_v2 ORDER BY 1;`
 
 ---
 
