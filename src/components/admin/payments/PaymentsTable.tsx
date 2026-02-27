@@ -543,7 +543,7 @@ export default function PaymentsTable({
                     <Handshake className="h-3 w-3 text-muted-foreground" />
                     <span>Связана</span>
                     {payment.effective_deal_source === 'queue' && (
-                      <span className="text-[9px] text-muted-foreground ml-0.5">(reconcile)</span>
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 ml-1" />
                     )}
                   </button>
                 </TooltipTrigger>
@@ -561,25 +561,23 @@ export default function PaymentsTable({
           );
         }
         return (
-          <div className="flex items-center gap-1">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-6 w-6 p-0" 
-              onClick={() => openLinkDeal(payment)}
-            >
-              <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-            </Button>
-            {payment.origin === 'statement_sync' ? (
-              <Badge variant="outline" className="text-blue-600 border-blue-600 text-[10px] px-1.5 py-0">
-                Из выписки
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-gray-500 border-gray-500 text-[10px] px-1.5 py-0">
-                Без сделки (ручная привязка)
-              </Badge>
-            )}
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 w-6 p-0" 
+                onClick={() => openLinkDeal(payment)}
+              >
+                <Link2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <span className="text-xs">
+                {payment.origin === 'statement_sync' ? 'Из выписки' : 'Ручная привязка'}
+              </span>
+            </TooltipContent>
+          </Tooltip>
         );
         
       case 'product':

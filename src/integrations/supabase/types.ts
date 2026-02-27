@@ -9770,6 +9770,7 @@ export type Database = {
         Args: { batch_limit?: number }
         Returns: number
       }
+      fill_order_from_queue: { Args: never; Returns: number }
       find_bought_not_joined_users: {
         Args: never
         Returns: {
