@@ -104,7 +104,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   if (payment_type === 'one_time') {
     // === ONE-TIME PAYMENT ===
 
-    // PATCH RENEWAL+PAYMENTS.1 C1: Dedup — check for existing pending order (same key, 3 days)
+    // PATCH F1: Dedup one_time — strict key: user/product/tariff/amount/flow/currency/3d
     const { data: existingOrder } = await supabase
       .from('orders_v2')
       .select('id, meta')
@@ -113,6 +113,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('tariff_id', tariff_id)
       .eq('status', 'pending')
       .eq('currency', 'BYN')
+      .eq('final_price', amountByn)
+      .filter('meta->>payment_flow', 'eq', paymentFlow)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
       .limit(1)
       .maybeSingle();
@@ -278,7 +280,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
 
-    // PATCH RENEWAL+PAYMENTS.1 C1: Dedup — check for existing pending subscription order (3 days)
+    // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
     const { data: existingSubOrder } = await supabase
       .from('orders_v2')
       .select('id, meta')
@@ -287,47 +289,47 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('tariff_id', tariff_id)
       .eq('status', 'pending')
       .eq('currency', 'BYN')
+      .eq('final_price', amountByn)
+      .filter('meta->>payment_flow', 'eq', paymentFlow)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
-      .limit(5);
+      .limit(1)
+      .maybeSingle();
 
-    // Find one with payment_flow containing 'subscription' and valid checkout_url
-    const reusableSubOrder = (existingSubOrder || []).find((o: any) => {
-      const m = (o.meta || {}) as Record<string, any>;
-      return m.payment_flow && String(m.payment_flow).includes('subscription');
-    });
-
-    if (reusableSubOrder?.id) {
-      // Check if provider_subscriptions has a checkout_url for this order
-      const { data: provSub } = await supabase
+    if (existingSubOrder?.id) {
+      // PATCH F3: Strict provider_subscriptions search by order_id + state
+      const { data: reusableProvSub } = await supabase
         .from('provider_subscriptions')
         .select('meta')
         .eq('user_id', user_id)
-        .eq('status', 'pending')
-        .limit(5);
+        .eq('state', 'pending')
+        .filter('meta->>order_id', 'eq', existingSubOrder.id)
+        .limit(1)
+        .maybeSingle();
 
-      const reusableProvSub = (provSub || []).find((ps: any) => {
-        const m = (ps.meta || {}) as Record<string, any>;
-        return m.order_id === reusableSubOrder.id && m.checkout_url;
-      });
+      // STOP-guard: only reuse if checkout_url is present and valid
+      const reusableCheckoutUrl = reusableProvSub
+        ? (reusableProvSub.meta as Record<string, any>)?.checkout_url
+        : null;
 
-      if (reusableProvSub) {
-        const existingUrl = (reusableProvSub.meta as Record<string, any>).checkout_url;
-        console.log('[create-payment-checkout] Reusing existing pending subscription order:', reusableSubOrder.id);
+      if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
+        console.log('[create-payment-checkout] Reusing existing pending subscription order:', existingSubOrder.id);
 
         await supabase.from('audit_logs').insert({
           actor_type: effectiveActorType,
           actor_user_id: actorUserId,
           action: 'payment_checkout.reused',
-          meta: { reused_order_id: reusableSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
+          meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
         });
 
         return {
           success: true,
-          redirect_url: existingUrl,
-          order_id: reusableSubOrder.id,
+          redirect_url: reusableCheckoutUrl,
+          order_id: existingSubOrder.id,
           payment_type: 'subscription',
         };
       }
+      // No valid checkout_url — fall through to create new order+subscription
+      console.log('[create-payment-checkout] Found pending sub order but no valid checkout_url, creating new');
     }
 
     const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
@@ -437,16 +439,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
-    // Store provider subscription record
-    await supabase.from('provider_subscriptions').upsert({
+    // PATCH F2: Store provider subscription — use REAL column names
+    const { error: provSubError } = await supabase.from('provider_subscriptions').upsert({
       provider: 'bepaid',
       provider_subscription_id: String(bepaidSubId),
-      subscription_id: null,
+      subscription_v2_id: null,
       user_id,
-      status: 'pending',
-      plan_title: planTitle,
-      plan_description: planDescription,
-      amount: amountByn,
+      profile_id: profileId,
+      state: 'pending',
+      amount_cents: amount, // amount is already in kopecks
       currency: 'BYN',
       interval_days: intervalDays,
       meta: {
@@ -454,8 +455,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         checkout_url: redirectUrl,
         created_by_admin: actorUserId,
         order_id: order.id,
+        plan_title: planTitle,
+        plan_description: planDescription,
       },
     }, { onConflict: 'provider,provider_subscription_id' });
+
+    if (provSubError) {
+      console.error('[create-payment-checkout] STOP: provider_subscriptions upsert failed:', provSubError);
+      // Don't fail the whole flow — order+bePaid subscription already created
+    }
 
     // Audit log
     await supabase.from('audit_logs').insert({
