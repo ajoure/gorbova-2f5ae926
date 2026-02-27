@@ -198,19 +198,16 @@ Deno.serve(async (req) => {
     }
 
     // 3. Close access for subscriptions with expired access_end_at
-    // PATCH: Compare against start of TODAY in Minsk timezone (21:00 UTC yesterday = 00:00 Minsk today)
-    // This ensures access lasts until the end of the expiration day
-    const minskMidnightToday = new Date();
-    minskMidnightToday.setUTCHours(21, 0, 0, 0); // 21:00 UTC = 00:00 Minsk
-    if (minskMidnightToday > now) {
-      // If 21:00 UTC hasn't happened yet today, use yesterday's 21:00 UTC
-      minskMidnightToday.setDate(minskMidnightToday.getDate() - 1);
-    }
+    // F10: Use APP_TZ (Europe/Minsk) for consistent day boundaries
+    const { APP_TZ, todayDateKey: reconcileTodayDateKey, dayWindowUtc: reconcileDayWindowUtc } = await import('../_shared/timezone.ts');
+    const reconcileTodayKey = reconcileTodayDateKey(APP_TZ);
+    const { start: minskDayStart } = reconcileDayWindowUtc(APP_TZ, reconcileTodayKey);
+    console.log(`[F10] Reconcile: APP_TZ=${APP_TZ}, todayKey=${reconcileTodayKey}, dayStart=${minskDayStart}`);
     
     const { data: expiredAccess, error: accessError } = await supabase
       .from('subscriptions_v2')
       .select('id, user_id, product_id, access_end_at, status, grace_period_status')
-      .lt('access_end_at', minskMidnightToday.toISOString())
+      .lt('access_end_at', minskDayStart)
       .in('status', ['active', 'past_due']);
 
     if (accessError) {

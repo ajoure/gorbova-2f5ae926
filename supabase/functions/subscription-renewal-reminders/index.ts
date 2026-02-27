@@ -524,21 +524,20 @@ async function sendEmailReminder(
   }
 }
 
-// Check if reminder was already sent today
+// F10: Check if reminder was already sent today (APP_TZ day window)
 async function wasReminderSentToday(
   supabase: any,
   userId: string,
-  eventType: string
+  eventType: string,
+  todayWindow: { start: string; end: string }
 ): Promise<boolean> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const { data } = await supabase
     .from('telegram_logs')
     .select('id')
     .eq('user_id', userId)
     .eq('event_type', eventType)
-    .gte('created_at', today.toISOString())
+    .gte('created_at', todayWindow.start)
+    .lt('created_at', todayWindow.end)
     .limit(1);
 
   return (data?.length || 0) > 0;
@@ -591,16 +590,18 @@ Deno.serve(async (req) => {
       });
     }
 
+    // F10: Import timezone helpers
+    const { APP_TZ, todayDateKey, addDaysToDateKey, dayWindowUtc, toTzDateKey } = await import('../_shared/timezone.ts');
+    const todayKey = todayDateKey(APP_TZ);
+    const todayWindow = dayWindowUtc(APP_TZ, todayKey);
+    console.log(`[F10] APP_TZ=${APP_TZ}, todayKey=${todayKey}, todayWindow=${todayWindow.start}..${todayWindow.end}`);
+
     // ============ STANDARD REMINDERS (7, 3, 1 days by access_end_at) ============
     for (const daysLeft of [7, 3, 1]) {
-      const targetDate = new Date(now);
-      targetDate.setDate(targetDate.getDate() + daysLeft);
-      const startOfDay = new Date(targetDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(targetDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      const targetDateKey = addDaysToDateKey(todayKey, daysLeft);
+      const { start: windowStart, end: windowEnd } = dayWindowUtc(APP_TZ, targetDateKey);
 
-      console.log(`Checking subscriptions expiring in ${daysLeft} days (${startOfDay.toISOString()} to ${endOfDay.toISOString()})`);
+      console.log(`Checking subscriptions expiring in ${daysLeft} days (dateKey=${targetDateKey}, window=${windowStart}..${windowEnd})`);
 
       const { data: subscriptions, error } = await supabase
         .from('subscriptions_v2')
@@ -624,8 +625,8 @@ Deno.serve(async (req) => {
           )
         `)
         .in('status', ['active', 'trial'])
-        .gte('access_end_at', startOfDay.toISOString())
-        .lte('access_end_at', endOfDay.toISOString())
+        .gte('access_end_at', windowStart)
+        .lt('access_end_at', windowEnd)
         .eq('auto_renew', true);
 
       if (error) {
@@ -638,7 +639,7 @@ Deno.serve(async (req) => {
       for (const sub of subscriptions || []) {
         const userId = sub.user_id;
         
-        if (await wasReminderSentToday(supabase, userId, `subscription_reminder_${daysLeft}d`)) {
+        if (await wasReminderSentToday(supabase, userId, `subscription_reminder_${daysLeft}d`, todayWindow)) {
           console.log(`Reminder already sent today for user ${userId}, skipping`);
           continue;
         }
@@ -772,7 +773,7 @@ Deno.serve(async (req) => {
       const userId = sub.user_id;
 
       // Check if already sent today (reuse event type for backward compat)
-      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning')) {
+      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
         continue;
       }
 
@@ -911,6 +912,24 @@ Deno.serve(async (req) => {
         recipients_3d: reminders3d.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ user_id: r.user_id, subscription_id: r.subscription_id })),
         recipients_1d: reminders1d.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ user_id: r.user_id, subscription_id: r.subscription_id })),
         no_card_recipients: noCardWarnings.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ user_id: r.user_id, subscription_id: r.subscription_id })),
+      }
+    });
+
+    // F10 P7: Timezone audit log + self-check for 23:00 UTC edge cases
+    await supabase.from('audit_logs').insert({
+      action: 'subscription.reminders_timezone_check',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'F10_timezone',
+      meta: {
+        app_tz: APP_TZ,
+        today_key: todayKey,
+        today_window_utc: todayWindow,
+        reminder_windows: [7, 3, 1].map(d => {
+          const dk = addDaysToDateKey(todayKey, d);
+          return { days: d, date_key: dk, ...dayWindowUtc(APP_TZ, dk) };
+        }),
+        total_reminders_sent: results.filter(r => r.telegram_sent).length,
       }
     });
 

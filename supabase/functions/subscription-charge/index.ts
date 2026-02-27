@@ -445,15 +445,13 @@ interface ChargeResult {
   skip_reason?: string;
 }
 
-// PATCH: Check if charge was already attempted today (UTC date comparison)
-function wasChargeAttemptedToday(sub: any): boolean {
+// F10: Check if charge was already attempted today (APP_TZ date comparison)
+function wasChargeAttemptedToday(sub: any, todayKeyAppTz: string, toTzDateKeyFn: (iso: string, tz: string) => string, appTz: string): boolean {
   const lastAttempt = sub.meta?.last_charge_attempt_at;
   if (!lastAttempt) return false;
   
-  const todayUtc = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
-  const lastAttemptDate = new Date(lastAttempt).toISOString().split('T')[0];
-  
-  return lastAttemptDate === todayUtc;
+  const lastAttemptDateKey = toTzDateKeyFn(lastAttempt, appTz);
+  return lastAttemptDateKey === todayKeyAppTz;
 }
 
 // ========== GRACE PERIOD HELPERS (PATCH) ==========
@@ -1835,14 +1833,13 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const nowIso = now.toISOString();
-    const todayUtc = nowIso.split('T')[0]; // 'YYYY-MM-DD'
     
-    // PATCH: End of current day UTC (23:59:59.999Z) for due query
-    const endOfDay = new Date();
-    endOfDay.setUTCHours(23, 59, 59, 999);
-    const endOfDayIso = endOfDay.toISOString();
+    // F10: Use APP_TZ for day boundaries instead of UTC
+    const { APP_TZ, todayDateKey, dayWindowUtc, toTzDateKey } = await import('../_shared/timezone.ts');
+    const todayKey = todayDateKey(APP_TZ);
+    const { end: endOfDayIso } = dayWindowUtc(APP_TZ, todayKey);
 
-    console.log(`Starting subscription charge job... Mode: ${mode}, Source: ${source}, Today UTC: ${todayUtc}`);
+    console.log(`Starting subscription charge job... Mode: ${mode}, Source: ${source}, Today APP_TZ(${APP_TZ}): ${todayKey}, endOfDay: ${endOfDayIso}`);
 
     // PATCH 2: DRY-RUN mode - only diagnostics, no charges
     if (mode === 'dry_run') {
@@ -1939,7 +1936,7 @@ Deno.serve(async (req) => {
     }
 
     // PATCH: Apply gate - filter out subscriptions already attempted today
-    const subscriptionsToProcess = (allCandidates || []).filter(sub => !wasChargeAttemptedToday(sub));
+    const subscriptionsToProcess = (allCandidates || []).filter(sub => !wasChargeAttemptedToday(sub, todayKey, toTzDateKey, APP_TZ));
     const skippedAlreadyAttempted = (allCandidates?.length || 0) - subscriptionsToProcess.length;
 
     // PATCH: Separate with_card and no_card for statistics
@@ -2009,7 +2006,7 @@ Deno.serve(async (req) => {
 
     for (const sub of trialEnding || []) {
       // Skip if already attempted today
-      if (wasChargeAttemptedToday(sub)) {
+      if (wasChargeAttemptedToday(sub, todayKey, toTzDateKey, APP_TZ)) {
         console.log(`Trial subscription ${sub.id}: skipped (already attempted today)`);
         continue;
       }
