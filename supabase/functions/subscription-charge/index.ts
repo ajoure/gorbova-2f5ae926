@@ -532,7 +532,7 @@ async function chargeSubscription(
   const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta, billing_type, product_id } = subscription;
   const now = new Date();
 
-  // ========== PROVIDER-MANAGED CHECK (PATCH-6) ==========
+  // ========== PROVIDER-MANAGED CHECK (PATCH-6 + RENEWAL+PAYMENTS.1 A2) ==========
   // Skip charge for subscriptions managed by bePaid Subscriptions
   if (billing_type === 'provider_managed') {
     console.log(`Subscription ${id}: billing_type=provider_managed, skipping (managed by bePaid)`);
@@ -541,6 +541,16 @@ async function chargeSubscription(
       success: true,
       skipped: true,
       skip_reason: 'provider_managed',
+    };
+  }
+  // PATCH RENEWAL+PAYMENTS.1 A2: Safety net — block ALL non-provider_managed charges (MIT disabled)
+  if (billing_type !== 'provider_managed') {
+    console.log(`Subscription ${id}: billing_type=${billing_type}, MIT auto-charge disabled. Only provider_managed uses auto-charge.`);
+    return {
+      subscription_id: id,
+      success: true,
+      skipped: true,
+      skip_reason: 'mit_disabled',
     };
   }
   // ========== END PROVIDER-MANAGED CHECK ==========
@@ -1939,12 +1949,15 @@ Deno.serve(async (req) => {
     const subscriptionsToProcess = (allCandidates || []).filter(sub => !wasChargeAttemptedToday(sub, todayKey, toTzDateKey, APP_TZ));
     const skippedAlreadyAttempted = (allCandidates?.length || 0) - subscriptionsToProcess.length;
 
-    // PATCH: Separate with_card and no_card for statistics
-    const withCard = subscriptionsToProcess.filter(s => s.payment_method_id);
+    // PATCH RENEWAL+PAYMENTS.1 A1: Split candidates into provider_managed (chargeable), MIT-disabled, and no_card
+    const providerManagedWithCard = subscriptionsToProcess.filter(s => s.payment_method_id && s.billing_type === 'provider_managed');
+    const mitDisabled = subscriptionsToProcess.filter(s => s.payment_method_id && s.billing_type !== 'provider_managed');
     const noCard = subscriptionsToProcess.filter(s => !s.payment_method_id);
+    // Legacy alias for downstream compatibility
+    const withCard = providerManagedWithCard;
 
     console.log(`Found ${allCandidates?.length || 0} total candidates, ${subscriptionsToProcess.length} after gate (skipped ${skippedAlreadyAttempted} already attempted today)`);
-    console.log(`With card: ${withCard.length}, No card: ${noCard.length}`);
+    console.log(`Provider-managed with card: ${providerManagedWithCard.length}, MIT-disabled (has card but not provider_managed): ${mitDisabled.length}, No card: ${noCard.length}`);
 
     // PATCH-D: Get bePaid config STRICTLY from integration_instances (no env fallback)
     const { data: bepaidInstance, error: bepaidError } = await supabase
@@ -1971,6 +1984,16 @@ Deno.serve(async (req) => {
 
     const results: ChargeResult[] = [];
 
+    // PATCH RENEWAL+PAYMENTS.1 A1: Record MIT-disabled subscriptions (no charge attempt)
+    for (const sub of mitDisabled) {
+      results.push({
+        subscription_id: sub.id,
+        success: true,
+        skipped: true,
+        skip_reason: 'mit_disabled',
+      });
+    }
+
     // PATCH: Add no_card subscriptions to results (don't attempt charge, just record)
     for (const sub of noCard) {
       // Don't update last_charge_attempt_at for no_card - they didn't attempt charge
@@ -1984,7 +2007,7 @@ Deno.serve(async (req) => {
       console.log(`Subscription ${sub.id}: skipped (no card)`);
     }
 
-    // PATCH: Charge only subscriptions WITH card
+    // PATCH: Charge only provider_managed subscriptions WITH card
     for (const sub of withCard) {
       const result = await chargeSubscription(supabase, sub, bepaidConfig);
       results.push(result);
@@ -2013,6 +2036,12 @@ Deno.serve(async (req) => {
       
       const tariff = sub.tariffs as any;
       
+      // PATCH RENEWAL+PAYMENTS.1 A3: Skip MIT charge for trials too
+      if (sub.billing_type !== 'provider_managed') {
+        results.push({ subscription_id: sub.id, success: true, skipped: true, skip_reason: 'mit_disabled_trial' });
+        continue;
+      }
+
       if (tariff?.trial_auto_charge && sub.payment_method_id) {
         await supabase
           .from('subscriptions_v2')
@@ -2066,6 +2095,26 @@ Deno.serve(async (req) => {
       results,
     };
 
+    // PATCH RENEWAL+PAYMENTS.1 A4: MIT-disabled aggregate audit log
+    const mitDisabledCount = results.filter(r => r.skip_reason === 'mit_disabled').length;
+    const mitDisabledTrialCount = results.filter(r => r.skip_reason === 'mit_disabled_trial').length;
+    if (mitDisabledCount > 0 || mitDisabledTrialCount > 0) {
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.charge.mit_disabled',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'subscription_charge_run',
+        meta: {
+          mit_skipped: mitDisabledCount,
+          mit_trial_skipped: mitDisabledTrialCount,
+          provider_managed_charged: providerManagedWithCard.length,
+          no_card: noCard.length,
+          run_at: nowIso,
+          source,
+        },
+      });
+    }
+
     // PATCH: Enhanced SYSTEM ACTOR audit log with new fields
     await supabase.from('audit_logs').insert({
       action: 'subscription.charge_cron_completed',
@@ -2077,16 +2126,15 @@ Deno.serve(async (req) => {
         mode,
         run_at: nowIso,
         today_utc: todayUtc,
-        // New detailed fields
         total_candidates: allCandidates?.length || 0,
         total_after_gate: subscriptionsToProcess.length,
         skipped_already_attempted_count: skippedAlreadyAttempted,
-        charged_attempted_count: withCard.length,
+        provider_managed_charged_count: providerManagedWithCard.length,
+        mit_disabled_count: mitDisabledCount,
+        mit_disabled_trial_count: mitDisabledTrialCount,
         no_card_count: noCard.length,
-        // Results
         success_count: results.filter(r => r.success).length,
         failed_count: results.filter(r => !r.success && !r.skipped).length,
-        // Legacy fields for compatibility
         total_processed: results.length,
       }
     });

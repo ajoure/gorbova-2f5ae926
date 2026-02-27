@@ -96,10 +96,62 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const actorUserId = actor_user_id || null;
   const effectiveActorType = actor_type || 'system';
 
+  // Determine payment_flow based on actor_type and payment_type
+  const paymentFlow = payment_type === 'one_time'
+    ? (effectiveActorType === 'admin' ? 'admin_one_time' : 'renewal_one_time')
+    : (effectiveActorType === 'admin' ? 'admin_subscription' : 'renewal_subscription');
+
   if (payment_type === 'one_time') {
     // === ONE-TIME PAYMENT ===
+
+    // PATCH RENEWAL+PAYMENTS.1 C1: Dedup — check for existing pending order (same key, 3 days)
+    const { data: existingOrder } = await supabase
+      .from('orders_v2')
+      .select('id, meta')
+      .eq('user_id', user_id)
+      .eq('product_id', product_id)
+      .eq('tariff_id', tariff_id)
+      .eq('status', 'pending')
+      .eq('currency', 'BYN')
+      .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
+      .limit(1)
+      .maybeSingle();
+
+    if (existingOrder?.id) {
+      const existingMeta = (existingOrder.meta || {}) as Record<string, any>;
+      const existingToken = existingMeta.bepaid_checkout_token;
+      if (existingToken) {
+        const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
+        console.log('[create-payment-checkout] Reusing existing pending one_time order:', existingOrder.id);
+
+        // Audit log for reuse
+        await supabase.from('audit_logs').insert({
+          actor_type: effectiveActorType,
+          actor_user_id: actorUserId,
+          action: 'payment_checkout.reused',
+          meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
+        });
+
+        return {
+          success: true,
+          redirect_url: existingUrl,
+          order_id: existingOrder.id,
+          payment_type: 'one_time',
+        };
+      }
+    }
+
     const { data: orderNumberData } = await supabase.rpc('generate_order_number');
     const orderNumber = orderNumberData || `ORD-LINK-${Date.now()}`;
+
+    const orderMeta = {
+      type: effectiveActorType === 'admin' ? 'admin_payment_link' : 'system_payment_link',
+      description: description || null,
+      created_by: actorUserId,
+      product_name: product.name,
+      tariff_name: tariff.name,
+      payment_flow: paymentFlow,
+    };
 
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
@@ -116,13 +168,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         currency: 'BYN',
         status: 'pending',
         customer_email: customerEmail,
-        meta: {
-          type: effectiveActorType === 'admin' ? 'admin_payment_link' : 'system_payment_link',
-          description: description || null,
-          created_by: actorUserId,
-          product_name: product.name,
-          tariff_name: tariff.name,
-        },
+        meta: orderMeta,
       })
       .select('id')
       .single();
@@ -198,14 +244,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     const redirectUrl = checkoutResult.checkout.redirect_url;
 
-    // Update order meta with checkout token
+    // PATCH RENEWAL+PAYMENTS.1 C3: Meta MERGE (not overwrite) after checkout token
     await supabase.from('orders_v2').update({
       meta: {
-        type: effectiveActorType === 'admin' ? 'admin_payment_link' : 'system_payment_link',
-        description: description || null,
-        created_by: actorUserId,
-        product_name: product.name,
-        tariff_name: tariff.name,
+        ...orderMeta,
         bepaid_checkout_token: checkoutResult.checkout.token,
       },
     }).eq('id', order.id);
@@ -235,7 +277,67 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
+
+    // PATCH RENEWAL+PAYMENTS.1 C1: Dedup — check for existing pending subscription order (3 days)
+    const { data: existingSubOrder } = await supabase
+      .from('orders_v2')
+      .select('id, meta')
+      .eq('user_id', user_id)
+      .eq('product_id', product_id)
+      .eq('tariff_id', tariff_id)
+      .eq('status', 'pending')
+      .eq('currency', 'BYN')
+      .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
+      .limit(5);
+
+    // Find one with payment_flow containing 'subscription' and valid checkout_url
+    const reusableSubOrder = (existingSubOrder || []).find((o: any) => {
+      const m = (o.meta || {}) as Record<string, any>;
+      return m.payment_flow && String(m.payment_flow).includes('subscription');
+    });
+
+    if (reusableSubOrder?.id) {
+      // Check if provider_subscriptions has a checkout_url for this order
+      const { data: provSub } = await supabase
+        .from('provider_subscriptions')
+        .select('meta')
+        .eq('user_id', user_id)
+        .eq('status', 'pending')
+        .limit(5);
+
+      const reusableProvSub = (provSub || []).find((ps: any) => {
+        const m = (ps.meta || {}) as Record<string, any>;
+        return m.order_id === reusableSubOrder.id && m.checkout_url;
+      });
+
+      if (reusableProvSub) {
+        const existingUrl = (reusableProvSub.meta as Record<string, any>).checkout_url;
+        console.log('[create-payment-checkout] Reusing existing pending subscription order:', reusableSubOrder.id);
+
+        await supabase.from('audit_logs').insert({
+          actor_type: effectiveActorType,
+          actor_user_id: actorUserId,
+          action: 'payment_checkout.reused',
+          meta: { reused_order_id: reusableSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
+        });
+
+        return {
+          success: true,
+          redirect_url: existingUrl,
+          order_id: reusableSubOrder.id,
+          payment_type: 'subscription',
+        };
+      }
+    }
+
     const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
+
+    const subOrderMeta = {
+      type: effectiveActorType === 'admin' ? 'admin_payment_link_subscription' : 'system_payment_link_subscription',
+      description: description || null,
+      created_by: actorUserId,
+      payment_flow: paymentFlow,
+    };
 
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
@@ -252,12 +354,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         currency: 'BYN',
         status: 'pending',
         customer_email: customerEmail,
-        meta: {
-          type: effectiveActorType === 'admin' ? 'admin_payment_link_subscription' : 'system_payment_link_subscription',
-          description: description || null,
-          created_by: actorUserId,
-          payment_flow: 'provider_managed_checkout',
-        },
+        meta: subOrderMeta,
       })
       .select('id')
       .single();
