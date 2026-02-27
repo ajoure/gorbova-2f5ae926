@@ -9812,6 +9812,22 @@ export type Database = {
           user_id: string
         }[]
       }
+      find_unlinked_payments: {
+        Args: { p_limit?: number }
+        Returns: {
+          amount: number
+          created_at: string
+          has_tracking_id: boolean
+          match_source: string
+          origin: string
+          paid_at: string
+          payment_flow: string
+          payment_id: string
+          potential_order_id: string
+          provider_payment_id: string
+          tracking_id: string
+        }[]
+      }
       find_users_with_permission: {
         Args: { permission_code: string }
         Returns: {

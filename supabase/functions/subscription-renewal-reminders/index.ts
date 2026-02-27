@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -131,7 +132,7 @@ async function tryGeneratePaymentLink(
   }
 }
 
-// Send Telegram reminder — unified texts without hasCard/!hasCard split
+// Send Telegram reminder — PATCH RENEWAL+PAYMENTS.1 B3: 2 buttons for non-SBS
 async function sendTelegramReminder(
   supabase: any,
   botToken: string | null,
@@ -143,7 +144,8 @@ async function sendTelegramReminder(
   amount: number,
   currency: string,
   hasSBS: boolean,
-  paymentLinkUrl: string | null,
+  oneTimeUrl: string | null,
+  subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null
@@ -233,21 +235,14 @@ async function sendTelegramReminder(
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
-    // Unified texts: SBS vs !SBS (no hasCard/!hasCard)
-    const ctaUrl = hasSBS 
-      ? 'https://club.gorbova.by/purchases' 
-      : (paymentLinkUrl || 'https://club.gorbova.by/purchases');
-    const ctaText = hasSBS ? 'Управление подпиской' : 'Оплатить и продлить';
-    
+    // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
     if (daysLeft === 7) {
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
 ${safeUserName}, ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
 
-Автопродление активно — подписка продлится автоматически.
-
-Нажмите кнопку ниже для управления подпиской.`;
+Автопродление активно — подписка продлится автоматически. Отключить можно в кабинете.`;
       } else {
         message = `📅 *Напоминание о подписке*
 
@@ -256,9 +251,7 @@ ${safeUserName}, ваша подписка на *${safeProductName}* закан�
 📦 *Продукт:* ${safeProductName}
 🎯 *Тариф:* ${safeTariffName}
 
-Для продления оплатите по ссылке.
-
-Нажмите кнопку ниже для оплаты.`;
+Выберите удобный способ продления:`;
       }
     } else if (daysLeft === 3) {
       if (hasSBS) {
@@ -266,9 +259,7 @@ ${safeUserName}, ваша подписка на *${safeProductName}* закан�
 
 ${safeUserName}, осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
 
-Автопродление активно.
-
-Нажмите кнопку ниже для управления подпиской.`;
+Автопродление активно — спишется автоматически. Отключить можно в кабинете.`;
       } else {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
@@ -276,35 +267,40 @@ ${safeUserName}, осталось 3 дня до окончания подпис�
 
 📦 *${safeProductName}* / ${safeTariffName}
 
-Для продления оплатите по ссылке.
-
-Нажмите кнопку ниже для оплаты.`;
+Выберите удобный способ продления:`;
       }
     } else if (daysLeft === 1) {
       if (hasSBS) {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${safeUserName}, это последнее напоминание. Подписка продлится автоматически.
-
-Нажмите кнопку ниже.`;
+${safeUserName}, это последнее напоминание. Подписка продлится автоматически. Отключить можно в кабинете.`;
       } else {
         message = `🔔 *Завтра заканчивается подписка!*
 
 ${safeUserName}, это последнее напоминание. Подписка на *${safeProductName}* заканчивается ${formattedDate}.
 
-Оплатите сейчас, чтобы сохранить доступ.
-
-Нажмите кнопку ниже для оплаты.`;
+Оплатите сейчас, чтобы сохранить доступ:`;
       }
     }
 
     if (!message) return { sent: false, logged: false, logError: 'Invalid daysLeft', skipReason: null, failReason: null };
 
-    // Build reply_markup — ALWAYS send inline keyboard
-    const buttonText = hasSBS ? '📋 Управление подпиской' : '💳 Оплатить и продлить';
-    const replyMarkup = {
-      inline_keyboard: [[{ text: buttonText, url: ctaUrl }]],
-    };
+    // PATCH RENEWAL+PAYMENTS.1 B3: Build reply_markup — SBS: manage only; non-SBS: 2 CTA buttons
+    let replyMarkup: any;
+    if (hasSBS) {
+      replyMarkup = {
+        inline_keyboard: [[{ text: '📋 Управление подпиской', url: 'https://club.gorbova.by/purchases' }]],
+      };
+    } else {
+      const buttons: any[][] = [];
+      if (oneTimeUrl) buttons.push([{ text: '💳 Оплатить разово', url: oneTimeUrl }]);
+      if (subscriptionUrl) buttons.push([{ text: '🔄 Подписка (автосписание)', url: subscriptionUrl }]);
+      if (buttons.length === 0) {
+        // Fallback: generic link
+        buttons.push([{ text: '💳 Оплатить и продлить', url: 'https://club.gorbova.by/purchases' }]);
+      }
+      replyMarkup = { inline_keyboard: buttons };
+    }
 
     // Send Telegram message
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -333,7 +329,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
         message_text: message,
         meta: {
           subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
-          days_left: daysLeft, has_sbs: hasSBS, has_payment_link: !!paymentLinkUrl,
+          days_left: daysLeft, has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
           telegram_error_code: result.error_code, telegram_response: result,
         },
       });
@@ -356,7 +352,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
       meta: {
         days_left: daysLeft, product: productName, tariff: tariffName,
         subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
-        has_sbs: hasSBS, has_payment_link: !!paymentLinkUrl,
+        has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
       },
     });
     const isDuplicate = insertError?.code === '23505';
@@ -375,7 +371,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
   }
 }
 
-// Send email reminder — unified without hasCard/!hasCard
+// PATCH RENEWAL+PAYMENTS.1 B4: Send email reminder — 2 buttons for non-SBS
 async function sendEmailReminder(
   supabase: any,
   userId: string,
@@ -388,7 +384,8 @@ async function sendEmailReminder(
   amount: number,
   currency: string,
   hasSBS: boolean,
-  paymentLinkUrl: string | null,
+  oneTimeUrl: string | null,
+  subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null
@@ -403,16 +400,34 @@ async function sendEmailReminder(
     let subject = '';
     let bodyHtml = '';
 
-    const ctaUrl = hasSBS
-      ? 'https://club.gorbova.by/purchases'
-      : (paymentLinkUrl || 'https://club.gorbova.by/purchases');
-    const ctaText = hasSBS ? 'Управление подпиской' : 'Оплатить и продлить';
+    // PATCH RENEWAL+PAYMENTS.1 B4: Build CTA section — SBS vs 2 buttons
+    let ctaHtml = '';
+    if (hasSBS) {
+      ctaHtml = `
+        <p style="color: #059669; margin: 16px 0;">✅ Автопродление активно. Подписка продлится автоматически. Отключить можно в кабинете.</p>
+        <p style="margin-top: 24px;">
+          <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+            📋 Управление подпиской
+          </a>
+        </p>`;
+    } else {
+      const otBtn = oneTimeUrl
+        ? `<a href="${oneTimeUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-right: 12px; margin-bottom: 8px;">💳 Оплатить разово</a>`
+        : '';
+      const subBtn = subscriptionUrl
+        ? `<a href="${subscriptionUrl}" style="display: inline-block; background: #059669; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-bottom: 8px;">🔄 Подписка (автосписание)</a>`
+        : '';
+      const fallbackBtn = (!oneTimeUrl && !subscriptionUrl)
+        ? `<a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">💳 Оплатить и продлить</a>`
+        : '';
+      ctaHtml = `
+        <div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 16px; margin: 16px 0;">
+          <p style="margin: 0; color: #0c4a6e;">Выберите удобный способ продления:</p>
+        </div>
+        <p style="margin-top: 24px;">${otBtn}${subBtn}${fallbackBtn}</p>`;
+    }
 
-    const statusSection = hasSBS 
-      ? `<p style="color: #059669; margin: 16px 0;">✅ Автопродление активно. Подписка продлится автоматически.</p>`
-      : `<div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 16px; margin: 16px 0;">
-          <p style="margin: 0; color: #0c4a6e;">Для продления оплатите по ссылке ниже.</p>
-        </div>`;
+    const statusSection = ctaHtml;
 
     if (daysLeft === 7) {
       subject = '📅 Напоминание: подписка заканчивается через неделю';
@@ -427,11 +442,6 @@ async function sendEmailReminder(
             <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
           </div>
           ${statusSection}
-          <p style="margin-top: 24px;">
-            <a href="${ctaUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              ${ctaText}
-            </a>
-          </p>
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
         </div>`;
     } else if (daysLeft === 3) {
@@ -447,11 +457,6 @@ async function sendEmailReminder(
             <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
           </div>
           ${statusSection}
-          <p style="margin-top: 24px;">
-            <a href="${ctaUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              ${ctaText}
-            </a>
-          </p>
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
         </div>`;
     } else if (daysLeft === 1) {
@@ -467,11 +472,6 @@ async function sendEmailReminder(
             <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
           </div>
           ${statusSection}
-          <p style="margin-top: 24px;">
-            <a href="${ctaUrl}" style="display: inline-block; background: #dc2626; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              ${ctaText}
-            </a>
-          </p>
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
         </div>`;
     }
@@ -492,7 +492,8 @@ async function sendEmailReminder(
         meta: {
           days_left: daysLeft,
           has_sbs: hasSBS,
-          has_payment_link: !!paymentLinkUrl,
+          has_one_time_url: !!oneTimeUrl,
+          has_subscription_url: !!subscriptionUrl,
           source: 'subscription-renewal-reminders',
           order_id: orderId,
           tariff_id: tariffId,
@@ -685,12 +686,16 @@ Deno.serve(async (req) => {
         // Check if user has active SBS for this product
         const userHasSBS = await hasActiveSBS(supabase, userId, productId);
 
-        // If no SBS, try to generate payment link
-        let paymentLinkUrl: string | null = null;
-        if (!userHasSBS) {
-          paymentLinkUrl = await tryGeneratePaymentLink(
-            supabase, userId, productId, sub.tariff_id, amount, currency, (sub as any).billing_type
-          );
+        // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS
+        let oneTimeUrl: string | null = null;
+        let subscriptionUrl: string | null = null;
+        if (!userHasSBS && productId && sub.tariff_id && amount > 0) {
+          const ctas = await generateRenewalCTAs({
+            supabase, userId, productId, tariffId: sub.tariff_id,
+            amount, currency, actorType: 'system',
+          });
+          oneTimeUrl = ctas.oneTimeUrl;
+          subscriptionUrl = ctas.subscriptionUrl;
         }
 
         const result: ReminderResult = {
@@ -710,7 +715,7 @@ Deno.serve(async (req) => {
         const telegramResult = await sendTelegramReminder(
           supabase, botToken, userId,
           productName, tariffName, expiryDate, daysLeft,
-          amount, currency, userHasSBS, paymentLinkUrl,
+          amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
           sub.id, sub.order_id, sub.tariff_id
         );
 
@@ -728,13 +733,13 @@ Deno.serve(async (req) => {
           result.email_sent = await sendEmailReminder(
             supabase, userId, profile?.id || null, userEmail,
             productName, tariffName, expiryDate, daysLeft,
-            amount, currency, userHasSBS, paymentLinkUrl,
+            amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
             sub.id, sub.order_id, sub.tariff_id
           );
         }
 
         results.push(result);
-        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${userHasSBS}, paymentLink=${!!paymentLinkUrl}, Email=${result.email_sent}`);
+        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${userHasSBS}, oneTime=${!!oneTimeUrl}, sub=${!!subscriptionUrl}, Email=${result.email_sent}`);
       }
     }
 
@@ -812,17 +817,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Generate payment link
-      const paymentLinkUrl = await tryGeneratePaymentLink(
-        supabase, userId, productId, sub.tariff_id, amount, currency, (sub as any).billing_type
-      );
+      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links
+      let ncOneTimeUrl: string | null = null;
+      let ncSubscriptionUrl: string | null = null;
+      if (productId && sub.tariff_id && amount > 0) {
+        const ctas = await generateRenewalCTAs({
+          supabase, userId, productId, tariffId: sub.tariff_id,
+          amount, currency, actorType: 'system',
+        });
+        ncOneTimeUrl = ctas.oneTimeUrl;
+        ncSubscriptionUrl = ctas.subscriptionUrl;
+      }
 
       // Send via the unified sendTelegramReminder (with hasSBS=false)
       const telegramResult = await sendTelegramReminder(
         supabase, botToken, userId,
         productName, tariff?.name || 'Стандартный',
         accessEndAt, daysLeft, amount, currency,
-        false, paymentLinkUrl,
+        false, ncOneTimeUrl, ncSubscriptionUrl,
         sub.id, sub.order_id, sub.tariff_id
       );
 
