@@ -2201,9 +2201,24 @@ Deno.serve(async (req) => {
         // PATCH P2.9: Compute next_charge_at with guard against null overwrite
         const newNextChargeAt = subscription?.next_billing_at || body.next_billing_at || null;
 
+        // PATCH F5: Read existing meta to preserve order_id/checkout_url/tracking_id from create-payment-checkout
+        const providerSubscriptionIdStr = String(subscriptionId);
+        let existingPsMeta: Record<string, any> = {};
+        try {
+          const { data: existingPsRow } = await supabase
+            .from('provider_subscriptions')
+            .select('meta')
+            .eq('provider', 'bepaid')
+            .eq('provider_subscription_id', providerSubscriptionIdStr)
+            .maybeSingle();
+          existingPsMeta = (existingPsRow?.meta as Record<string, any>) || {};
+        } catch (readErr) {
+          console.warn('[WEBHOOK-LINK-ORDER] F5: existing provider_subscription meta read error', readErr);
+        }
+
         const psData: Record<string, any> = {
           provider: 'bepaid',
-          provider_subscription_id: String(subscriptionId),
+          provider_subscription_id: providerSubscriptionIdStr,
           state: 'active',
           last_charge_at: new Date().toISOString(),
           card_brand: subscription?.card?.brand || body.card?.brand || null,
@@ -2211,7 +2226,9 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
           // PATCH P2.8: Always save raw_data + meta snapshot
           raw_data: body,
+          // PATCH F5: Merge meta — preserve order_id/checkout_url/tracking_id from checkout flow
           meta: {
+            ...existingPsMeta,
             provider_snapshot: {
               state: subscription?.state || body.state || 'active',
               plan: body.plan || subscription?.plan || null,
