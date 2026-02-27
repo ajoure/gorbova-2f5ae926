@@ -363,7 +363,7 @@ Deno.serve(async (req) => {
       // Check if already complete in payments_v2
       const { data: existingPayment } = await supabaseAdmin
         .from('payments_v2')
-        .select('id, paid_at, provider_response, order_id, profile_id, user_id')
+        .select('id, paid_at, provider_response, order_id, profile_id, user_id, meta')
         .eq('provider', 'bepaid')
         .eq('provider_payment_id', uid)
         .single();
@@ -476,7 +476,8 @@ Deno.serve(async (req) => {
 
         if (existingPayment) {
           // Update only specific fields, preserve links
-          // ALSO update status and meta for failed/cancelled transactions
+          // F13: order_id, profile_id, user_id NOT in update payload — fill-only safe.
+          // Do NOT add these fields to the update without a fill-only guard.
           const { error: updateError } = await supabaseAdmin
             .from('payments_v2')
             .update({
@@ -486,7 +487,7 @@ Deno.serve(async (req) => {
               provider_response: upsertData.provider_response,
               card_last4: upsertData.card_last4 || undefined,
               card_brand: upsertData.card_brand || undefined,
-              meta: upsertData.meta,
+              meta: { ...(existingPayment.meta as Record<string, any> || {}), ...upsertData.meta },
               updated_at: upsertData.updated_at,
             })
             .eq('id', existingPayment.id);
