@@ -529,8 +529,8 @@ export default function PaymentsTable({
         );
         
       case 'deal':
-        if (payment.order_id) {
-          // Show "Связана" text with calm neutral chip, click opens modal
+        // F13.ADD: Use effective_order_id for deal resolution (cross-reference queue → payments_v2)
+        if (payment.effective_order_id) {
           return (
             <div className="flex items-center gap-1">
               <Tooltip>
@@ -538,15 +538,21 @@ export default function PaymentsTable({
                   <button
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs cursor-pointer hover:bg-accent border-muted bg-muted/30 text-foreground"
-                    onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}
+                    onClick={() => openDealSheet(payment.effective_order_id!, payment.profile_id)}
                   >
                     <Handshake className="h-3 w-3 text-muted-foreground" />
                     <span>Связана</span>
+                    {payment.effective_deal_source === 'queue' && (
+                      <span className="text-[9px] text-muted-foreground ml-0.5">(reconcile)</span>
+                    )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <div className="text-xs">
-                    <div className="font-medium">Сделка: {payment.order_number || payment.order_id}</div>
+                    <div className="font-medium">Сделка: {payment.effective_order_number || payment.effective_order_id}</div>
+                    {payment.effective_deal_source === 'queue' && (
+                      <div className="text-yellow-600 dark:text-yellow-400">Источник: reconcile (не привязана напрямую)</div>
+                    )}
                     <div className="text-muted-foreground">Нажмите для просмотра</div>
                   </div>
                 </TooltipContent>

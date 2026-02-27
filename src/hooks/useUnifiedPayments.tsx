@@ -44,10 +44,16 @@ export interface UnifiedPayment {
   profile_phone: string | null;
   is_ghost: boolean;
   
-  // Linked deal
+  // Linked deal (raw from payments_v2)
   order_id: string | null;
   order_number: string | null;
   order_status: string | null;
+  
+  // F13.ADD: Resolved deal (cross-reference queue → payments_v2)
+  effective_order_id: string | null;
+  effective_order_number: string | null;
+  effective_order_status: string | null;
+  effective_deal_source: 'payment' | 'queue' | 'none';
   
   // Product/tariff mapping
   bepaid_product: string | null; // plan.title or description from bePaid
@@ -251,6 +257,26 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
       
+      // F13.ADD: Build cross-reference map from ALL queue records BEFORE dedup
+      // This allows payments_v2 records to inherit matched_order_id from queue
+      const uidToQueue = new Map<string, {
+        matched_order_id: string | null;
+        order_number: string | null;
+        order_status: string | null;
+        description: string | null;
+      }>();
+      for (const q of queueData) {
+        if (q.bepaid_uid && q.matched_order_id) {
+          const qOrder = q.orders as any;
+          uidToQueue.set(q.bepaid_uid, {
+            matched_order_id: q.matched_order_id,
+            order_number: qOrder?.order_number || null,
+            order_status: qOrder?.status || null,
+            description: q.description || q.product_name || null,
+          });
+        }
+      }
+      
       // Dedup key: provider:uid - ONLY provider_payment_id, not fallback to id
       const processedKeys = new Set<string>();
       
@@ -315,11 +341,17 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const meta = (p.meta || {}) as any;
         const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
         
-        // Extract bepaid_description: prefer meta (F7 backfill), then provider_response fallback
+        // F13.ADD: Extract bepaid_description with expanded fallback chain
         const bepaid_description = 
           meta?.bepaid_description ??
           providerResponse?.transaction?.description ??
           providerResponse?.transaction?.additional_data?.description ??
+          providerResponse?.transaction?.message ??
+          providerResponse?.payment?.description ??
+          providerResponse?.message ??
+          providerResponse?.description ??
+          meta?.gateway_message ??
+          (pUid ? uidToQueue.get(pUid)?.description : null) ??
           null;
         
         // P0-guard: Build search index ONCE during transformation
@@ -364,6 +396,15 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           order_id: p.order_id,
           order_number: order?.order_number || null,
           order_status: order?.status || null,
+          // F13.ADD: effective_* via cross-reference queue → payments_v2
+          effective_order_id: p.order_id || (pUid ? uidToQueue.get(pUid)?.matched_order_id : null) || null,
+          effective_order_number: p.order_id 
+            ? (order?.order_number || null) 
+            : (pUid ? uidToQueue.get(pUid)?.order_number : null) || null,
+          effective_order_status: p.order_id 
+            ? (order?.status || null) 
+            : (pUid ? uidToQueue.get(pUid)?.order_status : null) || null,
+          effective_deal_source: p.order_id ? 'payment' as const : (pUid && uidToQueue.has(pUid) ? 'queue' as const : 'none' as const),
           bepaid_product: purchaseSnapshot?.product_name || null,
           mapped_product_id: order?.product_id || null,
           mapped_tariff_id: null,
@@ -467,6 +508,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             order_id: q.matched_order_id || order?.id || null,
             order_number: order?.order_number || null,
             order_status: order?.status || null,
+            // F13.ADD: effective_* for queue records
+            effective_order_id: q.matched_order_id || order?.id || null,
+            effective_order_number: order?.order_number || null,
+            effective_order_status: order?.status || null,
+            effective_deal_source: (q.matched_order_id || order?.id) ? 'queue' as const : 'none' as const,
             bepaid_product: q.description || q.product_name || null,
             mapped_product_id: q.matched_product_id,
             mapped_tariff_id: q.matched_tariff_id,
@@ -520,8 +566,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         processed: transformedPayments.length,
         withContact: allPayments.filter(p => p.profile_id).length,
         withoutContact: allPayments.filter(p => !p.profile_id).length,
-        withDeal: allPayments.filter(p => p.order_id).length,
-        withoutDeal: allPayments.filter(p => !p.order_id).length,
+        // F13.ADD: Stats use effective_order_id for accurate deal counting
+        withDeal: allPayments.filter(p => p.effective_order_id).length,
+        withoutDeal: allPayments.filter(p => !p.effective_order_id).length,
         withReceipt: allPayments.filter(p => p.receipt_url).length,
         withoutReceipt: allPayments.filter(p => !p.receipt_url).length,
         withRefunds: allPayments.filter(p => p.refunds_count > 0).length,

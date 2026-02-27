@@ -181,6 +181,8 @@ async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, t
       
       if (changes.length > 0) {
         updates.meta = { ...(payment.meta || {}), reconcile_verification: { status: 'verified', at: new Date().toISOString(), uid, changes } };
+        // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
+        // are NOT in this update payload — fill-only safe by omission.
         if (!dryRun) await supabase.from('payments_v2').update(updates).eq('id', payment.id);
         if (samples.verified.length < maxSamples) samples.verified.push({ uid, changes });
       } else {
@@ -224,6 +226,9 @@ async function processListModeTransactions(supabase: any, transactions: any[], d
       
       if (changes.length > 0) {
         counters.mismatched++;
+        // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
+        // are NOT in this update payload — fill-only safe by omission.
+        // Do NOT add link fields without explicit fill-only check.
         if (!dryRun) { await supabase.from('payments_v2').update(updates).eq('id', existing.id); }
         counters.updated++;
         if (samples.mismatches.length < maxSamples) samples.mismatches.push({ uid, changes });
