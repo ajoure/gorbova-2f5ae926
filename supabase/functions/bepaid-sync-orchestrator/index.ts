@@ -1081,6 +1081,9 @@ serve(async (req) => {
             if (dry_run) {
               stats.updated++;
             } else {
+              // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
+              // are NOT in this update payload — fill-only safe by omission.
+              // Do NOT add link fields without explicit fill-only check.
               const { error: updateError } = await supabase
                 .from('payments_v2')
                 .update({
@@ -1270,7 +1273,9 @@ serve(async (req) => {
               continue;
             }
 
-            // Execute update
+            // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
+            // are NOT in this update payload — fill-only safe by omission.
+            // Do NOT add link fields without explicit fill-only check.
             const { error: updateError } = await supabase
               .from("payments_v2")
               .update({
