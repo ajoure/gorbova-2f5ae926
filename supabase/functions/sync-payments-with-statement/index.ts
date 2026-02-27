@@ -796,7 +796,7 @@ Deno.serve(async (req) => {
             // PostgreSQL partial unique indexes don't work with Supabase upsert()
             const { data: existing } = await supabaseAdmin
               .from('payments_v2')
-              .select('id, origin, profile_id')
+              .select('id, origin, profile_id, meta')
               .eq('provider', 'bepaid')
               .eq('provider_payment_id', change.uid)
               .maybeSingle();
@@ -822,6 +822,7 @@ Deno.serve(async (req) => {
                     user_id: linkedProfile.user_id,
                   } : {}),
                   meta: {
+                    ...(existing.meta && typeof existing.meta === 'object' ? existing.meta : {}),
                     commission_total: stmt.commission_total,
                     payout_amount: stmt.payout_amount,
                     customer_email: stmt.email,
@@ -832,6 +833,14 @@ Deno.serve(async (req) => {
                     is_erip: isErip,
                     auto_linked: !!linkedProfile,
                     merged_from_create: true,
+                    // F13.ADD: fill-only bepaid_description from statement rows
+                    ...(() => {
+                      const existingDesc = (existing.meta as any)?.bepaid_description;
+                      const canFill = !existingDesc || String(existingDesc).trim() === '';
+                      const stmtRow = stmtByUid.get(change.uid);
+                      const stmtDesc = stmtRow?.description ? String(stmtRow.description).trim() : '';
+                      return canFill && stmtDesc ? { bepaid_description: stmtDesc } : {};
+                    })(),
                   },
                 })
                 .eq('id', existing.id);
@@ -874,6 +883,12 @@ Deno.serve(async (req) => {
                   synced_by: user.id,
                   is_erip: isErip,
                   auto_linked: !!linkedProfile,
+                  // F13.ADD: fill bepaid_description from statement rows
+                  ...(() => {
+                    const stmtRow = stmtByUid.get(change.uid);
+                    const stmtDesc = stmtRow?.description ? String(stmtRow.description).trim() : '';
+                    return stmtDesc ? { bepaid_description: stmtDesc } : {};
+                  })(),
                 },
               });
               
@@ -943,6 +958,14 @@ Deno.serve(async (req) => {
                 payout_amount: stmt.payout_amount,
                 statement_synced_at: new Date().toISOString(),
                 statement_synced_by: user.id,
+                // F13.ADD: fill-only bepaid_description from statement rows
+                ...(() => {
+                  const existingDesc = (pmt.meta as any)?.bepaid_description;
+                  const canFill = !existingDesc || String(existingDesc).trim() === '';
+                  const stmtRow = stmtByUid.get(change.uid);
+                  const stmtDesc = stmtRow?.description ? String(stmtRow.description).trim() : '';
+                  return canFill && stmtDesc ? { bepaid_description: stmtDesc } : {};
+                })(),
               },
             };
             // F12 P6: Explicitly remove order_id/profile_id from updates to prevent overwrite
@@ -1105,6 +1128,29 @@ Deno.serve(async (req) => {
         }
       }
       
+      // F13.ADD.ADDON P2: Bulk fill order_id from queue.matched_order_id (one SQL via RPC)
+      let orderFillCount = 0;
+      try {
+        const { data: filledCount, error: fillErr } = await supabaseAdmin.rpc('fill_order_from_queue');
+        if (fillErr) {
+          console.error('[sync-statement] fill_order_from_queue error', fillErr);
+        } else {
+          orderFillCount = filledCount || 0;
+          if (orderFillCount > 0) {
+            console.log(`[sync-statement] F13.ADD: filled order_id from queue for ${orderFillCount} payments`);
+            await supabaseAdmin.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'C_statement_fill_order',
+              action: 'payment.fill_order_from_queue',
+              meta: { filled_count: orderFillCount, run_at: new Date().toISOString() },
+            });
+          }
+        }
+      } catch (e: any) {
+        console.error('[sync-statement] fill_order_from_queue exception', e);
+      }
+
       // Create audit log
       const { data: auditLog } = await supabaseAdmin
         .from('audit_logs')
@@ -1122,6 +1168,7 @@ Deno.serve(async (req) => {
             initiated_by_email: user.email,
             changes_count: changes.length,
             applied_count: stats.applied,
+            order_fill_count: orderFillCount,
           },
         })
         .select('id')
